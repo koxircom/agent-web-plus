@@ -19,12 +19,14 @@ import {
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { parseFrontmatter } from "@/lib/frontmatter";
-import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
+import { isMarkdownMathCode, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown-math";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
+import { useMarkdownMathPlugins } from "./useMarkdownMathPlugins";
 import { FrontmatterCard } from "./FrontmatterCard";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
+import { isEnhancementPluginEnabled } from "@/lib/enhancement-chat-bridge";
 import {
   resolveInitialFileDisplayMode,
   type FileViewerDisplayMode as DisplayMode,
@@ -1144,6 +1146,17 @@ function TextFileViewer({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [obsidianMarkdownViewerEnabled, setObsidianMarkdownViewerEnabled] = useState(
+    () => isEnhancementPluginEnabled("obsidian-markdown-viewer"),
+  );
+  const [copySourceStatus, setCopySourceStatus] = useState<"idle" | "copying" | "copied" | "failed">("idle");
+  const copySourceLabel = copySourceStatus === "copied"
+    ? "已复制"
+    : copySourceStatus === "failed"
+      ? "复制失败"
+      : copySourceStatus === "copying"
+        ? "复制中"
+        : "复制源码";
   const requestedInitialDisplayMode = resolveInitialFileDisplayMode(initialState, initialDisplayMode);
   const initialWrapLines = initialState?.wrapLines ?? false;
   const initialScrollTop = initialState?.scrollTop ?? 0;
@@ -1153,8 +1166,11 @@ function TextFileViewer({
   const [watching, setWatching] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const contentRequestRef = useRef(0);
+  const viewerIdentityRef = useRef<{ filePath: string; sourceSessionId?: string | null } | null>(null);
+  viewerIdentityRef.current = { filePath, sourceSessionId };
   const gitDiffRequestRef = useRef(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const copySourceResetTimerRef = useRef<number | null>(null);
   const autoDiffAppliedRef = useRef(false);
   const defaultPreviewEligibleRef = useRef(
     initialState === undefined && initialDisplayMode === undefined,
@@ -1171,10 +1187,108 @@ function TextFileViewer({
 
   onStateChangeRef.current = onStateChange;
 
+  useEffect(() => {
+    const updatePluginState = (event?: Event) => {
+      const enabled = (event as CustomEvent<{ enabled?: boolean }> | undefined)?.detail?.enabled;
+      setObsidianMarkdownViewerEnabled(
+        typeof enabled === "boolean"
+          ? enabled
+          : isEnhancementPluginEnabled("obsidian-markdown-viewer"),
+      );
+    };
+    updatePluginState();
+    window.addEventListener("pi:obsidian-markdown-viewer-preferences-change", updatePluginState);
+    return () => window.removeEventListener("pi:obsidian-markdown-viewer-preferences-change", updatePluginState);
+  }, []);
+
   const updateDisplayMode = useCallback((nextDisplayMode: DisplayMode) => {
     viewerStateRef.current.displayMode = nextDisplayMode;
     setDisplayMode(nextDisplayMode);
   }, []);
+
+  const copyMarkdownSource = useCallback(async () => {
+    if (!data) return;
+    const requestId = contentRequestRef.current;
+    const isSameViewer = () => (
+      viewerIdentityRef.current?.filePath === filePath
+      && viewerIdentityRef.current.sourceSessionId === sourceSessionId
+    );
+    const isStale = () => (
+      contentRequestRef.current !== requestId || !isSameViewer()
+    );
+    const stopIfStale = () => {
+      if (!isStale()) return false;
+      if (isSameViewer()) setCopySourceStatus("idle");
+      return true;
+    };
+    if (copySourceResetTimerRef.current !== null) {
+      window.clearTimeout(copySourceResetTimerRef.current);
+      copySourceResetTimerRef.current = null;
+    }
+    setCopySourceStatus("copying");
+    try {
+      let source = data.content;
+      let offset = data.nextOffset;
+      let truncated = data.truncated;
+      while (truncated) {
+        const response = await fetch(getFileApiUrl(filePath, "read", sourceSessionId, { offset }));
+        if (stopIfStale()) return;
+        if (!response.ok) throw new Error(`File read failed (${response.status})`);
+        const next = await response.json() as FileData & { error?: string };
+        if (stopIfStale()) return;
+        if (
+          next.error
+          || typeof next.content !== "string"
+          || typeof next.nextOffset !== "number"
+          || next.nextOffset <= offset
+        ) {
+          throw new Error(next.error || "File read did not advance");
+        }
+        source += next.content;
+        offset = next.nextOffset;
+        truncated = next.truncated;
+      }
+
+      let copied = false;
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(source);
+          if (stopIfStale()) return;
+          copied = true;
+        } catch {
+          // Use the browser's synchronous clipboard fallback below.
+        }
+      }
+      if (stopIfStale()) return;
+      if (!copied && typeof document !== "undefined" && typeof document.execCommand === "function") {
+        const textarea = document.createElement("textarea");
+        textarea.value = source;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        try {
+          textarea.select();
+          copied = document.execCommand("copy");
+        } finally {
+          textarea.remove();
+        }
+      }
+      if (stopIfStale()) return;
+      setCopySourceStatus(copied ? "copied" : "failed");
+    } catch {
+      if (stopIfStale()) return;
+      setCopySourceStatus("failed");
+    }
+
+    if (stopIfStale()) return;
+    if (copySourceResetTimerRef.current !== null) {
+      window.clearTimeout(copySourceResetTimerRef.current);
+    }
+    copySourceResetTimerRef.current = window.setTimeout(() => {
+      if (isSameViewer()) setCopySourceStatus("idle");
+      copySourceResetTimerRef.current = null;
+    }, 1500);
+  }, [data, filePath, sourceSessionId]);
 
   const toggleWrapLines = useCallback(() => {
     setWrapLines((current) => {
@@ -1195,6 +1309,11 @@ function TextFileViewer({
     viewerStateRef.current = nextState;
     scrollRestorePendingRef.current = true;
     autoDiffAppliedRef.current = false;
+    setCopySourceStatus("idle");
+    if (copySourceResetTimerRef.current !== null) {
+      window.clearTimeout(copySourceResetTimerRef.current);
+      copySourceResetTimerRef.current = null;
+    }
     setDisplayMode(requestedInitialDisplayMode);
     setWrapLines(initialWrapLines);
 
@@ -1262,6 +1381,7 @@ function TextFileViewer({
   // Reset and load the file itself when its identity changes. Live watching is
   // managed separately so pausing it never clears the displayed content.
   useEffect(() => {
+    viewerIdentityRef.current = { filePath, sourceSessionId };
     let active = true;
     setLoading(true);
     setError(null);
@@ -1276,6 +1396,17 @@ function TextFileViewer({
 
     return () => {
       active = false;
+      contentRequestRef.current++;
+      if (
+        viewerIdentityRef.current?.filePath === filePath
+        && viewerIdentityRef.current.sourceSessionId === sourceSessionId
+      ) {
+        viewerIdentityRef.current = null;
+      }
+      if (copySourceResetTimerRef.current !== null) {
+        window.clearTimeout(copySourceResetTimerRef.current);
+        copySourceResetTimerRef.current = null;
+      }
     };
   }, [filePath, fetchContent, sourceSessionId]);
 
@@ -1357,6 +1488,8 @@ function TextFileViewer({
     () => (data?.language === "markdown" ? normalizeDisplayMath(data.content) : ""),
     [data],
   );
+  const { remarkPlugins: markdownPreviewRemarkPlugins, rehypePlugins: markdownPreviewRehypePlugins } =
+    useMarkdownMathPlugins();
 
   const frontmatter = useMemo(
     () => (data?.language === "markdown" ? parseFrontmatter(data.content) : null),
@@ -1611,8 +1744,29 @@ function TextFileViewer({
             </div>
           )}
 
-          <div className="file-viewer-actions">
-            {(onAtMention || onMentionLines) && (
+        <div className="file-viewer-actions">
+          {isMarkdown && obsidianMarkdownViewerEnabled && (
+            <button
+              type="button"
+              onClick={() => void copyMarkdownSource()}
+              title="复制源码全文"
+              aria-label={copySourceLabel}
+              disabled={copySourceStatus === "copying"}
+              className="file-viewer-icon-button"
+            >
+              {copySourceStatus === "copied" ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              )}
+            </button>
+          )}
+          {(onAtMention || onMentionLines) && (
               <button
                 type="button"
                 onPointerDown={(event) => event.preventDefault()}
@@ -1728,6 +1882,10 @@ function TextFileViewer({
               urlTransform={markdownUrlTransform}
               components={{
                 code({ className, children, ...props }) {
+                  if (isMarkdownMathCode(className)) {
+                    delete props.node;
+                    return <code className={className} {...props}>{children}</code>;
+                  }
                   const lang = className?.replace("language-", "").toLowerCase() ?? "";
                   const raw = String(children);
                   const isBlock = className?.includes("language-") || raw.includes("\n");

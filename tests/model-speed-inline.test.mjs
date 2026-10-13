@@ -4,183 +4,129 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { createJiti } from "jiti";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sourceDir = path.resolve(__dirname, "..");
-const cssPath = path.resolve(sourceDir, "app/enhancements.css");
-const mod06Path = path.resolve(sourceDir, "enhancements/modules/06-chat-view-and-tool-cards.js");
+const sourceDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconfigPaths: true });
+const React = await jiti.import("react");
+const { renderToStaticMarkup } = await jiti.import("react-dom/server");
+const { MessageView } = await jiti.import("../components/MessageView.tsx");
+const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+const moduleSource = fs.readFileSync(path.join(sourceDir, "enhancements/modules/06-chat-view-and-tool-cards.js"), "utf8");
+const helpers = ["modelSpeedColor", "upsertModelSpeedBadge"].map(name => {
+  const match = moduleSource.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n  \\}`));
+  assert.ok(match, `must extract ${name} from its owner`);
+  return match[0];
+}).join("\n");
 
-// 从 06 模块中精准提取 modelSpeedColor 和 upsertModelSpeedBadge 函数源码用于隔离沙盒测试
-const mod06Source = fs.readFileSync(mod06Path, "utf8");
-const colorMatch = mod06Source.match(/function modelSpeedColor\([\s\S]*?\n  \}/);
-const upsertMatch = mod06Source.match(/function upsertModelSpeedBadge\([\s\S]*?\n  \}/);
+// Use the actual component, not a handwritten imitation of its model header.
+function renderMessage({ id, longName = false, isStreaming = false, compactProgress = false, provider = "gateway" }) {
+  return renderToStaticMarkup(React.createElement(I18nProvider, null,
+    React.createElement(MessageView, {
+      entryId: id,
+      message: {
+        role: "assistant", provider, model: "gpt-6.1-sol", timestamp: 1791474427000,
+        content: [{ type: "text", text: "请在联系人页面查看：客户与供应商操作说明。" }],
+      },
+      modelNames: { "gateway:gpt-6.1-sol": longName ? "GPT-6.1 Sol · 很长的供应商及模型名称".repeat(8) : "GPT-6.1 Sol" },
+      isStreaming, compactProgress,
+    })));
+}
 
-assert.ok(colorMatch, "must extract modelSpeedColor from module 06");
-assert.ok(upsertMatch, "must extract upsertModelSpeedBadge from module 06");
+function assertPlacement(rows, width) {
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    assert.equal(row.count, 1, `${row.id}: only one badge`);
+    assert.ok(Math.abs(row.gap - 6) <= 1, `${row.id}: speed must immediately follow model (gap ${row.gap})`);
+    assert.ok(Math.abs(row.centerDelta) <= 1, `${row.id}: model and speed must share a row`);
+    assert.ok(row.left >= 0 && row.right <= width, `${row.id}: header must fit narrow screens`);
+    assert.ok(row.modelWidth > 0, `${row.id}: speed must not hide the model`);
+    assert.equal(row.ellipsis, "ellipsis");
+  }
+}
 
-const speedHelperSnippet = `
-${colorMatch[0]}
-${upsertMatch[0]}
-`;
+async function measure(page) {
+  return page.locator('[data-pi-model-speed-host]').evaluateAll(hosts => hosts.map(host => {
+    const model = host.previousElementSibling;
+    const badge = host.querySelector('.pi-enh-model-speed');
+    const m = model.getBoundingClientRect(), b = badge.getBoundingClientRect();
+    return {
+      id: host.closest('[data-entry-id]').getAttribute('data-entry-id'),
+      count: host.querySelectorAll('.pi-enh-model-speed').length,
+      gap: b.left - m.right, centerDelta: (b.top + b.height / 2) - (m.top + m.height / 2),
+      left: m.left, right: b.right, modelWidth: m.width,
+      ellipsis: getComputedStyle(model).textOverflow,
+    };
+  }));
+}
 
-test("Model generation speed inline badge in Chromium", async () => {
-  const browser = await chromium.launch({ headless: true });
+test("real assistant headers keep live and historical speed beside the model on desktop and mobile", async () => {
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   try {
+    const cases = [];
+    for (const longName of [false, true]) {
+      for (const isStreaming of [false, true]) {
+        for (const compactProgress of [false, true]) {
+          cases.push({ id: `model-${Number(longName)}-stream-${Number(isStreaming)}-compact-${Number(compactProgress)}`, longName, isStreaming, compactProgress });
+        }
+      }
+    }
+    // Two rendered segments of the same transcript entry must each own a badge.
+    cases.push({ id: "split-entry", compactProgress: true }, { id: "split-entry" });
+    const css = fs.readFileSync(path.join(sourceDir, "app/enhancements.css"), "utf8");
     const page = await browser.newPage();
-    const cssContent = fs.readFileSync(cssPath, "utf8");
-
-    await page.setContent(`<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    ${cssContent}
-  </style>
-</head>
-<body>
-  <!-- Message 1: 带有 provider 的标准助手消息 -->
-  <div data-message-role="assistant" data-entry-id="entry-1">
-    <div style="font-size: 11px; color: #888; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-      <span style="display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;">
-        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;" title="gateway/claude-sonnet-5">gateway/claude-sonnet-5</span>
-        <span data-pi-model-speed-host="" style="display: inline-flex; align-items: center; flex-shrink: 0; white-space: nowrap;"></span>
-      </span>
-      <span id="est-tokens" style="display: flex; align-items: center; gap: 4;">128 tokens</span>
-      <button class="assistant-message-copy" style="margin-left: auto;">Copy</button>
-    </div>
-    <div class="content">回答正文 1</div>
-  </div>
-
-  <!-- Message 2: 同 entry 分段的第二个消息容器 (同 entryId) -->
-  <div data-message-role="assistant" data-entry-id="entry-1">
-    <div style="font-size: 11px; color: #888; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-      <span style="display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0;">
-        <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;" title="gateway/claude-sonnet-5">gateway/claude-sonnet-5</span>
-        <span data-pi-model-speed-host="" style="display: inline-flex; align-items: center; flex-shrink: 0; white-space: nowrap;"></span>
-      </span>
-    </div>
-    <div class="content">分段正文 2</div>
-  </div>
-
-  <!-- Message 3: 无 provider 消息 (没有 speed host) -->
-  <div data-message-role="assistant" data-entry-id="entry-no-provider">
-    <div style="font-size: 11px; color: #888; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
-      <button class="assistant-message-copy">Copy</button>
-    </div>
-    <div class="content">无 provider 正文</div>
-  </div>
-
-  <script>
-    ${speedHelperSnippet}
-  </script>
-</body>
-</html>`);
-
-    // 1. 验证空 host 的 display: none（避免禁用留白）
-    const initialDisplay = await page.evaluate(() => {
-      const host = document.querySelector('[data-entry-id="entry-1"] [data-pi-model-speed-host]');
-      return window.getComputedStyle(host).display;
-    });
-    assert.equal(initialDisplay, "none", "Empty host must have display: none to avoid layout spacing");
-
-    // 2. 模拟运行流式实时速度 (live: true)
-    await page.evaluate(() => {
-      const msgs = document.querySelectorAll('[data-entry-id="entry-1"]');
-      msgs.forEach(msg => {
-        window.upsertModelSpeedBadge(msg, {
-          output: 45,
-          durationSec: 1.5,
-          tps: 30.0,
-          live: true,
-        });
+    const receipts = [];
+    for (const width of [1280, 390, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.setContent(`<html class="dark"><head><style>${css}</style>
+        <style>body{margin:16px;background:#191919;color:#ddd;font-family:Arial,sans-serif}</style></head>
+        <body>${cases.map(renderMessage).join("")}${renderMessage({ id: "no-provider", provider: null })}</body></html>`);
+      assert.equal(await page.locator('[data-entry-id="no-provider"] [data-pi-model-speed-host]').count(), 0);
+      await page.addScriptTag({ content: helpers });
+      assert.equal(await page.locator('[data-pi-model-speed-host]').first().evaluate(el => getComputedStyle(el).display), "none");
+      await page.evaluate(() => {
+        for (const msg of document.querySelectorAll('[data-message-role="assistant"]')) {
+          upsertModelSpeedBadge(msg, { tps: 18.5, output: 185, durationSec: 10, live: true });
+        }
       });
-    });
-
-    // 检查 host 变为 inline-flex，内部成功挂载 badge
-    const liveCheck = await page.evaluate(() => {
-      const host = document.querySelector('[data-entry-id="entry-1"] [data-pi-model-speed-host]');
-      const badge = host.querySelector('.pi-enh-model-speed');
-      const cs = window.getComputedStyle(host);
-      return {
-        hostDisplay: cs.display,
-        badgeText: badge ? badge.textContent : null,
-        badgeDataLive: badge ? badge.getAttribute("data-live") : null,
-        badgeOutput: badge ? badge.getAttribute("data-output-tokens") : null,
-        childCount: host.children.length,
-      };
-    });
-    assert.ok(liveCheck.hostDisplay === "flex" || liveCheck.hostDisplay === "inline-flex", "Populated host must be display: flex/inline-flex");
-    assert.equal(liveCheck.badgeText, "30.0 t/s");
-    assert.equal(liveCheck.badgeDataLive, "true");
-    assert.equal(liveCheck.badgeOutput, "45");
-    assert.equal(liveCheck.childCount, 1, "Only 1 badge inside host");
-
-    // 3. 验证同 entry 分段的第二个消息容器也有且仅有 1 个 badge
-    const secondMsgCheck = await page.evaluate(() => {
-      const msgs = document.querySelectorAll('[data-entry-id="entry-1"]');
-      const host2 = msgs[1].querySelector('[data-pi-model-speed-host]');
-      const badge2 = host2.querySelector('.pi-enh-model-speed');
-      return {
-        badgeText: badge2 ? badge2.textContent : null,
-        childCount: host2.children.length,
-      };
-    });
-    assert.equal(secondMsgCheck.badgeText, "30.0 t/s");
-    assert.equal(secondMsgCheck.childCount, 1);
-
-    // 4. 重复挂载与幂等性：再次调用 upsert，不能产生多余 badge
-    await page.evaluate(() => {
-      const msgs = document.querySelectorAll('[data-entry-id="entry-1"]');
-      msgs.forEach(msg => {
-        window.upsertModelSpeedBadge(msg, {
-          output: 60,
-          durationSec: 1.5,
-          tps: 40.0,
-          live: false,
-        });
+      assertPlacement(await measure(page), width);
+      assert.equal(await page.locator('.pi-enh-model-speed[data-live="true"]').count(), cases.length);
+      await page.evaluate(() => {
+        for (const msg of document.querySelectorAll('[data-message-role="assistant"]')) {
+          upsertModelSpeedBadge(msg, { tps: 27.9, output: 279, durationSec: 10, live: false });
+          upsertModelSpeedBadge(msg, { tps: 27.9, output: 279, durationSec: 10, live: false });
+        }
       });
-    });
-
-    const dedupCheck = await page.evaluate(() => {
-      const host = document.querySelector('[data-entry-id="entry-1"] [data-pi-model-speed-host]');
-      const badges = host.querySelectorAll('.pi-enh-model-speed');
-      return {
-        count: badges.length,
-        text: badges[0]?.textContent,
-        live: badges[0]?.getAttribute("data-live"),
-        output: badges[0]?.getAttribute("data-output-tokens"),
-      };
-    });
-    assert.equal(dedupCheck.count, 1, "Must never duplicate badge on re-render / updates");
-    assert.equal(dedupCheck.text, "40.0 t/s");
-    assert.equal(dedupCheck.live, "false");
-    assert.equal(dedupCheck.output, "60");
-
-    // 5. 验证无 provider 消息调用 upsert 安全退出，不插入任何错误节点
-    const noProviderCheck = await page.evaluate(() => {
-      const msg = document.querySelector('[data-entry-id="entry-no-provider"]');
-      window.upsertModelSpeedBadge(msg, { output: 10, durationSec: 1, tps: 10 });
-      return msg.querySelector('.pi-enh-model-speed');
-    });
-    assert.equal(noProviderCheck, null, "Should not attach badge to message without speed host");
-
-    // 6. 验证 metrics 清空时清除 badge，host 恢复为空，display 恢复为 none
-    await page.evaluate(() => {
-      const msgs = document.querySelectorAll('[data-entry-id="entry-1"]');
-      msgs.forEach(msg => {
-        window.upsertModelSpeedBadge(msg, null);
+      const rows = await measure(page);
+      assertPlacement(rows, width);
+      assert.equal(rows.length, cases.length);
+      assert.deepEqual(await page.locator('.pi-enh-model-speed').allTextContents(), cases.map(() => "27.9 t/s"));
+      assert.equal(await page.locator('.pi-enh-model-speed[data-live="false"]').count(), cases.length);
+      assert.equal(await page.locator('[data-entry-id="split-entry"] .pi-enh-model-speed').count(), 2);
+      receipts.push({ width, headers: rows.length, gap: 6, passed: true });
+      if (process.env.PI_SPEED_ARTIFACT_DIR) {
+        fs.mkdirSync(process.env.PI_SPEED_ARTIFACT_DIR, { recursive: true });
+        await page.screenshot({ path: path.join(process.env.PI_SPEED_ARTIFACT_DIR, `headers-${width}.png`), fullPage: true });
+      }
+      // Prove the geometry check catches the reported right-aligned layout.
+      await page.locator('[data-pi-model-speed-host]').first().evaluate(host => {
+        host.parentElement.style.width = "100%";
+        host.parentElement.style.justifyContent = "space-between";
       });
-    });
-
-    const clearedDisplay = await page.evaluate(() => {
-      const host = document.querySelector('[data-entry-id="entry-1"] [data-pi-model-speed-host]');
-      return {
-        childCount: host.children.length,
-        display: window.getComputedStyle(host).display,
-      };
-    });
-    assert.equal(clearedDisplay.childCount, 0, "Host children must be cleared");
-    assert.equal(clearedDisplay.display, "none", "Empty host must revert to display: none");
-
+      const wrongRows = await measure(page);
+      assert.throws(() => assertPlacement(wrongRows, width), /speed must immediately follow model/);
+      // Clearing/disable and re-enable must not leave space or duplicate badges.
+      await page.evaluate(() => {
+        for (const msg of document.querySelectorAll('[data-message-role="assistant"]')) upsertModelSpeedBadge(msg, null);
+      });
+      assert.equal(await page.locator('.pi-enh-model-speed').count(), 0);
+      assert.deepEqual(await page.locator('[data-pi-model-speed-host]').evaluateAll(hosts => hosts.map(h => getComputedStyle(h).display)), cases.map(() => "none"));
+      await page.evaluate(() => {
+        for (const msg of document.querySelectorAll('[data-message-role="assistant"]')) upsertModelSpeedBadge(msg, { tps: 30, output: 60, durationSec: 2, live: true });
+      });
+      assert.equal(await page.locator('.pi-enh-model-speed[data-live="true"]').count(), cases.length);
+    }
+    if (process.env.PI_SPEED_ARTIFACT_DIR) fs.writeFileSync(path.join(process.env.PI_SPEED_ARTIFACT_DIR, "layout.json"), JSON.stringify(receipts, null, 2));
   } finally {
     await browser.close();
   }

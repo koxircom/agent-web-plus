@@ -2122,7 +2122,7 @@
       user-select: text !important;
       -webkit-touch-callout: default !important;
     }
-    .pi-enh-session-row-host > div:not(.pi-enh-native-session-actions):not(.pi-enh-session-overflow):not(.pi-enh-session-pinned-indicator):not(.pi-enh-session-model-badge),
+    .pi-enh-session-row-host > div:not(.pi-enh-session-overflow):not(.pi-enh-session-pinned-indicator):not(.pi-enh-session-model-badge),
     .pi-enh-session-row-host > input {
       order: 1 !important;
       flex: 1 1 0 !important;
@@ -2149,13 +2149,13 @@
     html.pi-enh-session-compact-active .pi-enh-session-row-host {
       overflow: hidden !important;
     }
-    html.pi-enh-session-compact-active .pi-enh-session-row-host > div:not(.pi-enh-native-session-actions) {
+    html.pi-enh-session-compact-active .pi-enh-session-row-host > div {
       min-width: 0 !important;
     }
 
     /* 标题行：强制单行省略截断，稳固锁定在首行 */
     html.pi-enh-session-compact-active .pi-enh-session-title,
-    html.pi-enh-session-compact-active .pi-enh-session-row-host > div:not(.pi-enh-native-session-actions):not(.pi-enh-session-odoo-addons) > div:first-child {
+    html.pi-enh-session-compact-active .pi-enh-session-row-host > div:not(.pi-enh-session-odoo-addons) > div:first-child {
       min-width: 0 !important;
       max-width: 100% !important;
       overflow: hidden !important;
@@ -2166,7 +2166,7 @@
 
     /* 元数据行：强制单行、高度锁定最大 18px，彻底杜绝任何折行撑高与挤爆 */
     html.pi-enh-session-compact-active .pi-enh-session-meta,
-    html.pi-enh-session-compact-active .pi-enh-session-row-host:not([data-pi-enh-has-tags="true"]) > div:not(.pi-enh-native-session-actions):not(.pi-enh-session-odoo-addons) > div:last-child:not(.pi-enh-session-odoo-addons) {
+    html.pi-enh-session-compact-active .pi-enh-session-row-host:not([data-pi-enh-has-tags="true"]) > div:not(.pi-enh-session-odoo-addons) > div:last-child:not(.pi-enh-session-odoo-addons) {
       display: flex !important;
       align-items: center !important;
       min-width: 0 !important;
@@ -2200,12 +2200,6 @@
 
     /* 手机端 / 触屏设备 / 窄屏视口：精简掉“多少条消息”，优化状态胶囊与操作按钮 */
     @media (max-width: 768px), (pointer: coarse) {
-      /* 触屏会把 :hover 留在刚选中的行；原生编辑/删除按钮会挤垮内容列，
-         统一使用右侧的更多操作入口，避免选中行出现竖排元数据。 */
-      html.pi-enh-session-compact-active .pi-enh-session-row-host .pi-enh-native-session-actions,
-      .pi-enh-session-row-host .pi-enh-native-session-actions {
-        display: none !important;
-      }
       .pi-enh-session-overflow {
         opacity: 0.72 !important;
         pointer-events: auto !important;
@@ -2247,10 +2241,7 @@
     html.pi-enh-mobile .pi-enh-session-msg-count {
       display: none !important;
     }
-    html.pi-enh-mobile .pi-enh-session-row-host .pi-enh-native-session-actions {
-      display: none !important;
-    }
-    html.pi-enh-mobile .pi-enh-session-overflow {
+        html.pi-enh-mobile .pi-enh-session-overflow {
       opacity: 0.72 !important;
       pointer-events: auto !important;
     }
@@ -2868,13 +2859,7 @@
       background: var(--bg-hover, rgba(125, 125, 125, 0.05));
     }
 
-    html.pi-enh-session-pin-archive-active .pi-enh-native-session-actions {
-      display: none !important;
-    }
-    html:not(.pi-enh-session-pin-archive-active) .pi-enh-session-row-host:not(:hover):not(:focus-within) .pi-enh-native-session-actions {
-      display: none !important;
-    }
-    .pi-enh-session-menu {
+            .pi-enh-session-menu {
       min-width: 190px;
     }
     .pi-enh-menu-item.pi-enh-menu-item-danger {
@@ -3304,8 +3289,7 @@
       background: color-mix(in srgb, var(--accent, #3b82f6) 15%, var(--bg-hover, #27272a)) !important;
       border-left-color: var(--accent, #3b82f6) !important;
     }
-    .pi-enh-session-batch-active .pi-enh-session-overflow,
-    .pi-enh-session-batch-active .pi-enh-native-session-actions {
+    .pi-enh-session-batch-active .pi-enh-session-overflow {
       display: none !important;
     }
 
@@ -3594,17 +3578,6 @@
       }
     }
     /* 侧边栏底部快捷入口与设置选项卡双击快捷 */
-    [data-pi-enh-shortcuts-host="true"]:has(> .pi-enh-shortcuts-bar):not([data-pi-enh-shortcuts-disabled="true"]) > button:not(.pi-enh-shortcut-btn) {
-      display: none !important;
-    }
-    /* 快捷入口直达守卫已退役：由原生状态与 hidden 控制 */
-    .pi-enh-shortcuts-bar {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-      width: 100%;
-      flex-wrap: nowrap;
-    }
     .pi-enh-shortcut-btn {
       flex: 1 1 0;
       min-width: 0;
@@ -3623,15 +3596,17 @@
       letter-spacing: -0.02em;
       line-height: normal;
       white-space: nowrap;
-      outline: none !important;
       transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
       user-select: none;
       -webkit-user-select: none;
     }
-    .pi-enh-shortcut-btn:focus,
     .pi-enh-shortcut-btn:focus-visible {
-      outline: none !important;
-      box-shadow: none !important;
+      outline: 2px solid var(--accent, #38bdf8);
+      outline-offset: -2px;
+    }
+    .pi-enh-shortcut-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
     }
     .pi-enh-shortcut-btn:hover {
       background: var(--bg-hover, rgba(255, 255, 255, 0.08));
@@ -4081,9 +4056,6 @@
       color: var(--text-muted);
       font-size: 12px;
       text-align: center;
-    }
-    .notice-shelf-item[data-pi-enh-notification-suppressed="true"] {
-      display: none !important;
     }
     .pi-enh-plugins-shell {
       min-height: 100%;
@@ -6220,62 +6192,6 @@
         align-items: center !important;
         justify-content: center !important;
       }
-    }
-
-    /* Markdown 笔记预览模式增强开关 */
-    .pi-enh-md-mode-switch {
-      display: inline-flex;
-      align-items: center;
-      background: var(--bg-panel, #27272a);
-      border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-      border-radius: 6px;
-      padding: 2px;
-      gap: 2px;
-      margin-right: 6px;
-      font-size: 11px;
-    }
-    .pi-enh-md-btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 2px 8px;
-      border: none;
-      border-radius: 4px;
-      background: transparent;
-      color: var(--text-muted, #a1a1aa);
-      font-size: 11px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.15s ease, color 0.15s ease;
-      line-height: 18px;
-    }
-    .pi-enh-md-btn:hover {
-      background: var(--bg-hover, rgba(255, 255, 255, 0.08));
-      color: var(--text, #f4f4f5);
-    }
-    .pi-enh-md-btn.is-active {
-      background: var(--bg-selected, rgba(96, 165, 250, 0.18));
-      color: var(--accent, #60a5fa);
-      font-weight: 600;
-    }
-    .pi-enh-md-btn.pi-enh-md-copy:hover {
-      background: var(--bg-hover, rgba(255, 255, 255, 0.08));
-      color: var(--accent, #60a5fa);
-    }
-    .pi-enh-md-btn.pi-enh-md-copy.is-copied {
-      background: rgba(34, 197, 94, 0.18) !important;
-      color: #22c55e !important;
-      font-weight: 600;
-    }
-    .pi-enh-md-btn.pi-enh-md-copy {
-      padding: 2px 7px;
-      justify-content: center;
-    }
-    .pi-enh-md-btn.pi-enh-md-copy svg {
-      pointer-events: none;
-    }
-    .file-viewer-shell:has(.pi-enh-md-mode-switch) .file-viewer-mode-switch {
-      display: none !important;
     }
 
     /* ==========================================================================

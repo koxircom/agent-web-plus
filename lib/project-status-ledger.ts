@@ -19,9 +19,10 @@ export class ProjectStatusLedger {
     const ended = [...this.executions.values()].filter(item => item.state !== "running");
     for (const item of ended.slice(0, Math.max(0, ended.length - 500))) this.executions.delete(item.sessionId);
   }
+  forget(sessionId: string): void { this.executions.delete(sessionId); }
   snapshot(runningIds: string[], pending: Pending[]) {
     const running = new Set(runningIds);
-    const executions = [...this.executions.values()].map(item => ({ ...item, state: running.has(item.sessionId) ? "running" as const : item.state }));
+    const executions = [...this.executions.values()].map(item => ({ ...item, state: running.has(item.sessionId) ? "running" as const : item.state === "running" ? "idle" as const : item.state }));
     for (const id of running) if (!this.executions.has(id)) executions.push({ sessionId: id, state: "running", runId: "" });
     const sessions = pending.filter(item => item.pendingRequests.length > 0).map(item => ({ sessionId: item.sessionId, pendingRequests: item.pendingRequests.map(request => ({ ...request })) }));
     const signature = JSON.stringify([executions, sessions]);

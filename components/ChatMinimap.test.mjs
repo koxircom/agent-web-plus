@@ -31,6 +31,26 @@ test("getUserPreview extracts trimmed string content", () => {
   assert.equal(getUserPreview({ role: "user", content: "  hello world  " }), "hello world");
 });
 
+test("getUserPreview strips image coordinate dimension note and falls back to [图片] when text is only note", () => {
+  assert.equal(
+    getUserPreview({
+      role: "user",
+      content: "分析下图片\n\n[Image: original 2248x2480, displayed at 1813x2000. Multiply coordinates by 1.24 to map to original image.]"
+    }),
+    "分析下图片"
+  );
+  assert.equal(
+    getUserPreview({
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "abc" } },
+        { type: "text", text: "[Image: original 2248x2480, displayed at 1813x2000. Multiply coordinates by 1.24 to map to original image.]" }
+      ]
+    }),
+    "[图片]"
+  );
+});
+
 test("getUserPreview extracts multi-block text and handles image attachments gracefully", () => {
   assert.equal(
     getUserPreview({
@@ -144,9 +164,9 @@ test("createTurnNodes and layoutNodes distribute user nodes predictably", () => 
   assert(layout.gap > 0);
 });
 
-test("getMinimapHistorySettings falls back to initialTurns>=3 and stepTurns=5 safely", () => {
+test("getMinimapHistorySettings falls back to initialTurns>=5 and stepTurns=5 safely", () => {
   const fallback = getMinimapHistorySettings();
-  assert.equal(fallback.initialTurns, 3);
+  assert.equal(fallback.initialTurns, 5);
   assert.equal(fallback.stepTurns, 5);
 
   // Mock global settings
@@ -154,7 +174,7 @@ test("getMinimapHistorySettings falls back to initialTurns>=3 and stepTurns=5 sa
     __PI_ENH_GET_MINIMAP_HISTORY_SETTINGS__: () => ({ initialTurns: 1, stepTurns: 10 }),
   };
   const overridden = getMinimapHistorySettings();
-  assert.equal(overridden.initialTurns, 3, "initialTurns must have min clamp of 3");
+  assert.equal(overridden.initialTurns, 5, "initialTurns must have min clamp of 5");
   assert.equal(overridden.stepTurns, 10);
   delete globalThis.window;
 });

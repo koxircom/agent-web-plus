@@ -5,9 +5,18 @@ import type { AskUserQuestion, ExtensionUiRequest } from "@/lib/types";
 import { buildAskAnswerInputs, readAskTerminal } from "@/lib/ask-user";
 import { isEnhancementPluginFastActive } from "@/lib/enhancement-settings.generated";
 import { allowsAutomaticEditableFocus } from "@/hooks/useIsMobile";
+import { useI18n } from "@/hooks/useI18n";
 
 type Request = Extract<ExtensionUiRequest, { method: "custom" }>;
 type Input = (request: Request, data: string | string[]) => Promise<boolean | undefined>;
+
+export function ExtensionWaitingCount({ count }: { count: number }) {
+  const { t } = useI18n();
+  if (count <= 0) return null;
+  return <span role="status" style={{ color: "var(--text-dim)", fontSize: 11, flexShrink: 0, whiteSpace: "nowrap" }}>
+    {t("chat.extensionMoreWaiting", { count })}
+  </span>;
+}
 
 function subscribePreference(listener: () => void) {
   window.addEventListener("storage", listener);
@@ -19,7 +28,7 @@ function subscribePreference(listener: () => void) {
 }
 
 /** Keep the legacy switch, with React owning both renderer and cleanup. */
-export function AskUserSurface({ request, onInput, fallback }: { request: Request; onInput: Input; fallback: React.ReactNode }) {
+export function AskUserSurface({ request, onInput, fallback, waitingCount = 0 }: { request: Request; onInput: Input; fallback: React.ReactNode; waitingCount?: number }) {
   const enabled = useSyncExternalStore(subscribePreference, () => isEnhancementPluginFastActive("ask-user-web-native"), () => true);
   const terminal = readAskTerminal(request.lines);
   const question: AskUserQuestion | undefined = request.askUser ?? (terminal.question && /\bask_user\b/.test(terminal.text) ? {
@@ -28,12 +37,12 @@ export function AskUserSurface({ request, onInput, fallback }: { request: Reques
     allowMultiple: /\d+\.\s+\[/.test(terminal.text),
     allowFreeform: terminal.freeform, allowComment: terminal.comment,
   } : undefined);
-  return enabled && question ? <AskUserPanel key={request.id} request={request} question={question} onInput={onInput} /> : fallback;
+  return enabled && question ? <AskUserPanel key={request.id} request={request} question={question} waitingCount={waitingCount} onInput={onInput} /> : fallback;
 }
 
 // The same question surface handles plain input/editor requests, without a terminal overlay.
 type TextRequest = Extract<ExtensionUiRequest, { method: "input" | "editor" }>;
-export function AskUserTextPanel({ request, onRespond }: { request: TextRequest; onRespond: (request: TextRequest, response: { value: string } | { cancelled: true }) => void }) {
+export function AskUserTextPanel({ request, onRespond, waitingCount = 0 }: { request: TextRequest; onRespond: (request: TextRequest, response: { value: string } | { cancelled: true }) => void; waitingCount?: number }) {
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
   const [now, setNow] = useState(() => Date.now());
   const sending = useRef(false);
@@ -65,7 +74,7 @@ export function AskUserTextPanel({ request, onRespond }: { request: TextRequest;
         }
       }
     }}>
-      <div className="pi-native-ask-question-row"><h2 className="pi-native-ask-question">{title}</h2></div>
+      <div className="pi-native-ask-question-row"><h2 className="pi-native-ask-question">{title}</h2><ExtensionWaitingCount count={waitingCount} /></div>
       {(context || request.method === "editor") && (
         <div className="pi-native-ask-body">
           {context && <details className="pi-native-ask-context"><summary>查看背景与方案</summary><div>{context}</div></details>}
@@ -104,7 +113,7 @@ export function AskUserTextPanel({ request, onRespond }: { request: TextRequest;
   </div>;
 }
 
-export function AskUserPanel({ request, question, onInput }: { request: Request; question: AskUserQuestion; onInput: Input }) {
+export function AskUserPanel({ request, question, onInput, waitingCount = 0 }: { request: Request; question: AskUserQuestion; onInput: Input; waitingCount?: number }) {
   const [selected, setSelected] = useState<number[]>(() => {
     const checked = readAskTerminal(request.lines).options.flatMap((option, index) => option.checked ? [index] : []);
     return readAskTerminal(request.lines).mode === "freeform" ? [] : checked.length ? checked : question.options.length ? [0] : [];
@@ -188,7 +197,7 @@ export function AskUserPanel({ request, question, onInput }: { request: Request;
         }
         if (option && event.key === "Enter") { event.preventDefault(); submit(); }
       }}>
-      <div className="pi-native-ask-question-row"><h2 className="pi-native-ask-question">{question.question}</h2></div>
+      <div className="pi-native-ask-question-row"><h2 className="pi-native-ask-question">{question.question}</h2><ExtensionWaitingCount count={waitingCount} /></div>
       <div className="pi-native-ask-body">
         {question.context && <details className="pi-native-ask-context"><summary>查看背景与方案</summary><div>{question.context}</div></details>}
         <div className="pi-native-ask-options" role="group" aria-label={question.allowMultiple ? "多选答案" : "单选答案"}>

@@ -46,7 +46,7 @@ function overview(project = { cwd: "/Users/me/repo", trust: fresh, trustFolder: 
 }
 
 function pane(props = {}) {
-  return renderToStaticMarkup(h(I18nProvider, null, h(McpAddServer, {
+  return renderToStaticMarkup(h(I18nProvider, { initialLocale: "en" }, h(McpAddServer, {
     data: overview(),
     cwd: "/Users/me/repo",
     draft: EMPTY_MCP_ADD_DRAFT,
@@ -325,7 +325,7 @@ test("a refused Add says why; host variables are added only through an explicit 
 });
 
 test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and tests what Add wrote", () => {
-  const html = renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
+  const html = renderToStaticMarkup(h(I18nProvider, { initialLocale: "en" }, h(McpConfigView, {
     cwd: null,
     load: { state: "loaded", data: overview(null) },
     selected: null,
@@ -344,7 +344,7 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
   assert.match(text(html), /Server to add npx -y @acme\/lint-mcp Name Named lint after its address or command\. Preview Read as a command line Transport stdio Command npx -y @acme\/lint-mcp Add /);
   assert.match(decode(html), /aria-label="Name"[^>]*value="lint"\/>/);
   // The added notice: the server and its file, the folder trusted with it, the test, and Sign in.
-  const addedView = (props = {}) => renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
+  const addedView = (props = {}) => renderToStaticMarkup(h(I18nProvider, { initialLocale: "en" }, h(McpConfigView, {
     cwd: "/Users/me/repo",
     load: {
       state: "loaded",
@@ -374,7 +374,7 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
   // Outside the home folder too, where `~` shortens nothing (the e2e run's folder). The detail
   // pane's File row still shows the whole path.
   const far = "/private/tmp/work/some/long/folder/project";
-  const farView = decode(renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
+  const farView = decode(renderToStaticMarkup(h(I18nProvider, { initialLocale: "en" }, h(McpConfigView, {
     cwd: far,
     load: {
       state: "loaded",

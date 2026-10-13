@@ -1,4 +1,4 @@
-import { sendAgentCommand } from "./agent-client";
+import { acknowledgeRecalledPrompts, sendAgentCommand } from "./agent-client";
 import { getDraft } from "./draft-store";
 import { MAX_ATTACHED_IMAGES, isBase64ImageWithinLimits } from "./image-attachments";
 import type {
@@ -226,6 +226,8 @@ export async function recallSessionQueue(
         originDraftKey,
       );
     }
+    const recalledIds = (rawRecall as RecallAllQueuedMessagesResult & { recalledPromptRequestIds?: string[] }).recalledPromptRequestIds;
+    if (recalledIds?.length) await acknowledgeRecalledPrompts(originSessionId, recalledIds, originDraftKey);
 
     if (isSameSession(originSessionId)) {
       options.clearQueuedMessagesUi?.();

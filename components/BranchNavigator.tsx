@@ -351,7 +351,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
            {!compact && <span>{t("i18n.branches")}</span>}
         </button>
         {open && dropdownPos && (
-          <div style={{
+          <div className="pi-native-menu-motion" style={{
             position: "fixed",
             top: dropdownPos.top,
             left: dropdownPos.left,
@@ -412,7 +412,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
 
       {/* Tree panel - overlay */}
       {open && (
-        <div style={{
+        <div className="pi-native-menu-motion" style={{
           position: "absolute",
           top: "100%",
           left: 0,

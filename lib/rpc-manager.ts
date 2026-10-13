@@ -1,3 +1,4 @@
+import { getPromptReceipt, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery } from "./prompt-delivery";
 import { ProjectStatusLedger } from "./project-status-ledger";
 import { createProgressCommentaryExtension } from "./progress-commentary";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -468,6 +469,12 @@ export class AgentSessionWrapper {
         ? [{ id: request.id, method: request.method }] : []);
   }
 
+  // Read the same live requests replayed to SSE subscribers, without waiting
+  // for SDK state/history or starting an idle session.
+  getPendingExtensionUiRequests(): AgentEvent[] {
+    return [...this.pendingUiRequests.values()];
+  }
+
   isChatOnly(): boolean {
     return this.chatOnly;
   }
@@ -476,9 +483,84 @@ export class AgentSessionWrapper {
     return this.suppressCompletionNotifications;
   }
 
+  private startedPromptRequestId: string | null = null;
+  private promptReceiptMessages = new WeakMap<object, string>();
+  private activePromptRequestIds = new Set<string>();
+
+  isPromptRequestActive(requestId: string): boolean {
+    if (!this.isAlive()) return false;
+    if (this.activePromptRequestIds.has(requestId)) return true;
+    const queues = this.inner.agent as unknown as { steeringQueue?: { messages: object[] }; followUpQueue?: { messages: object[] } };
+    for (const queue of [queues.steeringQueue, queues.followUpQueue]) {
+      for (const message of queue?.messages ?? []) if (this.promptReceiptMessages.get(message) === requestId) return true;
+    }
+    return false;
+  }
+
+  private failPromptDelivery(requestId: string, error: unknown): void {
+    console.error("[pi-web] prompt persistence remains unconfirmed:", error instanceof Error ? error.message : String(error));
+    try { markPromptDeliveryUnconfirmed(this.sessionId, requestId); }
+    catch (saveError) { console.error("[pi-web] could not persist failed receipt:", saveError instanceof Error ? saveError.message : String(saveError)); }
+    this.emit({ type: "prompt_delivery", requestId, receipt: { status: "unconfirmed" } });
+  }
+
+  private confirmPromptDelivery(requestId: string, evidence: Parameters<typeof commitPromptDelivery>[2]): void {
+    void commitPromptDelivery(this.sessionId, requestId, evidence).then(() => {
+      // Emit only the durable, request-scoped receipt, after fsync. Admission and
+      // model completion are neither a persistence acknowledgement nor a replay.
+      const receipt = getPromptReceipt(this.sessionId, requestId);
+      if (receipt.status === "committed") this.emit({ type: "prompt_delivery", requestId, receipt });
+    }).catch((error) => {
+      this.failPromptDelivery(requestId, error);
+    });
+  }
+
+  private mutatePromptQueue<T extends object>(action: () => T, recalling = false): T & { cancelledPromptRequestIds: string[]; recalledPromptRequestIds?: string[] } {
+    const queues = this.inner.agent as unknown as { steeringQueue: { messages: object[] }; followUpQueue: { messages: object[] } };
+    const before = [...queues.steeringQueue.messages, ...queues.followUpQueue.messages];
+    const result = action();
+    const remaining = new Set([...queues.steeringQueue.messages, ...queues.followUpQueue.messages]);
+    const cancelledPromptRequestIds: string[] = [];
+    const recalledPromptRequestIds: string[] = [];
+    for (const message of before) {
+      const requestId = this.promptReceiptMessages.get(message);
+      if (!requestId || remaining.has(message)) continue;
+      // These operations remove exact SDK queue objects synchronously. Do not
+      // infer cancellation from matching text or from a later empty queue.
+      if (recalling) recallPromptDelivery(this.sessionId, requestId);
+      else cancelPromptDelivery(this.sessionId, requestId);
+      this.promptReceiptMessages.delete(message);
+      (recalling ? recalledPromptRequestIds : cancelledPromptRequestIds).push(requestId);
+    }
+    return { ...result, cancelledPromptRequestIds, ...(recalling ? { recalledPromptRequestIds } : {}) };
+  }
+
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
-      if (event.type === "message_start") reconcileDeliveredImageOnlyMessage(this.inner, event.message);
+      if (event.type === "message_start") {
+        reconcileDeliveredImageOnlyMessage(this.inner, event.message);
+        if ((event.message as { role?: string } | undefined)?.role === "user" && this.startedPromptRequestId) {
+          this.promptReceiptMessages.set(event.message as object, this.startedPromptRequestId);
+          this.startedPromptRequestId = null;
+        }
+      }
+      if (event.type === "message_end" && event.message && typeof event.message === "object") {
+        const requestId = this.promptReceiptMessages.get(event.message);
+        if (requestId) {
+          this.promptReceiptMessages.delete(event.message);
+          const message = event.message;
+          // SDK public listeners run just before appendMessage. Confirm in the
+          // next microtask, after its synchronous append, using object/entry ID.
+          queueMicrotask(() => {
+            try {
+              const entry = this.inner.sessionManager.getEntries().find(e => e.type === "message" && e.message === message);
+              const sessionFile = this.inner.sessionManager.getSessionFile();
+              if (!entry || !sessionFile) throw new Error("User entry has no persisted identity");
+              this.confirmPromptDelivery(requestId, { sessionFile, entryId: entry.id });
+            } catch (error) { this.failPromptDelivery(requestId, error); }
+          });
+        }
+      }
       if (event.type === "agent_start") {
         this.agentRunNeedsCompletion = true;
         getProjectStatusLedger().begin(this.sessionId);
@@ -756,6 +838,7 @@ export class AgentSessionWrapper {
     // SDK 1.0.4 exposes a writable transcript; the file and live context agree.
     if (this.inner.agent.state) this.inner.agent.state.messages = [...(this.inner.agent.state.messages ?? []), message];
     if (requestId) manager.appendCustomEntry("pi-web-stopped-prompt", { requestId, entryId });
+    if (requestId && this.inner.sessionFile) this.confirmPromptDelivery(requestId, { sessionFile: this.inner.sessionFile, entryId });
     if (this.inner.sessionFile) cacheSessionPath(this.inner.sessionId, this.inner.sessionFile);
     invalidateSessionListCache();
     this.emit({ type: "message_end", message, entryId });
@@ -897,6 +980,7 @@ export class AgentSessionWrapper {
           }
           const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
           const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+          const requestId = typeof command.requestId === "string" ? command.requestId : null;
           const stopEpoch = this.promptStopEpoch;
           let stoppedBeforeRun = false;
           let stoppedResult: { stopped: true; entryId: string } | undefined;
@@ -927,14 +1011,17 @@ export class AgentSessionWrapper {
             };
           });
           const finishPrompt = () => {
+            if (this.startedPromptRequestId === command.requestId) this.startedPromptRequestId = null;
             if (promptSettled) return;
             promptSettled = true;
+            if (requestId) this.activePromptRequestIds.delete(requestId);
             this.pendingPromptCount = Math.max(0, this.pendingPromptCount - 1);
             this.resetIdleTimer();
             this.notifyAgentRunCompleteIfIdle();
           };
 
           this.pendingPromptCount += 1;
+          if (requestId) this.activePromptRequestIds.add(requestId);
           // A prompt that may start a run first connects the session's MCP servers and
           // waits for the ones still connecting. The SDK runs before_agent_start before a
           // run has an abort signal, so Stop is honoured here: it ends the wait, and the
@@ -963,6 +1050,10 @@ export class AgentSessionWrapper {
               if (this.mcpPromptWait === wait) this.mcpPromptWait = null;
             }
           }
+          // Reuse the SDK queue objects already owned by queue-actions. A queue
+          // edit/reorder keeps object identity; ambiguous additions stay unconfirmed.
+          const queues = this.inner.agent as unknown as { steeringQueue?: { messages: object[] }; followUpQueue?: { messages: object[] } };
+          const queueBefore = new Set([...(queues.steeringQueue?.messages ?? []), ...(queues.followUpQueue?.messages ?? [])]);
           let prompt: Promise<void>;
           try {
             prompt = this.inner.prompt(command.message as string, {
@@ -979,6 +1070,17 @@ export class AgentSessionWrapper {
                   throw new Error(MCP_WAIT_STOPPED_MESSAGE);
                 }
                 promptDisposition = disposition;
+                if (requestId) {
+                  if (disposition === "started") this.startedPromptRequestId = requestId;
+                  else if (disposition === "queued") {
+                    const added = [...(queues.steeringQueue?.messages ?? []), ...(queues.followUpQueue?.messages ?? [])].filter(message => !queueBefore.has(message));
+                    if (added.length === 1) this.promptReceiptMessages.set(added[0], requestId);
+                  } else {
+                    // Extension commands can intentionally produce no user bubble.
+                    // Their original input is already in the durable inbox.
+                    this.confirmPromptDelivery(requestId, { handled: true });
+                  }
+                }
                 acceptPreflight();
               },
             });
@@ -1326,15 +1428,15 @@ export class AgentSessionWrapper {
       }
 
       case "recall_queued_message": {
-        return recall(this.inner, command.token as string);
+        return this.mutatePromptQueue(() => recall(this.inner, command.token as string), true);
       }
 
       case "delete_queued_message": {
-        return deleteQueued(this.inner, command.token as string);
+        return this.mutatePromptQueue(() => deleteQueued(this.inner, command.token as string));
       }
 
       case "recall_all_queued_messages": {
-        return recallAll(this.inner, command.tokens as string[]);
+        return this.mutatePromptQueue(() => recallAll(this.inner, command.tokens as string[]), true);
       }
 
       case "reorder_queued_message": {
@@ -1344,7 +1446,7 @@ export class AgentSessionWrapper {
       case "clear_queue": {
         // Full clear only: pi has no single-item dequeue, and clear+requeue
         // races against the agent loop pulling messages mid-flight.
-        return this.inner.clearQueue();
+        return this.mutatePromptQueue(() => this.inner.clearQueue());
       }
 
       case "steer": {
@@ -1530,6 +1632,9 @@ export class AgentSessionWrapper {
   destroy(): void {
     if (!this._alive) return;
     this._alive = false;
+    this.startedPromptRequestId = null;
+    this.activePromptRequestIds.clear();
+    this.promptReceiptMessages = new WeakMap();
     this.disposeMcpHost();
     // Tell attached SSE listeners to drop this instance so the browser
     // EventSource errors and reconnects instead of staying OPEN on a dead wrapper.
@@ -2540,6 +2645,9 @@ export async function destroyRpcSessionsForCwd(cwd: string): Promise<number> {
 
 function getProjectStatusLedger(): ProjectStatusLedger {
   return globalThis.__piProjectStatusLedger ??= new ProjectStatusLedger();
+}
+export function forgetRpcProjectStatus(sessionId: string): void {
+  getProjectStatusLedger().forget(sessionId);
 }
 export function getRpcProjectStatusSnapshot() {
   return getProjectStatusLedger().snapshot(getRunningRpcSessionIds(), [...getRegistry().values()]

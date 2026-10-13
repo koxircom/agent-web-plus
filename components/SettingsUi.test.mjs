@@ -61,7 +61,11 @@ test("provides one template for config layout and controls", () => {
 });
 
 test("loads settings presentation from its dedicated stylesheet", () => {
-  assert.match(layoutSource, /import "\.\/globals\.css";\s*import "\.\/settings\.css";/);
+  const globalCssImport = layoutSource.indexOf('import "./globals.css";');
+  const settingsCssImport = layoutSource.indexOf('import "./settings.css";');
+  assert.notEqual(globalCssImport, -1);
+  assert.notEqual(settingsCssImport, -1);
+  assert.ok(globalCssImport < settingsCssImport);
   assert.match(cssSource, /\.config-panel-root \{/);
   assert.match(cssSource, /\.settings-dialog-backdrop \{/);
   assert.doesNotMatch(globalCssSource, /\.config-panel-root \{/);

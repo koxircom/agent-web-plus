@@ -6,7 +6,7 @@ import { basename, dirname, join, resolve as resolvePath } from "path";
 import { listAllSessions, mergeSessionLists, resolveSessionPath,
   invalidateSessionPathCache, invalidateSessionManagerCache, invalidateSessionListCache } from "./session-reader";
 import { sessionPathKey } from "./session-path";
-import { abortSubagent, getRpcSession, getRpcSessionInfos } from "./rpc-manager";
+import { abortSubagent, getRpcSession, getRpcSessionInfos, forgetRpcProjectStatus } from "./rpc-manager";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
 import type { SessionEntry, SessionHeader, SessionInfo } from "./types";
 import { deletedPaths as tombstones, ensureSessionWriteGuardInstalled, sealAndDeleteSync } from "./usage-delete-guard";
@@ -388,6 +388,7 @@ async function executeDeleteSessions(ids: string[]) {
   let deleteError: string | undefined;
   const confirm = (id: string, path: string) => {
     deleted.add(id);
+    forgetRpcProjectStatus(id);
     invalidateSessionPathCache(id);
     invalidateSessionManagerCache(path);
   };

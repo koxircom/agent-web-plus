@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { allowFileRoot } from "@/lib/file-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
 import { startRpcSession } from "@/lib/rpc-manager";
+import { getPromptReceipt, runPromptDelivery, validPromptRequestId } from "@/lib/prompt-delivery";
 
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -22,10 +23,17 @@ function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
 export async function POST(req: Request) {
   let commandType: string | undefined;
   let promptAccepted = false;
+  let promptRequestId: string | undefined;
+  let createdSessionId: string | undefined;
   try {
     const body = await req.json() as { cwd?: string; [key: string]: unknown };
     const { cwd, ...command } = body;
     commandType = typeof command.type === "string" ? command.type : undefined;
+    if (commandType === "prompt") {
+      if (command.requestId !== undefined && !validPromptRequestId(command.requestId)) throw new Error("Invalid prompt request ID");
+      promptRequestId = command.requestId as string | undefined ?? randomUUID();
+      command.requestId = promptRequestId;
+    }
 
     if (!cwd || typeof cwd !== "string") {
       return NextResponse.json({
@@ -60,6 +68,7 @@ export async function POST(req: Request) {
       ...(provider && modelId ? { initialModel: { provider, modelId } } : {}),
       ...(explicitThinkingLevel ? { thinkingLevel: explicitThinkingLevel } : {}),
     });
+    createdSessionId = realSessionId;
 
     // Keep the files-route allowed-roots cache (see app/api/files/[...path]/route.ts)
     // in sync so the new cwd is immediately readable via /api/files. Without this,
@@ -88,23 +97,29 @@ export async function POST(req: Request) {
     };
 
 
-    const result = await session.send(promptCommand);
+    const result = promptRequestId
+      ? await runPromptDelivery(realSessionId, promptRequestId, promptCommand, () => session.send(promptCommand))
+      : await session.send(promptCommand);
     promptAccepted = promptCommand.type === "prompt";
 
     return NextResponse.json({
       success: true,
       sessionId: realSessionId,
       data: result,
+      ...(promptRequestId ? { requestId: promptRequestId, receipt: getPromptReceipt(realSessionId, promptRequestId) } : {}),
       model: state.model
         ? { provider: state.model.provider, modelId: state.model.id }
         : null,
       thinkingLevel: state.thinkingLevel,
     });
   } catch (error) {
+    const receipt = createdSessionId && promptRequestId ? getPromptReceipt(createdSessionId, promptRequestId) : null;
+    const uncertain = receipt && !["unknown", "rejected"].includes(receipt.status);
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
+      ...(createdSessionId && promptRequestId ? { sessionId: createdSessionId, requestId: promptRequestId } : {}),
       ...(commandType === "prompt" && !promptAccepted
-        ? { code: "prompt_rejected", accepted: false }
+        ? { code: uncertain ? "prompt_uncertain" : "prompt_rejected", accepted: Boolean(uncertain) }
         : {}),
     }, { status: 500 });
   }

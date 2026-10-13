@@ -25,7 +25,11 @@ export function ImagePreview({ src, alt = "", children, className, style }: Imag
     if (!open || Dialog) return;
     let cancelled = false;
     const cancelPending = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.stopPropagation();
+      if (event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      setOpen(false);
     };
     document.addEventListener("keydown", cancelPending);
     loadImagePreview().then((module) => {

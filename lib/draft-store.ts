@@ -151,6 +151,13 @@ export function flushDraftPersistence(): void {
   }
 }
 
+/** A server recall backup can be released only after its draft is durable. */
+export function persistDraftNow(key: string): boolean {
+  cancelDraftPersistence(key);
+  const draft = drafts.get(key);
+  return Boolean(draft && savePersistedDraft(key, draft));
+}
+
 function readPersistedDraft(key: string): ChatDraft | null {
   hydratedScopedDraftOwners.delete(key);
   const storage = getLocalStorage();

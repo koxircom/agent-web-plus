@@ -4,16 +4,14 @@ import test from "node:test";
 
 const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
 
-test("expands process details when a completed turn has no final answer", () => {
-  assert.match(source, /const \[expanded, setExpanded\] = useState\(defaultExpanded\)/);
+test("keeps process details collapsed until opened or matched by search", () => {
+  assert.match(source, /const \[expanded, setExpanded\] = useState\(false\)/);
+  assert.match(source, /onClick=\{\(\) => setExpanded\(\(v\) => !v\)\}/);
+  assert.match(source, /aria-expanded=\{expanded \|\| reveal\}/);
+  assert.match(source, /\{\(expanded \|\| reveal\) && \(/);
   assert.match(
     source,
-    /if \(run\.kind === "public"\) \{\s*if \(finalInTurn\) finalAnswerAssistantIndices\.add\(idx\);[\s\S]*?plans\.push\(makeMessagePlan\(idx,/,
+    /processPlan\.reveal \|\|= Boolean\(pendingSearchScroll && entryIds\[idx\] === pendingSearchScroll\.entryId && \(!searchBlock \|\| run\.message\.content\.includes\(searchBlock\)\)\)/,
   );
-  assert.match(
-    source,
-    /plan\.defaultExpanded = finalAssistantIndex !== undefined\s*&& finalAssistantIndex < messages\.length\s*&& !finalAnswerAssistantIndices\.has\(finalAssistantIndex\)/,
-  );
-  assert.match(source, /<ProcessDetailsGroup toolStates=\{plan\.toolStates\} defaultExpanded=\{plan\.defaultExpanded\}/);
-  assert.match(source, /plans\.slice\(startIndex\)\.map\(/);
+  assert.match(source, /<ProcessDetailsGroup toolStates=\{plan\.toolStates\} streamingThinking=\{plan\.streamingThinking\} reveal=\{plan\.reveal\}/);
 });

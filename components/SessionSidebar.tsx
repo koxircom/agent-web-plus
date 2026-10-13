@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, typ
 import type { SessionInfo } from "@/lib/types";
 import { listSessionFamilies } from "@/lib/session-family";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
-import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
+import { dispatchSessionRowContextMenu, SESSION_ROW_RENAME_EVENT } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
@@ -16,7 +16,12 @@ import { formatRelativeTime } from "@/lib/i18n/format";
 import {
   createSidebarShortcutsFallbackHandler,
   getEnhancementSessionHeadersHeight,
+  getEnhancementProjectActivity,
+  getEnhancementSessionStatus,
+  type EnhancementProjectActivity,
   getEnhancementSessionItemHeight,
+  getEnhancementSessionTags,
+  hasEnhancementSessionLayout,
   getEnhancementSessionItemTop,
   getEnhancementSessionOdooAddons,
   processEnhancementSessionGroups,
@@ -136,7 +141,11 @@ function sessionListUrl(summary: boolean, force: boolean): string {
 
 const EMPTY_LOCAL_SESSIONS: SessionInfo[] = [];
 
+import type { SidebarBootstrap } from "@/lib/sidebar-bootstrap";
+
 interface Props {
+  bootstrap?: SidebarBootstrap;
+  initialCwd?: string | null;
   localSessions?: SessionInfo[];
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number) => void;
@@ -279,29 +288,21 @@ function PathLabel({ text, style }: { text: string; style?: CSSProperties }) {
   );
 }
 
-const DROPDOWN_ANIMATION_MS = 140;
+const DROPDOWN_ANIMATION_MS = 200;
 
 function AnimatedDropdown({ open, children, style }: { open: boolean; children: ReactNode; style: CSSProperties }) {
   const [mounted, setMounted] = useState(open);
-  const [visible, setVisible] = useState(open);
 
   useEffect(() => {
-    let frame: number | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     if (open) {
       setMounted(true);
-      setVisible(false);
-      frame = window.requestAnimationFrame(() => {
-        frame = window.requestAnimationFrame(() => setVisible(true));
-      });
     } else {
-      setVisible(false);
       timeout = setTimeout(() => setMounted(false), DROPDOWN_ANIMATION_MS);
     }
 
     return () => {
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
       if (timeout) clearTimeout(timeout);
     };
   }, [open]);
@@ -310,12 +311,12 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 
   return (
     <div
+      className="pi-native-menu-motion"
+      data-menu-motion-state={open ? "open" : "closed"}
+      inert={!open}
+      aria-hidden={!open}
       style={{
         ...style,
-        opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-8px) scale(0.96)",
-        transformOrigin: "top center",
-        transition: `opacity ${DROPDOWN_ANIMATION_MS}ms ease, transform ${DROPDOWN_ANIMATION_MS}ms ease`,
         pointerEvents: open ? "auto" : "none",
       }}
     >
@@ -427,17 +428,29 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, localSessions = EMPTY_LOCAL_SESSIONS }: Props) {
+export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, localSessions = EMPTY_LOCAL_SESSIONS }: Props) {
   const { t } = useI18n();
-  const [serverSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  // First client render must use the server snapshot clock; subsequent renders
+  // resume local relative times after hydration.
+  const [initialRenderTime, setInitialRenderTime] = useState<Date | undefined>(() => bootstrap ? new Date(bootstrap.renderedAt) : undefined);
+  useEffect(() => { setInitialRenderTime(undefined); }, []);
+  const [serverSessions, setAllSessions] = useState<SessionInfo[]>(() => bootstrap?.sessions ?? []);
+  // Tags, pins and visibility belong to this sidebar. Refreshing decorations
+  // must not masquerade as new server metadata and redraw the active chat.
+  const [decorationRevision, setDecorationRevision] = useState(0);
   const allSessions = useMemo(() => mergeLocalSessions(serverSessions, localSessions), [serverSessions, localSessions]);
   // Tracked in a ref only: the version is compared against the polled value to
   // decide whether the list needs reloading, and no render reads it.
-  const sessionListVersionRef = useRef<number | null>(null);
+  const sessionListVersionRef = useRef<number | null>(bootstrap?.sessionListVersion ?? null);
   const sessionLoadIdRef = useRef(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!bootstrap);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
+  const [selectedCwd, setSelectedCwd] = useState<string | null>(() => {
+    const sessions = bootstrap?.sessions ?? [];
+    const requested = selectedCwdProp ?? initialCwd;
+    return sessions.find((session) => session.id === initialSessionId)?.cwd
+      ?? (requested && sessions.some((session) => session.cwd === requested) ? requested : null);
+  });
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
@@ -461,6 +474,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [explorerOpen, setExplorerOpen] = useState(true);
   const [explorerKey, setExplorerKey] = useState(0);
+  // The incoming value is a baseline; only later changes request a refresh.
+  const previousExplorerRefreshKeyRef = useRef(explorerRefreshKey);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
@@ -471,14 +486,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [fileManager, setFileManager] = useState<FileManagerAvailability | null>(null);
   const [fileManagerError, setFileManagerError] = useState<string | null>(null);
-  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
-  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
+  const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set(bootstrap?.runningSessionIds ?? []));
+  const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set());
+  const [unreadHydrated, setUnreadHydrated] = useState(false);
+  useEffect(() => {
+    setUnreadSessionIds(loadUnreadSessionIds());
+    setUnreadHydrated(true);
+  }, []);
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   const currentSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
   const previousSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
   // Once polling has delivered a snapshot it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
   const runningPollAuthoritativeRef = useRef(false);
+  const [runningStatusHealthy, setRunningStatusHealthy] = useState(false);
+  const completedReceiptIdsRef = useRef(new Set<string>());
   const detailsHydrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
@@ -616,7 +638,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         sidebarBridgeStateRef.current.loadSessions(showLoading, force),
       getRawSessions: () => sidebarBridgeStateRef.current.allSessions.filter((session) => !session.submissionPending),
       rerenderSessions: () => {
-        setAllSessions((prev) => (Array.isArray(prev) ? [...prev] : prev));
+        setDecorationRevision((revision) => revision + 1);
       },
       notifySessionDeleted: (sessionId: string) => {
         sidebarBridgeStateRef.current.onSessionDeleted?.(sessionId);
@@ -647,7 +669,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       // Header/stat metadata is enough to select the URL session and paint the
       // sidebar. Hydrate exact counts, names, and first messages once the
       // selected chat has had a chance to start loading.
-      void loadSessions(true, false, true).then(() => {
+      const initialRead = bootstrap ? Promise.resolve() : loadSessions(true, false, true);
+      void initialRead.then(() => {
         if (!active) return;
         detailsHydrationTimerRef.current = setTimeout(() => {
           detailsHydrationTimerRef.current = null;
@@ -725,8 +748,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Persist unread markers so they survive a browser refresh before the user
   // has actually opened the completed session.
   useEffect(() => {
-    saveUnreadSessionIds(unreadSessionIds);
-  }, [unreadSessionIds]);
+    if (unreadHydrated) saveUnreadSessionIds(unreadSessionIds);
+  }, [unreadHydrated, unreadSessionIds]);
 
   useEffect(() => {
     let stopped = false;
@@ -738,62 +761,94 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       timer = null;
     };
 
+    let refreshQueued = false;
+    let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("pi-web-native-status-v1") : null;
+    let lastStamp: { epoch: string; revision: number } | null = null;
+    const retiredEpochs = new Set<string>();
+    const publish = (payload: unknown = null, catalog?: SessionInfo[]) => {
+      const win = window as unknown as Record<string, unknown>;
+      win.__PI_WEB_PROJECT_STATUS_SNAPSHOT__ = payload;
+      window.dispatchEvent(new CustomEvent("pi-web-project-status", { detail: { payload, catalog } }));
+    };
+    const unavailable = () => {
+      setRunningStatusHealthy(false);
+      setRunningSessionIds(prev => prev.size ? new Set() : prev);
+      publish();
+    };
+    const accept = (data: { runningSessionIds: string[]; completionNotificationSuppressedSessionIds?: string[];
+      statusSnapshot?: { epoch: string; revision: number; executions: { state: string; sessionId: string }[] } }, broadcast = false, catalog?: SessionInfo[]) => {
+      if (stopped || !Array.isArray(data.runningSessionIds) || data.runningSessionIds.some(id => typeof id !== "string")) return false;
+      const stamp = data.statusSnapshot;
+      if (stamp) {
+        if (retiredEpochs.has(stamp.epoch) || lastStamp?.epoch === stamp.epoch && stamp.revision < lastStamp.revision) return false;
+        if (lastStamp && lastStamp.epoch !== stamp.epoch) retiredEpochs.add(lastStamp.epoch);
+        lastStamp = { epoch: stamp.epoch, revision: stamp.revision };
+      }
+      runningPollAuthoritativeRef.current = true;
+      currentSuppressedCompletionSessionIdsRef.current = new Set(data.completionNotificationSuppressedSessionIds ?? []);
+      completedReceiptIdsRef.current = new Set<string>((stamp?.executions ?? []).filter(item => item.state === "ended").map(item => item.sessionId));
+      const nextIds = new Set<string>(data.runningSessionIds);
+      setRunningSessionIds(prev => prev.size === nextIds.size && [...prev].every(id => nextIds.has(id)) ? prev : nextIds);
+      setRunningStatusHealthy(true);
+      publish(data, catalog);
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = setTimeout(unavailable, 12000);
+      if (broadcast) channel?.postMessage({ payload: data, at: Date.now(), catalog: sidebarBridgeStateRef.current.allSessions.filter(session => !session.submissionPending) });
+      return true;
+    };
+    if (channel) channel.onmessage = event => {
+      if (event.data?.payload && Date.now() - event.data.at < 12000) accept(event.data.payload, false, event.data.catalog);
+    };
     const schedule = () => {
       clearTimer();
-      if (stopped || document.visibilityState !== "visible") return;
-      timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
+      if (!stopped && document.visibilityState === "visible") timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
     };
-
     const poll = async () => {
       if (stopped || document.visibilityState !== "visible") return;
+      if (controller) { refreshQueued = true; return; }
       const current = new AbortController();
-      controller?.abort();
       controller = current;
+      const timeout = setTimeout(() => current.abort(), 8000);
       try {
-        const res = await fetch("/api/agent/running", {
-          cache: "no-store",
-          signal: current.signal,
-        });
-        if (!res.ok) return;
-        const data = await res.json() as {
-          sessionListVersion: number;
-          runningSessionIds?: string[];
-          completionNotificationSuppressedSessionIds?: string[];
-        };
-        if (stopped || controller !== current) return;
-        runningPollAuthoritativeRef.current = true;
-        currentSuppressedCompletionSessionIdsRef.current = new Set(
-          data.completionNotificationSuppressedSessionIds ?? [],
-        );
-        setRunningSessionIds(new Set(data.runningSessionIds ?? []));
-        if (data.sessionListVersion !== sessionListVersionRef.current) {
-          // Reuse the invalidated cache; forcing a scan would change the version again.
-          await loadSessions();
-        }
+        const res = await fetch("/api/agent/running", { cache: "no-store", signal: current.signal });
+        if (!res.ok) throw new Error(`Task status HTTP ${res.status}`);
+        const data = await res.json();
+        if (!Array.isArray(data.runningSessionIds) || data.runningSessionIds.some((id: unknown) => typeof id !== "string")) throw new Error("Invalid running status");
+        if (stopped || controller !== current || current.signal.aborted) return;
+        accept(data, true);
+        if (data.sessionListVersion !== sessionListVersionRef.current) await loadSessions();
       } catch {
-        // Keep the last known state; the next visible-tab poll retries.
+        if (!stopped && controller === current && current.signal.reason !== "tab-hidden") {
+          // A failed read is not a completion receipt. Do not retain a live spinner.
+          unavailable();
+        }
       } finally {
+        clearTimeout(timeout);
         if (controller === current) controller = null;
-        schedule();
+        if (refreshQueued && !stopped) { refreshQueued = false; clearTimer(); void poll(); }
+        else schedule();
       }
     };
-
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void poll();
-        return;
-      }
-      clearTimer();
-      controller?.abort();
-      controller = null;
+      if (document.visibilityState === "visible") { clearTimer(); void poll(); }
+      else { clearTimer(); controller?.abort("tab-hidden"); }
     };
-
+    const win = window as unknown as Record<string, unknown>;
+    win.__PI_WEB_REFRESH_PROJECT_STATUS__ = poll;
+    window.dispatchEvent(new Event("pi-web-project-status-owner"));
     void poll();
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       stopped = true;
       clearTimer();
       controller?.abort();
+      if (expiryTimer) clearTimeout(expiryTimer);
+      channel?.close();
+      if (win.__PI_WEB_REFRESH_PROJECT_STATUS__ === poll) {
+        delete win.__PI_WEB_REFRESH_PROJECT_STATUS__;
+        delete win.__PI_WEB_PROJECT_STATUS_SNAPSHOT__;
+      }
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadSessions]);
@@ -808,10 +863,18 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [onRunningSessionIdsChange, runningSessionIds]);
 
   useEffect(() => {
+    window.dispatchEvent(new CustomEvent("pi-web-session-catalog", { detail: { sessions: allSessions.filter(session => !session.submissionPending) } }));
+  }, [allSessions]);
+
+  useEffect(() => {
     onSessionsChange?.(serverSessions);
   }, [serverSessions, onSessionsChange]);
 
   useEffect(() => {
+    if (!runningStatusHealthy) {
+      previousRunningSessionIdsRef.current = new Set();
+      return;
+    }
     const previous = previousRunningSessionIdsRef.current;
     const completedInBackground = [...previous].filter((id) => !runningSessionIds.has(id) && id !== selectedSessionId);
     const knownSubagentIds = new Set(
@@ -820,7 +883,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         .map((session) => session.id),
     );
     const completedWithNotifications = completedInBackground.filter(
-      (id) => !previousSuppressedCompletionSessionIdsRef.current.has(id) && !knownSubagentIds.has(id),
+      (id) => completedReceiptIdsRef.current.has(id) && !previousSuppressedCompletionSessionIdsRef.current.has(id) && !knownSubagentIds.has(id),
     );
     const newlyRunning = [...runningSessionIds].filter((id) => !previous.has(id));
 
@@ -848,7 +911,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         (id) => currentSuppressedCompletionSessionIdsRef.current.has(id) || knownSubagentIds.has(id),
       ),
     );
-  }, [runningSessionIds, selectedSessionId, allSessions, loadSessions, onBackgroundTaskDone]);
+  }, [runningStatusHealthy, runningSessionIds, selectedSessionId, allSessions, loadSessions, onBackgroundTaskDone]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -861,7 +924,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [selectedSessionId]);
 
   useEffect(() => {
-    if (explorerRefreshKey !== undefined) setExplorerKey((k) => k + 1);
+    const previousKey = previousExplorerRefreshKeyRef.current;
+    previousExplorerRefreshKeyRef.current = explorerRefreshKey;
+    if (
+      previousKey !== undefined &&
+      explorerRefreshKey !== undefined &&
+      previousKey !== explorerRefreshKey
+    ) {
+      setExplorerKey((k) => k + 1);
+    }
   }, [explorerRefreshKey]);
 
   useEffect(() => {
@@ -971,19 +1042,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
 
-    if (selectedCwd === null) {
-      // If restoring a session, set cwd to match that session
-      if (initialSessionId && !restoredRef.current) {
-        restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
-        if (target) {
-          setSelectedCwd(target.cwd);
-          onSelectSession(target, true);
-          return;
-        }
-        // Session not found — notify parent so it can show the placeholder
-        onInitialRestoreDone?.();
+    // The directory can already be visible from the server snapshot. URL
+    // session restoration must still run once after hydration.
+    if (initialSessionId && !restoredRef.current) {
+      restoredRef.current = true;
+      const target = allSessions.find((s) => s.id === initialSessionId);
+      if (target) {
+        setSelectedCwd(target.cwd);
+        onSelectSession(target, true);
+        return;
       }
+      onInitialRestoreDone?.();
+    }
+    if (selectedCwd === null) {
       const projects = getRecentProjects(allSessions);
       if (projects.length > 0) setSelectedCwd(projects[0].root);
     }
@@ -1198,6 +1269,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     [projectActivity, selectedProject],
   );
 
+  const currentProjectStatus = getEnhancementProjectActivity(selectedProject?.key ?? null);
+  const otherProjectStatus = getEnhancementProjectActivity(selectedProject?.key ?? null, true);
+  const selectorStatus = currentProjectStatus?.status ? currentProjectStatus : otherProjectStatus?.status ? otherProjectStatus : currentProjectStatus;
+  const selectorStatusLabel = currentProjectStatus
+    ? `当前工作区：${currentProjectStatus.label}；其他工作区：${otherProjectStatus?.label || "无运行或待回复任务"}`
+    : t("sidebar.newActivity");
+
   const filteredSessions = useMemo(
     () => {
       if (!selectedProject) return allSessions;
@@ -1236,10 +1314,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
-  const sessionFamilies = useMemo(() => listSessionFamilies(filteredSessions) && (() => {
-    const sorted = listSessionFamilies(filteredSessions);
-    return processEnhancementSessionGroups(sorted);
-  })(), [filteredSessions]);
+  const sessionFamilies = useMemo(
+    () => processEnhancementSessionGroups(listSessionFamilies(filteredSessions)),
+    [filteredSessions, decorationRevision],
+  );
+
+  const initialDecorations = bootstrap?.decorations?.state;
+  const nativeHeights = sessionFamilies.map((family) => SESSION_LIST_ITEM_HEIGHT
+    + (getEnhancementSessionTags(family.root.id, initialDecorations).length ? 18 : 0));
+  const nativeTops: number[] = [0];
+  for (const height of nativeHeights) nativeTops.push(nativeTops[nativeTops.length - 1] + height);
+  const enhancedLayout = hasEnhancementSessionLayout();
 
   const virtualIndices = useMemo(() => getSessionListIndices(
     sessionFamilies.length,
@@ -1351,7 +1436,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
         {/* CWD picker */}
         <div ref={dropdownRef} style={{ position: "relative" }}>
-          <button
+          <button data-pi-native-project-status="true" data-pi-enh-current-project={selectedProject?.key || ""}
             onClick={() => setDropdownOpen((v) => !v)}
             title={selectedProject?.root ?? selectedCwd ?? ""}
             data-current-cwd={selectedCwd ?? selectedCwdProp ?? ""}
@@ -1395,20 +1480,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                  {initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
               </span>
             )}
-            {hasOtherWorkspaceActivity && (
-              <span
-                title={t("sidebar.newActivity")}
-                aria-label={t("sidebar.newActivity")}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  flexShrink: 0,
-                  marginLeft: 6,
-                  background: "var(--accent)",
-                }}
-              />
-            )}
+            {selectorStatus?.status ? (
+              <ProjectStatusDot activity={selectorStatus} label={selectorStatusLabel} />
+            ) : !currentProjectStatus && hasOtherWorkspaceActivity ? (
+              <span data-pi-native-project-status-dot="activity" title={t("sidebar.newActivity")} aria-label={t("sidebar.newActivity")}
+                style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginLeft: 6, background: "var(--accent)" }} />
+            ) : null}
           </button>
 
           <AnimatedDropdown
@@ -1458,6 +1535,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 {visibleProjects.map((project) => (
                   <button
                     key={project.key}
+                    data-pi-native-project-status="true"
                     onClick={() => {
                       setSelectedCwd(project.root);
                       setProjectFilter("");
@@ -1492,7 +1570,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     )}
                     {project.key !== selectedProject?.key && <span style={{ width: 10, flexShrink: 0 }} />}
                     <PathLabel text={displayCwd(project.root, homeDir)} style={{ flex: 1 }} />
-                    {showProjectActivity(projectActivity.get(project.key), t)}
+                    {getEnhancementProjectActivity(project.key)
+                      ? <ProjectStatusBadges activity={getEnhancementProjectActivity(project.key)!} />
+                      : showProjectActivity(projectActivity.get(project.key), t)}
                   </button>
                 ))}
                 {visibleProjects.length === 0 && projectFilter.trim() && (
@@ -1972,7 +2052,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <div
             style={{
               position: "relative",
-              height: sessionFamilies.length * SESSION_LIST_ITEM_HEIGHT + getEnhancementSessionHeadersHeight(sessionFamilies),
+              height: enhancedLayout ? sessionFamilies.length * SESSION_LIST_ITEM_HEIGHT + getEnhancementSessionHeadersHeight(sessionFamilies) : nativeTops[nativeTops.length - 1],
             }}
           >
             {virtualIndices.map((index) => {
@@ -1989,22 +2069,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   onBlur={() => setFocusedSessionId(null)}
                   style={{
                     position: "absolute",
-                    top: getEnhancementSessionItemTop(index, sessionFamilies, SESSION_LIST_ITEM_HEIGHT),
+                    top: enhancedLayout ? getEnhancementSessionItemTop(index, sessionFamilies, SESSION_LIST_ITEM_HEIGHT) : nativeTops[index],
                     left: 0,
                     right: 0,
                   }}
                 >
                   <SessionItem
+                    initialRenderTime={initialRenderTime}
+                    initialDecorations={initialDecorations}
                     session={displaySession}
                     isSelected={familySessions.some((session) => session.id === selectedSessionId)}
                     isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
                     isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
                     onClick={() => handleSelectSessionFromList(family.root)}
                     onRenamed={loadSessions}
-                    onDeleted={(id) => {
-                      onSessionDeleted?.(id);
-                      loadSessions();
-                    }}
                   />
                 </div>
               );
@@ -2272,6 +2350,18 @@ function UnreadSessionIndicator() {
  * when the project has no activity. Counts share the accent / unread colors of
  * the per-session indicators so the two stay visually consistent.
  */
+function ProjectStatusDot({ activity, label = activity.label }: { activity: EnhancementProjectActivity; label?: string }) {
+  const color = { attention: "#f59e0b", interrupted: "#f87171", running: "#60a5fa", unknown: "#a1a1aa" }[activity.status || "unknown"];
+  return <span data-pi-native-project-status-dot={activity.status || undefined} title={label} aria-label={label}
+    style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, marginLeft: 6, background: color }} />;
+}
+function ProjectStatusBadges({ activity }: { activity: EnhancementProjectActivity }) {
+  if (!activity.status) return null;
+  return <span title={activity.label} aria-label={activity.label} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, marginLeft: 6 }}>
+    <ProjectStatusDot activity={activity} />{activity.label}
+  </span>;
+}
+
 function showProjectActivity(
   activity: { running: number; unread: number } | undefined,
   t: (key: string) => string,
@@ -2309,25 +2399,27 @@ function showProjectActivity(
 }
 
 function SessionItem({
+  initialRenderTime,
+  initialDecorations,
   session,
   isSelected,
   isRunning,
   isUnread,
   onClick,
   onRenamed,
-  onDeleted,
   depth = 0,
   hasChildren = false,
   collapsed = false,
   onToggleCollapse,
 }: {
+  initialRenderTime?: Date;
+  initialDecorations?: import("@/lib/enhancement-state-store.cjs").EnhancementDurableState;
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
-  onDeleted?: (id: string) => void;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -2337,12 +2429,11 @@ function SessionItem({
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const renameActiveRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Select the whole name once the rename input is mounted (startRename's
-  // immediate setTimeout can fire before the input exists).
+  // Select only after React has mounted the input.
   useEffect(() => {
     if (renaming) {
       const id = requestAnimationFrame(() => inputRef.current?.select());
@@ -2356,14 +2447,38 @@ function SessionItem({
   const displayFirstMessage = skillExpansionToCommand(session.firstMessage) ?? session.firstMessage;
   const title = session.name || displayFirstMessage.slice(0, 50) || session.id.slice(0, 12);
 
-  const startRename = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (session.transient) return;
-    setRenameValue(session.name || displayFirstMessage.slice(0, 50) || session.id.slice(0, 12));
+  const startRename = useCallback(() => {
+    if (session.transient || session.submissionPending) return false;
+    if (renameActiveRef.current) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      return true;
+    }
+    renameActiveRef.current = true;
+    setRenameValue(title);
     setRenaming(true);
-  }, [session.name, session.transient, displayFirstMessage, session.id]);
+    return true;
+  }, [session.transient, session.submissionPending, title]);
+
+  // The menu requests an action; React alone owns the editor and its lifecycle.
+  useEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const rename = (event: Event) => {
+      if (startRename()) event.preventDefault();
+    };
+    row.addEventListener(SESSION_ROW_RENAME_EVENT, rename);
+    return () => row.removeEventListener(SESSION_ROW_RENAME_EVENT, rename);
+  }, [startRename]);
+
+  const cancelRename = useCallback(() => {
+    renameActiveRef.current = false;
+    setRenaming(false);
+  }, []);
 
   const commitRename = useCallback(async () => {
+    if (!renameActiveRef.current) return;
+    renameActiveRef.current = false;
     const name = renameValue.trim();
     setRenaming(false);
     // No-op when unchanged: the fallback title (first message / id) isn't a
@@ -2383,37 +2498,6 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed, title]);
 
-  const performDelete = useCallback(async () => {
-    if (session.transient) return;
-    setConfirmDelete(false);
-    setDeleting(true);
-    try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
-      onDeleted?.(session.id);
-    } catch {
-      setDeleting(false);
-    }
-  }, [session.id, session.transient, onDeleted]);
-
-  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (e.shiftKey) {
-      void performDelete();
-    } else {
-      setConfirmDelete(true);
-    }
-  }, [performDelete]);
-
-  const handleDeleteConfirm = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    void performDelete();
-  }, [performDelete]);
-
-  const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmDelete(false);
-  }, []);
-
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const handled = dispatchSessionRowContextMenu({
       id: session.id,
@@ -2429,81 +2513,46 @@ function SessionItem({
     e.stopPropagation();
   }, [onRenamed, session.cwd, session.id, session.name, session.path]);
 
+  const taskStatus = getEnhancementSessionStatus(session.id);
+  const rowStatus = taskStatus?.status === "completed" && !taskStatus.unread ? undefined : taskStatus?.status;
+  const tags = getEnhancementSessionTags(session.id, initialDecorations);
+  const showTags = !renaming && tags.length > 0;
   const odooAddons = getEnhancementSessionOdooAddons(session.id);
-  const showOdooAddons = !renaming && !confirmDelete && odooAddons.length > 0;
+  const showOdooAddons = !renaming && odooAddons.length > 0;
 
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
   return (
     <div
+      ref={rowRef}
+      data-pi-enh-editing={renaming ? "true" : undefined}
       data-pi-enh-session-id={session.id}
+      data-pi-native-session-tags="true"
+      data-pi-native-project-status="true"
+      data-pi-enh-project-status={rowStatus && rowStatus !== "idle" ? rowStatus : undefined}
+      data-pi-enh-completed-unread={rowStatus === "completed" ? String(taskStatus?.unread) : undefined}
+      data-pi-enh-has-tags={showTags ? "true" : undefined}
       data-pi-enh-has-odoo-addons={showOdooAddons ? "true" : undefined}
-      className="pi-enh-session-row-host"
+      className={`pi-enh-session-row-host${rowStatus === "attention" ? " pi-enh-session-needs-attention" : ""}`}
       aria-disabled={session.submissionPending || undefined}
-      onClick={confirmDelete || renaming || session.submissionPending ? undefined : onClick}
-      onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
+      onClick={renaming || session.submissionPending ? undefined : onClick}
+      onContextMenu={renaming ? undefined : handleContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
-        height: getEnhancementSessionItemHeight(session.id, SESSION_LIST_ITEM_HEIGHT),
+        height: getEnhancementSessionItemHeight(session.id, SESSION_LIST_ITEM_HEIGHT + (tags.length ? 18 : 0)),
         display: "flex",
         alignItems: "center",
         paddingLeft: depth > 0 ? depth * 12 + 14 : 14,
         paddingRight: 8,
-        cursor: confirmDelete || renaming || session.submissionPending ? "default" : "pointer",
-        background: confirmDelete
-          ? "rgba(239,68,68,0.06)"
-          : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
-        borderLeft: confirmDelete
-          ? "2px solid #ef4444"
-          : isSelected ? "2px solid var(--accent)" : "2px solid transparent",
+        cursor: renaming || session.submissionPending ? "default" : "pointer",
+        background: isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
+        borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
         transition: "background 0.1s",
-        opacity: deleting ? 0.5 : 1,
         gap: 6,
         overflow: "hidden",
       }}
     >
-      {confirmDelete ? (
-        /* ── Delete confirmation: same height, two flat buttons ── */
-        <>
-          <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {t("sidebar.deleteSession", { title: title.slice(0, 22) + (title.length > 22 ? "…" : "") })}
-          </div>
-          <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-            <button
-              onClick={handleDeleteConfirm}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-                height: 30, padding: "0 11px",
-                background: "#ef4444", border: "none",
-                borderRadius: 6, color: "#fff",
-                cursor: "pointer", fontSize: 12, fontWeight: 600,
-                whiteSpace: "nowrap",
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6M14 11v6" />
-                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-              </svg>
-              {t("sidebar.delete")}
-            </button>
-            <button
-              onClick={handleDeleteCancel}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                height: 30, padding: "0 11px",
-                background: "var(--bg)", border: "1px solid var(--border)",
-                borderRadius: 6, color: "var(--text-muted)",
-                cursor: "pointer", fontSize: 12, fontWeight: 500,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {t("sidebar.cancel")}
-            </button>
-          </div>
-        </>
-      ) : renaming ? (
+      {renaming ? (
         /* ── Rename: input fills the same row ── */
         <input
           ref={inputRef}
@@ -2511,8 +2560,8 @@ function SessionItem({
           onChange={(e) => setRenameValue(e.target.value)}
           onBlur={commitRename}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") setRenaming(false);
+            if (e.key === "Enter") { e.preventDefault(); void commitRename(); }
+            if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
           }}
           autoFocus
           style={{
@@ -2556,12 +2605,16 @@ function SessionItem({
               </span>
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {isRunning ? (
+              {rowStatus === "unknown" ? (
+                <span title="服务端任务状态暂不可确认">状态待确认</span>
+              ) : rowStatus === "attention" ? (
+                <span title="等待你的回复" style={{ color: "#f59e0b" }}>待回复</span>
+              ) : (taskStatus ? rowStatus === "running" : isRunning) ? (
                 <RunningSessionIndicator />
               ) : isUnread ? (
                 <UnreadSessionIndicator />
               ) : (
-                <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
+                <span title={session.modified}>{formatRelativeTime(session.modified, locale, initialRenderTime)}</span>
               )}
               <span>
                 {session.detailsPending ? "…" : t("sidebar.messagesCount", { count: session.messageCount })}
@@ -2581,6 +2634,21 @@ function SessionItem({
                 </span>
               )}
             </div>
+            {showTags && (
+              <div className="pi-enh-session-tags-row">
+                {tags.slice(0, 2).map((tag) => {
+                  const color = tag.color || "#9ca3af";
+                  return <span key={tag.id} className="pi-enh-session-tag-pill" title={tag.name}
+                    style={{ color, background: `color-mix(in srgb, ${color} 16%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 35%, transparent)` }}>
+                    <span className="pi-enh-tag-dot" style={{ background: color }} />
+                    <span className="pi-enh-tag-name">{tag.name}</span>
+                  </span>;
+                })}
+                {tags.length > 2 && <span className="pi-enh-session-tag-pill pi-enh-session-tag-more"
+                  style={{ color: "#9ca3af", background: "rgba(156,163,175,0.16)", border: "1px solid rgba(156,163,175,0.35)" }}
+                  title={`全部标签：${tags.map((tag) => tag.name).join("、")}`}>+{tags.length - 2}</span>}
+              </div>
+            )}
           </div>
 
           {/* Collapse toggle — always visible when has children */}
@@ -2603,71 +2671,6 @@ function SessionItem({
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && !session.transient && (
-            <div className="pi-enh-native-session-actions" style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <button
-                onClick={startRename}
-                title={t("sidebar.rename")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, padding: 0,
-                  background: "var(--bg-hover)", border: "1px solid var(--border)",
-                  borderRadius: 7, color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                  e.currentTarget.style.color = "var(--accent)";
-                  e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-                </svg>
-              </button>
-              <button
-                onClick={handleDeleteClick}
-                title={t("sidebar.deleteWithShiftClick")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, padding: 0,
-                  background: "var(--bg-hover)", border: "1px solid var(--border)",
-                  borderRadius: 7, color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
-            </div>
-          )}
-          {!hovered && !session.transient && (
-            <div className="pi-enh-native-session-actions" hidden aria-hidden="true" style={{ display: "none" }}>
-              <button type="button" onClick={startRename} title={t("sidebar.rename")} tabIndex={-1} />
-            </div>
-          )}
           {showOdooAddons && (
             <div className="pi-enh-session-odoo-addons">
               {odooAddons.map((addon) => (

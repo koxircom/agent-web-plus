@@ -274,6 +274,7 @@ export function ModelSelector({
         return createPortal(
           <div
             ref={panelRef}
+            className="pi-native-menu-motion"
             role="listbox"
             aria-label={ariaLabel}
             style={{

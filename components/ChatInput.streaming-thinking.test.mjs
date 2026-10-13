@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+const selectorSource = await readFile(new URL("./ThinkingSelector.tsx", import.meta.url), "utf8");
 const session = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
 const thinkingControl = source.slice(source.indexOf("{onThinkingLevelChange && ("));
 
@@ -11,12 +12,14 @@ const thinkingControl = source.slice(source.indexOf("{onThinkingLevelChange && (
 test("keeps one thinking control and lets it change the level while the session is busy", () => {
   assert.doesNotMatch(source, /isStreaming && onThinkingLevelChange/);
   assert.doesNotMatch(thinkingControl, /<span\s+title=\{t\("chat\.currentReasoning"/);
-  const button = thinkingControl.slice(0, thinkingControl.indexOf("</button>"));
-  assert.doesNotMatch(button, /disabled=/);
-  assert.match(button, /onClick=\{\(\) => setThinkingDropdownOpen\(\(v\) => !v\)\}/);
-  assert.doesNotMatch(source, /if \(!isStreaming\) return;\s*setThinkingDropdownOpen\(false\)/);
+  const selectorStart = thinkingControl.indexOf("<ThinkingSelector");
+  const selector = thinkingControl.slice(selectorStart, thinkingControl.indexOf("/>", selectorStart) + 2);
+  assert.match(selector, /disabled=\{false\}/);
+  assert.match(selectorSource, /disabled=\{disabled\}/);
+  assert.match(selectorSource, /onClick=\{\(\) => \{ updateAnchor\(\); setOpen\(\(current\) => !current\); \}\}/);
+  assert.match(selectorSource, /useEffect\(\(\) => \{ if \(disabled\) setOpen\(false\); \}, \[disabled\]\)/);
   assert.match(thinkingControl, /title=\{isStreaming/);
-  assert.match(thinkingControl, /t\("chat\.currentReasoning", \{ level: thinkingDisplayLabel \}\)/);
+  assert.match(thinkingControl, /为下一条消息设置思考深度：\$\{thinkingDisplayLabel\}/);
   assert.match(thinkingControl, /t\("chat\.changeReasoning", \{ level: thinkingDisplayLabel \}\)/);
 });
 

@@ -1,13 +1,14 @@
 {
   "name": "@agegr/pi-web",
-  "version": "1.3.54",
+  "version": "1.3.74",
   "capabilities": {
     "nativeSettingsHost": true,
     "nativeSettingsLayout": true,
     "nativeBranding": true,
     "nativeComposerLayout": true,
     "nativeComposerPreferences": true,
-    "nativeAskUser": true
+    "nativeAskUser": true,
+    "nativeSessionTags": true
   },
   "piWebEdition": "koxir-standalone",
   "standalone": true,
@@ -36,6 +37,7 @@
     "public",
     "next.config.ts",
     "package.json",
+    "THIRD_PARTY_NOTICES.md",
     "!public/pi-*-manifest.json",
     "!public/pi-usage-ledger.json",
     "!public/*.before-*",
@@ -58,10 +60,10 @@
     "postbuild": "node scripts/check-client-budget.cjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "1.1.0",
-    "@earendil-works/pi-ai": "1.1.0",
-    "@earendil-works/pi-coding-agent": "1.1.0",
-    "@earendil-works/pi-tui": "1.1.0",
+    "@earendil-works/pi-agent-core": "1.2.0",
+    "@earendil-works/pi-ai": "1.2.0",
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "@earendil-works/pi-tui": "1.2.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "js-yaml": "5.4.2",

@@ -561,130 +561,21 @@
     } catch (e) {}
   }
 
-  function locateShortcutsContainer() {
-    const existing = document.querySelector("[data-pi-enh-shortcuts-host='true']");
-    if (existing && existing.isConnected) return existing;
-
-    const buttons = Array.from(document.querySelectorAll("button")).filter((btn) => {
-      if (btn.closest(".settings-dialog-surface, .settings-dialog-backdrop, dialog, .pi-enh-menu, .pi-enh-quote-bar, main, .chat-window, .message-view")) {
-        return false;
-      }
-      const text = (btn.textContent || "").trim();
-      const aria = btn.getAttribute("aria-label") || btn.getAttribute("title") || "";
-      return text === "设置" || text === "Settings" || aria === "设置" || aria === "Settings";
-    });
-
-    for (const btn of buttons) {
-      const parent = btn.parentElement;
-      if (!parent) continue;
-      const nativeButtons = Array.from(parent.querySelectorAll("button:not(.pi-enh-shortcut-btn)"));
-      const hasModelOrSkill = nativeButtons.some((b) => {
-        const t = (b.textContent || "").trim();
-        return t === "模型" || t === "Models" || t === "技能" || t === "Skills";
-      });
-      if (hasModelOrSkill || nativeButtons.length >= 2) {
-        parent.setAttribute("data-pi-enh-shortcuts-host", "true");
-        return parent;
-      }
-    }
-
-    return null;
-  }
-
   initialShortcutsSyncAttempted = false;
-  function syncBottomShortcutsBar(force = false) {
+  function syncBottomShortcutsBar() {
+    const abi = window.__PI_WEB_SETTINGS_NATIVE__;
+    if (!abi?.setSidebarShortcuts) return;
     if (!isPluginEnabled("settings-tab-shortcuts")) {
-      removeBottomShortcutsBar();
+      abi.setSidebarShortcuts(null);
       return;
     }
-
     if (!initialShortcutsSyncAttempted) {
       initialShortcutsSyncAttempted = true;
       void syncManifestQuickShortcuts();
     }
-
-    const host = locateShortcutsContainer();
-    if (!host) return;
-    host.removeAttribute("data-pi-enh-shortcuts-disabled");
-
-    let bar = host.querySelector(".pi-enh-shortcuts-bar");
-    const shortcuts = getStoredQuickShortcuts();
-    const shortcutsSignature = JSON.stringify(shortcuts);
-
-    if (bar && !force && bar.getAttribute("data-signature") === shortcutsSignature) {
-      bindShortcutButtonsEvents(bar);
-      return;
-    }
-
-    if (!bar) {
-      bar = document.createElement("div");
-      bar.className = "pi-enh-shortcuts-bar";
-      host.appendChild(bar);
-    }
-
-    bar.setAttribute("data-signature", shortcutsSignature);
-    bar.setAttribute("data-count", String(shortcuts.length));
-
-    bar.innerHTML = shortcuts.map((shortcut) => {
-      const icon = shortcut.iconHtml || SHORTCUT_ICONS[shortcut.id] || SHORTCUT_ICONS.settings;
-      return `
-        <button type="button" class="pi-enh-shortcut-btn" data-shortcut-id="${shortcut.id}" title="${shortcut.label} (点击直达，双击可移除)">
-          ${icon}
-          <span>${shortcut.label}</span>
-        </button>
-      `;
-    }).join("");
-
-    bindShortcutButtonsEvents(bar);
-  }
-
-  function bindShortcutButtonsEvents(bar) {
-    if (!bar) return;
-
-    const renderedButtons = Array.from(bar.querySelectorAll(".pi-enh-shortcut-btn"));
-    for (const btn of renderedButtons) {
-      if (btn.__piEnhShortcutEventsBound) continue;
-      btn.__piEnhShortcutEventsBound = true;
-      const id = btn.getAttribute("data-shortcut-id");
-
-      if (id === "models" && !btn.__piEnhModelPrewarmBound) {
-        btn.__piEnhModelPrewarmBound = true;
-        const prewarm = () => {
-          if (typeof window !== "undefined" && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
-            void window.__PI_ENH_PRELOAD_MODELS_CACHE__();
-          }
-        };
-        btn.addEventListener("pointerenter", prewarm, { passive: true });
-        btn.addEventListener("touchstart", prewarm, { passive: true });
-      }
-
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try { btn.blur(); } catch (_) {}
-        triggerShortcutNavigation(id);
-      });
-
-      btn.addEventListener("focus", () => {
-        try { btn.blur(); } catch (_) {}
-      });
-
-      btn.addEventListener("dblclick", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        window.getSelection()?.removeAllRanges();
-
-        const currentShortcuts = getStoredQuickShortcuts();
-        const nextShortcuts = currentShortcuts.filter((item) => item.id !== id);
-        const removed = currentShortcuts.find((item) => item.id === id);
-        setStoredQuickShortcuts(nextShortcuts);
-
-        const icon = removed?.iconHtml || SHORTCUT_ICONS[id] || SHORTCUT_ICONS.settings;
-        showToast(`已从快捷入口移除「${removed ? removed.label : id}」`, icon, 2000);
-
-        syncBottomShortcutsBar(true);
-      });
-    }
+    // The extension owns preferences; React alone owns buttons and focus.
+    // The registry ignores equal snapshots, including forced remote syncs.
+    abi.setSidebarShortcuts(getStoredQuickShortcuts());
   }
 
   function triggerShortcutNavigation(shortcutId) {
@@ -742,20 +633,7 @@
   }
 
   function removeBottomShortcutsBar() {
-    const host = document.querySelector("[data-pi-enh-shortcuts-host='true']") ||
-      (function() {
-        const sidebar = document.querySelector(".sidebar-container");
-        return sidebar?.lastElementChild?.querySelector("button") ? sidebar.lastElementChild : null;
-      })();
-    if (host) {
-      host.removeAttribute("data-pi-enh-shortcuts-host");
-      host.setAttribute("data-pi-enh-shortcuts-disabled", "true");
-      const bar = host.querySelector(".pi-enh-shortcuts-bar");
-      if (bar) bar.remove();
-    }
-    for (const pin of document.querySelectorAll(".pi-enh-tab-pin-indicator")) {
-      pin.remove();
-    }
+    window.__PI_WEB_SETTINGS_NATIVE__?.setSidebarShortcuts?.(null);
   }
 
   isForceReloading = false;
@@ -1802,9 +1680,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       renderNotificationPanel(panel, nav);
     });
     panel.querySelector('[data-notification-action="reset"]')?.addEventListener("click", () => {
-      notificationSettings = getNotificationDefaults();
-      writeNotificationSettings();
-      applyNotificationVisibility();
+      resetNotificationSettings();
       renderNotificationPanel(panel, nav);
     });
     panel.querySelector('[data-notification-action="clear-history"]')?.addEventListener("click", () => {
@@ -4427,7 +4303,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                     <div class="pi-enh-plugin-number-settings" aria-label="会话导航轮数设置">
                       <label class="pi-enh-plugin-number-setting">
                         <span>初始显示</span>
-                        <input data-minimap-initial-turns min="1" max="50" step="1" value="${getMinimapHistorySettings().initialTurns}" type="number" inputmode="numeric" aria-label="会话导航初始显示轮数">
+                        <input data-minimap-initial-turns min="5" max="50" step="1" value="${getMinimapHistorySettings().initialTurns}" type="number" inputmode="numeric" aria-label="会话导航初始显示轮数">
                         <span>轮</span>
                       </label>
                       <label class="pi-enh-plugin-number-setting">
@@ -4843,7 +4719,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       syncStreamingThinkingGuard(false);
       removeAnnotationUi();
       removeBottomShortcutsBar();
-      clearModelScopeWarningVisibility();
       if (typeof cleanupSessionScrollTracking === "function") {
         try { cleanupSessionScrollTracking(); } catch (e) {}
       }

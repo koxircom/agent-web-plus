@@ -116,13 +116,6 @@
       defaultEnabled: true,
     },
     {
-      id: "model-scope-warning",
-      name: "隐藏模型范围警告",
-      desc: "隐藏输入区的模型范围警告，并在模型菜单对应选项后显示黄色提示图标；关闭插件后恢复原生警告。",
-      category: "显示增强",
-      defaultEnabled: true,
-    },
-    {
       id: "quick-quote",
       name: "划选引用与注释",
       desc: "划选对话文本后可一键引用，或保存多条带可选评论的引用注释；输入框上方实时显示 x 条注释，并在发送时作为结构化上下文附带给 Agent。",
@@ -571,7 +564,7 @@
   const ENHANCEMENT_SETTINGS_STORAGE_KEY = "pi-enh-settings-v1";
   const ENHANCEMENT_PLUGIN_SETTINGS = {
     "minimap-full-nav": {
-      initialTurns: { type: "number", defaultValue: 5, min: 1, max: 50, legacyKey: "pi-enh-minimap-initial-turns" },
+      initialTurns: { type: "number", defaultValue: 5, min: 5, max: 50, legacyKey: "pi-enh-minimap-initial-turns" },
       stepTurns: { type: "number", defaultValue: 5, min: 1, max: 50, legacyKey: "pi-enh-minimap-step-turns" },
     },
     "session-pin-archive": {
@@ -599,7 +592,7 @@
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
     { id: "background-attention", name: "后台会话提醒", desc: "管理跨项目状态、提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
     { id: "notification-management", name: "通知管理", desc: "管理所有站内通知、网页操作提示、提示音与桌面提醒，并查看通知历史。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["notification-center"] },
-    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护、模型警告可见性和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["model-scope-warning", "esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
+    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
     { id: "local-workspace", name: "本地工作区工具", desc: "管理本地路径直达和会话缓存。", category: "快捷操作", version: "1.0.0", defaultEnabled: true, features: ["local-path-launcher", "obsidian-markdown-viewer", "excel-sheet-preview", "session-memory-cache", "session-history-integrity", "session-history-order-guard", "cross-device-session-sync", "session-panel-binding", "file-panel-overlay-guard", "general-settings-dashboard", "workspace-picker-hover", "pi-web-plus-branding"] },
     { id: "preference-memory", name: "偏好记忆", desc: "管理思考深度的跨会话记忆与浏览器增强设置归档。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["thinking-persistence", "enhancement-settings-archive"] },
   ];
@@ -970,17 +963,12 @@
       window.__PI_ENH_CRASH_DIAGNOSTICS__?.setEnabled(enabled);
     } else if (id === "notification-center") {
       applyNotificationVisibility();
-      if (enabled) {
-        initNotificationCapture();
-      }
     } else if (id === "obsidian-markdown-viewer") {
       if (!enabled) removeMarkdownViewerEnhancements();
       else syncMarkdownViewerMode();
     } else if (id === "excel-sheet-preview") {
       if (!enabled && typeof removeExcelViewerEnhancements === "function") removeExcelViewerEnhancements();
       else if (typeof syncExcelViewerMode === "function") syncExcelViewerMode();
-    } else if (id === "model-scope-warning") {
-      syncModelScopeWarnings();
     } else if (id === "turn-duration") {
       if (!enabled) {
         for (const badge of document.querySelectorAll(".pi-enh-duration-badge")) {
@@ -1290,203 +1278,6 @@
     }
   }
 
-  const MODEL_SCOPE_WARNING_MARKER = "data-pi-enh-model-scope-warning";
-  const MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY = "data-pi-enh-model-scope-warning-display";
-  const MODEL_SCOPE_WARNING_ICON_SELECTOR = ".pi-enh-model-scope-warning-icon";
-  const MODEL_SCOPE_WARNING_TEXT_MARKERS = [
-    "模型范围警告",
-    "model scope warning",
-    "no models match pattern",
-  ];
-  const MODEL_SCOPE_WARNING_PATTERN_RE = /no models match(?:es)? pattern\s+(?:["“'‘]([^"”'’\r\n]+)["”'’]|([^\s,;]+))/gi;
-  const MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE = /:(?:none|off|minimal|low|medium|high|xhigh|max)$/i;
-
-  function isModelScopeWarningCard(card) {
-    if (!card || card.getAttribute?.("role") !== "alert") return false;
-    const text = String(card.textContent || "").toLocaleLowerCase();
-    return MODEL_SCOPE_WARNING_TEXT_MARKERS.some((marker) => text.includes(marker.toLocaleLowerCase()));
-  }
-
-  function restoreModelScopeWarningCard(card) {
-    if (!card?.hasAttribute?.(MODEL_SCOPE_WARNING_MARKER)) return;
-    if (card.style) {
-      card.style.display = card.getAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY) || "";
-    }
-    card.removeAttribute(MODEL_SCOPE_WARNING_MARKER);
-    card.removeAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY);
-  }
-
-  function removeModelScopeWarningIndicators() {
-    for (const icon of document.querySelectorAll(MODEL_SCOPE_WARNING_ICON_SELECTOR)) {
-      icon.remove();
-    }
-  }
-
-  function clearModelScopeWarningVisibility() {
-    for (const card of document.querySelectorAll('[role="alert"]')) {
-      restoreModelScopeWarningCard(card);
-    }
-    removeModelScopeWarningIndicators();
-    document.documentElement?.classList?.remove("pi-enh-model-scope-warning-hidden");
-  }
-
-  function normalizeModelScopeIdentity(value) {
-    return String(value || "").toLocaleLowerCase().replace(/[^a-z0-9]/g, "");
-  }
-
-  function collectModelScopeWarningPatterns(cards) {
-    const patternsByModel = new Map();
-    for (const card of cards) {
-      const text = String(card.textContent || "");
-      MODEL_SCOPE_WARNING_PATTERN_RE.lastIndex = 0;
-      let match;
-      while ((match = MODEL_SCOPE_WARNING_PATTERN_RE.exec(text))) {
-        const rawPattern = String(match[1] || match[2] || "").trim().replace(/[.!?]+$/, "");
-        const modelRef = rawPattern.replace(MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE, "").trim();
-        if (!modelRef) continue;
-        const key = modelRef.toLocaleLowerCase();
-        let warning = patternsByModel.get(key);
-        if (!warning) {
-          const parts = modelRef.split("/").filter(Boolean);
-          warning = {
-            modelRef,
-            provider: parts.length > 1 ? parts[0] : "",
-            modelName: parts[parts.length - 1] || modelRef,
-            rawPatterns: new Set(),
-          };
-          patternsByModel.set(key, warning);
-        }
-        warning.rawPatterns.add(rawPattern);
-      }
-    }
-    return Array.from(patternsByModel.values());
-  }
-
-  function getModelScopeOptionProvider(option, listbox) {
-    const group = option?.parentElement;
-    if (!group || group === listbox) return "";
-    for (const child of Array.from(group.children || [])) {
-      if (child === option || child.matches?.('button[role="option"]')) continue;
-      if (child.querySelector?.('button[role="option"]')) continue;
-      const label = String(child.textContent || "").trim();
-      if (label) return label;
-    }
-    return "";
-  }
-
-  function modelScopeWarningMatchesOption(option, listbox, warning) {
-    const modelNameIdentity = normalizeModelScopeIdentity(warning.modelName);
-    const modelRefIdentity = normalizeModelScopeIdentity(warning.modelRef);
-    const explicitModel = option.getAttribute("data-model-id") ||
-      option.getAttribute("data-model") ||
-      option.getAttribute("data-provider-model") ||
-      option.getAttribute("value") || "";
-    if (explicitModel) {
-      const explicitIdentity = normalizeModelScopeIdentity(explicitModel.replace(MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE, ""));
-      if (explicitIdentity === modelRefIdentity || explicitIdentity === modelNameIdentity) {
-        const explicitProvider = option.getAttribute("data-provider") || "";
-        return !warning.provider || !explicitProvider ||
-          normalizeModelScopeIdentity(explicitProvider) === normalizeModelScopeIdentity(warning.provider);
-      }
-    }
-
-    const labelNode = option.querySelector?.("[title]");
-    const label = String(labelNode?.getAttribute("title") || labelNode?.textContent || option.textContent || "").trim();
-    const labelIdentity = normalizeModelScopeIdentity(label);
-    if (!modelNameIdentity || !labelIdentity.includes(modelNameIdentity)) return false;
-
-    const provider = option.getAttribute("data-provider") || getModelScopeOptionProvider(option, listbox);
-    return !warning.provider || !provider ||
-      normalizeModelScopeIdentity(provider) === normalizeModelScopeIdentity(warning.provider);
-  }
-
-  function createModelScopeWarningIcon(warning) {
-    const svgNamespace = "http://www.w3.org/2000/svg";
-    const icon = document.createElementNS(svgNamespace, "svg");
-    icon.classList.add("pi-enh-model-scope-warning-icon");
-    icon.setAttribute("viewBox", "0 0 24 24");
-    icon.setAttribute("width", "15");
-    icon.setAttribute("height", "15");
-    icon.setAttribute("fill", "none");
-    icon.setAttribute("stroke", "#eab308");
-    icon.setAttribute("stroke-width", "2");
-    icon.setAttribute("stroke-linecap", "round");
-    icon.setAttribute("stroke-linejoin", "round");
-    icon.setAttribute("role", "img");
-    icon.style.cssText = "display:block;width:15px;height:15px;flex:0 0 15px;margin-left:6px;color:#eab308";
-
-    const triangle = document.createElementNS(svgNamespace, "path");
-    triangle.setAttribute("d", "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z");
-    const exclamation = document.createElementNS(svgNamespace, "path");
-    exclamation.setAttribute("d", "M12 9v4");
-    const dot = document.createElementNS(svgNamespace, "circle");
-    dot.setAttribute("cx", "12");
-    dot.setAttribute("cy", "17");
-    dot.setAttribute("r", "0.5");
-    dot.setAttribute("fill", "#eab308");
-    dot.setAttribute("stroke", "none");
-    icon.append(triangle, exclamation, dot);
-    return icon;
-  }
-
-  function syncModelScopeWarningIndicators(warnings) {
-    const matchedOptions = new Set();
-    if (warnings.length) {
-      for (const listbox of document.querySelectorAll('.model-selector div[role="listbox"]')) {
-        for (const option of listbox.querySelectorAll('[role="option"]')) {
-          const matchedWarnings = warnings.filter((warning) => modelScopeWarningMatchesOption(option, listbox, warning));
-          if (!matchedWarnings.length) continue;
-          matchedOptions.add(option);
-          let icon = option.querySelector(MODEL_SCOPE_WARNING_ICON_SELECTOR);
-          if (!icon) {
-            icon = createModelScopeWarningIcon(matchedWarnings[0]);
-            option.appendChild(icon);
-          }
-          const tooltip = `模型范围警告：${matchedWarnings.flatMap((warning) =>
-            Array.from(warning.rawPatterns, (pattern) => `No models match pattern "${pattern}"`)
-          ).join("；")}`;
-          if (icon.getAttribute("title") !== tooltip) icon.setAttribute("title", tooltip);
-          if (icon.getAttribute("aria-label") !== tooltip) icon.setAttribute("aria-label", tooltip);
-        }
-      }
-    }
-    for (const icon of document.querySelectorAll(MODEL_SCOPE_WARNING_ICON_SELECTOR)) {
-      if (!matchedOptions.has(icon.parentElement)) icon.remove();
-    }
-    return matchedOptions.size;
-  }
-
-  function syncModelScopeWarnings() {
-    const matchingCards = [];
-    for (const card of document.querySelectorAll('[role="alert"]')) {
-      if (isModelScopeWarningCard(card)) {
-        matchingCards.push(card);
-      } else {
-        restoreModelScopeWarningCard(card);
-      }
-    }
-
-    if (!isPluginEnabled("model-scope-warning")) {
-      for (const card of matchingCards) restoreModelScopeWarningCard(card);
-      removeModelScopeWarningIndicators();
-      document.documentElement?.classList?.remove("pi-enh-model-scope-warning-hidden");
-      return;
-    }
-
-    for (const card of matchingCards) {
-      if (!card.hasAttribute(MODEL_SCOPE_WARNING_MARKER)) {
-        card.setAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY, card.style?.display || "");
-      }
-      card.setAttribute(MODEL_SCOPE_WARNING_MARKER, "true");
-      if (card.style && card.style.display !== "none") card.style.display = "none";
-    }
-
-    const warningPatterns = collectModelScopeWarningPatterns(matchingCards);
-    syncModelScopeWarningIndicators(warningPatterns);
-    document.documentElement?.classList?.toggle("pi-enh-model-scope-warning-hidden", matchingCards.length > 0);
-  }
-
-  window.__PI_ENH_SYNC_MODEL_SCOPE_WARNINGS__ = syncModelScopeWarnings;
   window.__PI_ENH_PLUGINS__ = ENHANCEMENT_PLUGINS;
   window.__PI_ENH_MODULES__ = ENHANCEMENT_MODULES;
   window.__PI_ENH_SUITE_VERSION__ = ENHANCEMENT_SUITE_VERSION;
@@ -2442,9 +2233,8 @@
       writeSessionTagsDefinitions(replayedDefs);
       writeSessionTagMappings(replayedMappings);
       syncSessionTags();
-      if (typeof requestSessionListRefresh === "function") {
-        requestSessionListRefresh(false, true);
-      }
+      // Decorations only change presentation. React's existing bridge has
+      // already rerendered the rows; do not refetch every transcript here.
     }
 
     if (state.sessionColors && typeof state.sessionColors === "object" && !Array.isArray(state.sessionColors)) {
@@ -2475,12 +2265,16 @@
           : `${getDurableStateBaseUrl()}/enhancement-state?instance=${getDurableStateInstanceParam()}`;
         let res, data;
         try {
-          const fetchRes = await fetchModelsConfigBounded(endpoint, {
-            method: "GET",
-            credentials: "include",
-            cache: "no-store",
-            readJson: true,
-          }, 15000);
+          const initialState = !force && window.__PI_ENH_INITIAL_DURABLE_STATE__;
+          delete window.__PI_ENH_INITIAL_DURABLE_STATE__;
+          const fetchRes = initialState
+            ? await Promise.resolve({ resp: { ok: true, status: 200 }, json: initialState })
+            : await fetchModelsConfigBounded(endpoint, {
+              method: "GET",
+              credentials: "include",
+              cache: "no-store",
+              readJson: true,
+            }, 15000);
           res = fetchRes?.resp;
           data = fetchRes?.json;
         } catch (netErr) {
@@ -3774,94 +3568,34 @@
     return count;
   }
 
-  function syncSessionTagsRow(row, sessionId) {
-    if (!row || !sessionId) return;
+  let lastNativeSessionTagsSignature = null;
+  let lastNativeSessionTagsBridge = null;
 
-    // 行内重命名守卫：处于编辑状态时隐藏标签
-    if (!isPluginEnabled("session-tags") || row.querySelector('input:not([type="checkbox"])') || row.getAttribute("data-pi-enh-editing") === "true") {
-      row.querySelector(".pi-enh-session-tags-row")?.remove();
-      row.removeAttribute("data-pi-enh-has-tags");
-      return;
-    }
+  function notifyNativeSessionTagsChanged() {
+    const bridge = window.__PI_ENH_RERENDER_SESSIONS__;
+    if (typeof bridge !== "function") return;
+    const signature = JSON.stringify([
+      isPluginEnabled("session-tags"),
+      readSessionTagsDefinitions(),
+      readSessionTagMappings(),
+    ]);
+    if (signature === lastNativeSessionTagsSignature && bridge === lastNativeSessionTagsBridge) return;
+    // Commit before notifying: native row rendering schedules another sidebar sync.
+    lastNativeSessionTagsSignature = signature;
+    lastNativeSessionTagsBridge = bridge;
+    bridge();
+  }
 
-    const tags = getSessionTags(sessionId);
-    let tagsRow = row.querySelector(".pi-enh-session-tags-row");
-
-    if (tags.length === 0) {
-      tagsRow?.remove();
-      row.removeAttribute("data-pi-enh-has-tags");
-      return;
-    }
-
-    row.setAttribute("data-pi-enh-has-tags", "true");
-
-    if (!tagsRow) {
-      tagsRow = document.createElement("div");
-      tagsRow.className = "pi-enh-session-tags-row";
-    }
-
-    const contentHost = row.querySelector(".pi-enh-session-meta")?.parentElement ||
-      row.querySelector("div[style*='flex: 1'], div[style*='flex:1']") ||
-      row.firstElementChild;
-
-    if (!contentHost) {
-      tagsRow.remove();
-      return;
-    }
-
-    const metaDiv = contentHost.querySelector(".pi-enh-session-meta") ||
-      (contentHost.children && contentHost.children.length >= 2 ? contentHost.children[1] : null);
-
-    if (metaDiv && metaDiv.nextSibling !== tagsRow) {
-      metaDiv.after(tagsRow);
-    } else if (tagsRow.parentElement !== contentHost) {
-      contentHost.appendChild(tagsRow);
-    }
-
-    const visibleTags = tags.slice(0, 2);
-    const overflowCount = tags.length - visibleTags.length;
-
-    let pillsHtml = visibleTags.map((tag) => {
-      const palette = getTagPaletteItem(tag.color);
-      return `<span class="pi-enh-session-tag-pill" style="background:${palette.bg};border:1px solid ${palette.border};color:${palette.color};" title="${escapeHtml(tag.name)}">
-        <span class="pi-enh-tag-dot" style="background:${tag.color};"></span>
-        <span class="pi-enh-tag-name">${escapeHtml(tag.name)}</span>
-      </span>`;
-    }).join("");
-
-    if (overflowCount > 0) {
-      const allTagNames = tags.map((t) => t.name).join("、");
-      pillsHtml += `<span class="pi-enh-session-tag-pill pi-enh-session-tag-more" style="background:rgba(156,163,175,0.16);border:1px solid rgba(156,163,175,0.35);color:#9ca3af;" title="全部标签：${escapeHtml(allTagNames)}">+${overflowCount}</span>`;
-    }
-
-    if (tagsRow.__renderedHtml !== pillsHtml || !tagsRow.firstElementChild) {
-      tagsRow.innerHTML = pillsHtml;
-      tagsRow.__renderedHtml = pillsHtml;
-    }
+  function syncSessionTagsRow() {
+    notifyNativeSessionTagsChanged();
   }
 
   function removeSessionTagsRowAll() {
-    for (const el of document.querySelectorAll(".pi-enh-session-tags-row")) {
-      el.remove();
-    }
-    for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-tags]")) {
-      row.removeAttribute("data-pi-enh-has-tags");
-    }
+    notifyNativeSessionTagsChanged();
   }
 
   function syncSessionTags() {
-    if (!isPluginEnabled("session-tags")) {
-      removeSessionTagsRowAll();
-      syncSessionOdooAddonsLayout();
-      return;
-    }
-    const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
-    for (const row of rows) {
-      const sessionId = row.getAttribute("data-pi-enh-session-id");
-      if (sessionId) {
-        syncSessionTagsRow(row, sessionId);
-      }
-    }
+    notifyNativeSessionTagsChanged();
     syncSessionOdooAddonsLayout();
   }
 
@@ -4475,6 +4209,7 @@
     });
   }
 
+  window.__PI_ENH_GET_SESSION_TAGS__ = (sessionId) => isPluginEnabled("session-tags") ? getSessionTags(sessionId) : [];
   window.__PI_ENH_READ_SESSION_TAGS__ = readSessionTagsDefinitions;
   window.__PI_ENH_WRITE_SESSION_TAGS__ = writeSessionTagsDefinitions;
   window.__PI_ENH_READ_SESSION_TAG_MAPPINGS__ = readSessionTagMappings;
@@ -4691,19 +4426,8 @@
   function syncSessionOdooAddonsLayout() {
     // React 的刷新是异步的；切换开关/热加载时，同步用同一高度函数重排整组，
     // 不能只改变某一行高度而暂时保留下方旧坐标。
-    if (!Array.isArray(latestKnownSessionGroups) || !latestKnownSessionGroups.length) {
-      if (Array.isArray(window.__PI_ENH_EARLY_SESSION_GROUPS__) && window.__PI_ENH_EARLY_SESSION_GROUPS__.length > 0) {
-        processSessionGroups(window.__PI_ENH_EARLY_SESSION_GROUPS__);
-      }
-      if ((!Array.isArray(latestKnownSessionGroups) || !latestKnownSessionGroups.length) && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
-        try {
-          const raw = window.__PI_ENH_GET_RAW_SESSIONS__();
-          if (Array.isArray(raw) && raw.length > 0) {
-            window.__PI_ENH_RERENDER_SESSIONS__?.();
-          }
-        } catch (e) {}
-      }
-    }
+    // An empty native group list is valid (for example, a tag filter with no matches).
+    // Layout must not request another render or restore stale bootstrap groups.
 
     const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
     if (!rows || rows.length === 0) {

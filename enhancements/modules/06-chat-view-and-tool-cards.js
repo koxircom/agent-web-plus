@@ -4134,8 +4134,6 @@
     } catch (e) {}
   }
 
-  let lastFullDomSyncTime = performance.now();
-
   const ALL_SYNC_STEPS = [
     { fn: syncStandaloneVersionDom, scope: "full" },
     { fn: syncWorkspacePickerHover, scope: "full" },
@@ -4147,7 +4145,6 @@
     { fn: syncSubagentDispatchCards, scope: "full" },
     { fn: syncHistoryScrollStability, scope: "chat-text" },
     { fn: syncCompactionCards, scope: "chat-text" },
-    { fn: syncModelScopeWarnings, scope: "full" },
     { fn: hideQuickActionAnalysisCards, scope: "full" },
     { fn: syncQuickActionButtons, scope: "full" },
     { fn: syncEmptySendContinue, scope: "full" },
@@ -4195,10 +4192,6 @@
       ? "chat-text"
       : "full";
 
-    if (targetScope === "full") {
-      lastFullDomSyncTime = performance.now();
-    }
-
     withMutationGuard(() => {
       if (isDisposed) return;
       for (let i = 0; i < ALL_SYNC_STEPS.length; i++) {
@@ -4232,7 +4225,6 @@
   addManagedListener(document, "visibilitychange", () => {
     setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
     if (document.visibilityState === "visible") {
-      stopAttentionTitleAlert();
       syncProjectStatusIndicators();
       // 手机端/前台切回：静默确保当前会话快照与状态对齐，绝不触发全屏重载
       const currentId = getActiveSessionId() || getCurrentSessionId();
@@ -4320,8 +4312,9 @@
     }
     const isForeground = typeof document === "undefined" || document.visibilityState !== "hidden";
     if (isForeground) {
-      const now = performance.now();
-      if (sessionChanged || runningStateChanged || (now - lastFullDomSyncTime >= 5000)) {
+      // DOM/config changes and navigation already invalidate their own scopes.
+      // Keep lifecycle reconciliation, but do not rescan unchanged messages.
+      if (sessionChanged || runningStateChanged) {
         if (typeof scheduleDomSync === "function") {
           scheduleDomSync("full");
         }
@@ -4830,7 +4823,7 @@
 
   function getMinimapHistorySettings() {
     return {
-      initialTurns: clampMinimapTurnSetting(getPluginSetting("minimap-full-nav", "initialTurns"), 5),
+      initialTurns: Math.max(5, clampMinimapTurnSetting(getPluginSetting("minimap-full-nav", "initialTurns"), 5)),
       stepTurns: clampMinimapTurnSetting(getPluginSetting("minimap-full-nav", "stepTurns"), 5),
     };
   }
@@ -5513,9 +5506,6 @@
   // ==========================================
   // 3.8. Obsidian & Markdown Viewer Plugin (Obsidian 笔记与 Markdown 预览增强)
   // ==========================================
-  const userExplicitSourcePaths = new Set();
-  lastObsidianViewerPath = null;
-
   async function handleObsidianFileFetch(input, init, urlStr, activeFetch) {
     if (!isPluginEnabled("obsidian-markdown-viewer")) return null;
 
@@ -5575,10 +5565,6 @@
             const lang = bridgeData.language || "markdown";
 
             if (reqType === "read") {
-              if (bridgeData.content) {
-                viewerFileContentCache.set(candidatePath, bridgeData.content);
-                viewerFileContentCache.set(rawPath, bridgeData.content);
-              }
               const payload = {
                 content: bridgeData.content,
                 nextOffset: bridgeData.size,
@@ -5628,17 +5614,6 @@
 
     // 若原生能正常读取（HTTP 200），直接使用原生响应
     if (nativeResp && nativeResp.ok) {
-      if (reqType === "read") {
-        try {
-          const clone = nativeResp.clone();
-          clone.json().then((data) => {
-            if (data && typeof data.content === "string") {
-              viewerFileContentCache.set(candidatePath, data.content);
-              viewerFileContentCache.set(rawPath, data.content);
-            }
-          }).catch(() => {});
-        } catch (e) {}
-      }
       return nativeResp;
     }
 
@@ -5662,10 +5637,6 @@
             const lang = bridgeData.language || "markdown";
 
             if (reqType === "read") {
-              if (bridgeData.content) {
-                viewerFileContentCache.set(candidatePath, bridgeData.content);
-                viewerFileContentCache.set(rawPath, bridgeData.content);
-              }
               const payload = {
                 content: bridgeData.content,
                 nextOffset: bridgeData.size,
@@ -5700,146 +5671,10 @@
   }
 
   function syncMarkdownViewerMode() {
-    if (!isPluginEnabled("obsidian-markdown-viewer")) {
-      removeMarkdownViewerEnhancements();
-      return;
-    }
-
-    const viewerShell = document.querySelector(".file-viewer-shell");
-    if (!viewerShell) {
-      lastObsidianViewerPath = null;
-      return;
-    }
-
-    const pathEl = viewerShell.querySelector(".file-viewer-path");
-    const currentPath = pathEl?.getAttribute("title") || pathEl?.textContent || "";
-    const isMarkdown = /\.md$/i.test(currentPath) || /\.markdown$/i.test(currentPath) ||
-      Boolean(viewerShell.querySelector(".file-viewer-meta")?.textContent?.toLowerCase().includes("markdown"));
-
-    if (!isMarkdown) return;
-
-    const modeSwitch = viewerShell.querySelector(".file-viewer-mode-switch");
-    if (!modeSwitch) return;
-
-    const buttons = Array.from(modeSwitch.querySelectorAll(".file-viewer-mode-button"));
-    const sourceBtn = buttons.find((b) => /源码|source/i.test(b.textContent || ""));
-    const previewBtn = buttons.find((b) => /预览|preview/i.test(b.textContent || ""));
-
-    if (!sourceBtn || !previewBtn) return;
-
-    if (!sourceBtn.__piObsidianTracked) {
-      sourceBtn.__piObsidianTracked = true;
-      sourceBtn.addEventListener("click", () => {
-        if (currentPath) userExplicitSourcePaths.add(currentPath);
-        updateCustomSwitcherUi();
-      });
-    }
-    if (!previewBtn.__piObsidianTracked) {
-      previewBtn.__piObsidianTracked = true;
-      previewBtn.addEventListener("click", () => {
-        if (currentPath) userExplicitSourcePaths.delete(currentPath);
-        updateCustomSwitcherUi();
-      });
-    }
-
-    // 默认自动切换为格式化预览：当首次打开新笔记且用户未显式切到源码时
-    if (lastObsidianViewerPath !== currentPath) {
-      lastObsidianViewerPath = currentPath;
-      if (!userExplicitSourcePaths.has(currentPath)) {
-        const isPreviewActive = previewBtn.getAttribute("aria-pressed") === "true";
-        if (!isPreviewActive) {
-          previewBtn.click();
-        }
-      }
-    }
-
-    decorateMarkdownModeSwitcher(viewerShell, sourceBtn, previewBtn, currentPath);
-  }
-
-  viewerFileContentCache = new Map();
-
-  async function handleCopyViewerContent(viewerShell, copyBtnEl, fallbackPath) {
-    const pathEl = viewerShell?.querySelector(".file-viewer-path");
-    const activePath = pathEl?.getAttribute("title") || pathEl?.textContent || fallbackPath || "";
-
-    let content = "";
-    // 1. 尝试从内存缓存中获取
-    if (activePath) {
-      content = viewerFileContentCache.get(activePath) || viewerFileContentCache.get(decodeURIComponent(activePath)) || "";
-    }
-
-    // 2. 若缓存未命中，尝试从 Monaco 编辑器中读取源码
-    if (!content) {
-      try {
-        const models = window.monaco?.editor?.getModels?.();
-        if (models && models.length > 0) {
-          content = models[0].getValue?.() || "";
-        }
-      } catch (e) {}
-    }
-
-    // 3. 若仍无内容，且存在有效路径，异步向后端请求该文件的纯文本
-    if (!content && activePath) {
-      try {
-        const cleanPath = activePath.replace(/^[\\/]+/, "");
-        const fetchUrl = `/api/files/${encodeURIComponent(cleanPath)}?type=read`;
-        const resp = await (originalWindowFetch || fetch)(fetchUrl);
-        if (resp && resp.ok) {
-          const data = await resp.json();
-          if (data && typeof data.content === "string") {
-            content = data.content;
-            viewerFileContentCache.set(activePath, content);
-          }
-        }
-      } catch (e) {}
-    }
-
-    // 4. 兜底提取 DOM 内部文本（例如源码 pre/code，或预览区文本）
-    if (!content && viewerShell) {
-      const targetEl = viewerShell.querySelector(".view-lines, pre code, pre, .markdown-file-preview");
-      if (targetEl) {
-        content = targetEl.innerText || targetEl.textContent || "";
-      }
-    }
-
-    if (!content) {
-      showToast("未获取到文件内容，复制失败", null, 2000);
-      return;
-    }
-
-    let copied = false;
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
-        await navigator.clipboard.writeText(content);
-        copied = true;
-      }
-    } catch (e) {}
-    if (!copied) {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = content;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        copied = document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch (e) {}
-    }
-
-    if (copied) {
-      copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-      copyBtnEl.classList.add("is-copied");
-      showToast("已复制 Markdown 源码全文");
-      setTimeout(() => {
-        if (copyBtnEl.isConnected) {
-          copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-          copyBtnEl.classList.remove("is-copied");
-        }
-      }, 1500);
-    } else {
-      showToast("复制失败，请检查浏览器剪贴板权限", null, 2500);
-    }
+    const enabled = isPluginEnabled("obsidian-markdown-viewer");
+    window.dispatchEvent(new CustomEvent("pi:obsidian-markdown-viewer-preferences-change", {
+      detail: { enabled },
+    }));
   }
 
   // 全局直达文件浏览窗口（点击链接直接在右侧浏览窗口查看）
@@ -5930,102 +5765,6 @@
     executeSyncStep(syncExcelViewerMode);
   };
 
-  function decorateMarkdownModeSwitcher(viewerShell, sourceBtn, previewBtn, currentPath) {
-    let customSwitch = viewerShell.querySelector(".pi-enh-md-mode-switch");
-    if (!customSwitch) {
-      customSwitch = document.createElement("div");
-      customSwitch.className = "pi-enh-md-mode-switch";
-      customSwitch.setAttribute("data-pi-enh-viewer-switch", "true");
-      customSwitch.__currentPath = currentPath;
-
-      const prevBtnEl = document.createElement("button");
-      prevBtnEl.type = "button";
-      prevBtnEl.className = "pi-enh-md-btn pi-enh-md-preview";
-      prevBtnEl.title = "Markdown 格式化富文本预览";
-      prevBtnEl.textContent = "👁️ 格式预览";
-
-      const srcBtnEl = document.createElement("button");
-      srcBtnEl.type = "button";
-      srcBtnEl.className = "pi-enh-md-btn pi-enh-md-source";
-      srcBtnEl.title = "切换到 Markdown 源码阅读";
-      srcBtnEl.textContent = "📝 源码阅读";
-
-      const copyBtnEl = document.createElement("button");
-      copyBtnEl.type = "button";
-      copyBtnEl.className = "pi-enh-md-btn pi-enh-md-copy";
-      copyBtnEl.title = "复制源码全文 (Copy Source)";
-      copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-
-      prevBtnEl.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (currentPath) userExplicitSourcePaths.delete(currentPath);
-        previewBtn.click();
-        updateCustomSwitcherUi();
-      });
-      srcBtnEl.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (currentPath) userExplicitSourcePaths.add(currentPath);
-        sourceBtn.click();
-        updateCustomSwitcherUi();
-      });
-      copyBtnEl.addEventListener("click", async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        await handleCopyViewerContent(viewerShell, copyBtnEl, currentPath);
-      });
-
-      customSwitch.appendChild(prevBtnEl);
-      customSwitch.appendChild(srcBtnEl);
-      customSwitch.appendChild(copyBtnEl);
-
-      const controls = viewerShell.querySelector(".file-viewer-controls");
-      if (controls) {
-        if (typeof controls.prepend === "function") {
-          controls.prepend(customSwitch);
-        } else {
-          controls.insertBefore(customSwitch, controls.firstChild);
-        }
-      }
-    } else {
-      customSwitch.__currentPath = currentPath;
-      if (!customSwitch.querySelector(".pi-enh-md-copy")) {
-        const copyBtnEl = document.createElement("button");
-        copyBtnEl.type = "button";
-        copyBtnEl.className = "pi-enh-md-btn pi-enh-md-copy";
-        copyBtnEl.title = "复制源码全文 (Copy Source)";
-        copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
-        copyBtnEl.addEventListener("click", async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          await handleCopyViewerContent(viewerShell, copyBtnEl, currentPath);
-        });
-        customSwitch.appendChild(copyBtnEl);
-      }
-    }
-
-    updateCustomSwitcherUi();
-  }
-
-  function updateCustomSwitcherUi() {
-    const customSwitch = document.querySelector(".pi-enh-md-mode-switch");
-    if (!customSwitch) return;
-    const viewerShell = customSwitch.closest?.(".file-viewer-shell") || document.querySelector(".file-viewer-shell");
-    if (!viewerShell) return;
-
-    const modeButtons = Array.from(viewerShell.querySelectorAll(".file-viewer-mode-button"));
-    const activeBtn = modeButtons.find((b) => b.getAttribute("aria-pressed") === "true");
-    const isPreviewActive = Boolean(activeBtn && /预览|preview/i.test(activeBtn.textContent || ""));
-
-    const prevBtnEl = customSwitch.querySelector(".pi-enh-md-preview");
-    const srcBtnEl = customSwitch.querySelector(".pi-enh-md-source");
-    if (prevBtnEl && srcBtnEl) {
-      prevBtnEl.classList.toggle("is-active", isPreviewActive);
-      srcBtnEl.classList.toggle("is-active", !isPreviewActive);
-    }
-  }
-
   function checkAndAutoRecoverAccessDenied() {
     if (!isPluginEnabled("obsidian-markdown-viewer")) return;
 
@@ -6062,11 +5801,9 @@
   }
 
   function removeMarkdownViewerEnhancements() {
-    for (const el of document.querySelectorAll(".pi-enh-md-mode-switch")) {
-      el.remove();
-    }
-    userExplicitSourcePaths.clear();
-    lastObsidianViewerPath = null;
+    window.dispatchEvent(new CustomEvent("pi:obsidian-markdown-viewer-preferences-change", {
+      detail: { enabled: false },
+    }));
   }
 
   // ==========================================================================
@@ -6443,7 +6180,7 @@
 
 
   addManagedListener(document, "click", (e) => {
-    const link = e.target?.closest?.("a, [role='tab'], .file-viewer-mode-button, .pi-enh-md-btn");
+    const link = e.target?.closest?.("a, [role='tab'], .file-viewer-mode-button");
     if (link) {
       if (link.tagName === "A" && (link.getAttribute("href")?.includes("/session/") || link.getAttribute("href") === "/")) {
         queueMicrotask(() => {

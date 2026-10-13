@@ -81,7 +81,7 @@ export function ThinkingSelector({ levels, value, displayLabel, levelMap, descri
         <span style={{ whiteSpace: "nowrap" }}>{displayLabel}</span>
       </button>
       {open && anchor && typeof document !== "undefined" && createPortal(
-        <div ref={panel} role="listbox" aria-label={label} data-pi-native-thinking-selector="true" className="thinking-selector-menu"
+        <div ref={panel} role="listbox" aria-label={label} data-pi-native-thinking-selector="true" className="thinking-selector-menu pi-native-menu-motion"
           style={{ position: "fixed", zIndex: 1200, boxSizing: "border-box", width, maxHeight, left: Math.max(viewport.left + 8, Math.min(anchor.right - width, viewport.left + viewport.width - width - 8)), ...(useAbove ? { bottom: window.innerHeight - anchor.top + 6 } : { top: anchor.bottom + 6 }) }}
           onKeyDown={(event) => {
             if (event.key === "Tab") { close(); return; }

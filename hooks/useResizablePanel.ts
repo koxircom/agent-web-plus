@@ -88,8 +88,9 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
   const priorTransitionRef = useRef<string | null>(null);
   const [width, setWidth] = useState(defaultWidth);
   const [isResizing, setIsResizing] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  // Bounds may read layout. Measure during owned resize/restore operations,
+  // never while an unrelated React update renders the separator.
+  const [measuredMaxWidth, setMeasuredMaxWidth] = useState(maxWidth);
 
   const effectiveMaxWidth = useCallback(
     () => Math.min(maxWidth, Math.max(minWidth, getMaxWidth())),
@@ -108,13 +109,15 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
 
   const commitWidth = useCallback((candidate: number, commitOptions: CommitOptions = {}) => {
     const { forcePersist = false, persist = true } = commitOptions;
-    const nextWidth = clampWidth(candidate);
+    const nextMaxWidth = effectiveMaxWidth();
+    const nextWidth = clampPanelWidth(candidate, minWidth, nextMaxWidth);
     const changed = nextWidth !== widthRef.current;
     applyLiveWidth(nextWidth);
     setWidth(nextWidth);
+    setMeasuredMaxWidth(nextMaxWidth);
     if (persist && (changed || forcePersist)) writeStoredWidth(storageKey, nextWidth);
     return nextWidth;
-  }, [applyLiveWidth, clampWidth, storageKey, widthRef]);
+  }, [applyLiveWidth, effectiveMaxWidth, minWidth, storageKey, widthRef]);
 
   const restoreBodyState = useCallback((drag: DragState) => {
     document.body.style.cursor = drag.previousCursor;
@@ -319,7 +322,7 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
     separatorProps: {
       "aria-label": ariaLabel,
       "aria-orientation": axis === "vertical" ? "horizontal" as const : "vertical" as const,
-      "aria-valuemax": mounted ? effectiveMaxWidth() : maxWidth,
+      "aria-valuemax": measuredMaxWidth,
       "aria-valuemin": minWidth,
       "aria-valuenow": width,
       "aria-valuetext": `${width} px`,

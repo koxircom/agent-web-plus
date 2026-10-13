@@ -1,9 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_Mono } from "next/font/google";
 import { PwaRegistration } from "@/components/PwaRegistration";
-import { PiWebEnhancementsRuntime } from "@/components/PiWebEnhancementsRuntime";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
-import "katex/dist/katex.min.css";
 import { BRAND_NAME } from "@/lib/branding";
 import "./globals.css";
 import "../components/ComposerQueue.css";
@@ -82,7 +80,6 @@ export default function RootLayout({
       </head>
       <body translate="no" className="notranslate" suppressHydrationWarning>
         {children}
-        <PiWebEnhancementsRuntime />
         <PwaRegistration />
       </body>
     </html>

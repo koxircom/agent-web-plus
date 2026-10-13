@@ -229,50 +229,15 @@
 
 
   // --- Notification Preferences & History (通知偏好与历史) ---
-  const NOTIFICATION_SETTINGS_STORAGE_KEY = "pi-enh-notification-settings-v1";
-  const NOTIFICATION_HISTORY_STORAGE_KEY = "pi-enh-notification-history-v1";
-  const NOTIFICATION_HISTORY_LIMIT = 100;
-  const NOTIFICATION_CHANNELS = [
-    { id: "session-title", name: "会话标题自动提炼", desc: "会话标题被 AI 自动提炼并修改时提示。", group: "日常提示", defaultEnabled: false },
-    { id: "mcp", name: "MCP 工具与连接提示", desc: "MCP 工具注册、重新加载、连接失败或配置错误提示。", group: "日常提示", defaultEnabled: false },
-    { id: "native-info", name: "普通信息提示", desc: "其他 info 级别的 Agent 扩展通知。", group: "日常提示", defaultEnabled: false },
-    { id: "native-success", name: "成功提示", desc: "操作成功或服务完成时的 success 通知。", group: "日常提示", defaultEnabled: true },
-    { id: "native-warning", name: "警告提示", desc: "warning 级别的服务或配置告警。", group: "异常与安全", defaultEnabled: true },
-    { id: "native-error", name: "错误提示", desc: "error 级别的故障提示，建议保持开启。", group: "异常与安全", defaultEnabled: true },
-    { id: "security-guard", name: "安全拦截与防护", desc: "WSL、NAS、Pi Web 重启及超时看门狗等高危操作拦截提示。", group: "异常与安全", defaultEnabled: true },
-    { id: "enhancement-toast", name: "网页增强操作提示", desc: "复制、归档、缓存、插件切换等网页操作的轻量提示。", group: "网页提醒", defaultEnabled: true },
-    { id: "attention-sound", name: "审批提示音", desc: "后台任务等待人工处理时播放提示音。", group: "后台任务", defaultEnabled: true },
-    { id: "attention-desktop", name: "桌面待处理通知", desc: "后台任务需要处理时发送浏览器/系统桌面通知。", group: "后台任务", defaultEnabled: false },
-  ];
-  let notificationSettings = null;
-
-  function getNotificationDefaults() {
-    return Object.fromEntries(NOTIFICATION_CHANNELS.map((item) => [item.id, item.defaultEnabled]));
-  }
+  const getNativeNotificationPolicy = () => {
+    try { return window.__PI_NATIVE_NOTIFICATION_POLICY__ || null; } catch (e) { return null; }
+  };
+  const nativeNotificationPolicy = getNativeNotificationPolicy();
+  const NOTIFICATION_CHANNELS = nativeNotificationPolicy?.channels || [];
+  const NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT = nativeNotificationPolicy?.changeEvent || "pi-native-notification-policy-change";
 
   function readNotificationSettings() {
-    if (notificationSettings) return notificationSettings;
-    const defaults = getNotificationDefaults();
-    try {
-      const raw = localStorage.getItem(NOTIFICATION_SETTINGS_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      if (parsed && typeof parsed === "object" && parsed.schemaVersion === 1 && parsed.channels) {
-        for (const item of NOTIFICATION_CHANNELS) {
-          if (typeof parsed.channels[item.id] === "boolean") defaults[item.id] = parsed.channels[item.id];
-        }
-      }
-    } catch (e) {}
-    notificationSettings = defaults;
-    try {
-      localStorage.setItem(NOTIFICATION_SETTINGS_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, channels: notificationSettings }));
-    } catch (e) {}
-    return notificationSettings;
-  }
-
-  function writeNotificationSettings() {
-    try {
-      localStorage.setItem(NOTIFICATION_SETTINGS_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, channels: readNotificationSettings() }));
-    } catch (e) {}
+    return getNativeNotificationPolicy()?.getSettings?.() || Object.fromEntries(NOTIFICATION_CHANNELS.map((item) => [item.id, item.defaultEnabled]));
   }
 
   function getNotificationChannel(id) {
@@ -280,9 +245,7 @@
   }
 
   function isNotificationEnabled(id) {
-    const channel = getNotificationChannel(id);
-    if (!channel) return true;
-    return readNotificationSettings()[id] !== false;
+    return getNativeNotificationPolicy()?.isEnabled?.(id) ?? true;
   }
 
   function getNotificationTypeLabel(type) {
@@ -290,102 +253,20 @@
   }
 
   function classifyNotification(message, type = "info", channel = "native") {
-    const text = String(message || "");
-    if (channel === "toast") return "enhancement-toast";
-    if (channel === "attention-sound") return "attention-sound";
-    if (channel === "attention-desktop") return "attention-desktop";
-    if (/会话标题(?:已自动提炼|自动提炼)/i.test(text)) return "session-title";
-    if (/\bMCP\b|Registered\s+\d+\s+tool|MCP tools|工具.*(?:注册|重新加载)|(?:注册|重新加载).*工具/i.test(text)) return "mcp";
-    if (/已(?:物理)?拦截|WSL|NAS|Pi Web.*(?:杀死|重启|高危)|看门狗|超时兜底/i.test(text)) return "security-guard";
-    if (type === "error") return "native-error";
-    if (type === "warning") return "native-warning";
-    if (type === "success") return "native-success";
-    return "native-info";
+    return getNativeNotificationPolicy()?.classify?.(message, type, channel) || "native-info";
   }
 
   function readNotificationHistory() {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(NOTIFICATION_HISTORY_STORAGE_KEY) || "[]");
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (e) { return []; }
-  }
-
-  function writeNotificationHistory(history) {
-    try { localStorage.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, JSON.stringify(history.slice(0, NOTIFICATION_HISTORY_LIMIT))); } catch (e) {}
+    return getNativeNotificationPolicy()?.history?.() || [];
   }
 
   function recordNotificationEvent(message, type = "info", channel = "native", settingId = null) {
-    const resolvedId = settingId || classifyNotification(message, type, channel);
-    const enabled = isNotificationEnabled(resolvedId);
-    const history = readNotificationHistory();
-    history.unshift({
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      timestamp: Date.now(),
-      message: String(message || "").slice(0, 2000),
-      type: String(type || "info"),
-      channel: String(channel || "native"),
-      settingId: resolvedId,
-      suppressed: !enabled,
-    });
-    writeNotificationHistory(history);
-    return enabled;
+    return getNativeNotificationPolicy()?.record?.(message, type, channel, settingId) ?? true;
   }
 
-  function isNotificationCenterEnabled() {
-    try { return typeof isPluginEnabled !== "function" || isPluginEnabled("notification-center"); } catch (e) { return true; }
-  }
-
-  function getNativeNoticeType(node) {
-    const bullet = node?.querySelector?.(":scope > span");
-    const background = `${bullet?.style?.background || ""} ${bullet?.style?.backgroundColor || ""}`.toLowerCase();
-    if (background.includes("#ef4444") || background.includes("239, 68, 68")) return "error";
-    if (background.includes("#d97706") || background.includes("217, 119, 6")) return "warning";
-    if (background.includes("#10b981") || background.includes("16, 185, 129")) return "success";
-    return "info";
-  }
-
-  function processNativeNotice(node) {
-    if (!node?.matches?.(".notice-shelf-item") || node.dataset.piEnhNotificationProcessed === "true") return;
-    if (!isNotificationCenterEnabled()) {
-      if (node.hasAttribute("data-pi-enh-notification-suppressed")) {
-        node.removeAttribute("data-pi-enh-notification-suppressed");
-      }
-      return;
-    }
-    const message = (node.textContent || "").trim();
-    if (!message) return;
-    const type = getNativeNoticeType(node);
-    const settingId = classifyNotification(message, type, "native");
-    node.dataset.piEnhNotificationProcessed = "true";
-    node.dataset.piEnhNotificationSetting = settingId;
-    recordNotificationEvent(message, type, "native", settingId);
-    const shouldSuppress = !isNotificationEnabled(settingId);
-    if (shouldSuppress) {
-      if (node.getAttribute("data-pi-enh-notification-suppressed") !== "true") {
-        node.setAttribute("data-pi-enh-notification-suppressed", "true");
-      }
-    } else {
-      if (node.hasAttribute("data-pi-enh-notification-suppressed")) {
-        node.removeAttribute("data-pi-enh-notification-suppressed");
-      }
-    }
-  }
-
-  function applyNotificationVisibility() {
-    const centerEnabled = isNotificationCenterEnabled();
-    for (const node of document.querySelectorAll(".notice-shelf-item")) {
-      const settingId = node.dataset.piEnhNotificationSetting || classifyNotification(node.textContent || "", getNativeNoticeType(node), "native");
-      node.dataset.piEnhNotificationSetting = settingId;
-      const shouldSuppress = centerEnabled && !isNotificationEnabled(settingId);
-      if (shouldSuppress) {
-        if (node.getAttribute("data-pi-enh-notification-suppressed") !== "true") {
-          node.setAttribute("data-pi-enh-notification-suppressed", "true");
-        }
-      } else {
-        if (node.hasAttribute("data-pi-enh-notification-suppressed")) {
-          node.removeAttribute("data-pi-enh-notification-suppressed");
-        }
-      }
+  function applyNotificationVisibility(dispatchPolicyChange = true) {
+    if (dispatchPolicyChange) {
+      try { window.dispatchEvent(new CustomEvent(NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT)); } catch (e) {}
     }
     if (!isNotificationEnabled("enhancement-toast")) dismissToast?.(true);
     if (typeof renderAttentionNotices === "function") renderAttentionNotices();
@@ -394,25 +275,17 @@
   }
 
   function setNotificationEnabled(id, enabled) {
-    if (!getNotificationChannel(id)) return;
-    readNotificationSettings()[id] = Boolean(enabled);
-    writeNotificationSettings();
-    applyNotificationVisibility();
+    if (!getNotificationChannel(id) || !getNativeNotificationPolicy()?.setEnabled?.(id, enabled)) return;
+    applyNotificationVisibility(false);
   }
 
   function clearNotificationHistory() {
-    writeNotificationHistory([]);
+    getNativeNotificationPolicy()?.clearHistory?.();
   }
 
-  function scanNativeNotices(root) {
-    if (root?.matches?.(".notice-shelf-item")) processNativeNotice(root);
-    root?.querySelectorAll?.(".notice-shelf-item").forEach(processNativeNotice);
-  }
-
-  function initNotificationCapture() {
-    // Native notice nodes are scanned by the existing body/settings observer below;
-    // avoid adding another MutationObserver to the hot-reload lifecycle.
-    scanNativeNotices(document);
+  function resetNotificationSettings() {
+    getNativeNotificationPolicy()?.reset?.();
+    applyNotificationVisibility(false);
   }
 
   window.__PI_ENH_NOTIFICATION_SETTINGS__ = {
@@ -422,6 +295,8 @@
     history: () => readNotificationHistory(),
     clearHistory: clearNotificationHistory,
     classify: classifyNotification,
+    reset: resetNotificationSettings,
+    admit: (notice) => getNativeNotificationPolicy()?.admitNativeNotification?.(notice) ?? true,
   };
 
   // --- Toast Helper ---
@@ -523,8 +398,6 @@
     delete window.__PI_ENH_PENDING_TOAST__;
     showToast(pendingToast.message, pendingToast.iconSvg, pendingToast.durationMs, pendingToast.settingId);
   }
-
-  initNotificationCapture();
 
   // --- Clipboard Helper ---
   async function copyText(text, successMsg) {

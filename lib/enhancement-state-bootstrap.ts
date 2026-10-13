@@ -47,6 +47,7 @@ export type EnhancementsRuntimeWindow = {
   __PI_OFFICIAL_AGENT_VERSION__?: string;
   __PI_ENH_NATIVE_STATE_API__?: boolean;
   __PI_ENH_DURABLE_STATE_ENABLED__?: boolean;
+  __PI_ENH_INITIAL_DURABLE_STATE__?: unknown;
   __PI_WEB_ENHANCEMENTS_LOADED__?: boolean;
   __PI_ENH_ASSET_BUILD__?: string;
   __PI_ENH_RELOAD__?: (forceBust?: boolean) => void;

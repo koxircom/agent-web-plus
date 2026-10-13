@@ -7,6 +7,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const listRoute = await readFile(new URL("./route.ts", import.meta.url), "utf8");
+const sessionListSource = await readFile(new URL("../../../lib/session-list.ts", import.meta.url), "utf8");
 const detailRoute = await readFile(new URL("./[id]/route.ts", import.meta.url), "utf8");
 const contextRoute = await readFile(new URL("./[id]/context/route.ts", import.meta.url), "utf8");
 const stateRoute = await readFile(new URL("./[id]/state/route.ts", import.meta.url), "utf8");
@@ -147,7 +148,9 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
     cacheSessionPath(id, filePath);
     let shutdownCalled = false;
     globalThis.__piSessions.set(id, {
+      isAlive: () => true,
       isRunning: () => false,
+      getPendingProjectRequests: () => [],
       shutdown: async () => {
         shutdownCalled = true;
         if (persistOnShutdown) await writeFile(filePath, JSON.stringify(manager.getHeader()));
@@ -173,11 +176,11 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
 
 test("session listing supports cheap summaries and honors force refresh", () => {
   assert.match(listRoute, /searchParams\.get\("summary"\) === "1"/);
-  assert.match(listRoute, /summary\s*\n?\s*\? listSessionSummaries\(\)/);
+  assert.match(listRoute, /readSessionList\(\{\s*summary,\s*force\s*\}\)/);
   assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
-  assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
-  assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
-  assert.match(listRoute, /mergeSessionLists\(persistedSessions, runtimeSessions\)/);
+  assert.match(sessionListSource, /options\.summary \? listSessionSummaries\(\) : listAllSessions\(\{ force: options\.force \}\)/);
+  assert.match(sessionListSource, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
+  assert.match(sessionListSource, /mergeSessionLists\(sessions, runtime\)/);
   assert.match(listRoute, /"Cache-Control": "no-store"/);
 });
 

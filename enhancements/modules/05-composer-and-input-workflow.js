@@ -2481,11 +2481,53 @@
     } catch (e) {}
   }
 
+  function hideDimensionNotesInMessage(msgEl) {
+    if (!msgEl) return;
+    try {
+      if (typeof document === "undefined" || typeof document.createTreeWalker !== "function") return;
+      const dimRegex = /\[Image:\s*original\s+[^\]]+\]/i;
+      const walker = document.createTreeWalker(msgEl, 4 /* NodeFilter.SHOW_TEXT */, null, false);
+      const nodesToReplace = [];
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.nodeValue && dimRegex.test(node.nodeValue)) {
+          nodesToReplace.push(node);
+        }
+      }
+      for (const textNode of nodesToReplace) {
+        const val = textNode.nodeValue;
+        const parts = val.split(/(\[Image:\s*original\s+[^\]]+\])/i);
+        const frag = document.createDocumentFragment();
+        for (const p of parts) {
+          if (/^\[Image:\s*original\s+[^\]]+\]$/i.test(p)) {
+            const span = document.createElement("span");
+            span.className = "pi-enh-msg-dimension-hidden-mark";
+            span.textContent = p;
+            span.style.display = "none";
+            frag.appendChild(span);
+          } else if (p) {
+            frag.appendChild(document.createTextNode(p));
+          }
+        }
+        const parent = textNode.parentNode;
+        parent?.replaceChild(frag, textNode);
+        if (parent && parent !== msgEl && parent.nodeType === 1) {
+          const visibleText = parent.textContent?.replace(dimRegex, "").trim();
+          if (!visibleText && parent.children.length > 0) {
+            const allHidden = Array.from(parent.children).every(
+              (c) => c.classList?.contains("pi-enh-msg-dimension-hidden-mark") || c.classList?.contains("pi-enh-msg-attachment-hidden-mark") || c.style?.display === "none"
+            );
+            if (allHidden) {
+              parent.setAttribute("data-pi-enh-empty-container-hidden", "true");
+              parent.style.display = "none";
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   function syncUserMessageAttachmentCards() {
-    if (!isPluginEnabled("composer-file-paste")) {
-      removeUserMessageAttachmentCards();
-      return;
-    }
     if (typeof document === "undefined") return;
 
     const userMessages = document.querySelectorAll(".markdown-user-message");
@@ -2495,8 +2537,15 @@
     const cwd = window.__PI_CURRENT_SESSION_DATA__?.info?.cwd || "";
 
     for (const msgEl of userMessages) {
+      hideAttachmentSyntaxInMessage(msgEl);
+      hideDimensionNotesInMessage(msgEl);
+
       const bubble = msgEl.parentElement;
       if (!bubble) continue;
+
+      if (!isPluginEnabled("composer-file-paste")) {
+        continue;
+      }
 
       const attachments = extractAttachmentsFromUserMessage(msgEl, currentSessionId);
       let bar = bubble.querySelector(".pi-enh-message-attachments");
@@ -2528,8 +2577,6 @@
         const card = createUserMessageAttachmentPillCard(att, cwd);
         bar.appendChild(card);
       }
-
-      hideAttachmentSyntaxInMessage(msgEl);
     }
   }
 
@@ -2541,6 +2588,16 @@
     for (const mark of hiddenMarks) {
       mark.style.display = "";
       mark.classList.remove("pi-enh-msg-attachment-hidden-mark");
+    }
+    const hiddenDimMarks = document.querySelectorAll(".pi-enh-msg-dimension-hidden-mark");
+    for (const mark of hiddenDimMarks) {
+      mark.style.display = "";
+      mark.classList.remove("pi-enh-msg-dimension-hidden-mark");
+    }
+    const emptyContainers = document.querySelectorAll('[data-pi-enh-empty-container-hidden="true"]');
+    for (const c of emptyContainers) {
+      c.style.display = "";
+      c.removeAttribute("data-pi-enh-empty-container-hidden");
     }
   }
 
@@ -3277,6 +3334,7 @@
   window.__PI_ENH_REMOVE_COMPOSER_FILE_PASTE__ = removeComposerFilePaste;
   window.__PI_ENH_SYNC_USER_MESSAGE_ATTACHMENTS__ = syncUserMessageAttachmentCards;
   window.__PI_ENH_REMOVE_USER_MESSAGE_ATTACHMENTS__ = removeUserMessageAttachmentCards;
+  window.__PI_ENH_HIDE_DIMENSION_NOTES__ = hideDimensionNotesInMessage;
   function appendComposerAttachmentsToSubmission(body, attachments) {
     let extraText = "";
     for (const att of attachments) {
@@ -3772,34 +3830,45 @@
     const button = findComposerModelSelectorButton();
     if (!button) return;
     button.removeAttribute(RUNNING_MODEL_SWITCH_MARKER);
-    if (isComposerTaskRunning()) button.disabled = true;
+    // 原生单一所有权：绝对不篡改原生 button.disabled，由 React 原生组件自主管理
   }
 
   function syncRunningModelSwitch() {
-    if (!isPluginEnabled("running-model-switch")) {
-      restoreRunningModelSwitch();
-      return;
-    }
     const button = findComposerModelSelectorButton();
     if (!button) return;
-    if (!isComposerTaskRunning()) {
+    if (!isPluginEnabled("running-model-switch") || !isComposerTaskRunning()) {
       button.removeAttribute(RUNNING_MODEL_SWITCH_MARKER);
       return;
     }
-    if (button.disabled) button.disabled = false;
     button.setAttribute(RUNNING_MODEL_SWITCH_MARKER, "true");
   }
 
   function guardDisabledRunningModelSwitch(event) {
-    if (isPluginEnabled("running-model-switch") || !isComposerTaskRunning()) return;
-    const button = event.target?.closest?.('.model-selector button[aria-haspopup="listbox"], .model-selector > button');
-    if (!button) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    button.disabled = true;
+    // 原生 React ChatInput 已完全原生支持运行态选择下一条消息模型，
+    // 外部脚本彻底退出拦截，杜绝强制禁用按钮或阻止点击导致的菜单意外关闭
+    return;
   }
 
   addManagedListener(document, "click", guardDisabledRunningModelSwitch, true);
+
+  // 保护原生模型选择器在会话流式输出期间不被高频重绘或脱落节点触发的伪 Outside Click 误关
+  function guardModelSelectorDuringStreaming(event) {
+    const listbox = document.querySelector('div[role="listbox"]');
+    if (!listbox) return;
+    const target = event.target;
+    // 如果事件源节点在流式更新或重排中已被移除脱离 DOM 树，阻止其冒泡触发 outside-click
+    if (target && !target.isConnected) {
+      event.stopPropagation();
+      return;
+    }
+    const modelBtn = findComposerModelSelectorButton();
+    if ((modelBtn && (modelBtn === target || modelBtn.contains(target))) || listbox.contains(target)) {
+      return;
+    }
+  }
+
+  addManagedListener(document, "mousedown", guardModelSelectorDuringStreaming, true);
+  addManagedListener(document, "pointerdown", guardModelSelectorDuringStreaming, true);
 
   window.__PI_ENH_SYNC_RUNNING_MODEL_SWITCH__ = syncRunningModelSwitch;
   window.__PI_ENH_RESTORE_RUNNING_MODEL_SWITCH__ = restoreRunningModelSwitch;
@@ -3996,9 +4065,26 @@
     showToast("输入框状态已变化，完整召回图文已导出恢复文件；未覆盖当前输入", null, 6000);
   }
 
+  function getEffectiveQueueSessionId(explicitSid) {
+    if (explicitSid && typeof explicitSid === "string" && !explicitSid.startsWith("new:")) {
+      return explicitSid;
+    }
+    const fromUrl = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
+    if (fromUrl) return fromUrl;
+    if (typeof getEffectiveComposerSessionId === "function") {
+      const fromComposer = getEffectiveComposerSessionId();
+      if (fromComposer && !fromComposer.startsWith("new:")) return fromComposer;
+    }
+    const fromScroll = document.querySelector?.("[data-pi-native-scroll-owner]")?.getAttribute?.("data-pi-native-scroll-owner");
+    if (fromScroll && !fromScroll.startsWith("new:")) return fromScroll;
+    return explicitSid || null;
+  }
+
   function deliverRecalledQueuePayload(ownerKey, keyRef, route, text, images) {
     const current = readNativeComposerDraft();
-    if (getCurrentSessionId() === route && current?.key === ownerKey && current.keyRef === keyRef
+    const effectiveRoute = getEffectiveQueueSessionId(route);
+    const activeRoute = getEffectiveQueueSessionId();
+    if (activeRoute === effectiveRoute && current?.key === ownerKey && current.keyRef === keyRef
       && current.pendingRef.current === 0 && current.imagesRef.current.length + images.length <= 10) {
       current.handle.restoreSubmission(text, images, ownerKey);
       current.textarea?.focus();
@@ -4008,11 +4094,12 @@
   }
 
   async function hydrateSessionQueueAttachments(sessionId) {
-    if (!sessionId) return;
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (!activeSid) return;
     try {
-      const persisted = await idbLoadSubmissions(sessionId);
+      const persisted = await idbLoadSubmissions(activeSid);
       if (Array.isArray(persisted) && persisted.length > 0) {
-        const existing = queueSubmissionMemoryStore.get(sessionId) || [];
+        const existing = queueSubmissionMemoryStore.get(activeSid) || [];
         const existingIds = new Set(existing.map((x) => x.id));
         for (const item of persisted) {
           if (!existingIds.has(item.id)) {
@@ -4020,20 +4107,22 @@
           }
         }
         existing.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        queueSubmissionMemoryStore.set(sessionId, existing);
+        queueSubmissionMemoryStore.set(activeSid, existing);
         notifyQueueAttachmentUpdated();
       }
     } catch (_) {}
   }
 
   function triggerSessionHydration(sessionId) {
-    if (!sessionId || hydratedSessions.has(sessionId)) return;
-    hydratedSessions.add(sessionId);
-    void hydrateSessionQueueAttachments(sessionId);
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (!activeSid || hydratedSessions.has(activeSid)) return;
+    hydratedSessions.add(activeSid);
+    void hydrateSessionQueueAttachments(activeSid);
   }
 
   function recordCapturedSubmissionAttachment(sessionId, kind, text, rawImages) {
-    if (!sessionId) return;
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (!activeSid) return;
     const cleanText = typeof text === "string" ? text.trim() : "";
     const images = (Array.isArray(rawImages) ? rawImages : []).map((img, idx) => {
       const raw = img.data || img.src || "";
@@ -4048,17 +4137,17 @@
 
     const submission = {
       id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : String(Date.now()) + Math.random(),
-      sessionId,
+      sessionId: activeSid,
       kind,
       text: cleanText,
       images,
       timestamp: Date.now(),
     };
 
-    let list = queueSubmissionMemoryStore.get(sessionId);
+    let list = queueSubmissionMemoryStore.get(activeSid);
     if (!list) {
       list = [];
-      queueSubmissionMemoryStore.set(sessionId, list);
+      queueSubmissionMemoryStore.set(activeSid, list);
     }
     list.push(submission); // Never evict a possibly still-pending attachment by count.
 
@@ -4075,22 +4164,27 @@
   const composerQueueUnsupported = new Set();
   let composerQueueActionsState = null;
   const composerQueueErrors = new Map();
+
   function showQueueUnavailable(sessionId, signature, entries) {
-    if (composerQueueUnsupported.has(sessionId)) {
+    const targetSid = getEffectiveQueueSessionId(sessionId);
+    if (composerQueueUnsupported.has(targetSid)) {
       showQueueSecurityWarningToast("队列未改动：当前服务不支持安全队列操作");
       return;
     }
-    const error = composerQueueErrors.get(sessionId) || "队列状态尚未获取";
-    showToast(/Queue desynchronized/i.test(error)
-      ? "队列显示与执行状态不同步，原图文已保留；正在重新读取状态"
-      : "队列状态暂不可用，原图文已保留；正在重新读取状态", null, 3500);
-    void loadComposerQueueTokens(sessionId, signature, entries);
+    const error = composerQueueErrors.get(targetSid) || "队列状态尚未获取";
+    if (/Queue desynchronized/i.test(error)) {
+      showToast("队列显示与执行状态不同步，原图文已保留；正在重新读取状态", null, 3500);
+    } else {
+      showToast("队列状态暂不可用，原图文已保留；正在重新读取状态", null, 3500);
+    }
+    loadComposerQueueTokens(targetSid, signature, entries);
   }
 
   function handleQueueOperationError(sessionId, errorMsg, defaultPrefix = "操作") {
+    const activeSid = getEffectiveQueueSessionId(sessionId);
     const raw = String(errorMsg || "");
     if (/unknown command|unsupported command|未安装|不支持.*(?:命令|接口)/i.test(raw)) {
-      if (sessionId) composerQueueUnsupported.add(sessionId);
+      if (activeSid) composerQueueUnsupported.add(activeSid);
       composerQueueActionsState = null;
       showQueueSecurityWarningToast("队列未改动：当前服务不支持安全队列操作");
     } else {
@@ -4108,9 +4202,9 @@
   }
 
   async function fetchQueuedMessageDetail(sessionId, token) {
-    if (isDisposed) return null;
-    if (!sessionId || !token) return null;
-    const cacheKey = `${sessionId}:${token}`;
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (isDisposed || !activeSid || !token) return null;
+    const cacheKey = `${activeSid}:${token}`;
     const cached = getFromQueueDetailCache(cacheKey);
     if (cached) {
       return cached;
@@ -4124,7 +4218,7 @@
 
     const p = (async () => {
       try {
-        const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+        const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "get_queued_message", token }),
@@ -4155,10 +4249,11 @@
   }
 
   async function loadComposerQueueTokens(sessionId, entriesSignature, entries) {
-    if (composerQueueRequest || composerQueueUnsupported.has(sessionId)) return;
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (!activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
     composerQueueRequest = entriesSignature;
     try {
-      const response = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+      const response = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "get_queue_actions" }),
@@ -4167,16 +4262,16 @@
       const data = result?.data;
       if (!response.ok || result.success === false) {
         composerQueueActionsState = null;
-        composerQueueErrors.set(sessionId, String(result?.error || "队列状态请求失败"));
+        composerQueueErrors.set(activeSid, String(result?.error || "队列状态请求失败"));
         if (/unknown command|unsupported command|不支持.*(?:命令|接口)/i.test(String(result?.error || ""))) {
-          composerQueueUnsupported.add(sessionId);
+          composerQueueUnsupported.add(activeSid);
         }
         return;
       }
-      if (!isPluginEnabled("composer-queue-panel") || !composerQueuePanel?.isConnected || sessionId !== getCurrentSessionId()
+      if (!isPluginEnabled("composer-queue-panel") || !composerQueuePanel?.isConnected
         || entriesSignature !== composerQueueLastEntriesSignature) return;
 
-      composerQueueErrors.delete(sessionId);
+      composerQueueErrors.delete(activeSid);
       if (data?.version === 2) {
         const steering = Array.isArray(data.steering) ? data.steering : [];
         const followUp = Array.isArray(data.followUp) ? data.followUp : [];
@@ -4202,7 +4297,7 @@
         }
 
         composerQueueActionsState = {
-          sessionId,
+          sessionId: activeSid,
           signature: entriesSignature,
           version: 2,
           reorder: data.reorder === true,
@@ -4212,9 +4307,9 @@
 
         const allItems = [...steering, ...followUp];
         for (const item of allItems) {
-          const cacheKey = `${sessionId}:${item.token}`;
+          const cacheKey = `${activeSid}:${item.token}`;
           if (item.imageCount > 0 && !queuedMessageDetailCache.has(cacheKey)) {
-            void fetchQueuedMessageDetail(sessionId, item.token);
+            void fetchQueuedMessageDetail(activeSid, item.token);
           }
         }
         if (entriesSignature === composerQueueLastEntriesSignature) {
@@ -4225,7 +4320,7 @@
         if (!Array.isArray(data.followUp) || data.followUp.length !== expectedFollowUp.length
           || expectedFollowUp.some((e, i) => e.text !== data.followUp[i].text)) return;
         composerQueueActionsState = {
-          sessionId,
+          sessionId: activeSid,
           signature: entriesSignature,
           version: 1,
           steering: [],
@@ -4234,34 +4329,34 @@
       }
     } catch (error) {
       composerQueueActionsState = null;
-      composerQueueErrors.set(sessionId, String(error?.message || "网络异常"));
-      // Keep native queue intact on a network error.
+      composerQueueErrors.set(activeSid, String(error?.message || "网络异常"));
     } finally {
       composerQueueRequest = null;
       if (composerQueueLastEntriesSignature && composerQueueLastEntriesSignature !== entriesSignature) {
-            syncComposerQueuePanel();
+        syncComposerQueuePanel(false, activeSid);
       }
     }
   }
 
   async function promoteComposerQueuedMessage(entryIndex, sessionId, signature) {
-    if (composerQueueBusy || sessionId !== getCurrentSessionId() || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && (composerQueueActionsState.version === 1 || composerQueueActionsState.version === 2) && !composerQueueUnsupported.has(sessionId);
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    const hasSecure = composerQueueActionsState && (composerQueueActionsState.version === 1 || composerQueueActionsState.version === 2) && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
-      showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
       return;
     }
-    if (composerQueueActionsState.sessionId !== sessionId || composerQueueActionsState.signature !== signature) {
+    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
       showToast("队列状态已更新，请重试", null, 3000);
       return;
     }
     composerQueueBusy = true;
-    publishNativeQueueDetails();
+    publishNativeQueueDetails(activeSid);
 
     try {
       const hasSecure = composerQueueActionsState.version === 1 || composerQueueActionsState.version === 2;
       if (!hasSecure) {
-        showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+        showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
         return;
       }
 
@@ -4281,11 +4376,11 @@
       }
 
       if (!token) {
-        showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+        showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
         return;
       }
 
-      const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "promote_queued_message", token }),
@@ -4297,48 +4392,48 @@
         showToast(`转引导失败: ${r?.error || "请求异常"}`, null, 3000);
       }
     } catch (error) {
-      handleQueueOperationError(sessionId, error.message, "转引导");
+      handleQueueOperationError(activeSid, error.message, "转引导");
     } finally {
       composerQueueBusy = false;
-        syncComposerQueuePanel();
+      syncComposerQueuePanel(false, activeSid);
     }
   }
 
   async function reorderComposerQueuedMessage(index, targetIndex, sessionId, signature) {
+    const activeSid = getEffectiveQueueSessionId(sessionId);
     const state = composerQueueActionsState;
-    if (composerQueueBusy || sessionId !== getCurrentSessionId() || signature !== composerQueueLastEntriesSignature
-      || state?.signature !== signature || state?.sessionId !== sessionId || !state.reorder) return;
+    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature
+      || state?.signature !== signature || state?.sessionId !== activeSid || !state.reorder) return;
     const items = [...state.steering, ...state.followUp];
     const entries = composerQueueCurrentEntries;
     if (!Number.isInteger(index) || !Number.isInteger(targetIndex) || !items[index] || !items[targetIndex]
       || entries[index]?.kind !== entries[targetIndex]?.kind || index === targetIndex) return;
     composerQueueBusy = true;
-    publishNativeQueueDetails();
+    publishNativeQueueDetails(activeSid);
     try {
-      const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({type: "reorder_queued_message", tokens: items.map(item => item.token), token: items[index].token, targetToken: items[targetIndex].token}),
       });
       const result = await res.json();
       if (!res.ok || result?.success !== true || result.data?.version !== 2) throw new Error(result?.error || "排序失败");
-    } catch (error) { handleQueueOperationError(sessionId, error.message, "排序"); }
+    } catch (error) { handleQueueOperationError(activeSid, error.message, "排序"); }
     finally {
       composerQueueBusy = false;
-      // Identical text may keep the render signature unchanged: re-read tokens
-      // so images continue to follow their original message objects.
       composerQueueActionsState = null;
-      syncComposerQueuePanel();
+      syncComposerQueuePanel(false, activeSid);
     }
   }
 
   async function recallSingleQueuedMessage(entryIndex, sessionId, signature) {
-    if (composerQueueBusy || sessionId !== getCurrentSessionId() || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(sessionId);
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
-      showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
       return;
     }
-    if (composerQueueActionsState.sessionId !== sessionId || composerQueueActionsState.signature !== signature) {
+    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
       showToast("队列状态已更新，请重试", null, 3000);
       return;
     }
@@ -4351,7 +4446,7 @@
 
     const capturedOwner = native.key;
     const capturedKeyRef = native.keyRef;
-    const capturedRoute = getCurrentSessionId();
+    const capturedRoute = activeSid;
     const capturedSignature = signature;
 
     const steerList = composerQueueActionsState.steering || [];
@@ -4365,20 +4460,19 @@
     }
 
     if (!token) {
-      showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
       return;
     }
 
     composerQueueBusy = true;
-    publishNativeQueueDetails();
+    publishNativeQueueDetails(activeSid);
 
     try {
-      const payload = await fetchQueuedMessageDetail(sessionId, token);
+      const payload = await fetchQueuedMessageDetail(activeSid, token);
       if (!payload) {
         showToast("获取排队消息详情失败，队列未改动", null, 3000);
         return;
       }
-
       const currentImages = Array.isArray(native.imagesRef?.current) ? native.imagesRef.current : [];
       const recallImages = Array.isArray(payload.images) ? payload.images : [];
       if (currentImages.length + recallImages.length > 10) {
@@ -4386,16 +4480,15 @@
         return;
       }
 
-      // await 详情后及 mutation 前重验 owner/route/signature
       const beforeMutation = readNativeComposerDraft();
-      if (getCurrentSessionId() !== capturedRoute || composerQueueLastEntriesSignature !== capturedSignature
+      if (getEffectiveQueueSessionId() !== capturedRoute || composerQueueLastEntriesSignature !== capturedSignature
         || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
         || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + recallImages.length > 10) return;
 
       let res;
       let result;
       try {
-        res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+        res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "recall_queued_message", token }),
@@ -4413,24 +4506,25 @@
       }
 
       if (deliverRecalledQueuePayload(capturedOwner, capturedKeyRef, capturedRoute, payload.text, recallImages)) {
-        showToast(getCurrentSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
+        showToast(getEffectiveQueueSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
       }
     } catch (error) {
-      handleQueueOperationError(sessionId, error.message, "移回编辑");
+      handleQueueOperationError(activeSid, error.message, "移回编辑");
     } finally {
       composerQueueBusy = false;
-        syncComposerQueuePanel();
+      syncComposerQueuePanel(false, activeSid);
     }
   }
 
   async function recallAllQueuedMessages(sessionId, signature, entries) {
-    if (composerQueueBusy || sessionId !== getCurrentSessionId() || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(sessionId);
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
-      showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
       return;
     }
-    if (composerQueueActionsState.sessionId !== sessionId || composerQueueActionsState.signature !== signature) {
+    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
       showToast("队列状态已更新，请重试", null, 3000);
       return;
     }
@@ -4443,7 +4537,7 @@
 
     const capturedOwner = native.key;
     const capturedKeyRef = native.keyRef;
-    const capturedRoute = getCurrentSessionId();
+    const capturedRoute = activeSid;
     const capturedSignature = signature;
 
     const steerList = composerQueueActionsState.steering || [];
@@ -4464,27 +4558,26 @@
     }
 
     composerQueueBusy = true;
-    publishNativeQueueDetails();
+    publishNativeQueueDetails(activeSid);
 
     try {
-      // Keep complete payloads before removal, including on ambiguous network failure.
       const backup = [];
       for (const token of expectedTokens) {
-        const detail = await fetchQueuedMessageDetail(sessionId, token);
+        const detail = await fetchQueuedMessageDetail(activeSid, token);
         if (!detail) { showToast("详情尚未完整读取，队列未改动", null, 3000); return; }
         backup.push(detail);
       }
       const backupText = backup.map(e => e.text).filter(Boolean).join("\n\n");
       const backupImages = backup.flatMap(e => e.images || []);
       const beforeMutation = readNativeComposerDraft();
-      if (getCurrentSessionId() !== capturedRoute || composerQueueLastEntriesSignature !== capturedSignature
+      if (getEffectiveQueueSessionId() !== capturedRoute || composerQueueLastEntriesSignature !== capturedSignature
         || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
         || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + backupImages.length > 10) return;
 
       let res;
       let result;
       try {
-        res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+        res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "recall_all_queued_messages", tokens: expectedTokens }),
@@ -4506,24 +4599,25 @@
       const combinedImages = returnedEntries.flatMap((e) => e.images || []);
 
       if (deliverRecalledQueuePayload(capturedOwner, capturedKeyRef, capturedRoute, combinedTexts, combinedImages)) {
-        showToast(getCurrentSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
+        showToast(getEffectiveQueueSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
       }
     } catch (error) {
-      handleQueueOperationError(sessionId, error.message, "全部移回");
+      handleQueueOperationError(activeSid, error.message, "全部移回");
     } finally {
       composerQueueBusy = false;
-        syncComposerQueuePanel();
+      syncComposerQueuePanel(false, activeSid);
     }
   }
 
   async function deleteSingleQueuedMessage(entryIndex, sessionId, signature) {
-    if (composerQueueBusy || sessionId !== getCurrentSessionId() || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(sessionId);
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
-      showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
       return;
     }
-    if (composerQueueActionsState.sessionId !== sessionId || composerQueueActionsState.signature !== signature) {
+    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
       showToast("队列状态已更新，请重试", null, 3000);
       return;
     }
@@ -4533,15 +4627,15 @@
     const token = entryIndex < steerList.length ? steerList[entryIndex]?.token : followUpList[entryIndex - steerList.length]?.token;
 
     if (!token) {
-      showQueueUnavailable(sessionId, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
       return;
     }
 
     composerQueueBusy = true;
-    publishNativeQueueDetails();
+    publishNativeQueueDetails(activeSid);
 
     try {
-      const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "delete_queued_message", token }),
@@ -4554,20 +4648,21 @@
 
       showToast("已删除该条排队消息", null, 1800);
     } catch (error) {
-      handleQueueOperationError(sessionId, error.message, "删除");
+      handleQueueOperationError(activeSid, error.message, "删除");
     } finally {
       composerQueueBusy = false;
-        syncComposerQueuePanel();
+      syncComposerQueuePanel(false, activeSid);
     }
   }
 
   function getQueueEntryAttachments(sessionId, entryText, entryIndex, entryKind, entryToken) {
-    if (!sessionId || sessionId !== getCurrentSessionId()) return [];
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (!activeSid) return [];
     const cleanText = (entryText || "").trim();
 
     // 1. 若后端 v2 权威接口返回了该 token 的详情（包含 empty []），优先终结！绝不向下 fallback！
     if (entryToken) {
-      const cacheKey = `${sessionId}:${entryToken}`;
+      const cacheKey = `${activeSid}:${entryToken}`;
       const detail = getFromQueueDetailCache(cacheKey);
       if (detail) {
         if (Array.isArray(detail?.images)) {
@@ -4581,7 +4676,7 @@
     }
 
     // 2. unsupported 场景或未拿到 v2 详情时：按 kind + 提交记录严格唯一匹配
-    const list = queueSubmissionMemoryStore.get(sessionId);
+    const list = queueSubmissionMemoryStore.get(activeSid);
     if (Array.isArray(list) && list.length > 0) {
       const matching = list.filter((s) => s.kind === entryKind && (s.text || "").trim() === cleanText);
       if (matching.length === 1 && Array.isArray(matching[0].images) && matching[0].images.length > 0) {
@@ -4592,8 +4687,8 @@
     return [];
   }
 
-  function publishNativeQueueDetails() {
-    const sessionId = getCurrentSessionId();
+  function publishNativeQueueDetails(explicitSid = null) {
+    const sessionId = getEffectiveQueueSessionId(explicitSid);
     const items = composerQueueActionsState?.signature === composerQueueLastEntriesSignature
       ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
     window.dispatchEvent(new CustomEvent("pi:native-queue-details", { detail: {
@@ -4605,46 +4700,50 @@
     } }));
   }
 
-  function syncComposerQueuePanel(isAttachmentUpdateOnly = false) {
+  function syncComposerQueuePanel(isAttachmentUpdateOnly = false, explicitSid = null) {
     if (!isPluginEnabled("composer-queue-panel")) {
-      publishNativeQueueDetails();
+      publishNativeQueueDetails(explicitSid);
       return;
     }
     if (!composerQueuePanel?.isConnected || !composerQueueCurrentEntries.length) return;
-    publishNativeQueueDetails();
-    // Only React's explicit snapshot event refreshes tokens; never DOM scans/timers.
-    if (!isAttachmentUpdateOnly && getCurrentSessionId() && !composerQueueBusy) {
-      void loadComposerQueueTokens(getCurrentSessionId(), composerQueueLastEntriesSignature, composerQueueCurrentEntries);
+    const activeSid = getEffectiveQueueSessionId(explicitSid);
+    publishNativeQueueDetails(activeSid);
+    // Only React explicit snapshot event refreshes tokens; never DOM scans/timers.
+    if (!isAttachmentUpdateOnly && activeSid && !composerQueueBusy) {
+      void loadComposerQueueTokens(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
     }
   }
 
   const handleNativeQueueSnapshot = (event) => {
     const detail = event.detail;
-    if (!detail || detail.sessionId !== getCurrentSessionId() || !Array.isArray(detail.entries)) return;
+    if (!detail || !Array.isArray(detail.entries)) return;
+    const activeSid = getEffectiveQueueSessionId(detail.sessionId);
+    if (!activeSid) return;
     composerQueuePanel = detail.host;
-    const signature = JSON.stringify([detail.sessionId, detail.entries]);
+    const signature = JSON.stringify([activeSid, detail.entries]);
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
     composerQueueLastEntriesSignature = signature;
     if (changed) composerQueueActionsState = null;
     if (!detail.entries.length) { clearQueueDetailCache(); return; }
-    syncComposerQueuePanel(!changed);
-    triggerSessionHydration(detail.sessionId);
+    syncComposerQueuePanel(!changed, activeSid);
+    triggerSessionHydration(activeSid);
   };
   const handleNativeQueueAction = (event) => {
     const { action, index, targetIndex, sessionId, signature } = event.detail || {};
-    if (!isPluginEnabled("composer-queue-panel") || sessionId !== getCurrentSessionId() || signature !== composerQueueLastEntriesSignature) return;
-    if (action === "recall") void recallSingleQueuedMessage(index, sessionId, signature);
-    else if (action === "recallAll") void recallAllQueuedMessages(sessionId, signature, composerQueueCurrentEntries);
-    else if (action === "delete") void deleteSingleQueuedMessage(index, sessionId, signature);
-    else if (action === "promote") void promoteComposerQueuedMessage(index, sessionId, signature);
-    else if (action === "reorder") void reorderComposerQueuedMessage(index, targetIndex, sessionId, signature);
+    const activeSid = getEffectiveQueueSessionId(sessionId);
+    if (!isPluginEnabled("composer-queue-panel") || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    if (action === "recall") void recallSingleQueuedMessage(index, activeSid, signature);
+    else if (action === "recallAll") void recallAllQueuedMessages(activeSid, signature, composerQueueCurrentEntries);
+    else if (action === "delete") void deleteSingleQueuedMessage(index, activeSid, signature);
+    else if (action === "promote") void promoteComposerQueuedMessage(index, activeSid, signature);
+    else if (action === "reorder") void reorderComposerQueuedMessage(index, targetIndex, activeSid, signature);
     else if (action === "gallery") {
       const items = composerQueueActionsState?.signature === signature
         ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
       const entry = composerQueueCurrentEntries[index];
       if (!entry) return;
-      const images = getQueueEntryAttachments(sessionId, entry.text, index, entry.kind, items[index]?.token);
+      const images = getQueueEntryAttachments(activeSid, entry.text, index, entry.kind, items[index]?.token);
       const gallery = images.map((img, i) => ({src: `data:${img.mimeType};base64,${img.data}`, alt: img.alt || `图片附件 ${i + 1}`}));
       if (gallery.length) openComposerImageZoomModal(gallery[0].src, gallery[0].alt, null, {items: gallery, initialIndex: 0}, {autoEdit: false, source: "queue"});
     }
@@ -4656,7 +4755,6 @@
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
     removeComposerQueuePanel();
   });
-  window.dispatchEvent(new Event("pi:native-queue-ready"));
   window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
@@ -9947,3 +10045,7 @@
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
+
+  // The native queue responds synchronously. Announce readiness only after
+  // its composer/session dependencies have finished initializing.
+  window.dispatchEvent(new Event("pi:native-queue-ready"));

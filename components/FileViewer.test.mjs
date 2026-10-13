@@ -5,6 +5,10 @@ import React from "react";
 import ts from "typescript";
 
 const source = await readFile(new URL("./FileViewer.tsx", import.meta.url), "utf8");
+const enhancementModule = await readFile(
+  new URL("../enhancements/modules/06-chat-view-and-tool-cards.js", import.meta.url),
+  "utf8",
+);
 
 test("large source previews bypass the per-line syntax highlighter", () => {
   assert.match(source, /const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;/);
@@ -70,4 +74,21 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
 test("markdown preview links carry PDF page fragments", () => {
   assert.match(source, /parsePdfPageFragment/);
   assert.match(source, /onOpenFile\(linkedFile, parsePdfPageFragment\(href\) \?\? undefined\)/);
+});
+
+test("Markdown mode controls and Copy Source stay under FileViewer ownership", () => {
+  assert.match(source, /className="file-viewer-mode-switch"[\s\S]*?displayModes\.map\(\(mode\)/);
+  assert.match(source, /onClick=\{\(\) => updateDisplayMode\(mode\)\}/);
+  assert.match(source, /\{isMarkdown && obsidianMarkdownViewerEnabled && \(/);
+  assert.match(source, /pi:obsidian-markdown-viewer-preferences-change/);
+  assert.match(source, /"复制源码"[\s\S]*?"已复制"|"已复制"[\s\S]*?"复制源码"/);
+  assert.match(source, /title="复制源码全文"/);
+  assert.match(source, /while \(truncated\)[\s\S]*getFileApiUrl\(filePath, "read", sourceSessionId, \{ offset \}\)/);
+  assert.match(source, /navigator\.clipboard\.writeText\(source\)/);
+  assert.match(source, /await navigator\.clipboard\.writeText\(source\)[\s\S]*?catch \{[\s\S]*?if \(stopIfStale\(\)\) return;[\s\S]*?document\.execCommand\("copy"\)/);
+  assert.match(source, /useEffect\(\(\) => \{\s*viewerIdentityRef\.current = \{ filePath, sourceSessionId \};[\s\S]*?return \(\) => \{[\s\S]*?contentRequestRef\.current\+\+;[\s\S]*?viewerIdentityRef\.current = null;/);
+  assert.match(source, /\.\.\.\(hasGitDiff \? \["diff" as const\] : \[\]\)/);
+
+  assert.doesNotMatch(enhancementModule, /pi-enh-md-mode-switch|pi-enh-md-btn|previewBtn\.click\(\)|sourceBtn\.click\(\)/);
+  assert.match(enhancementModule, /pi:obsidian-markdown-viewer-preferences-change/);
 });

@@ -33,11 +33,10 @@ test("session windows stay valid after a project shrinks and before the viewport
   assert.equal(getSessionListIndices(2000, 0, 0).length, 28);
 });
 
-test("only Shift+click bypasses session deletion confirmation", () => {
-  assert.match(
-    sessionItemSource,
-    /const handleDeleteClick[\s\S]*?if \(e\.shiftKey\) \{\s*void performDelete\(\);\s*\} else \{\s*setConfirmDelete\(true\);/,
-  );
+test("replaced row actions never render a legacy delete or rename control", () => {
+  assert.doesNotMatch(sessionItemSource, /pi-enh-native-session-actions|handleDeleteClick|performDelete|setConfirmDelete/);
+  assert.match(sessionItemSource, /row\.addEventListener\(SESSION_ROW_RENAME_EVENT, rename\)/);
+  assert.match(sessionItemSource, /row\.removeEventListener\(SESSION_ROW_RENAME_EVENT, rename\)/);
 });
 
 test("persists and exposes a vertical session/explorer resize handle", () => {
@@ -108,7 +107,7 @@ test("includes project activity counts in accessible labels", () => {
 test("formats session timestamps with the active locale", () => {
   assert.match(source, /import \{ formatRelativeTime \} from "@\/lib\/i18n\/format"/);
   assert.match(sessionItemSource, /const \{ locale, t \} = useI18n\(\)/);
-  assert.match(sessionItemSource, /formatRelativeTime\(session\.modified, locale\)/);
+  assert.match(sessionItemSource, /formatRelativeTime\(session\.modified, locale, initialRenderTime\)/);
 });
 
 test("does not persist an unchanged fallback title ending in whitespace", () => {
@@ -122,7 +121,7 @@ test("offers the downstream context-menu hook only on a normal session row", () 
   assert.match(sessionItemSource, /const handleContextMenu[\s\S]*?dispatchSessionRowContextMenu\(\{/);
   assert.match(
     sessionItemSource,
-    /onContextMenu=\{confirmDelete \|\| renaming \? undefined : handleContextMenu\}/,
+    /onContextMenu=\{renaming \? undefined : handleContextMenu\}/,
   );
 });
 
@@ -140,12 +139,11 @@ test("lifecycle refreshes bypass the cache while cross-window polling reuses it"
 });
 
 test("does not expose disk-backed actions for transient sessions", () => {
-  assert.match(sessionItemSource, /if \(session\.transient\) return;/);
-  assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
+  assert.match(sessionItemSource, /if \(session\.transient \|\| session\.submissionPending\) return false;/);
 });
 
 test("hides subagent rows and aggregates their state into the main session row", () => {
-  assert.match(source, /const sessionFamilies = useMemo\(\(\) => listSessionFamilies\(filteredSessions\)/);
+  assert.match(source, /const sessionFamilies = useMemo\(\s*\(\) => processEnhancementSessionGroups\(listSessionFamilies\(filteredSessions\)\)/);
   assert.match(source, /familySessions\.some\(\(session\) => session\.id === selectedSessionId\)/);
   assert.match(source, /familySessions\.some\(\(session\) => runningSessionIds\.has\(session\.id\)\)/);
   assert.doesNotMatch(source, /function SessionTreeItem/);

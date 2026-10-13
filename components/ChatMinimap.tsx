@@ -4,9 +4,12 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, typ
 import { isMessageGroupAnchor } from "@/lib/message-display";
 import type { AgentMessage, TextContent, UserMessage } from "@/lib/types";
 import { useMinimapBookmarks } from "@/hooks/useMinimapBookmarks";
+import { stripDimensionNotes } from "./MessageView";
 import styles from "./ChatMinimap.module.css";
 
 interface Props {
+  overlay?: boolean;
+  onClose?: () => void;
   sessionId: string | null;
   messages: AgentMessage[];
   streamingMessage: Partial<AgentMessage> | null;
@@ -38,13 +41,14 @@ export interface NodeInfo {
 }
 
 export function getUserPreview(message: UserMessage): string {
-  if (typeof message.content === "string") return message.content.trim();
+  if (typeof message.content === "string") return stripDimensionNotes(message.content).trim();
   if (Array.isArray(message.content)) {
-    const text = message.content
-      .filter((block): block is TextContent => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
+    const text = stripDimensionNotes(
+      message.content
+        .filter((block): block is TextContent => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+    ).trim();
     if (text) return text;
     const hasImage = message.content.some((block) => block.type === "image");
     if (hasImage) return "[图片]";
@@ -134,13 +138,13 @@ export function getMinimapHistorySettings(): { initialTurns: number; stepTurns: 
       if (typeof fn === "function") {
         const s = fn();
         return {
-          initialTurns: Math.max(3, Number(s?.initialTurns) || 3),
+          initialTurns: Math.max(5, Math.min(50, Math.floor(Number(s?.initialTurns) || 5))),
           stepTurns: Math.max(1, Number(s?.stepTurns) || 5),
         };
       }
     } catch {}
   }
-  return { initialTurns: 3, stepTurns: 5 };
+  return { initialTurns: 5, stepTurns: 5 };
 }
 
 export function readMinimapHistoryState(loadedCount: number): {
@@ -184,6 +188,8 @@ function waitForCommitFrames(): Promise<void> {
 }
 
 export function ChatMinimap({
+  overlay = false,
+  onClose,
   sessionId,
   messages,
   streamingMessage,
@@ -207,9 +213,9 @@ export function ChatMinimap({
   const [minimapHeight, setMinimapHeight] = useState(600);
   const [minimapHovered, setMinimapHovered] = useState(false);
   const [mouseYRatio, setMouseYRatio] = useState<number | null>(null);
-  const [targetTurns, setTargetTurns] = useState<number>(() => Math.max(3, getMinimapHistorySettings().initialTurns));
+  const [targetTurns, setTargetTurns] = useState<number>(() => getMinimapHistorySettings().initialTurns);
   useEffect(() => {
-    const syncPreferences = () => setTargetTurns(Math.max(3, getMinimapHistorySettings().initialTurns));
+    const syncPreferences = () => setTargetTurns(getMinimapHistorySettings().initialTurns);
     window.addEventListener("pi:minimap-preferences-change", syncPreferences);
     return () => window.removeEventListener("pi:minimap-preferences-change", syncPreferences);
   }, []);
@@ -217,14 +223,17 @@ export function ChatMinimap({
   targetTurnsRef.current = targetTurns;
   const [isLoadingEarlier, setIsLoadingEarlier] = useState(false);
   const isLoadingEarlierRef = useRef(false);
+  const initialLoadAttemptRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   const historyState = readMinimapHistoryState(allNodes.length);
-  if (historyState.sessionId !== currentSessionIdRef.current) {
-    currentSessionIdRef.current = historyState.sessionId;
+  if (sessionId !== currentSessionIdRef.current) {
+    currentSessionIdRef.current = sessionId;
     sessionGenerationRef.current++;
     closedByUserRef.current = false;
-    const initial = Math.max(3, getMinimapHistorySettings().initialTurns);
+    isLoadingEarlierRef.current = false;
+    initialLoadAttemptRef.current = null;
+    const initial = getMinimapHistorySettings().initialTurns;
     targetTurnsRef.current = initial;
   }
 
@@ -258,6 +267,11 @@ export function ChatMinimap({
   );
   const allMessagesRef = useRef(allMessages);
   allMessagesRef.current = allMessages;
+  useEffect(() => {
+    setTargetTurns(getMinimapHistorySettings().initialTurns);
+    setIsLoadingEarlier(false);
+    setLoadError(false);
+  }, [sessionId]);
 
   const nodeLayout = useMemo(
     () => layoutNodes(allNodes, minimapHeight),
@@ -307,9 +321,9 @@ export function ChatMinimap({
     if (!scrollEl) return;
     const scrollable = scrollEl.scrollHeight - scrollEl.clientHeight;
     const currentNodes = allNodesRef.current;
-    setVisible(scrollable > 20);
+    setVisible(overlay || scrollable > 20);
     syncActiveNode(scrollEl, currentNodes);
-  }, [scrollContainer, syncActiveNode]);
+  }, [overlay, scrollContainer, syncActiveNode]);
 
   const measureThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const measureNodes = useCallback(() => {
@@ -375,7 +389,7 @@ export function ChatMinimap({
       setMinimapHeight(minimapEl.clientHeight);
       allNodesRef.current = nextNodes;
       setAllNodes(nextNodes);
-      setVisible(scrollEl.scrollHeight - scrollEl.clientHeight > 20);
+      setVisible(overlay || scrollEl.scrollHeight - scrollEl.clientHeight > 20);
 
       // Stable entry identity or message reference lock to preserve position across prepends
       const now = Date.now();
@@ -412,9 +426,10 @@ export function ChatMinimap({
           top: Math.max(0, pendingNode.targetTurn.scrollTop - targetOffset),
           behavior: "smooth",
         });
+        if (overlay) onClose?.();
       }
-    }, 150);
-  }, [lockActiveNode, messageRefs, scrollContainer, syncActiveNode]);
+    }, overlay ? 0 : 150);
+  }, [overlay, onClose, lockActiveNode, messageRefs, scrollContainer, syncActiveNode]);
 
   useEffect(() => {
     const el = scrollContainer.current;
@@ -490,7 +505,8 @@ export function ChatMinimap({
       liveTop - scrollEl.clientHeight * 0.3,
     );
     scrollEl.scrollTo({ top: targetTop, behavior });
-  }, [lockActiveNode, onRevealHistory, scrollContainer]);
+    if (overlay) onClose?.();
+  }, [overlay, onClose, lockActiveNode, onRevealHistory, scrollContainer]);
 
   const findNearestNode = useCallback((ratio: number, clamp = false): NodeInfo | null => {
     const { nodes, gap, fillsHeight } = nodeLayoutRef.current;
@@ -614,11 +630,13 @@ export function ChatMinimap({
 
           // 2. 熔断保护：单次交互最多 30 页，连续无新增 user 最多 10 页
           if (pageCount >= 30 || consecutiveNoUser >= 10) {
+            setLoadError(true);
             break;
           }
 
-          // 3. 请求条数：初始不足 3 轮保底 100，否则 50
-          const fetchTail = loadedUserCount < 3 ? 100 : 50;
+          // Navigation pages are source messages, not turns. A larger bounded
+          // page avoids serial requests through a long tool execution.
+          const fetchTail = 100;
 
           // 记录本轮请求前消息状态与 cursor/entryId
           const messagesBefore = allMessagesRef.current;
@@ -709,7 +727,7 @@ export function ChatMinimap({
     setLoadError(false);
 
     // 一次触发目标只加一次 step 5
-    const nextTarget = currentTarget + settings.stepTurns;
+    const nextTarget = loadError ? currentTarget : currentTarget + settings.stepTurns;
     targetTurnsRef.current = nextTarget;
     setTargetTurns(nextTarget);
 
@@ -725,26 +743,23 @@ export function ChatMinimap({
   }, [preservePreviewScroll]);
 
   useEffect(() => {
-    const loadedCount = allNodes.length;
-    const history = readMinimapHistoryState(loadedCount);
-
-    const initial = Math.max(3, getMinimapHistorySettings().initialTurns);
+    const initial = getMinimapHistorySettings().initialTurns;
     if (targetTurnsRef.current < initial) {
       targetTurnsRef.current = initial;
       setTargetTurns(initial);
     }
-
-    const settings = getMinimapHistorySettings();
-    const minPreload = Math.min(history.totalTurns, Math.max(3, settings.initialTurns));
-
-    if (targetTurnsRef.current < minPreload) {
-      targetTurnsRef.current = minPreload;
-      setTargetTurns(minPreload);
+    const loadedCount = allMessagesRef.current.filter(message => message.role === "user").length;
+    const history = readMinimapHistoryState(loadedCount);
+    // ChatWindow installs the authoritative bridge before this passive effect.
+    // A closed mobile navigator is unmounted, so it does no background work.
+    if (!sessionId || history.sessionId !== sessionId || !history.hasEarlierMessages || loadedCount >= initial) return;
+    const attemptKey = `${sessionGenerationRef.current}:${initial}`;
+    if (initialLoadAttemptRef.current === attemptKey) return;
+    if (runContinuousLoad(initial, "initial")) {
+      // Network/budget failures require an explicit retry, never an effect loop.
+      initialLoadAttemptRef.current = attemptKey;
     }
-
-    // Initial navigation uses the confirmed tail already loaded for the chat.
-    // Fetch older pages only after an explicit navigation gesture or click.
-  }, [allNodes.length]);
+  }, [allNodes.length, messages.length, runContinuousLoad, sessionId, targetTurns]);
 
   useEffect(() => {
     return () => {
@@ -1041,6 +1056,9 @@ export function ChatMinimap({
   }, [minimapHovered, nearestNodeIndex]);
 
   useEffect(() => {
+    // Mobile overlays use native scrolling; desktop wheel/swipe history gestures
+    // must not load older pages or interfere with Android navigation.
+    if (overlay) return;
     const previewBox = previewBoxRef.current;
     if (!previewBox) return;
 
@@ -1216,11 +1234,11 @@ export function ChatMinimap({
         suppressClickTimerRef.current = null;
       }
     };
-  }, [cancelPreviewHide, minimapHovered, triggerLoadEarlier, visible]);
+  }, [cancelPreviewHide, minimapHovered, overlay, triggerLoadEarlier, visible]);
 
   // 导航测量前保留固定宽度，避免消息先按全宽渲染后再次换行。
-  if (!visible) return (
-    <div ref={containerRef} data-minimap-native-owner="true" aria-hidden="true"
+  if (!visible && !overlay) return (
+    <div ref={containerRef} className="chat-desktop-minimap" data-minimap-native-owner="true" aria-hidden="true"
       style={{ width: MINIMAP_WIDTH, flexShrink: 0, visibility: "hidden" }} />
   );
 
@@ -1233,29 +1251,32 @@ export function ChatMinimap({
     <div
       ref={containerRef}
       data-minimap-native-owner="true"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerCancel}
-      onLostPointerCapture={handlePointerCancel}
-      onMouseEnter={showPreview}
-      onMouseLeave={handleMouseLeave}
+      className={overlay ? undefined : "chat-desktop-minimap"}
+      onPointerDown={overlay ? undefined : handlePointerDown}
+      onPointerMove={overlay ? undefined : handlePointerMove}
+      onPointerUp={overlay ? undefined : handlePointerUp}
+      onPointerCancel={overlay ? undefined : handlePointerCancel}
+      onLostPointerCapture={overlay ? undefined : handlePointerCancel}
+      onMouseEnter={overlay ? undefined : showPreview}
+      onMouseLeave={overlay ? undefined : handleMouseLeave}
       onMouseDown={(e) => {
         // Prevent default text selection during pointer scrubbing
         if (e.button === 0) e.preventDefault();
       }}
       style={{
-        width: MINIMAP_WIDTH,
+        width: overlay ? 0 : MINIMAP_WIDTH,
         flexShrink: 0,
-        position: "relative",
+        position: overlay ? "absolute" : "relative",
+        ...(overlay ? { top: 0, bottom: 0, right: 0, pointerEvents: "none" as const } : {}),
         cursor: "pointer",
         userSelect: "none",
         touchAction: "pan-y",
-        borderLeft: "1px solid var(--border)",
-        background: "var(--bg-panel)",
+        borderLeft: overlay ? "none" : "1px solid var(--border)",
+        background: overlay ? "transparent" : "var(--bg-panel)",
         overflow: "visible",
       }}
     >
+      {!overlay && <>
       {/* 实际轨道独占 child hit surface */}
       <div
         data-minimap-rail-hit="true"
@@ -1323,7 +1344,8 @@ export function ChatMinimap({
         );
       })}
 
-      {minimapHovered && allNodes.length > 0 && (() => {
+      </>}
+      {(overlay || (minimapHovered && allNodes.length > 0)) && (() => {
         const visibleTurnsCount = Math.min(allNodes.length, targetTurns);
         const hiddenCount = Math.max(0, allNodes.length - visibleTurnsCount);
         const totalTurnsCount = historyState.totalTurns || allNodes.length;
@@ -1363,7 +1385,9 @@ export function ChatMinimap({
         return (
           <div
             ref={previewBoxRef}
-            className={styles.preview}
+            className={`${styles.preview}${overlay ? ` ${styles.overlayPreview}` : ""}`}
+            role={overlay ? "dialog" : undefined}
+            aria-label={overlay ? "会话导航" : undefined}
             data-minimap-preview-box=""
             data-minimap-native-preview=""
             onMouseEnter={showPreview}
@@ -1385,6 +1409,7 @@ export function ChatMinimap({
                   💬 共 {totalTurnsCount} 轮 · 已显示 {visibleTurnsCount} 轮{focusLabel}
                 </span>
               </div>
+              {overlay && <button type="button" className={styles.closeOverlay} aria-label="关闭会话导航" onClick={onClose}>×</button>}
               <button
                 type="button"
                 className={`${styles.loadEarlier} ${isLoadingEarlier ? styles.loading : ""}`}
@@ -1398,6 +1423,7 @@ export function ChatMinimap({
               </button>
             </div>
 
+            {overlay && allNodes.length === 0 && <p className={styles.emptyOverlay}>当前没有可导航的轮次</p>}
             {allNodes.map((node) => {
               const isHidden = node.index < hiddenCount;
               const isLocated = nearestNodeIndex === node.index;

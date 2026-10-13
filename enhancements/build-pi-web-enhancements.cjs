@@ -145,8 +145,13 @@ function validateOwnershipGate() {
   if (!layout.includes('import "./enhancements.css";') || !nativeStyles.includes(".pi-enh-quote-bar")) {
     throw new Error("共享增强样式必须由原生首帧样式流水线拥有");
   }
-  if (nativeStyles.includes('.sidebar-container > div:last-child:not([data-pi-enh-shortcuts-disabled="true"])') || !nativeStyles.includes('[data-pi-enh-shortcuts-host="true"]:has(> .pi-enh-shortcuts-bar)')) {
-    throw new Error("原生入口不可在增强快捷栏接管前被隐藏");
+  const shell = fs.readFileSync(path.join(__dirname, "..", "components/AppShell.tsx"), "utf8");
+  const shortcuts = fs.readFileSync(path.join(__dirname, "..", "components/SettingsShortcuts.tsx"), "utf8");
+  if (!shell.includes("<SettingsShortcuts") || !shortcuts.includes("useSyncExternalStore(") || !shortcuts.includes("key={id}") ||
+      !module08.includes("abi.setSidebarShortcuts(getStoredQuickShortcuts())") ||
+      module08.includes("function locateShortcutsContainer(") || module08.includes("function bindShortcutButtonsEvents(") ||
+      nativeStyles.includes(".pi-enh-shortcuts-bar") || nativeStyles.includes('.sidebar-container > div:last-child:not([data-pi-enh-shortcuts-disabled="true"])')) {
+    throw new Error("快捷入口必须由原生组件渲染：增强层只能同步偏好，不可隐藏、替换或清除原生按钮焦点");
   }
   if (module01.includes("styleEl.textContent") || module01.includes("initLogoInstantCache") || /Node\.prototype\.insertBefore\s*=/.test(module01)) {
     throw new Error("已迁移的共享样式/Logo/DOM所有权不能再次通过运行时覆盖");
@@ -163,8 +168,15 @@ function validateOwnershipGate() {
 function buildPublicBundle(bundleBuffer, writeAssets = false) {
   const usageLedger = fs.readFileSync(path.join(__dirname, "usage-ledger-core.js"), "utf8");
   const { script: optionalLoader } = require("./build-optional-assets.cjs").buildOptionalAssets(__dirname, { write: writeAssets });
-  const { extractEnhancementMetadata, buildFastPluginReaderSnippet } = require("./pi-web-settings-prepaint.cjs");
-  const reader = buildFastPluginReaderSnippet(extractEnhancementMetadata(path.join(MODULES_DIR, "02-plugin-registry-and-settings-schema.js")));
+  const { extractEnhancementMetadata, buildFastPluginReaderSnippet, buildNativePluginSettingsModuleCode } = require("./pi-web-settings-prepaint.cjs");
+  const metadata = extractEnhancementMetadata(path.join(MODULES_DIR, "02-plugin-registry-and-settings-schema.js"));
+  const nativePath = path.join(__dirname, "..", "lib", "enhancement-settings.generated.ts");
+  const nativeCode = buildNativePluginSettingsModuleCode(metadata);
+  if (writeAssets) fs.writeFileSync(nativePath, nativeCode);
+  else if (!fs.existsSync(nativePath) || fs.readFileSync(nativePath, "utf8") !== nativeCode) {
+    throw new Error("原生设置元数据漂移，请运行增强构建同步 canonical schema");
+  }
+  const reader = buildFastPluginReaderSnippet(metadata);
   if (bundleBuffer.includes(Buffer.from("PiUsagePanel =")) || bundleBuffer.includes(Buffer.from("make_xlsx_lib"))) throw new Error("低频组件重复内联，已阻止发布");
   const prefix = Buffer.from(`${usageLedger}\n;\n${optionalLoader}\n;\n${reader}\n;\n`, "utf8");
   return Buffer.concat([prefix, bundleBuffer]);

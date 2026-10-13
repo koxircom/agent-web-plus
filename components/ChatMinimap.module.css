@@ -232,3 +232,28 @@
 @media (hover: none) {
   .bookmark { opacity: 1; }
 }
+
+/* Same navigation content, presented above the mobile chat without a rail. */
+.overlayPreview {
+  right: 0;
+  width: min(320px, calc(100vw - 32px));
+  animation: mobile-navigation-enter 160ms ease-out both;
+}
+.closeOverlay {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 22px;
+  min-width: 36px;
+  min-height: 36px;
+  cursor: pointer;
+}
+.emptyOverlay { padding: 16px; color: var(--text-muted); font-size: 13px; }
+@keyframes mobile-navigation-enter {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlayPreview { animation: none; }
+}

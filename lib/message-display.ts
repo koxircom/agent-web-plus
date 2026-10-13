@@ -8,7 +8,13 @@ export function getThinkingPreview(thinking: string): string {
   return thinking.trimStart().match(/^[^\r\n]{0,240}/u)?.[0].trimEnd() ?? "";
 }
 
-export function isMessageGroupAnchor(message: { role?: AgentMessage["role"]; customType?: string }): boolean {
+/** SDK custom-message display controls UI only; keep the original in model context. */
+export function isHiddenCustomMessage(message: { role?: AgentMessage["role"]; display?: boolean }): boolean {
+  return message.role === "custom" && message.display === false;
+}
+
+export function isMessageGroupAnchor(message: { role?: AgentMessage["role"]; customType?: string; display?: boolean }): boolean {
+  if (isHiddenCustomMessage(message)) return false;
   // A background subagent completion starts a new displayed turn, same as a
   // user message or compaction summary. Other custom messages stay inside the turn.
   return message.role === "user"

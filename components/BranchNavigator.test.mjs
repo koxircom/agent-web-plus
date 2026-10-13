@@ -9,13 +9,28 @@ const jiti = createJiti(import.meta.url, {
 const { BranchNavigator, buildActivePath, compressChain, hasSessionBranches, selectTopLevelBranches } = await jiti.import("./BranchNavigator.tsx");
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { I18nProvider } = await jiti.import("@/hooks/useI18n.tsx");
+const { I18nProvider, useI18n } = await jiti.import("@/hooks/useI18n.tsx");
 const { enLocale } = await jiti.import("@/lib/i18n/messages/en.ts");
 
 const msg = (id, role, text) => ({ type: "message", id, parentId: null, timestamp: "t", message: { role, content: text } });
 const info = (id) => ({ type: "session_info", id, parentId: null, timestamp: "t", name: "x" });
 const model = (id) => ({ type: "model_change", id, parentId: null, timestamp: "t", provider: "test", modelId: "test" });
 const node = (entry, children = []) => ({ entry, children });
+
+test("I18nProvider defaults to Chinese and accepts an explicit English initial locale", () => {
+  const LocaleProbe = () => {
+    const { locale, t } = useI18n();
+    return React.createElement("span", null, `${locale}: ${t("i18n.branches")}`);
+  };
+  const render = (props) => renderToStaticMarkup(React.createElement(
+    I18nProvider,
+    props,
+    React.createElement(LocaleProbe),
+  ));
+
+  assert.equal(render(null), "<span>zh-CN: 分支</span>");
+  assert.equal(render({ initialLocale: "en" }), "<span>en: Branches</span>");
+});
 
 test("compressChain labels a chain by its first message entry", () => {
   const chain = node(msg("u1", "user", "原问题"), [node(msg("a1", "assistant", "回答"))]);
@@ -185,7 +200,7 @@ test("a locked navigator keeps the tree readable but offers no branch to switch 
   ])];
   const render = (locked) => renderToStaticMarkup(React.createElement(
     I18nProvider,
-    null,
+    { initialLocale: "en" },
     React.createElement(BranchNavigator, {
       tree,
       activeLeafId: "a1",

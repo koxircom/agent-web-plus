@@ -36,11 +36,11 @@ function readInitialLocale(): Locale {
 
 /**
  * 提供 Pi Web 的界面语言状态和翻译能力。
- * @param props React 子节点
+ * @param props React 子节点和可选的首次渲染语言；默认使用简体中文
  * @returns 包含语言上下文的 React 节点
  */
-export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(defaultLocale);
+export function I18nProvider({ children, initialLocale = defaultLocale }: { children: React.ReactNode; initialLocale?: Locale }) {
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
   const [hydrated, setHydrated] = useState(false);
   const supportedLocales = useMemo(
     () => getSupportedLocales().map((id) => getLocalePlugin(id)).filter((plugin): plugin is LocalePlugin => Boolean(plugin)),
@@ -67,7 +67,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const t = useCallback((key: string, params?: TranslationParams) => translateMessage(locale, key, messages, params), [locale, messages]);
-  const value = useMemo(() => ({ locale: hydrated ? locale : defaultLocale, setLocale, t, supportedLocales }), [hydrated, locale, setLocale, t, supportedLocales]);
+  const value = useMemo(() => ({ locale: hydrated ? locale : initialLocale, setLocale, t, supportedLocales }), [hydrated, initialLocale, locale, setLocale, t, supportedLocales]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

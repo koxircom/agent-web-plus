@@ -22,7 +22,7 @@
 Для работы PI Web Plus требуется Node.js 22.19.0 или новее (`node >=22.19`). Проверьте версию командой `node --version`, затем установите официальный пакет `.tgz` из [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) и запустите `pi-web`:
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
 pi-web
 ```
 
@@ -74,10 +74,10 @@ PI_WEB_PASSWORD='длинный-случайный-пароль' pi-web --hostna
 
 Для серверных запросов к моделям и API используются стандартные переменные окружения `HTTP_PROXY`, `HTTPS_PROXY` и `NO_PROXY`.
 
-В macOS и Linux (установка из [`.tgz`-релиза на GitHub](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz) и запуск):
+В macOS и Linux (установка из [`.tgz`-релиза на GitHub](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz) и запуск):
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -87,7 +87,7 @@ pi-web
 В Windows PowerShell:
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

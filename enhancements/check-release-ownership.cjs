@@ -143,7 +143,7 @@ function checkReleaseOwnership(sources) {
     /return\s*\[\s*\.\.\.nativeSections\s*,\s*\.\.\.enabledExtensions\.map\(\(ext\)\s*=>\s*\(\{/.test(settings) &&
     countMatches(settings, /\brole="dialog"/g) === 1;
 
-  const hiddenMinimapMarker = /if\s*\(\s*!visible\s*\)\s*return\s*\(\s*<div[\s\S]{0,400}?data-minimap-native-owner="true"/.test(minimap);
+  const hiddenMinimapMarker = /if\s*\(\s*!visible\s*(?:&&\s*!overlay\s*)?\)\s*return\s*\(\s*<div[\s\S]{0,400}?data-minimap-native-owner="true"/.test(minimap);
   const minimapLoadingOwnerOk = hiddenMinimapMarker &&
     countMatches(minimap, /data-minimap-native-owner="true"/g) === 2;
   const adapter = functionBody(module06, "function syncMinimapEnhancements()");

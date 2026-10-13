@@ -4,9 +4,10 @@
 
 /* 根卡片 (Native Composer Card) */
 .chat-composer-card {
+  --chat-composer-focus-border: color-mix(in srgb, var(--text-muted, #71717a) 60%, var(--border, #3f3f46));
   display: grid;
   position: relative;
-  grid-template-columns: 28px 28px auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 28px auto auto minmax(0, 1fr) auto auto auto;
   column-gap: 2px;
   row-gap: 4px;
   align-items: center;
@@ -21,7 +22,7 @@
 }
 
 .chat-composer-card:focus-within {
-  border-color: color-mix(in srgb, var(--text-muted, #71717a) 60%, var(--border, #3f3f46));
+  border-color: var(--chat-composer-focus-border);
 }
 
 /* Modal 对话框打开时防止遮挡（纯语义） */
@@ -75,7 +76,7 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   width: 100%;
   padding: 0 2px 4px;
   min-height: 28px;
-  max-height: none;
+  max-height: 80dvh;
   overflow-y: auto;
   overscroll-behavior: contain;
   box-sizing: border-box;
@@ -88,9 +89,9 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
 /* 用户自定义高度生效规则（精确受控变量，无多余 min-height 抬高） */
 .chat-composer-card.chat-composer-custom-height textarea.chat-input-textarea,
 .chat-composer-card.chat-composer-custom-height .pi-enh-formatted-composer {
-  height: var(--pi-composer-custom-height);
-  min-height: var(--pi-composer-custom-height);
-  max-height: var(--pi-composer-custom-height);
+  height: min(var(--pi-composer-custom-height), 80dvh);
+  min-height: min(var(--pi-composer-custom-height), 80dvh);
+  max-height: min(var(--pi-composer-custom-height), 80dvh);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -143,6 +144,15 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
 }
 
 /* 2. 图片附件按钮 (Col 2) */
+.chat-composer-attachment-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-composer-card .chat-composer-attachment-controls {
+  grid-column: 2;
+  grid-row: 3;
+}
 .chat-composer-card .chat-composer-attach-btn,
 .chat-composer-card [data-pi-attach-image] {
   grid-column: 2;
@@ -518,9 +528,13 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
 .chat-composer-resizer {
   position: absolute;
   top: -3px;
-  left: 0;
-  right: 0;
-  height: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 64px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -534,18 +548,35 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   width: 32px;
   height: 2px;
   border-radius: 1px;
-  background: color-mix(in srgb, var(--border, #71717a) 70%, transparent);
+  background: var(--text, #fff);
   transition: background 0.15s ease, width 0.15s ease, opacity 0.15s ease;
-  opacity: 0.55;
+  opacity: 0.2;
   pointer-events: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .chat-composer-resizer:hover .chat-composer-resizer-line {
-    opacity: 0.85;
+    opacity: 0.3;
     width: 36px;
-    background: color-mix(in srgb, var(--text-dim, #71717a) 80%, transparent);
   }
+}
+
+.chat-composer-height-locked .chat-composer-resizer-line {
+  background: color-mix(in srgb, var(--chat-composer-focus-border) 90%, var(--text, #fff));
+  opacity: 1;
+  box-shadow: 0 0 3px color-mix(in srgb, var(--text, #fff) 14.4%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .chat-composer-height-locked:hover .chat-composer-resizer-line {
+    opacity: 1;
+  }
+}
+
+.chat-composer-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
 }
 
 /* 拖拽中高亮 */
@@ -555,8 +586,8 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   cursor: ns-resize !important;
 }
 
-.chat-composer-resizing .chat-composer-resizer-line {
-  background: var(--accent, #3b82f6);
+.chat-composer-resizer.chat-composer-resizing .chat-composer-resizer-line {
+  background: #fff;
   width: 40px;
   height: 2.5px;
   opacity: 0.95;

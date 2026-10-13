@@ -1,3 +1,5 @@
+export const SESSION_ROW_RENAME_EVENT = "pi-web:session-row-rename";
+
 export const SESSION_ROW_CONTEXT_MENU_EVENT = "pi-web:session-row-contextmenu";
 
 export interface SessionRowContextMenuDetail {

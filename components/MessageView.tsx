@@ -10,7 +10,7 @@ import { parsePeerMailDisplay, formatPeerMailTime, getReadablePeerMailText, PEER
 import { isEnhancementPluginEnabled } from "@/lib/enhancement-chat-bridge";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { getAssistantErrorMessage, getThinkingPreview, isAssistantTruncated, isEmptyThinkingBlock } from "@/lib/message-display";
+import { isHiddenCustomMessage, getAssistantErrorMessage, getThinkingPreview, isAssistantTruncated, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile } from "@/lib/patch";
 import { applyPatchPreviewToFiles, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName } from "@/lib/tool-names";
@@ -288,6 +288,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     // Rendered inline under its toolCall — skip standalone rendering if paired
     return null;
   }
+  if (isHiddenCustomMessage(message)) return null;
   if (message.role === "custom") {
     if ((message as CustomMessage).customType === "compaction") {
       return <CompactionMessageView message={message as CustomMessage} />;
@@ -323,6 +324,13 @@ export function stripSerializedAnnotationBlocks(content: string): string {
   return content.replace(/<pi_annotations>[\s\S]*?<\/pi_annotations>\s*/g, "");
 }
 
+export function stripDimensionNotes(content: string): string {
+  if (typeof content !== "string") return "";
+  const cleaned = content.replace(/(?:\r?\n)*\s*\[Image:\s*original\s+[^\]]+\]\s*$/gi, "");
+  if (/^\s*\[Image:\s*original\s+[^\]]+\]\s*$/i.test(cleaned)) return "";
+  return cleaned.replace(/\[Image:\s*original\s+[^\]]+\]\s*/gi, "");
+}
+
 function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onEditContent }: {
   message: UserMessage;
   cwd?: string;
@@ -345,7 +353,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           .filter((b): b is TextContent => b.type === "text")
           .map((b) => b.text)
           .join("\n");
-  const content = stripSerializedAnnotationBlocks(sourceContent);
+  const content = stripDimensionNotes(stripSerializedAnnotationBlocks(sourceContent));
 
   const imageBlocks: ImageContent[] =
     typeof message.content === "string"
@@ -1667,8 +1675,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
   const { t } = useI18n();
   const text = getMessageText(message.content);
   const mail = useMemo(() => message.customType === "pi-mail" ? parsePeerMailDisplay(text) : null, [message.customType, text]);
-  const isHiddenDisplay = message.display === false;
-  const [contentExpanded, setContentExpanded] = useState(() => mail ? !isEnhancementPluginEnabled("pi-mail-auto-collapse") : !isHiddenDisplay);
+  const [contentExpanded, setContentExpanded] = useState(() => mail ? !isEnhancementPluginEnabled("pi-mail-auto-collapse") : true);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const images = getMessageImages(message.content);
@@ -1703,8 +1710,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           border: "1px solid var(--border)",
           borderRadius: 8,
           overflow: "hidden",
-          background: isHiddenDisplay ? "var(--bg-subtle)" : "var(--bg)",
-          opacity: isHiddenDisplay && !contentExpanded ? 0.82 : 1,
+          background: "var(--bg)",
         }}
       >
         <div
@@ -1722,7 +1728,6 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           <span style={{ color: "var(--text-muted)", fontFamily: mail ? "inherit" : "var(--font-mono)", fontSize: 11, fontWeight: 650 }}>
             {title}
           </span>
-           {!mail && isHiddenDisplay && <span style={{ color: "var(--text-dim)", fontSize: 11 }}>{t("i18n.hiddenExtensionMessage")}</span>}
           {mail && !contentExpanded && <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{mail.subject}</span>}
           {time && <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 10 }}>{time}</span>}
           {mail && <button type="button" aria-expanded={contentExpanded} aria-label={contentExpanded ? "收起协作消息" : "展开协作消息"} onClick={() => setContentExpanded(v => !v)} style={{ border: "none", background: "transparent", color: "var(--text-muted)", cursor: "pointer", padding: 4, flexShrink: 0 }}>
@@ -1806,11 +1811,10 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
                {copied ? t("i18n.copied") : t("i18n.copy")}
             </button>
           ) : null}
-          {(hasDetails || isHiddenDisplay) && (
+          {hasDetails && (
             <button
               onClick={() => {
-                if (isHiddenDisplay) setContentExpanded((v) => !v);
-                else setDetailsExpanded((v) => !v);
+                setDetailsExpanded((v) => !v);
               }}
               style={{
                 marginLeft: "auto",
@@ -1822,15 +1826,13 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
                 fontSize: 11,
               }}
             >
-              {isHiddenDisplay
-                 ? (contentExpanded ? t("i18n.collapse") : t("i18n.expand"))
-                 : (detailsExpanded ? t("i18n.hideDetails") : t("i18n.showDetails"))}
+              {detailsExpanded ? t("i18n.hideDetails") : t("i18n.showDetails")}
             </button>
           )}
         </div>
         )}
 
-        {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (
+        {hasDetails && detailsExpanded && (
           <pre
             style={{
               margin: 0,

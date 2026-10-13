@@ -11,13 +11,13 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, draftImagesToAttachedImages, filterModelOptions, getTooManyImagesNotice, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, shouldCompressImageFile, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, draftImagesToAttachedImages, filterModelOptions, getTooManyImagesNotice, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, shouldCompressImageFile, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
 const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("@/lib/draft-store.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
-test("native textarea grows to eight visual lines and preserves manual sizing", () => {
+test("native textarea grows to eight visual lines and preserves explicit locking", () => {
   const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "resizeChatInputTextarea");
   const script = new Script(ts.transpileModule(declaration.getText(source), {
@@ -29,8 +29,9 @@ test("native textarea grows to eight visual lines and preserves manual sizing", 
   const resize = context.exports.resizeChatInputTextarea;
   let manual = false;
   let native = true;
+  const card = { dataset: {} };
   const textarea = { value: "文字", style: { height: "auto" }, scrollHeight: 32,
-    closest(selector) { return selector === ".chat-composer-custom-height" ? manual : native; } };
+    closest(selector) { return selector === ".chat-composer-custom-height" ? manual : native ? card : null; } };
   resize(textarea);
   assert.equal(textarea.style.height, "34px", "one visual line includes padding and borders");
   textarea.scrollHeight = 200;
@@ -57,7 +58,20 @@ test("native textarea grows to eight visual lines and preserves manual sizing", 
     assert.equal(textarea.style.height, height, "manual height wins above and below the automatic cap");
   }
   manual = false;
+  card.dataset.composerMinHeight = "100";
+  textarea.scrollHeight = 40;
+  resize(textarea);
+  assert.equal(textarea.style.height, "100px", "unlocked drag sets a starting height");
+  textarea.scrollHeight = 200;
+  resize(textarea);
+  assert.equal(textarea.style.height, "202px", "content grows past an unlocked starting height");
+  textarea.value = "";
+  resize(textarea);
+  assert.equal(textarea.style.height, "100px", "empty draft keeps its unlocked starting height");
+  delete card.dataset.composerMinHeight;
   native = false;
+  textarea.value = "长文本";
+  textarea.scrollHeight = 600;
   resize(textarea);
   assert.equal(textarea.style.height, "200px", "classic layout keeps its existing cap");
 });
@@ -245,40 +259,26 @@ test("does not render an empty model error", () => {
   );
 });
 
-test("renders enabledModels scope warnings", () => {
-  const html = renderToStaticMarkup(
-    React.createElement(
-      I18nProvider,
-      null,
-      React.createElement(ModelScopeWarningBanner, {
-        warnings: ['No models match pattern "ghost-gateway/*"'],
-      }),
-    ),
-  );
-
-  assert.match(html, /模型范围警告/);
-  assert.match(html, /ghost-gateway/);
-  assert.equal(
-    renderToStaticMarkup(
-      React.createElement(I18nProvider, null, React.createElement(ModelScopeWarningBanner, { warnings: [] })),
-    ),
-    "",
-  );
+test("scope warnings never reappear when the composer mounts", () => {
+  for (const warnings of [[], ['No models match pattern "ghost-gateway/*"'],
+    ['Invalid thinking level "bogus" in pattern "fixture/startup:bogus". Using default instead.']]) {
+    for (let mount = 0; mount < 2; mount++) {
+      const html = renderToStaticMarkup(React.createElement(I18nProvider, null,
+        React.createElement(ChatInput, { onSend() {}, onAbort() {}, isStreaming: false,
+          modelScopeWarnings: warnings })));
+      assert.doesNotMatch(html, /模型范围警告|模型警告|ghost-gateway|Invalid thinking level|role="alert"/);
+    }
+  }
 });
 
-test("scope warnings collapse duplicates and translate diagnostic details", () => {
-  const warning = 'No models match pattern "openai-codex/gpt-6.1-sol:high"';
+test("actual model errors remain visible alongside ignored scope diagnostics", () => {
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null,
-    React.createElement(ModelScopeWarningBanner, { warnings: [warning, warning,
-      'Invalid thinking level "bogus" in pattern "fixture/startup:bogus". Using default instead.'] })));
-  assert.match(html, /2 项模型配置需要检查/);
-  assert.match(html, /<details>/);
-  assert.doesNotMatch(html, /<details open/);
-  assert.match(html, /当前可用目录未匹配/);
-  assert.match(html, /推理等级 bogus 无效/);
-  assert.doesNotMatch(html, /No models match pattern|Invalid thinking level/);
-  assert.match(html, /aria-label="关闭"/);
-  assert.equal((html.match(/openai-codex\/gpt-6.1-sol:high/g) ?? []).length, 1);
+    React.createElement(ChatInput, { onSend() {}, onAbort() {}, isStreaming: false,
+      modelError: "Invalid models.json schema", modelScopeWarnings: ['No models match pattern "ghost-gateway/*"'] })));
+  assert.match(html, /模型错误/);
+  assert.match(html, /Invalid models.json schema/);
+  assert.match(html, /role="alert"/);
+  assert.doesNotMatch(html, /模型范围警告|ghost-gateway/);
 });
 
 test("keeps the model selector visible when a model error leaves no options", () => {
@@ -682,6 +682,14 @@ test("restores text and base64 images when editing a user message", () => {
   assert.deepEqual(getUserMessageDraftImages(message), [
     { data: "AQID", mimeType: "image/png" },
   ]);
+
+  const messageWithDimension = {
+    role: "user",
+    content: [
+      { type: "text", text: "历史提问文本\n\n[Image: original 2248x2480, displayed at 1813x2000. Multiply coordinates by 1.24 to map to original image.]" }
+    ]
+  };
+  assert.equal(getUserMessageText(messageWithDimension), "历史提问文本");
 });
 
 test("restores legacy flat image entries when editing a user message", () => {

@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useRef,
   useCallback,
@@ -64,6 +65,7 @@ import {
   type SettingsExtensionDefinition,
 } from "@/lib/settings-extensions";
 import { IsolatedSettingsHost } from "./IsolatedSettingsHost";
+import { focusModalPanel, listenForPanelEscape } from "@/lib/stacked-dialog";
 
 function SettingsSectionLoading({ section, error, retry }: {
   section: SettingsSection;
@@ -97,13 +99,14 @@ const PluginsConfig = dynamic(loadPluginsConfig, { loading: (props) => <Settings
 const McpConfig = dynamic(loadMcpConfig, { loading: (props) => <SettingsSectionLoading section="mcp" {...props} /> });
 
 const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig };
-function preloadSettingsSection(section: SettingsSection) {
+export function preloadSettingsSection(section: SettingsSection) {
   const loader = sectionLoaders[section as keyof typeof sectionLoaders];
   // Warm only the hovered/focused code chunk; no component/data request is mounted.
   if (loader) void loader().catch(() => {});
 }
 
 interface Props {
+  resolveReturnFocus?: (opener: Element) => Element | null;
   cwd: string | null;
   sessionId: string | null;
   initialSection: SettingsSection;
@@ -604,6 +607,7 @@ function ExtensionSectionHost({ definition, ...props }: SettingsHostContextProps
 }
 
 export function SettingsPanel({
+  resolveReturnFocus,
   cwd,
   sessionId,
   initialSection,
@@ -616,6 +620,26 @@ export function SettingsPanel({
   onProjectTrustChanged,
 }: Props) {
   const { t } = useI18n();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<(() => void) | null>(null);
+
+  useLayoutEffect(() => {
+    const panel = dialogRef.current;
+    // Keep the original opener across StrictMode's setup/cleanup replay.
+    returnFocusRef.current ??= focusModalPanel(document, panel, {
+      restoreTextEntry: !window.matchMedia?.("(pointer: coarse)").matches,
+      resolveReturnFocus,
+    });
+    return () => {
+      // Composer CSS hides it while the modal exists. Restore after React's
+      // removal commit, when it is focusable again, without a timer or poll.
+      queueMicrotask(() => {
+        if (panel?.isConnected) return;
+        returnFocusRef.current?.();
+        returnFocusRef.current = null;
+      });
+    };
+  }, []);
 
   // 1. 同步初始布局状态（0ms 首次 client render 取得，无跳变）
   const [layout, setLayout] = useState<SettingsLayoutState>(() => readInitialSettingsLayout());
@@ -740,15 +764,7 @@ export function SettingsPanel({
   }, [section, activateSectionById]);
 
   // 5. 键盘 Escape 关闭
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      event.preventDefault();
-      onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  useEffect(() => listenForPanelEscape(document, onClose), [onClose]);
 
   // 6. Project 缺失或被禁用的扩展自动回退
   useEffect(() => {
@@ -994,9 +1010,11 @@ export function SettingsPanel({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={t("settings.title")}
+      tabIndex={-1}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -1140,17 +1158,17 @@ export function SettingsPanel({
           {cwd &&
             sectionHost(
               "skills",
-              <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />,
+              <SkillsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} onClose={onClose} />,
             )}
           {cwd &&
             sectionHost(
               "agents",
-              <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
+              <AgentsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
             )}
           {cwd &&
             sectionHost(
               "plugins",
-              <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
+              <PluginsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
             )}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
 

@@ -1,12 +1,13 @@
 "use client";
+
 import { createToolProcessSummary, getToolProcessSummaryLabel, includeToolInProcessSummary, type ToolProcessSummary } from "@/lib/tool-public-status";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
-import { isMessageGroupAnchor } from "@/lib/message-display";
+import { isHiddenCustomMessage, isMessageGroupAnchor } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView } from "./MessageView";
@@ -15,7 +16,7 @@ import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
-import { AskUserSurface, AskUserTextPanel } from "./AskUserPanel";
+import { AskUserSurface, AskUserTextPanel, ExtensionWaitingCount } from "./AskUserPanel";
 import { ChatScrollToBottom } from "./ChatScrollToBottom";
 import { NewSessionBrandHeader } from "./NewSessionBrandHeader";
 import { useI18n } from "@/hooks/useI18n";
@@ -50,6 +51,8 @@ import {
 
 interface Props {
   session: SessionInfo | null;
+  mobileNavigationOpen?: boolean;
+  onMobileNavigationOpenChange?: (open: boolean) => void;
   searchTarget?: { sessionId: string; entryId: string; blockIndex?: number } | null;
   onSearchTargetHandled?: (target: { sessionId: string; entryId: string }) => void;
   initialScrollPosition?: ChatScrollPosition | null;
@@ -99,6 +102,9 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
 
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
+
+type HistoryLoadStatus = "idle" | "loading" | "error";
+type HistoryLoadOperation = { id: number; sessionId: string | null; leafId: string | null; settled: boolean };
 
 function getUserInputText(message: AgentMessage): string | null {
   if (message.role !== "user") return null;
@@ -160,9 +166,52 @@ function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = f
   );
 }
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  // Only structural whitespace is a navigation shortcut. Text and controls keep
+  // native selection, zoom, horizontal scrolling and click behavior.
+  const closeMobileNavigation = useCallback(() => onMobileNavigationOpenChange?.(false), [onMobileNavigationOpenChange]);
+  const blankTapRef = useRef<{ pointerId: number; x: number; y: number; at: number } | null>(null);
+  const previousBlankTapRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const resetBlankTap = useCallback(() => {
+    blankTapRef.current = null;
+    previousBlankTapRef.current = null;
+  }, []);
+  useEffect(resetBlankTap, [session?.id, newSessionDraftKey, isMobile, resetBlankTap]);
+  const isBlankNavigationTarget = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // Chromium may adjust touch targets toward nearby text/controls. Test the
+    // physical point, so whitespace is distinguished from content itself.
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    if (!(target instanceof HTMLElement) || window.getSelection()?.toString().trim()) return false;
+    return target.matches("[data-pi-native-scroll-owner], [data-chat-navigation-blank], [data-pi-native-message-column], [data-scroll-anchor]");
+  };
+  const handleBlankPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isMobile || mobileNavigationOpen || event.pointerType !== "touch" || !event.isPrimary || !isBlankNavigationTarget(event)) {
+      resetBlankTap();
+      return;
+    }
+    blankTapRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, at: event.timeStamp };
+  };
+  const handleBlankPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = blankTapRef.current;
+    if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) resetBlankTap();
+  };
+  const handleBlankPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = blankTapRef.current;
+    blankTapRef.current = null;
+    if (!start || start.pointerId !== event.pointerId || !event.isPrimary || event.timeStamp - start.at > 300 || !isBlankNavigationTarget(event)
+      || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
+      previousBlankTapRef.current = null;
+      return;
+    }
+    const previous = previousBlankTapRef.current;
+    if (previous && event.timeStamp - previous.at <= 300 && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 24) {
+      previousBlankTapRef.current = null;
+      onMobileNavigationOpenChange?.(true);
+    } else previousBlankTapRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+  };
+
   useEffect(() => {
     installNativeProcessCollapseFlag();
   }, []);
@@ -198,18 +247,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   const {
     loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
-    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelsLoading, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelsLoading, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
+    slashCommands, slashCommandsLoading, queuedMessages, unconfirmedSubmissions, confirmPendingSubmission,
+    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     isAutoModelSelection,
     isAutoThinkingSelection,
     agentPhase,
     isNew,
     showScrollToBottom,
     sessionIdRef, scrollContainerRef,
-    lastUserMsgRef, promptAnchorActive,
+    lastUserMsgRef, promptAnchorActive, promptScrollRevision,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
@@ -558,6 +607,68 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const messageContentRef = useRef<HTMLDivElement | null>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
+  const currentHistorySessionId = session?.id ?? sessionIdRef.current ?? null;
+  const currentHistoryScopeRef = useRef({
+    sessionId: currentHistorySessionId,
+    leafId: activeLeafId,
+  });
+  currentHistoryScopeRef.current = {
+    sessionId: currentHistorySessionId,
+    leafId: activeLeafId,
+  };
+  const historyLoadScopeRef = useRef(currentHistoryScopeRef.current);
+  const historyLoadSequenceRef = useRef(0);
+  const activeHistoryLoadRef = useRef<HistoryLoadOperation | null>(null);
+  const [historyLoadPresentation, setHistoryLoadPresentation] = useState<{
+    sessionId: string | null;
+    leafId: string | null;
+    status: HistoryLoadStatus;
+  }>(() => ({ ...currentHistoryScopeRef.current, status: "idle" }));
+  const beginHistoryLoad = useCallback((sessionId: string | null, leafId: string | null, status: HistoryLoadStatus) => {
+    const operation: HistoryLoadOperation = { id: ++historyLoadSequenceRef.current, sessionId, leafId, settled: status !== "loading" };
+    activeHistoryLoadRef.current = operation;
+    loadingOlderRef.current = true;
+    setHistoryLoadPresentation({ sessionId, leafId, status });
+    return operation;
+  }, []);
+  const isCurrentHistoryLoad = useCallback((operation: HistoryLoadOperation) => {
+    const active = activeHistoryLoadRef.current;
+    const current = currentHistoryScopeRef.current;
+    return active?.id === operation.id
+      && active.sessionId === operation.sessionId
+      && active.leafId === operation.leafId
+      && current.sessionId === operation.sessionId
+      && current.leafId === operation.leafId;
+  }, []);
+  const setHistoryLoadOutcome = useCallback((operation: HistoryLoadOperation, status: Exclude<HistoryLoadStatus, "loading">) => {
+    if (!isCurrentHistoryLoad(operation)) return false;
+    operation.settled = true;
+    setHistoryLoadPresentation({ sessionId: operation.sessionId, leafId: operation.leafId, status });
+    return true;
+  }, [isCurrentHistoryLoad]);
+  const clearHistoryLoadGuard = useCallback((operation: HistoryLoadOperation) => {
+    // Restoring the viewport must not retire an in-flight request token.
+    // Its outcome still owns the loading presentation until it settles.
+    if (!operation.settled || activeHistoryLoadRef.current?.id !== operation.id) return;
+    activeHistoryLoadRef.current = null;
+    loadingOlderRef.current = false;
+  }, []);
+  const historyLoadStatus = historyLoadPresentation.sessionId === currentHistoryScopeRef.current.sessionId
+    && historyLoadPresentation.leafId === currentHistoryScopeRef.current.leafId
+    ? historyLoadPresentation.status
+    : "idle";
+  useLayoutEffect(() => {
+    const current = currentHistoryScopeRef.current;
+    const previous = historyLoadScopeRef.current;
+    if (previous.sessionId === current.sessionId && previous.leafId === current.leafId) return;
+    historyLoadScopeRef.current = { ...current };
+    historyLoadSequenceRef.current += 1;
+    activeHistoryLoadRef.current = null;
+    loadingOlderRef.current = false;
+    prevScrollDistanceRef.current = null;
+    pendingHistoryVisibleCountRef.current = null;
+    setHistoryLoadPresentation({ ...current, status: "idle" });
+  }, [activeLeafId, currentHistorySessionId]);
   const restoreStartedRef = useRef(false);
   const pendingScrollRestoreRef = useRef(pendingScrollRestore);
   pendingScrollRestoreRef.current = pendingScrollRestore;
@@ -628,14 +739,16 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         return;
       }
 
-      loadingOlderRef.current = true;
+      const operation = beginHistoryLoad(sessionId, activeLeafId, "loading");
+      let outcome: Exclude<HistoryLoadStatus, "loading"> = "idle";
       let before = initialHistory.historyCursor;
       let hasMore = initialHistory.hasEarlierMessages;
       try {
         while (hasMore && before && !controller.signal.aborted) {
           const context = await loadContext(sessionId, activeLeafId, before, { signal: controller.signal });
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted || !isCurrentHistoryLoad(operation)) return;
           if (!context) {
+            outcome = "error";
             scrollToBottom("instant");
             setPendingScrollRestore(null);
             return;
@@ -653,8 +766,17 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           scrollToBottom("instant");
           setPendingScrollRestore(null);
         }
+      } catch {
+        if (isCurrentHistoryLoad(operation)) {
+          outcome = "error";
+          scrollToBottom("instant");
+          setPendingScrollRestore(null);
+        }
       } finally {
-        loadingOlderRef.current = false;
+        if (isCurrentHistoryLoad(operation)) {
+          setHistoryLoadOutcome(operation, outcome);
+          clearHistoryLoadGuard(operation);
+        }
       }
     };
 
@@ -664,7 +786,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       // A branch change cancels restoration and must reveal the new context.
       setPendingScrollRestore(null);
     };
-  }, [activeLeafId, loadContext, loading, pendingScrollRestore, scrollToBottom, searchTarget, session?.id]);
+  }, [activeLeafId, beginHistoryLoad, clearHistoryLoadGuard, isCurrentHistoryLoad, loadContext, loading, pendingScrollRestore, scrollToBottom, searchTarget, session?.id, setHistoryLoadOutcome]);
 
   useLayoutEffect(() => {
     const position = pendingScrollRestore;
@@ -693,14 +815,26 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     const locate = async () => {
       const history = searchHistoryRef.current;
       let found = history.entryIds.includes(searchTarget.entryId);
-      if (!found && !sessionBusy && history.hasEarlierMessages && history.historyCursor && !loadingOlderRef.current) {
-        loadingOlderRef.current = true;
+      if (!found && !sessionBusy && history.hasEarlierMessages && history.historyCursor && !loadingOlderRef.current
+        && searchTarget.sessionId === currentHistoryScopeRef.current.sessionId) {
+        const operation = beginHistoryLoad(searchTarget.sessionId, activeLeafId, "loading");
+        let outcome: Exclude<HistoryLoadStatus, "loading"> = "idle";
         const container = scrollContainerRef.current;
         if (container) prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
         // ponytail: one extra page of 200 entries; deeper or other-branch hits just open the session.
-        const context = await loadContext(searchTarget.sessionId, activeLeafId, history.historyCursor, { tail: 200, signal: controller.signal });
-        loadingOlderRef.current = false;
-        found = Boolean(context?.entryIds.includes(searchTarget.entryId));
+        try {
+          const context = await loadContext(searchTarget.sessionId, activeLeafId, history.historyCursor, { tail: 200, signal: controller.signal });
+          if (controller.signal.aborted || !isCurrentHistoryLoad(operation)) return;
+          if (!context) outcome = "error";
+          found = Boolean(context?.entryIds.includes(searchTarget.entryId));
+        } catch {
+          if (isCurrentHistoryLoad(operation)) outcome = "error";
+        } finally {
+          if (isCurrentHistoryLoad(operation)) {
+            setHistoryLoadOutcome(operation, outcome);
+            clearHistoryLoadGuard(operation);
+          }
+        }
       }
       if (controller.signal.aborted) return;
       if (found) {
@@ -713,7 +847,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     };
     void locate();
     return () => controller.abort();
-  }, [searchTarget, loading, activeLeafId, sessionBusy, loadContext, onSearchTargetHandled, scrollContainerRef]);
+  }, [searchTarget, loading, activeLeafId, sessionBusy, loadContext, onSearchTargetHandled, scrollContainerRef, beginHistoryLoad, isCurrentHistoryLoad, setHistoryLoadOutcome, clearHistoryLoadGuard]);
 
   useLayoutEffect(() => {
     if (!pendingSearchScroll || pendingSearchScroll !== searchTarget) return;
@@ -742,7 +876,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
     const action = getHistoryLoadAction(visibleStartIndexRef.current, hasEarlierMessages);
     if (action === "reveal-local") {
-      loadingOlderRef.current = true;
+      beginHistoryLoad(currentHistoryScopeRef.current.sessionId, activeLeafId, "idle");
       prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
       revealNextVisiblePage();
       return;
@@ -756,30 +890,36 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     if (!oldestId) return;
     const sid = session?.id ?? sessionIdRef.current;
     if (!sid) return;
-    loadingOlderRef.current = true;
+    const operation = beginHistoryLoad(sid, activeLeafId, "loading");
     prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
     void loadContext(sid, activeLeafId, oldestId)
       .then((context) => {
+        if (!isCurrentHistoryLoad(operation)) return;
         if (context) {
           // The server page is measured in source messages, while the render
           // window is measured in nodes. Reveal one render page at a time.
           revealNextVisiblePage();
+          setHistoryLoadOutcome(operation, "idle");
         } else {
           prevScrollDistanceRef.current = null;
           pendingHistoryVisibleCountRef.current = null;
+          setHistoryLoadOutcome(operation, "error");
         }
       })
       .catch(() => {
+        if (!isCurrentHistoryLoad(operation)) return;
         // A failed page request must not leave the sentinel permanently blocked.
         prevScrollDistanceRef.current = null;
         pendingHistoryVisibleCountRef.current = null;
+        setHistoryLoadOutcome(operation, "error");
       })
       .finally(() => {
+        if (!isCurrentHistoryLoad(operation)) return;
         // Keep the guard until the layout effect has restored the anchor after
         // the requested render page is mounted.
-        if (prevScrollDistanceRef.current == null) loadingOlderRef.current = false;
+        if (prevScrollDistanceRef.current == null) clearHistoryLoadGuard(operation);
       });
-  }, [activeLeafId, hasEarlierMessages, historyCursor, loadContext, revealNextVisiblePage, scrollContainerRef, session?.id, sessionIdRef]);
+  }, [activeLeafId, beginHistoryLoad, clearHistoryLoadGuard, hasEarlierMessages, historyCursor, isCurrentHistoryLoad, loadContext, revealNextVisiblePage, scrollContainerRef, session?.id, sessionIdRef, setHistoryLoadOutcome]);
 
   // IntersectionObserver on the sentinel div at the top of the message list.
   // The callback ref/state pair also registers a sentinel that appears after
@@ -821,17 +961,32 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // Restore the viewport after either a local render page or a prepended
   // server page becomes visible. Wait for the requested render page so a
   // source-message update cannot consume the anchor before the page expands.
+  const historyPromptRevisionRef = useRef(promptScrollRevision);
   useLayoutEffect(() => {
-    if (prevScrollDistanceRef.current == null) return;
+    if (historyPromptRevisionRef.current !== promptScrollRevision) {
+      historyPromptRevisionRef.current = promptScrollRevision;
+      // A new user turn takes precedence over a previous reading position.
+      // Leave an in-flight page guarded until its own request settles.
+      prevScrollDistanceRef.current = null;
+    }
     const pendingVisibleCount = pendingHistoryVisibleCountRef.current;
+    if (prevScrollDistanceRef.current == null) {
+      if (pendingVisibleCount !== null && visibleCount >= pendingVisibleCount) {
+        pendingHistoryVisibleCountRef.current = null;
+        const operation = activeHistoryLoadRef.current;
+        if (operation) clearHistoryLoadGuard(operation);
+      }
+      return;
+    }
     if (pendingVisibleCount !== null && visibleCount < pendingVisibleCount) return;
     const container = scrollContainerRef.current;
     if (!container) return;
     container.scrollTop = restoreScrollTop(container.scrollHeight, prevScrollDistanceRef.current);
     prevScrollDistanceRef.current = null;
     pendingHistoryVisibleCountRef.current = null;
-    loadingOlderRef.current = false;
-  }, [messages, messages.length, scrollContainerRef, visibleCount]);
+    const operation = activeHistoryLoadRef.current;
+    if (operation) clearHistoryLoadGuard(operation);
+  }, [clearHistoryLoadGuard, messages, messages.length, promptScrollRevision, scrollContainerRef, visibleCount]);
   // Push session stats up to AppShell for the top bar.
   // Compare scalar fields to avoid loops from new object identity each render.
   const statsKey = sessionStats
@@ -931,10 +1086,25 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   useLayoutEffect(() => {
     const win = getEnhancementWindow();
+    let bridgeOperation: HistoryLoadOperation | null = null;
+    let bridgeLoadFailed = false;
     const loadEarlier = createEarlierHistoryLoader({
       isLoading: () => loadingOlderRef.current,
       setLoading: (next) => {
-        loadingOlderRef.current = next;
+        if (next) {
+          const scope = currentHistoryScopeRef.current;
+          bridgeOperation = beginHistoryLoad(scope.sessionId, scope.leafId, "loading");
+          bridgeLoadFailed = false;
+          return;
+        }
+        const operation = bridgeOperation;
+        bridgeOperation = null;
+        if (!operation) return;
+        if (isCurrentHistoryLoad(operation)) {
+          setHistoryLoadOutcome(operation, bridgeLoadFailed ? "error" : "idle");
+          clearHistoryLoadGuard(operation);
+        }
+        bridgeLoadFailed = false;
       },
       hasEarlierMessages: () => historyBridgeRef.current.hasEarlierMessages,
       getOldestEntryId: () => historyBridgeRef.current.oldestEntryId,
@@ -947,12 +1117,26 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         }
       },
       clearScrollAnchor: () => {
+        if (bridgeOperation && !isCurrentHistoryLoad(bridgeOperation)) return;
         prevScrollDistanceRef.current = null;
         pendingHistoryVisibleCountRef.current = null;
       },
-      loadContext: (sid, leafId, before, options) => (
-        historyBridgeRef.current.loadContext(sid, leafId, before, options)
-      ),
+      loadContext: async (sid, leafId, before, options) => {
+        try {
+          const context = await historyBridgeRef.current.loadContext(sid, leafId, before, options);
+          if (!context && bridgeOperation && bridgeOperation.sessionId === sid && bridgeOperation.leafId === leafId
+            && isCurrentHistoryLoad(bridgeOperation)) {
+            bridgeLoadFailed = true;
+          }
+          return context;
+        } catch (error) {
+          if (bridgeOperation && bridgeOperation.sessionId === sid && bridgeOperation.leafId === leafId
+            && isCurrentHistoryLoad(bridgeOperation)) {
+            bridgeLoadFailed = true;
+          }
+          throw error;
+        }
+      },
       onContextLoaded: (context) => {
         if (context.messages.length > 0) {
           setVisibleCount((current) => Math.max(
@@ -978,7 +1162,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         }
       },
     });
-  }, [scrollContainerRef, session?.id, sessionIdRef]);
+  }, [beginHistoryLoad, clearHistoryLoadGuard, isCurrentHistoryLoad, scrollContainerRef, session?.id, sessionIdRef, setHistoryLoadOutcome]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const columnEndInset = useChatColumnInset(scrollContainerRef, !loading && !error && !isEmptyNew, isMobile ? 0 : CHAT_MINIMAP_WIDTH);
@@ -989,6 +1173,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const promptAnchorSpacerHeightRef = useRef(0);
   const promptAnchorMeasureFrameRef = useRef<number | null>(null);
   const promptAnchorAdjustmentDoneRef = useRef(false);
+  const promptAnchorRevisionRef = useRef(-1);
   const promptAnchorUpdateRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
@@ -997,6 +1182,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       promptAnchorUpdateRef.current = null;
       promptAnchorSpacerHeightRef.current = 0;
       promptAnchorAdjustmentDoneRef.current = false;
+      promptAnchorRevisionRef.current = -1;
       if (spacer) spacer.style.height = "";
       return;
     }
@@ -1005,6 +1191,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     const messageContent = messageContentRef.current;
     const userMessage = lastUserMsgRef.current;
     if (!container || !messageContent || !userMessage || !spacer) return;
+    if (promptAnchorRevisionRef.current !== promptScrollRevision) {
+      promptAnchorRevisionRef.current = promptScrollRevision;
+      promptAnchorAdjustmentDoneRef.current = false;
+    }
 
     let disposed = false;
     const updatePromptAnchorSpacer = () => {
@@ -1031,16 +1221,16 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       );
 
       const isInitialMeasurement = !promptAnchorAdjustmentDoneRef.current;
-      const needsInitialAdjustment = isInitialMeasurement
-        && nextPromptAnchorSpacerHeight > 0;
       if (isInitialMeasurement) promptAnchorAdjustmentDoneRef.current = true;
-      if (nextPromptAnchorSpacerHeight === promptAnchorSpacerHeightRef.current) return;
-
-      promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
-      spacer.style.height = nextPromptAnchorSpacerHeight > 0
-        ? `${nextPromptAnchorSpacerHeight}px`
-        : "";
-      if (needsInitialAdjustment) scrollUserMsgToTop();
+      if (nextPromptAnchorSpacerHeight !== promptAnchorSpacerHeightRef.current) {
+        promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
+        spacer.style.height = nextPromptAnchorSpacerHeight > 0
+          ? `${nextPromptAnchorSpacerHeight}px`
+          : "";
+      }
+      // Each user turn needs an alignment even when its required spacer
+      // happens to equal the previous turn's height.
+      if (isInitialMeasurement) scrollUserMsgToTop();
     };
 
     promptAnchorUpdateRef.current = updatePromptAnchorSpacer;
@@ -1075,6 +1265,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     lastUserMsgRef,
     messages.length,
     promptAnchorActive,
+    promptScrollRevision,
     scrollContainerRef,
     scrollUserMsgToTop,
   ]);
@@ -1092,7 +1283,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     : null;
 
   const chatInputElement = (
-    <>
+    <Fragment key="chat-input-element">
     <ChatInput
       ref={chatInputRef}
       columnEndInset={columnEndInset}
@@ -1100,9 +1291,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           <div className="pi-native-extension-dock">
             <div className="pi-native-extension-column">
               {extensionDialog && (extensionDialog.method === "input" || extensionDialog.method === "editor"
-                ? <AskUserTextPanel key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />
-                : <ExtensionDialog key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />)}
-              {extensionCustomUi && <AskUserSurface key={extensionCustomUi.id} request={extensionCustomUi} onInput={sendExtensionCustomInput} fallback={<ExtensionCustomPanel request={extensionCustomUi} onInput={sendExtensionCustomInput} />} />}
+                ? <AskUserTextPanel key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
+                : <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />)}
+              {extensionCustomUi && <AskUserSurface key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} fallback={<ExtensionCustomPanel request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />} />}
             </div>
           </div>
       )}
@@ -1118,7 +1309,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       modelList={modelList}
       modelError={modelError}
           modelsLoading={modelsLoading}
-      modelScopeWarnings={modelScopeWarnings}
       onModelChange={handleModelChange}
       modelSwitching={modelSwitching}
       onCompact={session || isNew ? handleCompact : undefined}
@@ -1136,6 +1326,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       retryInfo={retryInfo}
       queuedMessages={queuedMessages}
       inputHistory={inputHistory}
+      retainedSubmissions={unconfirmedSubmissions}
+      onConfirmSubmission={confirmPendingSubmission}
       onRecallQueue={handleRecallQueue}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
@@ -1147,7 +1339,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       draftKey={session?.id ?? newSessionDraftKey ?? undefined}
       cwd={session?.cwd ?? newSessionCwd}
     />
-    </>
+    </Fragment>
   );
 
   if (loading) {
@@ -1376,6 +1568,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         {!isEmptyNew && <>
         <div
           ref={scrollContainerRef}
+          onPointerDown={handleBlankPointerDown}
+          onPointerMove={handleBlankPointerMove}
+          onPointerUp={handleBlankPointerUp}
+          onPointerCancel={resetBlankTap}
+          onScroll={resetBlankTap}
           // The message list is the one place long output has to be dragged through,
           // so it shows its scrollbar instead of hiding it behind the minimap (#788).
           // A stable gutter keeps the centred column from shifting when a short
@@ -1385,7 +1582,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           data-pi-native-scroll-restoring={pendingScrollRestore ? "true" : undefined}
           style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
         >
-          <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
+          <div data-chat-navigation-blank="true" style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div ref={messageContentRef} data-pi-native-message-column="true" style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {(() => {
               // Keep the grouping/index pass lightweight; only the selected
@@ -1461,6 +1658,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
               for (let idx = 0; idx < displayMessages.length; idx += 1) {
                 const message = displayMessages[idx];
+                // Skip presentation only: preserve source indices and entry IDs.
+                if (isHiddenCustomMessage(message)) continue;
                 if (message.role !== "assistant") {
                   if (message.role === "toolResult") continue;
                   flushProcess();
@@ -1577,9 +1776,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                       type="button"
                       ref={setSentinelElement}
                       onClick={loadOlderHistory}
+                      data-history-load-state={historyLoadStatus}
+                      aria-live="polite"
+                      aria-busy={historyLoadStatus === "loading"}
+                      disabled={historyLoadStatus === "loading"}
                       className="block w-full border-0 bg-transparent py-3 text-center text-xs text-text-muted"
                     >
-                      {t("chat.loadEarlier")}
+                      {historyLoadStatus === "loading" ? (
+                        <span className="pi-history-load-pending">
+                          <span className="pi-history-load-spinner" data-history-load-spinner="true" aria-hidden="true" />
+                          <span>{t("chat.loadingEarlier")}</span>
+                        </span>
+                      ) : t(historyLoadStatus === "error" ? "chat.loadEarlierFailed" : "chat.loadEarlier")}
                     </button>
                   )}
                   {plans.slice(startIndex).map((plan) => plan.kind === "message"
@@ -1632,8 +1840,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         </div>
-        {pendingScrollRestore ? (
-          <div aria-hidden="true" style={{ width: CHAT_MINIMAP_WIDTH, flexShrink: 0 }} />
+        {!isMobile && (pendingScrollRestore ? (
+          <div className="chat-desktop-minimap" aria-hidden="true" style={{ width: CHAT_MINIMAP_WIDTH, flexShrink: 0 }} />
         ) : (
           <ChatMinimap
             key={session?.id ?? sessionIdRef.current ?? "new"}
@@ -1644,6 +1852,25 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             messageRefs={messageRefs}
             onRevealHistory={revealHistoryForMinimap}
           />
+        ))}
+        {isMobile && mobileNavigationOpen && !pendingScrollRestore && (
+          <div className="chat-mobile-navigation-layer" data-mobile-navigation-layer="true">
+            <button type="button" className="chat-mobile-navigation-backdrop" aria-label="关闭会话导航" onPointerDown={closeMobileNavigation}
+              // Opening on pointer-up can retarget its compatibility click to
+              // this newly mounted backdrop. Dismiss on a new press instead.
+              onClick={(event) => { if (event.detail === 0) closeMobileNavigation(); }} />
+            <ChatMinimap
+              key={session?.id ?? sessionIdRef.current ?? "new"}
+              sessionId={session?.id ?? sessionIdRef.current ?? null}
+              messages={messages}
+              streamingMessage={streamState.streamingMessage}
+              scrollContainer={scrollContainerRef}
+              messageRefs={messageRefs}
+              onRevealHistory={revealHistoryForMinimap}
+              overlay
+              onClose={closeMobileNavigation}
+            />
+          </div>
         )}
         </>}
       </div>
@@ -1912,9 +2139,11 @@ function getExtensionDialogSummary(request: ExtensionDialogRequest): string | un
 
 function ExtensionDialog({
   request,
+  waitingCount,
   onRespond,
 }: {
   request: Extract<ExtensionDialogRequest, { method: "select" | "confirm" }>;
+  waitingCount: number;
   onRespond: (request: ExtensionDialogRequest, response: { value: string } | { confirmed: boolean } | { cancelled: true }) => void;
 }) {
   const { t } = useI18n();
@@ -1984,6 +2213,7 @@ function ExtensionDialog({
               {summary}
             </span>
           )}
+          <ExtensionWaitingCount count={waitingCount} />
           {countdown}
           <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
             {t("chat.extensionExpand")}
@@ -2011,7 +2241,8 @@ function ExtensionDialog({
             {/* Pi's TUI shows the title verbatim, newlines included; select/input have no
                 separate message field, so extensions put multi-line text here. */}
             <div style={{ color: "var(--text)", fontSize: 14, fontWeight: 650, lineHeight: 1.45, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{request.title}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 3, color: "var(--text-dim)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+              <ExtensionWaitingCount count={waitingCount} />
               {countdown}
             </div>
           </div>
@@ -2147,9 +2378,11 @@ type ExtensionCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 
 function ExtensionCustomPanel({
   request,
+  waitingCount,
   onInput,
 }: {
   request: ExtensionCustomRequest;
+  waitingCount: number;
   onInput: (request: ExtensionCustomRequest, data: string) => void;
 }) {
   const { t } = useI18n();
@@ -2202,6 +2435,7 @@ function ExtensionCustomPanel({
               {summary}
             </span>
           )}
+          <ExtensionWaitingCount count={waitingCount} />
           <span style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
             {t("chat.extensionExpand")}
           </span>
@@ -2283,6 +2517,7 @@ function ExtensionCustomPanel({
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
            <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 650 }}>{t("chat.extensionPanel")}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <ExtensionWaitingCount count={waitingCount} />
             <button
               type="button"
               onClick={() => setCollapsed(true)}

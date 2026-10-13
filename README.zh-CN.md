@@ -1,6 +1,6 @@
-> **PI Web Plus 1.3.38** 基于 Pi Coding Agent 1.0.4。通过 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/tag/v1.3.38) 安装预构建包；本地服务默认只监听 `127.0.0.1`。
+> **PI Web Plus 1.3.74** 基于 Pi Coding Agent 1.2.0。通过 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/tag/v1.3.74) 安装预构建包；本地服务默认只监听 `127.0.0.1`。
 
-> 1.3.38：移除侧边栏重复的文字状态标签和旧资源，补充脱敏实景图；包含截至 1.3.37 的改进，基于 Pi Coding Agent 1.0.4。
+> 1.3.38：移除侧边栏重复的文字状态标签和旧资源，补充脱敏实景图；包含截至 1.3.37 的改进，基于 Pi Coding Agent 1.2.0。
 
 # PI Web Plus
 
@@ -77,7 +77,7 @@ PI Web Plus 保留并扩展 agegr 的 pi-web 开源项目，许可证及原版�
 PI Web Plus 要求 Node.js 22.19.0 或更高版本（`node >=22.19`）。先用 `node --version` 检查版本，然后从 [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) 全局安装官方预构建 `.tgz` 发行包并启动 `pi-web`：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
 pi-web
 ```
 
@@ -129,10 +129,10 @@ PI_WEB_PASSWORD='足够长的随机密码' pi-web --hostname 0.0.0.0
 
 服务端的模型和 API 请求会读取标准的 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY` 环境变量。
 
-macOS 或 Linux（通过 [GitHub Release `.tgz` 安装包](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz)安装并启动）：
+macOS 或 Linux（通过 [GitHub Release `.tgz` 安装包](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz)安装并启动）：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -142,7 +142,7 @@ pi-web
 Windows PowerShell：
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

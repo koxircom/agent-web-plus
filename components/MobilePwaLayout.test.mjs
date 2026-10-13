@@ -42,7 +42,8 @@ test("contains chat content and inputs within the mobile viewport", () => {
   assert.match(cssSource, /\.markdown-body \{[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%;[\s\S]*?overflow-x: hidden;/);
   assert.match(cssSource, /\.markdown-code-block \{[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%;/);
   assert.match(chatWindowSource, /overflow-x-hidden overflow-y-auto/);
-  assert.match(chatWindowSource, /maxHeight: "min\(760px, 100%\)"/);
+  assert.match(chatWindowSource, /className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"/);
+  assert.match(chatWindowSource, /className="chat-composer-footer relative shrink-0"/);
   assert.match(chatInputSource, /flex: compact \? "none" : 1,\s*minWidth: 0,\s*width: "100%",/);
 });
 

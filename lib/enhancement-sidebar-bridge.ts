@@ -358,6 +358,33 @@ export function getEnhancementSessionOdooAddons(
   return [];
 }
 
+export interface EnhancementSessionTag { id: string; name: string; color?: string; }
+
+// The durable state owner keeps revision/outbox reconciliation. React alone
+// renders the tag nodes, including the server-provided initial snapshot.
+export function getEnhancementSessionTags(
+  sessionId: string,
+  initial?: { sessionTagsDefinitions: EnhancementSessionTag[]; sessionTagMappings: Record<string, unknown> } | null,
+  win: WindowRecord | undefined = getDefaultWindow(),
+): EnhancementSessionTag[] {
+  try {
+    const hook = win?.__PI_ENH_GET_SESSION_TAGS__;
+    if (typeof hook === "function") {
+      const tags = hook(sessionId);
+      return Array.isArray(tags) ? tags : [];
+    }
+  } catch { return []; }
+  const ids = initial?.sessionTagMappings[sessionId];
+  return Array.isArray(ids) ? ids.flatMap((id) => {
+    const tag = initial?.sessionTagsDefinitions.find((tag) => tag.id === id);
+    return tag ? [tag] : [];
+  }) : [];
+}
+
+export function hasEnhancementSessionLayout(win: WindowRecord | undefined = getDefaultWindow()): boolean {
+  return typeof win?.__PI_ENH_GET_SESSION_ITEM_TOP__ === "function";
+}
+
 export function getEnhancementSessionItemHeight(
   sessionId: string,
   fallback: number,
@@ -416,4 +443,29 @@ export function getEnhancementSearchResultDataProps(
       ? `已归档会话 · ${item.archivedSearchCount ?? 0} 个匹配`
       : undefined,
   };
+}
+
+export interface EnhancementProjectActivity {
+  running: number;
+  attention: number;
+  interrupted: number;
+  status: "running" | "attention" | "interrupted" | "unknown" | null;
+  label: string;
+}
+
+export function getEnhancementProjectActivity(projectKey: string | null, others = false): EnhancementProjectActivity | null {
+  const win = getDefaultWindow();
+  try {
+    const hook = win?.__PI_ENH_GET_PROJECT_ACTIVITY__;
+    return typeof hook === "function" ? hook(projectKey, others) : null;
+  } catch { return null; }
+}
+
+export function getEnhancementSessionStatus(sessionId: string): { status: string; unread?: boolean } | null {
+  const win = getDefaultWindow();
+  try {
+    if (typeof win?.__PI_ENH_IS_PLUGIN_ENABLED__ === "function" && win.__PI_ENH_IS_PLUGIN_ENABLED__("project-status-indicator") === false) return null;
+    const hook = win?.__PI_ENH_GET_EFFECTIVE_PROJECT_STATUS_ENTRY__;
+    return typeof hook === "function" ? hook(sessionId) : null;
+  } catch { return null; }
 }

@@ -1,3 +1,4 @@
+import { SETTINGS_SECTION_VALUES, type SettingsSection } from "./settings-navigation";
 import {
   createFastPluginReader,
   ENHANCEMENT_METADATA,
@@ -95,7 +96,13 @@ export type SettingsExtensionMount = (
   context: SettingsExtensionContext,
 ) => SettingsExtensionCleanup | void;
 
+export interface SettingsShortcut {
+  id: SettingsSection;
+  label: string;
+}
+
 export interface SettingsNativeAbi {
+  setSidebarShortcuts(shortcuts: readonly { id: string; label: string }[] | null): void;
   registerRenderer(id: string, mount: SettingsExtensionMount): () => void;
   registerTabAction(id: string, action: () => void): () => void;
   invokeTabAction(id: string): boolean;
@@ -129,6 +136,30 @@ class SettingsExtensionRegistry {
   private rendererListeners: Set<RendererChangeListener> = new Set();
   private currentModal: ModalRuntime | null = null;
   private readyDispatched = false;
+  private sidebarShortcuts: readonly SettingsShortcut[] | null = null;
+  private shortcutListeners = new Set<() => void>();
+
+  public getSidebarShortcuts = (): readonly SettingsShortcut[] | null => this.sidebarShortcuts;
+
+  public subscribeSidebarShortcuts = (listener: () => void): (() => void) => {
+    this.shortcutListeners.add(listener);
+    return () => { this.shortcutListeners.delete(listener); };
+  };
+
+  public setSidebarShortcuts(shortcuts: readonly { id: string; label: string }[] | null): void {
+    const seen = new Set<string>();
+    const normalized: SettingsShortcut[] = [];
+    for (const item of shortcuts ?? []) {
+      const id = item?.id === "settings" ? "general" : item?.id;
+      if (!SETTINGS_SECTION_VALUES.includes(id as SettingsSection) || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push({ id: id as SettingsSection, label: typeof item.label === "string" ? item.label : id });
+    }
+    const next = shortcuts === null ? null : normalized;
+    if (JSON.stringify(next) === JSON.stringify(this.sidebarShortcuts)) return;
+    this.sidebarShortcuts = next;
+    for (const listener of this.shortcutListeners) listener();
+  }
 
   constructor() {
     this.ensureWindowAbi();
@@ -234,6 +265,7 @@ class SettingsExtensionRegistry {
     if (typeof window === "undefined") return null;
 
     const abi: SettingsNativeAbi = {
+      setSidebarShortcuts: (shortcuts) => this.setSidebarShortcuts(shortcuts),
       registerRenderer: (id, mount) => this.registerRenderer(id, mount),
       registerTabAction: (id, action) => this.registerTabAction(id, action),
       invokeTabAction: (id) => this.invokeTabAction(id),

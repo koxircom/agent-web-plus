@@ -87,6 +87,7 @@ test("New restores the draft after session navigation and workspace auto-restore
         activeNewSessionDraftKeyRef: { current: `new:initial:${cwd}` },
         activeProjectKeyRef: { current: cwd },
         workspaceRestoreTokenRef: { current: 0 },
+        navigationIntentRef: { current: 0 },
         suppressCwdBumpRef: { current: false },
         branchLeafChangeFnRef: { current: null },
         liveFollowFrameRef: { current: null },
@@ -104,6 +105,7 @@ test("New restores the draft after session navigation and workspace auto-restore
         sessionKey: 0,
       });
       context.invalidateWorkspaceRestore = () => context.workspaceRestoreTokenRef.current++;
+      context.advanceNavigationIntent = () => ++context.navigationIntentRef.current;
       for (const [setter] of callbacks.matchAll(/\bset[A-Z]\w*(?=\()/g)) {
         const state = setter[3].toLowerCase() + setter.slice(4);
         context[setter] = (value) => {

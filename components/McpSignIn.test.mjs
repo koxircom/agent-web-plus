@@ -48,7 +48,7 @@ const PAGE = "https://auth.example/authorize?client_id=pi&state=abc&redirect_uri
 const flow = (phase, extra = {}) => ({ flowId: "f1", scope: "global", name: "docs", configKey: "key", phase, expiresInMs: 200_000, ...extra });
 
 function row(props = {}) {
-  return decode(renderToStaticMarkup(h(I18nProvider, null, h(McpSignInRow, {
+  return decode(renderToStaticMarkup(h(I18nProvider, { initialLocale: "en" }, h(McpSignInRow, {
     server: oauth,
     run: undefined,
     block: undefined,

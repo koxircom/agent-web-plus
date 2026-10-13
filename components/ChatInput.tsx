@@ -27,13 +27,15 @@ import { getMarkdownListContinuation } from "@/lib/markdown-list-continuation";
 import { isBareMcpCommand, isBuiltinMcpCommand } from "@/lib/mcp-command";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { ImagePreview } from "./ImagePreview";
+import { stripDimensionNotes } from "./MessageView";
 import { preloadImageCapabilities } from "@/lib/image-capabilities";
 import { useIsMobile, focusEditable } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { useChatAppearance } from "@/hooks/useChatAppearance";
-import { useComposerLayoutPreferences } from "@/hooks/useComposerLayoutPreferences";
+import { rekeyComposerHeight, useComposerLayoutPreferences } from "@/hooks/useComposerLayoutPreferences";
 import type { ToolPreset } from "@/lib/tool-presets";
-import type { PromptSubmissionPreviewIdentity } from "@/lib/prompt-submissions";
+import type { PendingPromptSubmission, PromptSubmissionPreviewIdentity } from "@/lib/prompt-submissions";
+import { SavedPromptMenu } from "./SavedPromptMenu";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { ComposerQueue, ComposerQueueIcon } from "./ComposerQueue";
@@ -66,7 +68,6 @@ interface Props {
   modelError?: string | null;
   modelsLoading?: boolean;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
-  modelScopeWarnings?: string[];
   onModelChange?: (provider: string, modelId: string) => void;
   modelSwitching?: boolean;
   onCompact?: () => void;
@@ -85,6 +86,8 @@ interface Props {
   retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
   queuedMessages?: QueuedMessages | null;
   inputHistory?: string[];
+  retainedSubmissions?: PendingPromptSubmission[];
+  onConfirmSubmission?: (submission: PendingPromptSubmission) => Promise<void>;
   onRecallQueue?: () => void;
   onQueuePreviewChange?: (identity: PromptSubmissionPreviewIdentity | null) => void;
   slashCommands?: SlashCommandInfo[];
@@ -345,17 +348,22 @@ function NativeComposerModeControls({ onModeChange }: { onModeChange: (mode: Com
 }
 
 export function resizeChatInputTextarea(textarea: HTMLTextAreaElement): void {
-  // A saved or in-progress drag owns the height until the user changes it.
+  // Only an explicit lock or an active drag suspends automatic sizing.
   if (textarea.closest(".chat-composer-custom-height")) return;
   textarea.style.height = "auto";
-  if (!textarea.value) return;
+  const card = textarea.closest<HTMLElement>(".chat-composer-card");
+  const minimum = Number(card?.dataset.composerMinHeight) || 0;
+  if (!textarea.value) {
+    if (minimum) textarea.style.height = `${minimum}px`;
+    return;
+  }
 
   const style = getComputedStyle(textarea);
   const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
   const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
   const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6;
   const maxHeight = textarea.closest(".chat-composer-card") ? lineHeight * 8 + padding + border : 200;
-  textarea.style.height = `${Math.min(textarea.scrollHeight + border, maxHeight)}px`;
+  textarea.style.height = `${Math.max(minimum, Math.min(textarea.scrollHeight + border, maxHeight))}px`;
 }
 
 export function getUpwardMenuMaxHeight(menuBottom: number, visibleTop: number, gap = ANCHORED_MENU_GAP): number {
@@ -670,11 +678,13 @@ export function canRestoreUserMessage(
 }
 
 export function getUserMessageText(message: UserMessage): string {
-  if (typeof message.content === "string") return message.content;
-  return message.content
-    .filter((block): block is TextContent => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  if (typeof message.content === "string") return stripDimensionNotes(message.content);
+  return stripDimensionNotes(
+    message.content
+      .filter((block): block is TextContent => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+  );
 }
 
 export function getUserMessageDraftImages(message: UserMessage): ChatDraftImage[] {
@@ -782,48 +792,11 @@ export function modelSupportsImageInput(
   return entry.input.includes("image");
 }
 
-/** Keep SDK diagnostics intact in the API, and translate their known forms for display. */
-function modelScopeWarningText(warning: string, t: ReturnType<typeof useI18n>["t"]): string {
-  const noMatch = /^No models match pattern "(.*)"$/.exec(warning);
-  if (noMatch) return t("chat.modelScopeNoMatch", { pattern: noMatch[1] });
-  const invalidLevel = /^Invalid thinking level "(.*)" in pattern "(.*)"\. Using default instead\.$/.exec(warning);
-  if (invalidLevel) return t("chat.modelScopeInvalidLevel", { level: invalidLevel[1], pattern: invalidLevel[2] });
-  return warning;
-}
-
-/** Configuration diagnostics stay available without filling the composer. */
-export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
-  const { t } = useI18n();
-  const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
-  const uniqueWarnings = [...new Set(warnings ?? [])];
-  // A genuinely changed diagnostic set must be visible even after dismissal.
-  const signature = JSON.stringify([...uniqueWarnings].sort());
-  if (uniqueWarnings.length === 0 || dismissedSignature === signature) return null;
-  return (
-    <ModelNoticeBanner
-      tone="warning"
-      title={t("chat.modelScopeWarning")}
-      onClose={() => setDismissedSignature(signature)}
-      body={(
-        <details>
-          <summary style={{ cursor: "pointer" }}>
-            {t("chat.modelScopeSummary", { count: uniqueWarnings.length })}
-          </summary>
-          <div style={{ marginTop: 4 }}>{t("chat.modelScopeHelp")}</div>
-          {uniqueWarnings.map((warning) => (
-            <div key={warning}>{modelScopeWarningText(warning, t)}</div>
-          ))}
-        </details>
-      )}
-    />
-  );
-}
-
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelsLoading, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelsLoading, onModelChange, modelSwitching,
   compactError, compactResult,
   thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, inputHistory = [], onRecallQueue, onQueuePreviewChange,
+  retryInfo, queuedMessages, inputHistory = [], retainedSubmissions = [], onConfirmSubmission, onRecallQueue, onQueuePreviewChange,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
  onAudioUnlock,
@@ -965,6 +938,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
     rekeyDraft(previousKey: string, nextKey: string) {
       if (previousKey === nextKey) return;
+      rekeyComposerHeight(previousKey, nextKey);
       if (draftKeyRef.current !== previousKey) {
         rekeyStoredDraft(previousKey, nextKey);
         return;
@@ -1957,8 +1931,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     codexLayoutEnabled,
     modesEnabled,
     customHeight,
+    heightLocked,
     setCustomHeight,
-  } = useComposerLayoutPreferences();
+  } = useComposerLayoutPreferences(draftKey);
   const [nativeComposerMode, setNativeComposerMode] = useState<ComposerMode>("normal");
   const handleNativeComposerModeChange = useCallback((mode: ComposerMode) => {
     setNativeComposerMode((current) => current === mode ? current : mode);
@@ -1968,68 +1943,78 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (node) window.dispatchEvent(new Event("pi-native-composer-preferences-change"));
   }, []);
   const [dragHeight, setDragHeight] = useState<number | null>(null);
-  const isDraggingRef = useRef(false);
-  const startDragYRef = useRef(0);
-  const startHeightRef = useRef(0);
+  const gestureRef = useRef<{ owner: string | undefined; y: number; height: number; latest: number | null } | null>(null);
+  const ignoreResizeClickRef = useRef(false);
   const effectiveCustomHeight = dragHeight ?? customHeight;
+  const fixedHeight = dragHeight !== null || heightLocked;
 
-  const handleResizerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const handle = e.currentTarget;
-    try {
-      handle.setPointerCapture(e.pointerId);
-    } catch (_) {}
-    isDraggingRef.current = true;
-    startDragYRef.current = e.clientY;
+  const measureComposerHeight = useCallback(() => {
     const ta = textareaRef.current;
-    // The formatting plugin owns its editable inside the editor host. Measure
-    // that visible editable during a gesture, never the hidden textarea proxy.
+    // The formatting plugin owns its visible editable, not the hidden proxy.
     const formatted = ta?.parentElement?.querySelector<HTMLElement>(".pi-enh-formatted-composer:not([style*='display: none'])");
-    startHeightRef.current = (formatted ?? ta)?.getBoundingClientRect().height || customHeight || 44;
-    setDragHeight(startHeightRef.current);
-  }, [customHeight]);
-
-  const handleResizerPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingRef.current) return;
-    const delta = startDragYRef.current - e.clientY;
-    const rawHeight = startHeightRef.current + delta;
-    const viewportHeight = window.visualViewport?.height || window.innerHeight;
-    const dynamicMaxHeight = Math.max(44, Math.floor(viewportHeight * 0.8));
-    const boundedHeight = Math.max(44, Math.min(dynamicMaxHeight, Math.round(rawHeight)));
-    setDragHeight(boundedHeight);
+    return (formatted ?? ta)?.getBoundingClientRect().height || 28;
   }, []);
 
-  const handleResizerPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingRef.current) return;
-    isDraggingRef.current = false;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch (_) {}
-    if (dragHeight !== null) {
-      setCustomHeight(dragHeight);
-      setDragHeight(null);
-    }
-  }, [dragHeight, setCustomHeight]);
+  const handleResizerPointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    ignoreResizeClickRef.current = false;
+    gestureRef.current = { owner: draftKey, y: e.clientY, height: measureComposerHeight(), latest: null };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, [draftKey, measureComposerHeight]);
 
-  const handleResizerPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingRef.current) return;
-    isDraggingRef.current = false;
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch (_) {}
+  const handleResizerPointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.owner !== draftKey) return;
+    const delta = gesture.y - e.clientY;
+    if (gesture.latest === null && Math.abs(delta) < 4) return;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const height = Math.max(44, Math.min(Math.floor(viewportHeight * 0.8), Math.round(gesture.height + delta)));
+    gesture.latest = height;
+    ignoreResizeClickRef.current = true;
+    setDragHeight(height);
+  }, [draftKey]);
+
+  const handleResizerPointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = gestureRef.current;
+    gestureRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+    if (gesture && gesture.owner === draftKey && gesture.latest !== null) {
+      // One write per completed gesture, using its latest value even in one React batch.
+      setCustomHeight(gesture.latest, true);
+    }
+    setDragHeight(null);
+  }, [draftKey, setCustomHeight]);
+
+  const handleResizerPointerCancel = useCallback(() => {
+    if (!gestureRef.current) return;
+    gestureRef.current = null;
     setDragHeight(null);
   }, []);
 
+  const toggleComposerHeightLock = useCallback(() => {
+    if (ignoreResizeClickRef.current) {
+      ignoreResizeClickRef.current = false;
+      return;
+    }
+    // Unlock also discards the manual minimum so automatic sizing resumes immediately.
+    setCustomHeight(heightLocked ? null : measureComposerHeight(), !heightLocked);
+  }, [heightLocked, measureComposerHeight, setCustomHeight]);
+
+  useLayoutEffect(() => {
+    gestureRef.current = null;
+    setDragHeight(null);
+  }, [draftKey]);
+
   const isCodexActive = codexLayoutEnabled && !compact;
-  useLayoutEffect(resizeTextarea, [value, fontSize, isCodexActive, effectiveCustomHeight, resizeTextarea]);
+  useLayoutEffect(resizeTextarea, [value, fontSize, isCodexActive, effectiveCustomHeight, fixedHeight, resizeTextarea]);
   const hasUserContent = Boolean(value && value.trim().length > 0);
 
   const rootClassName = isCodexActive
     ? [
         "chat-composer-card pi-enh-cursor-composer",
         "chat-composer-model-pill pi-enh-composer-model-pill",
-        effectiveCustomHeight ? "chat-composer-custom-height" : "",
+        fixedHeight ? "chat-composer-custom-height" : "",
         isStreaming ? "has-running-controls" : "",
         hasUserContent ? "has-user-content" : "",
       ].filter(Boolean).join(" ")
@@ -2078,24 +2063,27 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       />}
       <ComposerQueue sessionId={draftKey ?? ""} queuedMessages={queuedMessages} onRecallQueue={onRecallQueue} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} />
       {extensionPanel}
-      <div className={rootClassName} style={rootStyle} data-pi-native-composer-layout="true">
+      <div className={rootClassName} style={rootStyle} data-pi-native-composer-layout="true"
+        data-composer-min-height={!fixedHeight ? customHeight ?? undefined : undefined}>
         {isCodexActive && (
-          <div
-            className={`chat-composer-resizer ${dragHeight !== null ? "chat-composer-resizing" : ""}`}
-            role="separator"
-            aria-label="拖拽调整输入框高度"
-            aria-orientation="horizontal"
+          <button
+            type="button"
+            className={`chat-composer-resizer ${heightLocked ? "chat-composer-height-locked" : ""} ${dragHeight !== null ? "chat-composer-resizing" : ""}`}
+            aria-label={heightLocked ? "取消输入框高度锁定" : "锁定输入框高度"}
+            aria-pressed={heightLocked}
+            title={heightLocked ? "高度已锁定，单击恢复自动撑高；拖动调整高度" : "自动撑高，单击锁定当前高度；拖动调整并锁定高度"}
+            onClick={toggleComposerHeightLock}
             onPointerDown={handleResizerPointerDown}
             onPointerMove={handleResizerPointerMove}
             onPointerUp={handleResizerPointerUp}
             onPointerCancel={handleResizerPointerCancel}
+            onLostPointerCapture={handleResizerPointerCancel}
           >
-            <div className="chat-composer-resizer-line" />
-          </div>
+            <span className="chat-composer-resizer-line" />
+          </button>
         )}
         <div className={isCodexActive ? "chat-composer-banner-stack" : ""}>
         <ModelErrorBanner error={modelError} />
-        <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {tooManyImagesNotice && (
           <ModelNoticeBanner tone="error" title={tooManyImagesNotice.title} body={tooManyImagesNotice.body} />
         )}
@@ -2623,9 +2611,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               fontSize: "var(--chat-content-font-size, 14px)",
               lineHeight: 1.6,
               fontFamily: "inherit",
-              height: isCodexActive && effectiveCustomHeight ? effectiveCustomHeight : undefined,
-              minHeight: isCodexActive ? (effectiveCustomHeight ?? undefined) : (compact ? 96 : 24),
-              maxHeight: isCodexActive ? (effectiveCustomHeight ?? undefined) : 200,
+              minHeight: isCodexActive ? undefined : (compact ? 96 : 24),
+              maxHeight: isCodexActive ? undefined : 200,
               overflow: "auto",
             }}
           />
@@ -2750,6 +2737,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <NativeComposerModeControls onModeChange={handleNativeComposerModeChange} />
               </div>
             )}
+            <div className="chat-composer-attachment-controls">
             <button
               onClick={() => fileInputRef.current?.click()}
               title={t("chat.attachImage")}
@@ -2783,6 +2771,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
+            {onConfirmSubmission && <SavedPromptMenu key={retainedSubmissions[0]?.sessionId ?? draftKey} submissions={retainedSubmissions} onConfirm={onConfirmSubmission} />}
+            </div>
             {/* 经典模式下模型选择器留在左侧 */}
             {!isCodexActive && (modelsLoading || modelOptions.length > 0 || model || modelError) && onModelChange && (
               <ModelSelector

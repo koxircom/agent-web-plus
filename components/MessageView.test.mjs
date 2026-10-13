@@ -16,9 +16,12 @@ const {
   getToolCallInputText,
   replaceUserMessageText,
   stripSerializedAnnotationBlocks,
+  stripDimensionNotes,
 } = await jiti.import("./MessageView.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 const { splitFinalAssistantBlocks } = await jiti.import("@/lib/message-display");
+const { clearExpandedToolCalls, setToolCallExpanded } = await jiti.import("@/lib/tool-call-expansion");
+const { completeActiveToolResult } = await jiti.import("@/lib/tool-public-status");
 
 function renderMessage(message, props = {}) {
   return renderToStaticMarkup(
@@ -33,6 +36,24 @@ function renderMessage(message, props = {}) {
 test("hides serialized annotation blocks from rendered user text", () => {
   const serialized = "Question\n<pi_annotations>internal quote payload</pi_annotations>\nFollow-up";
   assert.equal(stripSerializedAnnotationBlocks(serialized), "Question\nFollow-up");
+});
+
+test("stripDimensionNotes removes auto-added coordinate dimension notes", () => {
+  const input = "图片上传的时候一直在转圈圈\n\n[Image: original 2248x2480, displayed at 1813x2000. Multiply coordinates by 1.24 to map to original image.]";
+  assert.equal(stripDimensionNotes(input), "图片上传的时候一直在转圈圈");
+
+  const imageOnly = "[Image: original 2248x2480, displayed at 1813x2000. Multiply coordinates by 1.24 to map to original image.]";
+  assert.equal(stripDimensionNotes(imageOnly), "");
+});
+
+test("renders user message without auto-added image coordinate dimension note", () => {
+  const html = renderMessage({
+    role: "user",
+    content: "正常提问问题\n\n[Image: original 2248x2480, displayed at 1813x2000. Multiply coordinates by 1.24 to map to original image.]",
+  });
+  assert.equal(html.includes("正常提问问题"), true);
+  assert.equal(html.includes("Multiply coordinates by"), false);
+  assert.equal(html.includes("2248x2480"), false);
 });
 
 test("updates a reused message when its written files change", () => {
@@ -132,6 +153,74 @@ test("keeps streamed tool input out of collapsed markup while counting it", () =
   assert.doesNotMatch(html, /secret-stream-fragment/);
   assert.equal(getToolCallInputText(block), block.rawInput);
   assert.equal(getTokenEstimateText(block), block.rawInput);
+});
+
+test("renders shell output for its matching call until the transcript result replaces it", () => {
+  const toolCallId = "call-shell-output";
+  const call = {
+    type: "toolCall",
+    toolCallId,
+    toolName: "bash",
+    input: { command: "run task" },
+  };
+  const message = {
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [call],
+  };
+  const partial = {
+    role: "toolResult",
+    toolCallId,
+    toolName: "bash",
+    content: [{ type: "text", text: "partial shell output" }],
+    inProgress: true,
+    isError: false,
+  };
+  const resultMap = new Map([[toolCallId, partial]]);
+  const render = (toolResults = resultMap) => renderMessage(message, { isStreaming: true, toolResults });
+
+  clearExpandedToolCalls();
+  setToolCallExpanded(toolCallId, true);
+  try {
+    const activeHtml = render();
+    assert.match(activeHtml, /data-pi-native-tool-status="running"/);
+    assert.match(activeHtml, />进行中</);
+    assert.match(activeHtml, /partial shell output/);
+
+    const successful = completeActiveToolResult(partial, { toolCallId, toolName: "bash", isError: false });
+    resultMap.set(toolCallId, successful);
+    const successHtml = render();
+    assert.match(successHtml, /data-pi-native-tool-status="success"/);
+    assert.match(successHtml, />成功</);
+    assert.match(successHtml, /partial shell output/);
+
+    const failed = completeActiveToolResult(partial, { toolCallId, toolName: "bash", isError: true });
+    resultMap.set(toolCallId, failed);
+    const failureHtml = render();
+    assert.match(failureHtml, /data-pi-native-tool-status="failure"/);
+    assert.match(failureHtml, />失败</);
+    assert.match(failureHtml, /partial shell output/);
+
+    const mismatchedHtml = render(new Map([["different-call", partial]]));
+    assert.match(mismatchedHtml, /data-pi-native-tool-status="running"/);
+    assert.doesNotMatch(mismatchedHtml, /partial shell output/);
+
+    resultMap.set(toolCallId, {
+      role: "toolResult",
+      toolCallId,
+      toolName: "bash",
+      content: [{ type: "text", text: "final transcript output" }],
+      isError: true,
+    });
+    const transcriptHtml = render();
+    assert.match(transcriptHtml, /data-pi-native-tool-status="failure"/);
+    assert.match(transcriptHtml, />失败</);
+    assert.match(transcriptHtml, /final transcript output/);
+    assert.doesNotMatch(transcriptHtml, /partial shell output/);
+  } finally {
+    clearExpandedToolCalls();
+  }
 });
 
 test("renders subagents as standard tool calls with only an extra session button", () => {
@@ -516,3 +605,15 @@ test("preserves streaming token estimates while retiring native old tps span", (
   assert.doesNotMatch(html, /#53b3cb|#9bc53d|#f9c22e|#e01a4f/);
 });
 
+
+test("SDK display:false custom messages render no card and keep their source payload", () => {
+  for (const customType of ["wiki-recall-context", "wiki-observe-reminder", "extension", "pi-mail", "compaction"]) {
+    const message = { role: "custom", customType, display: false, content: "internal model context", details: { retained: true }, timestamp: Date.now() };
+    const before = structuredClone(message);
+    assert.equal(renderMessage(message), "");
+    assert.deepEqual(message, before);
+  }
+  for (const display of [true, undefined]) {
+    assert.match(renderMessage({ role: "custom", customType: "extension", display, content: "Visible extension message" }), /Visible extension message/);
+  }
+});

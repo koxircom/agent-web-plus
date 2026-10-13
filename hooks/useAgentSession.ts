@@ -15,8 +15,8 @@ import type {
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { completeActiveToolResult } from "@/lib/tool-public-status";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { isPromptRejectedError, readPromptReceipt, sendAgentCommand } from "@/lib/agent-client";
-import { getPendingPromptSubmissions, getServerPendingPromptSubmissions, subscribePendingPromptSubmissions, releasePromptSubmission, type PendingPromptSubmission, type PromptSubmissionPreviewIdentity } from "@/lib/prompt-submissions";
+import { acknowledgeRecalledPrompts, isPromptRejectedError, readPromptReceipt, isPromptSubmissionDispatching, sendAgentCommand } from "@/lib/agent-client";
+import { getPendingPromptSubmissions, markPromptSubmissionsRecalled, reconcilePromptSubmission, mergeServerPromptSubmissions, getServerPendingPromptSubmissions, subscribePendingPromptSubmissions, releasePromptSubmission, type PendingPromptSubmission, type PromptSubmissionPreviewIdentity } from "@/lib/prompt-submissions";
 import {
   clearSessionViewCache,
   deleteSessionViewSnapshot,
@@ -79,6 +79,7 @@ import {
 } from "@/lib/enhancement-chat-bridge";
 import { recallSessionQueue } from "@/lib/queue-recall-client";
 import { pendingSessionInfo } from "@/lib/session-catalog-client";
+import { admitNativeNotification, isNativeNotificationEnabled, NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT } from "@/lib/native-notifications";
 
 export interface SessionData {
   sessionId: string;
@@ -161,6 +162,7 @@ type NoticeState = {
 
 type NoticeAction =
   | { type: "add"; notice: NoticeItem }
+  | { type: "refilter" }
   | { type: "mark_oldest_exiting" }
   | { type: "remove"; id: string };
 
@@ -296,6 +298,10 @@ function noticeReducer(state: NoticeState, action: NoticeAction): NoticeState {
         };
       }
       return { ...state, visible: [...state.visible, action.notice] };
+    }
+    case "refilter": {
+      const enabled = (notice: NoticeItem) => isNativeNotificationEnabled(notice.message, notice.type);
+      return fillPendingNotices(state.visible.filter(enabled), state.pending.filter(enabled));
     }
     case "mark_oldest_exiting":
       return { ...state, visible: markOldestNoticeExiting(state.visible) };
@@ -433,6 +439,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!agentRunning && !bashRunning) setStopRequested(false);
   }, [agentRunning, bashRunning]);
   const [promptAnchorActive, setPromptAnchorActive] = useState(false);
+  const [promptScrollRevision, setPromptScrollRevision] = useState(0);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [slashCommands, setSlashCommands] = useState<SlashCommandInfo[]>([]);
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
@@ -459,6 +466,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const agentRunningRef = useRef(false);
   // Lifecycle events outrank state snapshots already in flight.
   const agentStateRevisionRef = useRef(0);
+  const extensionUiRevisionRef = useRef(0);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
   const notifiedPromptRunIdRef = useRef(-1);
@@ -1195,14 +1203,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
     const message = notice.message.trim();
     if (!message) return;
-    dispatchNotice({
-      type: "add",
-      notice: {
-        id: notice.id ?? createNoticeId(),
-        message,
-        type: notice.type ?? "info",
-      },
-    });
+    const item = { id: notice.id ?? createNoticeId(), message, type: notice.type ?? "info" };
+    if (!admitNativeNotification(item)) return;
+    dispatchNotice({ type: "add", notice: item });
+  }, []);
+
+  useEffect(() => {
+    const onPolicyChange = () => dispatchNotice({ type: "refilter" });
+    window.addEventListener(NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT, onPolicyChange);
+    return () => window.removeEventListener(NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT, onPolicyChange);
   }, []);
 
   const handleExtensionUiRequest = useCallback((request: ExtensionUiRequest) => {
@@ -1254,6 +1263,39 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
     }
   }, [addNotice, onAttentionNeeded, opts.chatInputRef]);
+
+  const restorePendingInteraction = useEffectEvent((request: ExtensionUiRequest) => {
+    handleExtensionUiRequest(request);
+  });
+
+  useEffect(() => {
+    const sid = session?.id;
+    if (!sid) return;
+    const controller = new AbortController();
+    const revision = extensionUiRevisionRef.current;
+    // Pending questions must not wait for the event stream's connection/replay
+    // or a large history. SSE remains authoritative once it has caught up.
+    void (async () => {
+      try {
+        const response = await fetch(`/api/agent/${encodeURIComponent(sid)}?interactions=1`, {
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]),
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const snapshot = await response.json();
+        if (controller.signal.aborted || sessionIdRef.current !== sid) return;
+        if (Array.isArray(snapshot.uncommittedPrompts)) mergeServerPromptSubmissions(snapshot.uncommittedPrompts);
+        if (extensionUiRevisionRef.current !== revision) return;
+        if (!Array.isArray(snapshot.pendingExtensionUiRequests)) return;
+        for (const request of snapshot.pendingExtensionUiRequests as ExtensionUiRequest[]) {
+          if (isBlockingExtensionUiRequest(request)) restorePendingInteraction(request);
+        }
+      } catch {
+        // The normal event stream still restores requests if this read fails.
+      }
+    })();
+    return () => controller.abort();
+  }, [session?.id]);
 
   const settleUiStage = useCallback(() => {
     const wasRunning = agentRunningRef.current;
@@ -1504,6 +1546,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [agentRunning]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    if (event.type === "extension_ui_request" || event.type === "extension_ui_closed"
+      || (event.type === "connected" && Array.isArray(event.pendingExtensionUiIds))) {
+      extensionUiRevisionRef.current += 1;
+    }
     if (["connected", "agent_start", "agent_end", "agent_settled", "prompt_done"].includes(event.type)) {
       agentStateRevisionRef.current += 1;
     }
@@ -1670,6 +1716,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const deliveredKey = userMessageKey(delivered);
           const optimisticKey = optimisticUserMessageRef.current ? userMessageKey(optimisticUserMessageRef.current.message) : null;
           optimisticUserMessageRef.current = null;
+          if (!optimisticKey) {
+            // Steering/follow-up delivery is a new user turn too. The initial
+            // prompt already acquired its scroll intent in handleSend.
+            pendingScrollToUserRef.current = true;
+            setPromptAnchorActive(true);
+            setPromptScrollRevision((revision) => revision + 1);
+          }
           setMessages((prev) => {
             const fallback = () => {
               const last = prev[prev.length - 1];
@@ -1778,6 +1831,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       }
+      case "prompt_delivery": {
+        const sid = sessionIdRef.current;
+        const requestId = event.requestId;
+        if (!sid || typeof requestId !== "string") break;
+        const receipt = event.receipt as { status?: string } | undefined;
+        if (typeof receipt?.status === "string") reconcilePromptSubmission(requestId, { status: receipt.status });
+        break;
+      }
       case "queue_update":
         setQueuedMessages({
           steering: [...((event.steering as string[] | undefined) ?? [])],
@@ -1865,6 +1926,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
     setPromptAnchorActive(true);
+    setPromptScrollRevision((revision) => revision + 1);
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     let sentSessionId: string | null = null;
@@ -2409,11 +2471,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, composerDraftKey, restoreSubmission, ensureEventsConnected]);
 
-  const confirmPendingSubmission = useCallback(async (row: PendingPromptSubmission) => {
+  const confirmPendingSubmission = useCallback(async (row: PendingPromptSubmission, recoverRecall = true) => {
     try {
       const receipt = await readPromptReceipt(row.sessionId, row.requestId);
-      if (!getPendingPromptSubmissions().some((item) => item.requestId === row.requestId)) return;
-      if (receipt.status === "accepted") {
+      const current = getPendingPromptSubmissions().find((item) => item.requestId === row.requestId);
+      if (!current) return;
+      if (receipt.status === "committed") {
         releasePromptSubmission(row.requestId);
         if (sessionHookMountedRef.current && sessionIdRef.current === row.sessionId) {
           maintainEventsConnected(row.sessionId);
@@ -2421,6 +2484,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           void loadSession(row.sessionId);
           void reconcileAgentState(row.sessionId);
         }
+      } else if (receipt.status === "recalled") {
+        if (current.status !== "recalled") markPromptSubmissionsRecalled([row.requestId]);
+        // Automatic checks expose the saved original; only an explicit recovery
+        // action restores it. A delayed recall response cannot duplicate a draft.
+        if (recoverRecall) {
+          if (!current.recallRestored) restoreSubmission(row.message, row.images, row.sessionId);
+          await acknowledgeRecalledPrompts(row.sessionId, [row.requestId]);
+        }
+      } else if (receipt.status === "cancelled") {
+        // Delete or an acknowledged recall already owns removal. Do not
+        // resurrect cancelled queue contents in an unrelated composer.
+        releasePromptSubmission(row.requestId);
+      } else if (["accepted", "pending", "unknown", "unconfirmed"].includes(receipt.status)) {
+        reconcilePromptSubmission(row.requestId, receipt);
       } else if (receipt.status === "rejected") {
         // Preserve the original owner even if this read returns after a switch.
         restoreSubmission(row.message, row.images, row.sessionId);
@@ -2431,15 +2508,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch { /* Original contents remain visible and durable until confirmed. */ }
   }, [addNotice, loadSession, maintainEventsConnected, promoteNewSession, reconcileAgentState, restoreSubmission, isNew, newSessionDraftKey, onSessionSubmissionChange]);
 
+  // Metadata/UI callbacks may change each render. Keep the existing recovery
+  // clock stable while using the latest owner when a receipt check runs.
+  const confirmUncertainSubmission = useEffectEvent((row: PendingPromptSubmission) => confirmPendingSubmission(row, false));
   useEffect(() => {
-    const uncertain = unconfirmedSubmissions.filter((row) => row.status === "uncertain");
-    if (!uncertain.length) return;
+    const pending = unconfirmedSubmissions.filter((row) => row.status !== "recalled");
+    if (!pending.length) return;
     let active = true;
     let checking = false;
     const check = async () => {
       if (!active || checking) return;
       checking = true;
-      try { for (const row of uncertain) { if (!active) break; await confirmPendingSubmission(row); } }
+      try { for (const row of pending) {
+        if (!active) break;
+        if (!isPromptSubmissionDispatching(row.requestId)) await confirmUncertainSubmission(row);
+      } }
       finally { checking = false; }
     };
     void check();
@@ -2449,7 +2532,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     window.addEventListener("online", onOnline);
     document.addEventListener("visibilitychange", onVisible);
     return () => { active = false; clearInterval(interval); window.removeEventListener("online", onOnline); document.removeEventListener("visibilitychange", onVisible); };
-  }, [unconfirmedSubmissions, confirmPendingSubmission]);
+  }, [unconfirmedSubmissions]);
 
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => {
     await sendStreamingPrompt(message, "steer", images, onRegistered);
@@ -2972,7 +3055,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isAutoThinkingSelection: isNew && newSessionThinkingLevel === null,
     agentPhase: stopRequested && (agentRunning || bashRunning) ? { kind: "stopping" } as AgentPhase : agentPhase,
     isNew,
-    promptAnchorActive,
+    promptAnchorActive, promptScrollRevision,
     showScrollToBottom,
     // Refs
     sessionIdRef, scrollContainerRef,

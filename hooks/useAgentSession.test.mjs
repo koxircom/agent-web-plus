@@ -1,15 +1,95 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import ts from "typescript";
+import { createJiti } from "jiti";
 
 const jitiSource = async (url) => (await readFile(url, "utf8")).replace(/\r\n/g, "\n");
 const source = await jitiSource(new URL("./useAgentSession.ts", import.meta.url));
 const chatWindowSource = await jitiSource(new URL("../components/ChatWindow.tsx", import.meta.url));
 const chatInputSource = await jitiSource(new URL("../components/ChatInput.tsx", import.meta.url));
-const messageViewSource = await jitiSource(new URL("../components/MessageView.tsx", import.meta.url));
 const appShellSource = await jitiSource(new URL("../components/AppShell.tsx", import.meta.url));
 
-test("keeps the session event stream open through the idle grace window", () => {
+// Evaluate the actual callback/prop, rather than require an incidental source
+// spelling or a text slice that can include an unrelated effect.
+const hookFile = ts.createSourceFile("hook.ts", source, ts.ScriptTarget.Latest, true);
+const chatFile = ts.createSourceFile("chat.tsx", chatWindowSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function findNode(file, predicate) {
+  const matches = [];
+  const visit = (node) => {
+    if (predicate(node)) matches.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  assert.equal(matches.length, 1, "Expected exactly one source contract");
+  return matches[0];
+}
+function evaluate(node, file, scope) {
+  const js = ts.transpileModule(`(${node.getText(file)})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText.trim().replace(/;$/, "");
+  return new Function("scope", `with (scope) { return ${js}; }`)(scope);
+}
+function callback(name, scope, file = hookFile) {
+  const declaration = findNode(file, (node) => ts.isVariableDeclaration(node) && node.name.getText(file) === name);
+  return evaluate(declaration.initializer.arguments[0], file, scope);
+}
+function messageViewProp(name, scope) {
+  const attr = findNode(chatFile, (node) => ts.isJsxAttribute(node)
+    && node.name.text === name && node.parent.parent.tagName?.getText(chatFile) === "MessageView");
+  return evaluate(attr.initializer.expression, chatFile, scope);
+}
+const jiti = createJiti(import.meta.url);
+const { getToolExecutionProgress } = await jiti.import("../lib/tool-execution-progress.ts");
+const { completeActiveToolResult, getToolPublicStatus } = await jiti.import("../lib/tool-public-status.ts");
+const { isNestedToolExecutionEvent, isSystemMessageEvent } = await jiti.import("../lib/agent-event-wire.ts");
+const queueHelpers = await jiti.import("../lib/extension-ui-queue.ts");
+const ref = (current) => ({ current });
+const noop = () => {};
+function hookHarness() {
+  const state = { messages: [], activeToolResults: new Map(), phase: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0 };
+  const setter = (key) => (value) => { state[key] = typeof value === "function" ? value(state[key]) : value; };
+  const scope = {
+    ...queueHelpers, sessionIdRef: ref("session"), session: { id: "session" },
+    agentRunningRef: ref(false), bashRunningRef: ref(false), promptRunIdRef: ref(0), agentStateRevisionRef: ref(0), extensionUiRevisionRef: ref(0),
+    rpcPromptPendingRef: ref(false), optimisticUserMessageRef: ref(null), preparationRef: ref(null),
+    entryIdsRef: ref([]), pendingScrollToUserRef: ref(false), ensuringNewSessionRef: ref(null),
+    isNew: false, newSessionCwd: null, composerDraftKey: "draft", newSessionDraftKey: null,
+    setMessages: setter("messages"), setAgentPhase: setter("phase"), setActiveToolResults: setter("activeToolResults"),
+    setExtensionDialogs: setter("dialogs"), setExtensionCustomUis: setter("custom"),
+    setAgentRunning: noop, setPromptAnchorActive: noop, setPromptScrollRevision: noop, setStopRequested: noop, dispatch: noop,
+    markOptimisticUserMessage: noop, bumpSessionEpoch: noop, cancelEventStreamGrace: noop, addNotice: noop,
+    invalidatesSessionHistory: () => false, normalizeToolCalls: (value) => value,
+    isSystemMessageEvent, isNestedToolExecutionEvent, CODEMODE_TOOL_NAME: "codemode",
+    getToolExecutionProgress, completeActiveToolResult,
+    isPromptRejectedError: (error) => error.code === "rejected",
+    waitForPromptPreparation: (operation) => operation,
+    ensureEventsConnected: async () => {}, loadSession: async () => {},
+    closeEvents: () => { state.closes++; },
+    restoreSubmission: (...args) => state.restores.push(args),
+    reconcileAgentState: async (...args) => { state.reconciles.push(args); },
+    waitForPromptSettlement: async (...args) => { state.settlements.push(args); },
+    sendAgentCommand: async (...args) => { state.commands.push(args); },
+    isBlockingExtensionUiRequest: () => true, onAttentionNeeded: noop,
+  };
+  scope.handleExtensionUiRequest = callback("handleExtensionUiRequest", scope);
+  scope.handleAgentEvent = callback("handleAgentEvent", scope);
+  return { state, scope };
+}
+
+test("only an authoritative pending-ID snapshot supersedes the fast interaction read", () => {
+  const { scope } = hookHarness();
+  scope.handleAgentEvent({ type: "connected", isStreaming: false });
+  assert.equal(scope.extensionUiRevisionRef.current, 0, "dormant SSE proxy has no pending-request knowledge");
+  scope.handleAgentEvent({ type: "connected", isStreaming: false, pendingExtensionUiIds: [] });
+  assert.equal(scope.extensionUiRevisionRef.current, 1);
+  scope.handleAgentEvent({ type: "extension_ui_request", id: "question", method: "select", title: "Choose", options: ["A"] });
+  assert.equal(scope.extensionUiRevisionRef.current, 2);
+  scope.handleAgentEvent({ type: "extension_ui_closed", id: "question" });
+  assert.equal(scope.extensionUiRevisionRef.current, 3);
+});
+
+test("keeps the session event stream open through the idle grace window", async (t) => {
   const finishSource = source.slice(
     source.indexOf("const finishPromptWithoutStream"),
     source.indexOf("const waitForPromptSettlement"),
@@ -53,7 +133,28 @@ test("keeps the session event stream open through the idle grace window", () => 
   assert.match(promptDoneSource, /scheduleEventStreamClose\(sid\)/);
   assert.match(sendSource, /const definitivelyRejected = !promptRequestStarted/);
   assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
-  assert.match(sendSource, /restoreSubmission\(message, images, composerDraftKey\);[\s\S]*?if \(sentSessionId\) \{[\s\S]*?reconcileAgentState\(sentSessionId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
+  t.mock.method(console, "error", noop);
+  // Rejection describes this submission, not an unrelated run in this session.
+  for (const outcome of ["rejected", "ambiguous", "before-dispatch", "no-session", "cancelled"]) {
+    const { scope, state } = hookHarness();
+    const error = Object.assign(new Error(outcome), { code: outcome });
+    if (outcome === "no-session") scope.session = null;
+    if (["before-dispatch", "cancelled"].includes(outcome)) {
+      scope.ensureEventsConnected = async () => {
+        if (outcome === "cancelled") scope.preparationRef.current.abort();
+        throw error;
+      };
+    } else scope.sendAgentCommand = async () => { throw error; };
+    await callback("handleSend", scope)("message");
+    assert.equal(state.restores.length, outcome === "ambiguous" || outcome === "cancelled" ? 0 : 1, outcome);
+    assert.equal(state.closes, outcome === "no-session" || outcome === "cancelled" ? 1 : 0, outcome);
+    assert.deepEqual(state.reconciles, outcome === "rejected" || outcome === "before-dispatch" ? [["session"]] : [], outcome);
+    assert.deepEqual(state.settlements, outcome === "ambiguous" ? [["session", 1]] : [], outcome);
+    if (outcome === "cancelled") {
+      assert.equal(state.commands[0][1].type, "retain_stopped_prompt");
+      assert.equal(state.commands[0][1].message, "message");
+    }
+  }
   assert.doesNotMatch(
     sendSource,
     /rpcPromptPendingRef\.current = false;\s*agentRunningRef\.current = false;\s*closeEvents\(\)/,
@@ -204,7 +305,17 @@ test("forking stays available during a run while in-session branch switches wait
   // Fork copies into a new file, so only a shell command blocks it; the
   // in-session edit still waits because pi refuses navigate_tree mid-run.
   assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
-  assert.match(chatWindowSource, /onEditContent=\{sessionBusy \? undefined : handleEditContent\}/);
+  const handleFork = noop;
+  const handleNavigate = noop;
+  // Editing is gated by navigation; its content callback need not disappear.
+  for (const busy of [false, true]) {
+    const scope = { bashRunning: false, isNew: false, sessionBusy: busy, handleFork, handleNavigate };
+    assert.equal(messageViewProp("onFork", scope), handleFork);
+    assert.equal(messageViewProp("onNavigate", scope), busy ? undefined : handleNavigate);
+  }
+  for (const blocked of [{ bashRunning: true, isNew: false }, { bashRunning: false, isNew: true }]) {
+    assert.equal(messageViewProp("onFork", { ...blocked, handleFork }), undefined);
+  }
   assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
 
@@ -300,7 +411,7 @@ test("stale fresh-session completion cannot replace the active composer", () => 
   );
   assert.ok(
     createdSource.indexOf("activeNewSessionDraftKeyRef.current !== sourceDraftKey")
-      < createdSource.indexOf("setSelectedSession(session)"),
+      < createdSource.indexOf("setSelectedSession(sessionWithProject)"),
   );
 });
 
@@ -319,17 +430,41 @@ test("abandoned fresh-session drafts are cleared and cannot be recreated by late
   assert.match(mountSource, /clearDraft\(abandonedDraftKey\)/);
 });
 
-test("streaming submissions cannot be stranded in an idle direct queue", () => {
-  const queueSource = source.slice(
-    source.indexOf("  // Let AgentSession.prompt decide atomically"),
-    source.indexOf("  const handleAbortCompaction"),
-  );
-
-  assert.match(queueSource, /type: "prompt"/);
-  assert.match(queueSource, /streamingBehavior: behavior/);
-  assert.match(queueSource, /if \(isPromptRejectedError\(e\)\) restore\(\)/);
-  assert.doesNotMatch(queueSource, /type: "steer"/);
-  assert.doesNotMatch(queueSource, /type: "follow_up"/);
+test("streaming submissions cannot be stranded in an idle direct queue", async (t) => {
+  t.mock.method(console, "error", noop);
+  const images = [{ mimeType: "image/png", data: "image" }];
+  for (const behavior of ["steer", "followUp"]) {
+    for (const outcome of ["accepted", "rejected", "ambiguous", "before-dispatch", "no-session"]) {
+      const { scope, state } = hookHarness();
+      const order = [];
+      const error = Object.assign(new Error(outcome), { code: outcome });
+      scope.ensureEventsConnected = async () => {
+        order.push("connect");
+        if (outcome === "before-dispatch") throw error;
+      };
+      scope.sendAgentCommand = async (...args) => {
+        order.push("prompt");
+        state.commands.push(args);
+        if (outcome !== "accepted") throw error;
+        args[2].onPromptRegistered({ sessionId: "session", requestId: "request" });
+      };
+      if (outcome === "no-session") scope.sessionIdRef.current = null;
+      let registered;
+      await callback("sendStreamingPrompt", scope)("queued", behavior, images, (identity) => { registered = identity; });
+      const dispatched = ["accepted", "rejected", "ambiguous"].includes(outcome);
+      assert.equal(state.commands.length, dispatched ? 1 : 0, outcome);
+      if (dispatched) {
+        assert.deepEqual(order, ["connect", "prompt"]);
+        assert.deepEqual(state.commands[0].slice(0, 2), ["session", {
+          type: "prompt", message: "queued", streamingBehavior: behavior,
+          images: [{ type: "image", mimeType: "image/png", data: "image" }],
+        }]);
+      }
+      assert.deepEqual(state.restores, ["rejected", "before-dispatch", "no-session"].includes(outcome)
+        ? [["queued", images, "draft"]] : [], outcome);
+      assert.deepEqual(registered, outcome === "accepted" ? { sessionId: "session", requestId: "request", draftKey: "draft" } : undefined);
+    }
+  }
 });
 
 test("built-in clone switches to the independent child session", () => {
@@ -480,32 +615,42 @@ test("restoring a running session does not clear an SSE snapshot", () => {
 });
 
 test("tracks tool execution progress privately and shows public tool outcomes", () => {
-  const updateSource = source.slice(
-    source.indexOf('case "tool_execution_update"'),
-    source.indexOf('case "tool_execution_end"'),
-  );
-
-  assert.match(updateSource, /getToolExecutionProgress\(event\.partialResult\)/);
-  assert.match(updateSource, /tools: \[\.\.\.tools\.filter\([\s\S]*?, updated\]/);
-  assert.match(chatWindowSource, /getToolPublicStatus\(block, toolResultsMap\.get\(block\.toolCallId\)\)/);
-  assert.doesNotMatch(chatWindowSource, /chat\.runningNamedTool[\s\S]*latest\.progress/);
+  const { scope, state } = hookHarness();
+  const phaseDeclaration = findNode(chatFile, (node) => ts.isFunctionDeclaration(node) && node.name?.text === "phaseLabel");
+  const phaseLabel = evaluate(phaseDeclaration, chatFile, {});
+  const block = { toolCallId: "shell", toolName: "bash" };
+  scope.handleAgentEvent({ type: "tool_execution_start", ...block });
+  scope.handleAgentEvent({ type: "tool_execution_update", ...block, partialResult: { content: [{ type: "text", text: "private progress" }] } });
+  assert.equal(state.phase.tools[0].progress, "private progress");
+  assert.equal(phaseLabel(state.phase, (key) => key), "chat.runningTool");
+  assert.equal(getToolPublicStatus(block, state.activeToolResults.get("shell")), "running");
+  scope.handleAgentEvent({ type: "tool_execution_end", ...block, isError: true });
+  assert.equal(getToolPublicStatus(block, state.activeToolResults.get("shell")), "failure");
+  assert.equal(state.phase.kind, "waiting_model");
 });
 
 test("reconnects active shell output to its streaming tool call", () => {
-  const updateSource = source.slice(
-    source.indexOf('case "tool_execution_update"'),
-    source.indexOf('case "tool_execution_end"'),
-  );
-  const endSource = source.slice(
-    source.indexOf('case "tool_execution_end"'),
-    source.indexOf('case "queue_update"'),
-  );
-
-  assert.match(updateSource, /name === "bash" \|\| name === "powershell" \|\| name === CODEMODE_TOOL_NAME/);
-  assert.match(updateSource, /setActiveToolResults/);
-  assert.match(updateSource, /content,/);
-  assert.match(endSource, /setActiveToolResults[\s\S]*next\.delete\(id\)/);
-  assert.match(chatWindowSource, /const map = new Map\(activeToolResults\)/);
+  for (const toolName of ["bash", "powershell"]) {
+    const { scope, state } = hookHarness();
+    scope.agentRunningRef.current = true;
+    const block = { toolCallId: "shell", toolName };
+    scope.handleAgentEvent({ type: "tool_execution_update", ...block, partialResult: { content: [{ type: "text", text: "partial output" }] } });
+    scope.handleAgentEvent({ type: "tool_execution_update", toolCallId: "other", toolName, partialResult: { content: [{ type: "text", text: "other output" }] } });
+    const partial = state.activeToolResults.get("shell");
+    assert.equal(partial.content[0].text, "partial output");
+    assert.equal(partial.inProgress, true);
+    scope.handleAgentEvent({ type: "tool_execution_end", ...block, isError: false });
+    const completed = state.activeToolResults.get("shell");
+    assert.equal(completed.content, partial.content);
+    assert.equal(getToolPublicStatus(block, completed), "success");
+    const transcript = { role: "toolResult", ...block, content: [{ type: "text", text: "final output" }], isError: false };
+    scope.handleAgentEvent({ type: "message_end", message: transcript });
+    assert.equal(state.activeToolResults.has("shell"), false);
+    assert.equal(state.activeToolResults.has("other"), true);
+    const map = callback("toolResultsMap", { activeToolResults: state.activeToolResults, messages: state.messages }, chatFile)();
+    assert.equal(map.get("shell"), transcript);
+    assert.equal(map.get("other"), state.activeToolResults.get("other"));
+  }
   assert.match(chatWindowSource, /const displayMessages =[\s\S]*?\[\.\.\.messages, streamState\.streamingMessage\]/);
   assert.match(chatWindowSource, /message=\{msg\}\s*isStreaming=\{isStreaming\}\s*toolResults=\{toolResultsMap\}/);
   assert.doesNotMatch(chatWindowSource, /<MessageView message=\{streamState\.streamingMessage as AgentMessage\}/);
@@ -552,7 +697,7 @@ test("plays the enabled sound once when an extension dialog appears over an empt
   assert.match(soundSource, /playDoneSoundRef\.current\(\)/);
 });
 
-test("queues extension dialogs and custom panels by request id instead of sharing one slot", () => {
+test("queues extension dialogs and custom panels by request id instead of sharing one slot", async () => {
   const extensionRequestSource = source.slice(
     source.indexOf("  const handleExtensionUiRequest = useCallback"),
     source.indexOf("  const settleUiStage = useCallback"),
@@ -594,8 +739,37 @@ test("queues extension dialogs and custom panels by request id instead of sharin
   assert.match(source, /const waitingExtensionDialogCount = Math\.max\(0, extensionDialogs\.length - 1\);/);
   assert.match(source, /const extensionCustomUi = extensionCustomUis\[0\] \?\? null;/);
   assert.match(source, /const waitingExtensionCustomUiCount = Math\.max\(0, extensionCustomUis\.length - 1\);/);
-  assert.match(source, /notices: noticeState\.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount,/);
-  assert.match(chatWindowSource, /notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount,/);
+  const { scope, state } = hookHarness();
+  const first = { id: "dialog-1", method: "confirm", title: "First", message: "Continue?" };
+  const second = { id: "dialog-2", method: "editor", title: "Second" };
+  const custom = { id: "custom-1", method: "custom", lines: ["First render"] };
+  for (const request of [first, second, first, custom]) scope.handleExtensionUiRequest(request);
+  scope.handleExtensionUiRequest({ ...custom, lines: ["Updated render"] });
+  assert.deepEqual(state.dialogs, [first, second]);
+  assert.deepEqual(state.custom.map((request) => request.lines), [["Updated render"]]);
+  // Execute the hook's projections and verify the returned interface without
+  // requiring the properties to remain adjacent in a destructuring statement.
+  for (const name of ["extensionDialog", "waitingExtensionDialogCount", "extensionCustomUi", "waitingExtensionCustomUiCount"]) {
+    const declaration = findNode(hookFile, (node) => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === name);
+    const project = () => evaluate(declaration.initializer, hookFile, { extensionDialogs: state.dialogs, extensionCustomUis: state.custom });
+    assert.deepEqual(project(), { extensionDialog: first, waitingExtensionDialogCount: 1, extensionCustomUi: state.custom[0], waitingExtensionCustomUiCount: 0 }[name]);
+    findNode(hookFile, (node) => ts.isShorthandPropertyAssignment(node) && node.name.text === name);
+    findNode(chatFile, (node) => ts.isBindingElement(node) && node.name.getText(chatFile) === name);
+  }
+  await callback("respondToExtensionUi", scope)(first, { confirmed: true });
+  assert.deepEqual(state.dialogs, [second]);
+  scope.handleAgentEvent({ type: "extension_ui_closed", id: second.id });
+  assert.deepEqual(state.dialogs, []);
+  scope.handleExtensionUiRequest({ ...custom, closed: true });
+  assert.deepEqual(state.custom, []);
+  // Reconnect keeps only server-held requests; duplicate replay stays idempotent.
+  scope.handleExtensionUiRequest(first);
+  scope.handleExtensionUiRequest(second);
+  scope.handleExtensionUiRequest(custom);
+  scope.handleAgentEvent({ type: "connected", pendingExtensionUiIds: [second.id], isStreaming: false });
+  scope.handleExtensionUiRequest(second);
+  assert.deepEqual(state.dialogs, [second]);
+  assert.deepEqual(state.custom, []);
 });
 
 test("drops queued extension UI when a tool change rebuilds the wrapper", () => {
@@ -731,7 +905,7 @@ test("keeps a newly sent user message at the top while its response starts", () 
   assert.match(chatWindowSource, /<div ref=\{promptAnchorSpacerRef\} aria-hidden="true" \/>/);
   assert.match(chatWindowSource, /const promptAnchorAdjustmentDoneRef = useRef\(false\)/);
   assert.match(chatWindowSource, /promptAnchorAdjustmentDoneRef\.current = false/);
-  assert.match(chatWindowSource, /const isInitialMeasurement = !promptAnchorAdjustmentDoneRef\.current;[\s\S]*?promptAnchorAdjustmentDoneRef\.current = true;[\s\S]*?if \(needsInitialAdjustment\) scrollUserMsgToTop\(\)/);
+  assert.match(chatWindowSource, /const isInitialMeasurement = !promptAnchorAdjustmentDoneRef\.current;[\s\S]*?promptAnchorAdjustmentDoneRef\.current = true;[\s\S]*?if \(isInitialMeasurement\) scrollUserMsgToTop\(\)/);
 });
 
 test("keeps prompt anchor measurement outside the React update cycle", () => {
@@ -775,13 +949,29 @@ test("uses the prompt anchor as the only trailing message spacer", () => {
 });
 
 test("keeps a detached viewport in place when streaming completes", () => {
-  const scrollEffectSource = source.slice(
-    source.indexOf("useLayoutEffect(() => {\n    if (opts.deferInitialScroll) return;"),
-    source.indexOf("// Load the model list"),
-  );
-
-  assert.match(scrollEffectSource, /!agentRunningRef\.current && isNearBottomRef\.current[\s\S]*?scrollToBottom\("auto"\)/);
-  assert.doesNotMatch(scrollEffectSource, /\|\|/);
+  const effect = findNode(hookFile, (node) => ts.isCallExpression(node)
+    && node.expression.getText(hookFile) === "useLayoutEffect"
+    && node.arguments[0]?.getText(hookFile).includes("opts.deferInitialScroll"));
+  for (const running of [false, true]) {
+    for (const attached of [false, true]) {
+      const scrolls = [];
+      const scope = {
+        opts: { deferInitialScroll: false }, messages: [{}],
+        pendingScrollToUserRef: ref(false), initialScrollDoneRef: ref(true),
+        agentRunningRef: ref(running), isNearBottomRef: ref(attached),
+        scrollToBottom: (behavior) => scrolls.push(behavior), scrollUserMsgToTop: () => scrolls.push("user"),
+      };
+      const run = evaluate(effect.arguments[0], hookFile, scope);
+      run();
+      assert.deepEqual(scrolls, !running && attached ? ["auto"] : [], `running=${running}, attached=${attached}`);
+      scope.opts.deferInitialScroll = true;
+      scope.pendingScrollToUserRef.current = true;
+      scope.initialScrollDoneRef.current = false;
+      scrolls.length = 0;
+      run();
+      assert.deepEqual(scrolls, [], "Restoring a saved viewport must defer initial scrolling");
+    }
+  }
   assert.match(source, /addEventListener\("scroll", handleScrollPositionChange/);
 });
 
@@ -852,4 +1042,84 @@ test("loadSession suppresses AbortError from polluting UI error and conducts bou
   assert.equal(testIsAbortError(null), false, "null must NOT be treated as AbortError");
   assert.equal(testIsAbortError(undefined), false, "undefined must NOT be treated as AbortError");
   assert.equal(testIsAbortError("AbortError string"), false, "Plain string must NOT be treated as AbortError");
+});
+
+
+test("queued user delivery acquires a fresh native scroll intent without duplicating the optimistic prompt", () => {
+  const { state, scope } = hookHarness();
+  let revision = 0;
+  scope.agentRunningRef.current = true;
+  scope.setPromptScrollRevision = (update) => { revision = update(revision); };
+  scope.userMessageKey = (message) => JSON.stringify(message.content);
+  scope.reconcileDeliveredUserMessage = (_prev, _message, options) => options.fallback();
+  const initial = { role: "user", content: "initial", timestamp: 1 };
+  state.messages = [initial];
+  scope.optimisticUserMessageRef.current = { message: initial };
+  scope.handleAgentEvent({ type: "message_end", message: initial });
+  assert.equal(revision, 0, "the initial echo preserves the existing intent");
+  assert.equal(state.messages.length, 1);
+  const queued = { role: "user", content: "next turn", timestamp: 2 };
+  scope.handleAgentEvent({ type: "message_end", message: queued });
+  assert.equal(revision, 1, JSON.stringify({ messages: state.messages, optimistic: scope.optimisticUserMessageRef.current, pending: scope.pendingScrollToUserRef.current }));
+  assert.equal(scope.pendingScrollToUserRef.current, true);
+  assert.equal(state.messages.at(-1), queued);
+});
+
+
+test("new user turns cancel a stale history restore while ordinary pagination keeps its anchor", () => {
+  const effect = findNode(chatFile, (node) => ts.isCallExpression(node)
+    && node.expression.getText(chatFile) === "useLayoutEffect"
+    && node.arguments[0]?.getText(chatFile).includes("historyPromptRevisionRef.current !=="));
+  for (const revision of [1, 2]) {
+    const container = { scrollTop: 100, scrollHeight: 2000 };
+    const scope = { historyPromptRevisionRef: ref(1), promptScrollRevision: revision,
+      prevScrollDistanceRef: ref(1500), pendingHistoryVisibleCountRef: ref(null),
+      loadingOlderRef: ref(true), visibleCount: 50, scrollContainerRef: ref(container),
+      restoreScrollTop: (height, distance) => height - distance };
+    evaluate(effect.arguments[0], chatFile, scope)();
+    assert.equal(container.scrollTop, revision === 1 ? 500 : 100);
+    assert.equal(scope.prevScrollDistanceRef.current, null);
+    assert.equal(scope.loadingOlderRef.current, revision !== 1, "in-flight fetch remains guarded");
+  }
+});
+
+
+test("cancelled local history restoration releases its page guard after the render page mounts", () => {
+  const effect = findNode(chatFile, (node) => ts.isCallExpression(node)
+    && node.expression.getText(chatFile) === "useLayoutEffect"
+    && node.arguments[0]?.getText(chatFile).includes("historyPromptRevisionRef.current !=="));
+  const container = { scrollTop: 900, scrollHeight: 2000 };
+  const scope = { historyPromptRevisionRef: ref(1), promptScrollRevision: 2,
+    prevScrollDistanceRef: ref(1500), pendingHistoryVisibleCountRef: ref(100),
+    loadingOlderRef: ref(true), visibleCount: 50, scrollContainerRef: ref(container),
+    restoreScrollTop: () => { throw Error("old anchor must not be restored"); } };
+  const run = evaluate(effect.arguments[0], chatFile, scope);
+  run();
+  assert.equal(scope.loadingOlderRef.current, true);
+  scope.visibleCount = 100;
+  run();
+  assert.equal(scope.loadingOlderRef.current, false);
+  assert.equal(scope.pendingHistoryVisibleCountRef.current, null);
+  assert.equal(container.scrollTop, 900);
+});
+
+
+test("receipt recovery clock survives changing UI callbacks without losing their latest owner", async () => {
+  const effect = findNode(hookFile,node=>ts.isCallExpression(node) && node.expression.getText(hookFile)==="useEffect"
+    && node.arguments[0]?.getText(hookFile).includes("const uncertain = unconfirmedSubmissions"));
+  const row={requestId:"r",sessionId:"s",status:"uncertain"};
+  const scope={unconfirmedSubmissions:[row],confirmPendingSubmission:async()=>{},document:{visibilityState:"visible",addEventListener(){},removeEventListener(){}},window:{addEventListener(){},removeEventListener(){}},setInterval(fn,ms){assert.equal(ms,8000);scope.tick=fn;return 1;},clearInterval(){},};
+  let owner=0,reads=[];scope.confirmPendingSubmission=async()=>{reads.push(owner);};
+  // Model React's event function: stable scheduling, current callback on dispatch.
+  scope.confirmUncertainSubmission=async row=>scope.confirmPendingSubmission(row);
+  const dependencies=()=>evaluate(effect.arguments[1],hookFile,scope);
+  const first=dependencies();
+  const cleanup=evaluate(effect.arguments[0],hookFile,scope)();
+  await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(reads,[0]);
+  for(owner=1;owner<=30;owner++){
+    scope.confirmPendingSubmission=async()=>{reads.push(owner);};
+    assert.deepEqual(dependencies(),first,"ordinary UI callback changes must not restart immediate recovery");
+  }
+  scope.tick();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(reads,[0,31]);
+  cleanup();scope.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads.length,2);
 });

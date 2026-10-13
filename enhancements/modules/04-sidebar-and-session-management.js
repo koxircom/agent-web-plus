@@ -817,108 +817,7 @@
     const row = getSessionRowById(sessionId);
     if (!row) return false;
 
-    // 若当前已处于行内编辑状态，直接对焦全选
-    const existingInput = row.querySelector("input");
-    if (existingInput) {
-      existingInput.focus();
-      existingInput.select();
-      return true;
-    }
-
-    // 1. 优先调用原生重命名按钮，完全复用原生状态机与快捷键
-    const renameBtn = row.querySelector('.pi-enh-native-session-actions button[title*="重命名"], .pi-enh-native-session-actions button[title*="Rename"]') ||
-      row.querySelector('button[title*="重命名"], button[title*="Rename"]');
-
-    if (renameBtn && typeof renameBtn.click === "function") {
-      renameBtn.click();
-      return true;
-    }
-
-    // 2. 稳健自愈回退：若原生按钮因特殊状态缺失，就地插入与原生完全同款的行内输入框，绝不弹出 window.prompt
-    const currentTitle = extractSessionTitleFromRow(row, sessionId) || "";
-    const contentHost = row.querySelector("div:not(.pi-enh-native-session-actions):not(.pi-enh-session-overflow):not(.pi-enh-session-pinned-indicator)") || row.firstElementChild;
-    if (!contentHost) return false;
-
-    const originalDisplay = contentHost.style.display;
-    contentHost.style.display = "none";
-    row.setAttribute("data-pi-enh-editing", "true");
-    row.querySelector(".pi-enh-session-model-badge")?.remove();
-
-    const inlineInput = document.createElement("input");
-    inlineInput.type = "text";
-    inlineInput.value = currentTitle;
-    inlineInput.setAttribute("data-pi-enh-orig-title", currentTitle);
-    inlineInput.style.cssText = "order: 1 !important; flex: 1 1 0 !important; min-width: 0 !important; width: 100% !important; box-sizing: border-box !important; font-size: 12px; padding: 5px 8px; border: 1px solid var(--accent); border-radius: 5px; outline: none; background: var(--bg); color: var(--text); height: 30px;";
-
-    let committed = false;
-    const cleanup = () => {
-      inlineInput.remove();
-      contentHost.style.display = originalDisplay;
-      row.removeAttribute("data-pi-enh-editing");
-      setTimeout(() => {
-        if (typeof syncSessionModelLabels === "function") syncSessionModelLabels();
-        if (typeof syncSessionPinArchiveControls === "function") syncSessionPinArchiveControls();
-      }, 50);
-    };
-
-    const commitChange = async () => {
-      if (committed) return;
-      committed = true;
-      const newName = inlineInput.value.trim();
-      cleanup();
-      // 空文本保护：自动恢复原标题并显示温和气泡
-      if (!newName) {
-        showToast("会话名称不能为空", sessionWarnIcon, 2500);
-        return;
-      }
-      if (newName !== currentTitle) {
-        try {
-          const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newName }),
-          });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          const cachedSession = knownSessionsMap.get(sessionId);
-          if (cachedSession) cachedSession.name = newName;
-          knownSessionTitles.set(sessionId, newName);
-          requestSessionListRefresh();
-          showToast("已重命名会话");
-        } catch (e) {
-          showToast("重命名失败: " + (e?.message || String(e)));
-        }
-      }
-    };
-
-    inlineInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        void commitChange();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        committed = true;
-        cleanup();
-      }
-    });
-    inlineInput.addEventListener("blur", () => {
-      void commitChange();
-    });
-
-    const trigger = row.querySelector(".pi-enh-session-overflow");
-    if (trigger) {
-      row.insertBefore(inlineInput, trigger);
-    } else {
-      row.appendChild(inlineInput);
-    }
-
-    requestAnimationFrame(() => {
-      inlineInput.focus();
-      inlineInput.select();
-    });
-
-    return true;
+    return !row.dispatchEvent(new CustomEvent("pi-web:session-row-rename", { cancelable: true }));
   }
   window.__PI_ENH_TRIGGER_SESSION_INLINE_RENAME__ = triggerSessionInlineRename;
 
@@ -1598,6 +1497,11 @@
   addManagedListener(window, "blur", closeMenu);
   function handleGlobalEscapeKey(e) {
     if (e.key !== "Escape" && e.keyCode !== 27) return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+
+    // Native Settings owns focus, nested dialogs and Escape. Do not bypass
+    // that owner by clicking its close button from a global capture listener.
+    if (document.querySelector(".settings-dialog-backdrop")) return;
 
     // 0. 最高优先级：关闭全屏大图预览 / 退出标注编辑 (全屏最高 z-index 模态层最优先响应，保障 MacBook 等环境)
     const zoomDialog = (typeof activeZoomDialog !== "undefined" && activeZoomDialog && activeZoomDialog.open)
@@ -1688,26 +1592,6 @@
       if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
       closeAnnotationEditor();
       return;
-    }
-
-    // 1. 最高优先级：退出设置弹窗等模态对话框 (LIFO 顶层优先)
-    const settingsBackdrop = document.querySelector(".settings-dialog-backdrop, [role='dialog'].settings-dialog-backdrop");
-    if (settingsBackdrop) {
-      const closeBtn = settingsBackdrop.querySelector(".settings-dialog-close, button.config-close-button");
-      if (closeBtn) {
-        if (typeof e.preventDefault === "function") e.preventDefault();
-        if (typeof e.stopPropagation === "function") e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
-        closeBtn.click();
-        return;
-      }
-      if (typeof settingsBackdrop.click === "function") {
-        if (typeof e.preventDefault === "function") e.preventDefault();
-        if (typeof e.stopPropagation === "function") e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
-        settingsBackdrop.click();
-        return;
-      }
     }
 
     // 2. 次高优先级：关闭自定义右键菜单、引用工具条与耗时/消耗浮层
@@ -2994,7 +2878,7 @@
   // ==========================================
   // Pure state model: transport, DOM and storage never decide whether a request closed.
   function createProjectStatusModel() {
-    let catalog = new Map(), entries = new Map(), epoch = null, revision = -1;
+    let catalog = new Map(), entries = new Map(), epoch = null, revision = -1, catalogReady = false;
     let sync = { state: "connecting", at: 0 }, unread = new Set();
     const acknowledged = new Map(), retiredEpochs = new Set();
     let completedRead = new Set();
@@ -3021,15 +2905,15 @@
     const key = value => String(value || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
     const empty = id => ({ id, status: "idle", execution: "idle", pendingRequests: [], runId: "", toolNames: [], observedAt: 0 });
     const buildEntry = id => {
-      const stored = projectStatusState?.sessions?.[id];
-      const item = entries.get(id) || (stored && sync.state !== "live" ? { ...empty(id), ...stored } : empty(id));
+      // Browser storage is metadata/read history, never a runtime receipt.
+      const item = entries.get(id) || empty(id);
       const session = catalog.get(id) || {};
       return { ...item, projectKey: key(session.projectKey || session.projectRoot || session.cwd || item.projectKey),
         title: titleOf({ ...session, id, title: item.title }), cwd: session.cwd || item.cwd || "",
         unread: item.status === "completed" && !!item.runId && !isCompletedRead(id, item) };
     };
-    const list = () => [...new Set([...catalog.keys(), ...entries.keys(), ...Object.keys(projectStatusState?.sessions || {})])].map(buildEntry);
-    const entry = id => (entries.has(id) || catalog.has(id) || Boolean(projectStatusState?.sessions && Object.hasOwn(projectStatusState.sessions, id)))
+    const list = () => [...(catalogReady ? catalog.keys() : entries.keys())].map(buildEntry);
+    const entry = id => (catalogReady ? catalog.has(id) : entries.has(id))
       ? buildEntry(id)
       : empty(id);
     // Native unread flags are session-level activity hints, not evidence of a
@@ -3054,6 +2938,13 @@
         const status = { ended: "completed", failed: "interrupted" }[item.state] || item.state;
         next.set(item.sessionId, { ...empty(item.sessionId), status, execution: item.state, runId: String(item.runId || ""), toolNames: item.toolNames || [] });
       }
+      // The runtime set is authoritative even if an old server ledger misses an end event.
+      const running = new Set(payload.runningSessionIds);
+      for (const item of next.values()) {
+        if (running.has(item.id)) { item.status = item.execution = "running"; }
+        else if (item.execution === "running") { item.status = item.execution = "idle"; }
+      }
+      for (const id of running) if (!next.has(id)) next.set(id, { ...empty(id), status: "running", execution: "running" });
       for (const item of interactions.sessions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || seen.has(item.sessionId) || !Array.isArray(item.pendingRequests)) return reject("unavailable");
         seen.add(item.sessionId);
@@ -3097,7 +2988,7 @@
       }
     };
     return {
-      apply, list, items, titleOf, markAttention, clearAttention, setCatalog: sessions => { catalog = new Map(sessions.filter(s => s?.id).map(s => [s.id, s])); },
+      apply, list, items, titleOf, markAttention, clearAttention, setCatalog: sessions => { catalogReady = true; catalog = new Map(sessions.filter(s => s?.id).map(s => [s.id, s])); },
       entry,
       setUnread: ids => { unread = new Set(ids); }, // Native activity is not completion-read evidence.
       setCompletedRead: keys => {
@@ -3259,11 +3150,7 @@
     if (projectStatusDisposed) return false;
     const health = projectStatusModel?.health?.();
     if (!health) return false;
-    if (health.state === "live") return true;
-    if (health.state === "unsupported" && Date.now() - projectStatusLastLegacyResponseAt < 12000) {
-      return true;
-    }
-    return false;
+    return health.state === "live" && Date.now() - health.at < 12000;
   }
   function readNoticeSeen(key) { try { const value = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
   function writeNoticeSeen(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
@@ -3441,21 +3328,9 @@
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object" && parsed.sessions) {
-          let migrated = false;
-          const sessions = Object.fromEntries(Object.entries(parsed.sessions).map(([id, entry]) => {
-            if (entry?.status === "interrupted") {
-              migrated = true;
-              return [id, { ...entry, status: "idle", execution: "idle", needsInterruptionRecheck: true }];
-            }
-            if (entry?.status === "attention" && (!entry?.pendingRequests || entry.pendingRequests.length === 0)) {
-              return [id, { ...entry, status: "attention", pendingRequests: [{ id: "pending-ask", method: "select" }] }];
-            }
-            return [id, entry];
-          }));
-          if (migrated) {
-            parsed.sessions = sessions;
-            try { localStorage.setItem(PROJECT_STATUS_STORAGE_KEY_V1, JSON.stringify(parsed)); } catch (e) {}
-          }
+          // Preserve metadata only. Pending/running/error facts must be read live.
+          parsed.sessions = Object.fromEntries(Object.entries(parsed.sessions).map(([id, entry]) =>
+            [id, { id, title: entry?.title || "", cwd: entry?.cwd || "", projectKey: entry?.projectKey || "", status: "idle", pendingRequests: [] }]));
           return parsed;
         }
       }
@@ -3471,9 +3346,7 @@
     const previous = projectStatusState.sessions || {};
     const nextSessions = Object.fromEntries(listEntries);
     for (const [id, prev] of Object.entries(previous)) {
-      if (!nextSessions[id]) {
-        nextSessions[id] = prev;
-      } else {
+      if (nextSessions[id]) {
         nextSessions[id].title = nextSessions[id].title || prev.title;
         nextSessions[id].cwd = nextSessions[id].cwd || prev.cwd;
         nextSessions[id].projectKey = nextSessions[id].projectKey || prev.projectKey;
@@ -3625,18 +3498,9 @@
 
   function getEffectiveProjectStatusEntry(id) {
     const entry = projectStatusModel.entry(id);
+    if (!isProjectStatusHealthy()) return { ...entry, status: "unknown", pendingRequests: [], unread: false };
     if (localSessionLoadErrors.has(id) && entry.status === "idle") {
       return { ...entry, status: "load-error", loadError: localSessionLoadErrors.get(id) };
-    }
-    const stored = projectStatusState.sessions[id];
-    if (stored?.status === "attention" && stored.pendingRequests && stored.pendingRequests.length > 0) {
-      return { ...entry, status: "attention", pendingRequests: stored.pendingRequests };
-    }
-    if (entry.status === "idle" && stored?.status && stored.status !== "idle") {
-      const isLive = projectStatusModel.health().state === "live";
-      if (!isLive) {
-        return { ...entry, status: stored.status, pendingRequests: stored.pendingRequests || entry.pendingRequests };
-      }
     }
     return entry;
   }
@@ -3733,6 +3597,7 @@
   function decorateProjectStatusRows() {
     const rows = getSessionStatusRows();
     for (const row of rows) {
+      if (row.hasAttribute("data-pi-native-project-status")) continue;
       const session = findSessionForStatusRow(row);
       const entry = session ? getEffectiveProjectStatusEntry(session.id) : null;
       const status = entry?.status || null;
@@ -3773,7 +3638,7 @@
   }
 
   function syncProjectStatusDot(projectButton, status) {
-    if (!projectButton) return;
+    if (!projectButton || projectButton.hasAttribute("data-pi-native-project-status")) return;
     let dot = projectButton.querySelector("[data-pi-enh-project-status-dot]");
     if (!dot) {
       dot = projectButton.querySelector("[title]");
@@ -3859,40 +3724,23 @@
       favicon.setAttribute("data-pi-enh-attention-favicon", "true");
       document.head.appendChild(favicon);
     }
-    renderProjectStatusFavicon(snapshot.count, snapshot.hasAttention);
+    renderProjectStatusFavicon(snapshot.hasAttention ? snapshot.attention : snapshot.running, snapshot.hasAttention);
   }
 
   function getCurrentProjectTabStatusSnapshot() {
     const projectKey = getCurrentProjectStatusKey();
-    const countedSessions = new Set();
-    let hasAttention = false;
-    if (projectKey) {
-      const targetProjectKey = normalizeProjectStatusKey(projectKey);
-      for (const rawEntry of projectStatusModel.list()) {
-        const entry = getEffectiveProjectStatusEntry(rawEntry.id);
-        if (entry.projectKey !== targetProjectKey) continue;
-        const hasPendingAttention = entry.status === "attention"
-          || (Array.isArray(entry.pendingRequests) && entry.pendingRequests.length > 0);
-        const unreadCompleted = entry.status === "completed" && entry.unread === true;
-        if (hasPendingAttention) hasAttention = true;
-        if ((unreadCompleted || hasPendingAttention) && entry.id) countedSessions.add(entry.id);
-      }
-
-      const currentSessionId = getSessionIdFromCurrentUrl();
-      if (currentSessionId && hasActiveAskUserOnScreen()) {
-        const currentSession = projectStatusCatalog.get(currentSessionId) || projectStatusState.sessions[currentSessionId] || {};
-        const currentSessionProjectKey = getSessionProjectStatusKey(currentSession);
-        if (!currentSessionProjectKey || currentSessionProjectKey === targetProjectKey) {
-          countedSessions.add(currentSessionId);
-          hasAttention = true;
-        }
+    const counts = { running: 0, attention: 0 };
+    const healthy = isProjectStatusHealthy();
+    if (healthy && projectKey) {
+      const target = normalizeProjectStatusKey(projectKey);
+      for (const entry of projectStatusModel.list()) {
+        if (entry.projectKey !== target) continue;
+        if (entry.status === "attention" && entry.pendingRequests.length) counts.attention++;
+        else if (entry.status === "running") counts.running++;
       }
     }
-    return {
-      projectKey: normalizeProjectStatusKey(projectKey),
-      count: countedSessions.size,
-      hasAttention,
-    };
+    return { projectKey: normalizeProjectStatusKey(projectKey), ...counts,
+      count: counts.running + counts.attention, hasAttention: counts.attention > 0, healthy };
   }
 
   function syncProjectTabStatusSnapshot(force = false) {
@@ -3931,21 +3779,19 @@
   }
 
   function getCurrentEffectiveStatus(key = null) {
-    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) return null;
-    if (hasActiveAskUserOnScreen() || isCurrentSessionInAttention()) {
-      return "attention";
-    }
-    const projectKey = key || getCurrentProjectStatusKey();
-    let status = projectKey ? getProjectStatusForSummary(projectKey) : null;
-    if (!status && typeof isLiveRunning === "function" && isLiveRunning()) {
-      status = "running";
-    }
-    return status;
+    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator") || !isProjectStatusHealthy()) return null;
+    return getProjectStatusForSummary(key || getCurrentProjectStatusKey());
   }
 
-  function formatProjectTabTitle(base, count) {
+  function formatProjectTabTitle(base, snapshot) {
     const cleanBase = cleanSessionTitleBase(base);
-    return count > 0 ? `${cleanBase}（${count}）` : cleanBase;
+    // Unknown transport health has no task count. Keep diagnostics in the workspace
+    // indicator instead of an unexplained question mark in the browser tab.
+    if (!snapshot.healthy) return cleanBase;
+    const parts = [];
+    if (snapshot.running) parts.push(`🔵${snapshot.running}`);
+    if (snapshot.attention) parts.push(`🟡${snapshot.attention}`);
+    return parts.length ? `${cleanBase} ${parts.join(" ")}` : cleanBase;
   }
 
   function composeProjectWindowTitle(base) {
@@ -3953,7 +3799,7 @@
       return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Pi Web";
     }
     const snapshot = syncProjectTabStatusSnapshot(false);
-    return formatProjectTabTitle(base, snapshot.count);
+    return formatProjectTabTitle(base, snapshot);
   }
   window.__PI_ENH_COMPOSE_WINDOW_TITLE__ = composeProjectWindowTitle;
   window.__PI_ENH_CLEAR_SESSION_ATTENTION__ = clearSessionAttention;
@@ -3962,6 +3808,20 @@
   window.__PI_ENH_GET_CURRENT_PROJECT_STATUS_KEY__ = getCurrentProjectStatusKey;
   window.__PI_ENH_GET_CURRENT_EFFECTIVE_STATUS__ = getCurrentEffectiveStatus;
   window.__PI_ENH_GET_PROJECT_STATUS_FOR_SUMMARY__ = getProjectStatusForSummary;
+  window.__PI_ENH_GET_PROJECT_ACTIVITY__ = (projectKey, others = false) => {
+    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) return null;
+    const healthy = isProjectStatusHealthy();
+    const counts = { running: 0, attention: 0, interrupted: 0 };
+    if (healthy) for (const entry of projectStatusModel.items(projectKey, null, others)) {
+      if (Object.hasOwn(counts, entry.status)) counts[entry.status]++;
+    }
+    const status = healthy ? ["attention", "interrupted", "running"].find(s => counts[s]) || null : "unknown";
+    const parts = [];
+    if (counts.running) parts.push(`运行 ${counts.running}`);
+    if (counts.attention) parts.push(`待回复 ${counts.attention}`);
+    if (counts.interrupted) parts.push(`异常停止 ${counts.interrupted}`);
+    return { ...counts, status, label: healthy ? parts.join("，") || "无运行或待回复任务" : "状态待确认" };
+  };
 
   function updateProjectStatusTitle() {
     syncProjectTabStatusSnapshot(true);
@@ -4039,6 +3899,7 @@
     syncProjectStatusDots();
     renderProjectStatusSummary();
     updateProjectStatusTitle();
+    window.__PI_ENH_RERENDER_SESSIONS__?.();
   }
 
   function removeProjectStatusIndicators() {
@@ -4046,9 +3907,10 @@
     disposeApprovalSound();
     document.documentElement.removeAttribute("data-pi-enh-interaction-sync");
     for (const node of document.querySelectorAll(".pi-enh-project-status-summary, .pi-enh-status-popover, .pi-enh-attention-notice")) node.remove();
-    for (const row of getSessionStatusRows()) restoreStatusRow(row);
+    for (const row of getSessionStatusRows()) if (!row.hasAttribute("data-pi-native-project-status")) restoreStatusRow(row);
     for (const dot of document.querySelectorAll("[data-pi-enh-project-status-dot]")) restoreProjectStatusDot(dot);
     updateProjectStatusTitle();
+    window.__PI_ENH_RERENDER_SESSIONS__?.();
   }
 
   function clearSessionAttention(sessionId, nextStatus = null, resolvedRequestIds = []) {
@@ -4204,19 +4066,8 @@
     }
 
     // 无论是否带 interactionState，只要能正常拿到 runningSessionIds，就是健康状态
-    if (payload && Array.isArray(payload.runningSessionIds)) {
+    if (result.accepted) {
       projectStatusFailures = 0;
-      if (!result.accepted && !payload.interactionState && !payload.statusSnapshot) {
-        projectStatusLastLegacyResponseAt = Date.now();
-        projectStatusLastPayload = payload;
-        if (catalog) refreshProjectStatusCatalog(catalog);
-        projectStatusModel.setUnread([...readUnreadSessionIds()]);
-        projectStatusModel.setCompletedRead(readCompletedTokens());
-        if (typeof reconcileUnreadSessions === "function") reconcileUnreadSessions();
-        persistProjectStatusState();
-        syncApprovalSound();
-        syncDesktopAttention();
-      }
       const runningSet = new Set(payload.runningSessionIds || []);
       try {
         for (const [sId, entry] of sessionMemoryCache.entries()) {
@@ -4229,7 +4080,7 @@
     if (typeof schedulePrioritySessionPreloads === "function") {
       schedulePrioritySessionPreloads();
     }
-    return result.accepted || (payload && Array.isArray(payload.runningSessionIds));
+    return result.accepted;
   }
 
   let isProjectStatusMonitoringActive = false;
@@ -4251,6 +4102,10 @@
     }
     isProjectStatusMonitoringActive = true;
     const generation = projectInteractionGeneration;
+    if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
+      if (window.__PI_WEB_PROJECT_STATUS_SNAPSHOT__) receiveProjectStatus(window.__PI_WEB_PROJECT_STATUS_SNAPSHOT__, window.__PI_ENH_GET_RAW_SESSIONS__?.());
+      return;
+    }
     if (typeof BroadcastChannel === "function") {
       projectStatusChannel = new BroadcastChannel("pi-web-status-v2");
       projectStatusChannel.onmessage = event => {
@@ -4292,6 +4147,10 @@
   function requestProjectStatusRefresh(urgent = false) {
     if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) return;
     projectStatusNextPoll = 0;
+    if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
+      void window.__PI_WEB_REFRESH_PROJECT_STATUS__();
+      return;
+    }
     if (!projectStatusLeader && !urgent) { projectStatusChannel?.postMessage({ type: "refresh" }); return; }
     if (projectInteractionController) {
       if (!urgent) { projectStatusRefreshQueued = true; return; }
@@ -4318,6 +4177,7 @@
   }
 
   async function refreshProjectInteractions(force = false) {
+    if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") return window.__PI_WEB_REFRESH_PROJECT_STATUS__();
     if ((!projectStatusLeader && !force) || projectStatusDisposed || isLoginPage() || !isPluginEnabled("project-status-indicator") || projectInteractionController || Date.now() < projectStatusNextPoll) return;
     const generation = projectInteractionGeneration, controller = new AbortController();
     projectInteractionController = controller;
@@ -4338,7 +4198,7 @@
         projectStatusChannel?.postMessage({ type: "snapshot", payload, catalog: [...projectStatusCatalog.values()] });
       } else projectStatusFailures++;
     } catch (error) {
-      if (generation === projectInteractionGeneration && !projectStatusDisposed && !controller.signal.aborted) {
+      if (generation === projectInteractionGeneration && !projectStatusDisposed) {
         projectStatusFailures++;
         projectStatusModel.unavailable("unavailable");
         projectStatusChannel?.postMessage({ type: "unavailable" });
@@ -4645,6 +4505,20 @@
   window.__PI_ENH_PROJECT_STATUS_MODEL__ = projectStatusModel;
   window.__PI_ENH_IS_PROJECT_STATUS_HEALTHY__ = isProjectStatusHealthy;
   window.__PI_ENH_RECEIVE_PROJECT_STATUS__ = receiveProjectStatus;
+  addManagedListener(window, "pi-web-project-status", event => {
+    if (!isProjectStatusMonitoringActive || projectStatusDisposed) return;
+    const detail = event.detail;
+    if (detail?.payload) receiveProjectStatus(detail.payload, detail.catalog || window.__PI_ENH_GET_RAW_SESSIONS__?.());
+    else { projectStatusModel.unavailable("unavailable"); syncProjectStatusIndicators(); }
+  });
+  addManagedListener(window, "pi-web-session-catalog", event => {
+    if (!isProjectStatusMonitoringActive || !Array.isArray(event.detail?.sessions)) return;
+    refreshProjectStatusCatalog(event.detail.sessions);
+    syncProjectStatusIndicators();
+  });
+  addManagedListener(window, "pi-web-project-status-owner", () => {
+    if (isProjectStatusMonitoringActive) setProjectStatusMonitoring(true);
+  });
   window.__PI_ENH_RENDER_NOTIFICATION_PANEL__ = renderNotificationPanel;
   window.__PI_ENH_DEBUG_NOTIF_CONDITIONS__ = () => ({
     disposed: projectStatusDisposed,

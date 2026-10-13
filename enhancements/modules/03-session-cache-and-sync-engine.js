@@ -96,7 +96,11 @@
             const cache = await window.caches.open(PERSISTENT_SESSION_CACHE_NAME);
             await cache.put(key, createCachedResponse(data, {}, "PERSISTENT"));
             return;
-          } catch(e) {}
+          } catch(e) {
+            if (e && (e.name === "QuotaExceededError" || String(e).includes("QuotaExceeded"))) {
+              try { await PersistentStorage.clear(); } catch (_) {}
+            }
+          }
         }
         if (window.indexedDB) {
           try {
@@ -105,7 +109,12 @@
               const tx = db.transaction("cache", "readwrite");
               tx.objectStore("cache").put(data, key);
               tx.oncomplete = () => resolve();
-              tx.onerror = () => resolve();
+              tx.onerror = () => {
+                if (tx.error && (tx.error.name === "QuotaExceededError" || String(tx.error).includes("QuotaExceeded"))) {
+                  try { PersistentStorage.clear(); } catch (_) {}
+                }
+                resolve();
+              };
             });
           } catch(e) {}
         }
@@ -613,6 +622,9 @@
         if (!part || typeof part !== "object" || part.type !== "image") continue;
         const sourceUrl = part.source && typeof part.source === "object" ? part.source.url : null;
         if (typeof sourceUrl === "string" && sourceUrl.startsWith("blob:")) return true;
+        // 未 defer 的超大 Base64 图片（> 100KB），不进入离线持久化存储，由内存 Map 承载
+        if (typeof part.data === "string" && part.data.length > 100000) return true;
+        if (part.source && typeof part.source.data === "string" && part.source.data.length > 100000) return true;
       }
     }
     return false;
@@ -4392,6 +4404,11 @@
     if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?sync=1(?=[&#]|$)/.test(urlStr)) {
       return activeFetch(input, init);
     }
+    // Interaction queues and prompt receipts belong to the live server.
+    // A receipt must never be replaced by an idle Agent state envelope.
+    if (method === "GET" && /\/api\/agent\/[^/?#]+\?(?:[^#]*&)?(?:interactions=1|requestId=[^&#]+)(?=[&#]|$)/.test(urlStr)) {
+      return activeFetch(input, init);
+    }
 
     // 场景 0: 拦截外部文件/UNC路径请求，由本地桥接服务兜底读取，彻底解决 Access denied
     if (method === "GET" && urlStr.includes("/api/files/")) {
@@ -5610,7 +5627,7 @@
         const entry = getOrCreateSessionEntry(sId);
         entry.hasPendingAttention = false;
       }
-      if (["agent_start", "agent_settled", "prompt_done", "extension_ui_request", "extension_ui_response", "extension_ui_closed"].includes(data?.type)
+      if (["agent_start", "agent_end", "agent_settled", "prompt_done", "extension_ui_request", "extension_ui_response", "extension_ui_closed"].includes(data?.type)
         || (data?.type === "tool_execution_end" && data.toolName === "ask_user")) {
         requestProjectStatusRefresh(data?.type === "extension_ui_request" && data.closed === true);
         if (typeof schedulePrioritySessionPreloads === "function") {
@@ -6129,4 +6146,3 @@
     clearSessionMemoryCache();
     syncCrossDeviceSessionSync(false);
   });
-

@@ -1,17 +1,6 @@
 import { NextResponse } from "next/server";
 import { jsonResponse } from "@/lib/json-response";
-import {
-  attachSessionProjectInfo,
-  getSessionListVersion,
-  listAllSessions,
-  listSessionSummaries,
-  mergeSessionLists,
-} from "@/lib/session-reader";
-import {
-  getCompletionNotificationSuppressedRpcSessionIds,
-  getRpcSessionInfos,
-  getRunningRpcSessionIds,
-} from "@/lib/rpc-manager";
+import { readSessionList } from "@/lib/session-list";
 import { startServerPerf } from "@/lib/perf";
 
 export const dynamic = "force-dynamic";
@@ -25,34 +14,15 @@ export async function GET(req: Request) {
     // waiting for every session transcript to be parsed.
     const summary = searchParams.get("summary") === "1";
     perf?.span("start");
-    const persistedSessionsPromise = summary
-      ? listSessionSummaries()
-      : listAllSessions({ force });
-    // Capture before awaiting: mutations during the scan still require a later refresh.
-    const sessionListVersion = getSessionListVersion();
-    const [persistedSessions, runtimeSessions] = await Promise.all([
-      persistedSessionsPromise,
-      attachSessionProjectInfo(getRpcSessionInfos()),
-    ]);
+    const data = await readSessionList({ summary, force });
     perf?.span("scan+projects");
-    const sessions = mergeSessionLists(persistedSessions, runtimeSessions);
     return perf?.attach(jsonResponse(
       req,
-      {
-        sessions,
-        sessionListVersion,
-        runningSessionIds: getRunningRpcSessionIds(),
-        completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
-      },
+      data,
       { headers: { "Cache-Control": "no-store" } },
     )) ?? jsonResponse(
       req,
-      {
-        sessions,
-        sessionListVersion,
-        runningSessionIds: getRunningRpcSessionIds(),
-        completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
-      },
+      data,
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

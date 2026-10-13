@@ -93,11 +93,6 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
-  "model-scope-warning": {
-    "defaultEnabled": true,
-    "moduleId": "safety-performance",
-    "moduleDefaultEnabled": true
-  },
   "quick-quote": {
     "defaultEnabled": true,
     "moduleId": "selection-context",
@@ -149,11 +144,6 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
     "moduleDefaultEnabled": true
   },
   "mobile-enter-newline": {
-    "defaultEnabled": true,
-    "moduleId": "composer-workflow",
-    "moduleDefaultEnabled": true
-  },
-  "mobile-model-keyboard-guard": {
     "defaultEnabled": true,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true

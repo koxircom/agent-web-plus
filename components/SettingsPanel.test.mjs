@@ -7,6 +7,7 @@ const isolatedHostSource = await readFile(new URL("./IsolatedSettingsHost.tsx", 
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 const globalCssSource = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const shellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
+const shortcutSource = await readFile(new URL("./SettingsShortcuts.tsx", import.meta.url), "utf8");
 const sidebarSource = await readFile(new URL("./SessionSidebar.tsx", import.meta.url), "utf8");
 const themeSource = await readFile(new URL("../hooks/useTheme.ts", import.meta.url), "utf8");
 const themeOptionsSource = await readFile(new URL("../lib/theme.ts", import.meta.url), "utf8");
@@ -19,9 +20,9 @@ test("opens one settings panel from direct sidebar shortcuts", () => {
   assert.match(shellSource, /<SettingsPanel/);
   assert.match(shellSource, /setSettingsSection\(section\)/);
   assert.match(shellSource, /initialSection=\{settingsSection\}/);
-  assert.match(shellSource, /translate\("common\.settings"\)/);
-  assert.match(shellSource, /<SettingsSectionIcon section=\{section\} size=\{14\} strokeWidth=\{2\} \/>\s*<span>\{label\}<\/span>/);
-  assert.match(shellSource, /<SettingsSectionIcon section="general" size=\{14\} strokeWidth=\{2\} \/>/);
+  assert.match(shortcutSource, /t\("common\.settings"\)/);
+  assert.match(shortcutSource, /<SettingsSectionIcon section=\{id\} size=\{14\} strokeWidth=\{2\} \/><span>\{label\}<\/span>/);
+  assert.match(shellSource, /<SettingsShortcuts cwd=\{projectTrustCwd\} onOpen=\{setSettingsSection\}/);
   assert.doesNotMatch(shellSource, /\["plugins", translate\("common\.plugins"\)\]/);
   assert.doesNotMatch(shellSource, /setModelsConfigOpen|setSkillsConfigOpen|setAgentsConfigOpen|setPluginsConfigOpen/);
 });
@@ -39,13 +40,16 @@ test("Settings › MCP works without a project, and only project sections fall b
   // Mounted with or without a cwd, and remounted when the project changes.
   assert.match(panelSource, /\{sectionHost\("mcp", <McpConfig embedded key=\{cwd \?\? ""\} cwd=\{cwd\} [^\n]*onClose=\{onClose\} \/>\)\}/);
   assert.doesNotMatch(panelSource, /cwd && sectionHost\("mcp"/);
-  // Which sections need a project is decided once, in settings-navigation.
-  assert.match(panelSource, /requiresProject: settingsSectionRequiresProject\(item\.id\)/);
-  assert.match(panelSource, /const sectionRequiresProject = settingsSectionRequiresProject\(section\);/);
-  assert.match(panelSource, /if \(cwd \|\| !sectionRequiresProject\) return;/);
-  assert.doesNotMatch(panelSource, /section !== "skills" && section !== "agents"/);
+  // The panel marks project-only rows and routes a stale project-only section
+  // back to General when the project disappears.
+  assert.match(panelSource, /\{ id: "skills", label: t\("common\.skills"\), requiresProject: true \}/);
+  assert.match(panelSource, /\{ id: "agents", label: t\("common\.agents"\), requiresProject: true \}/);
+  assert.match(panelSource, /\{ id: "plugins", label: t\("common\.plugins"\), requiresProject: true \}/);
+  assert.match(panelSource, /\{ id: "mcp", label: t\("settings\.mcp"\), requiresProject: false \}/);
+  assert.match(panelSource, /if \(target\.requiresProject && !cwdRef\.current\) return false;/);
+  assert.match(panelSource, /if \(isProjectReq && !cwd\) \{\s*activateSection\("general"\);/);
   // The sidebar shortcuts ask the same function instead of naming sections by hand.
-  assert.match(shellSource, /const disabled = settingsSectionRequiresProject\(section\) && !projectTrustCwd;/);
+  assert.match(shortcutSource, /const disabled = settingsSectionRequiresProject\(id\) && !cwd;/);
   assert.doesNotMatch(shellSource, /section !== "models"/);
   // Its own glyph, not the Plugins fallback.
   assert.match(panelSource, /if \(section === "mcp"\) return <svg \{\.\.\.common\}>/);
@@ -53,7 +57,7 @@ test("Settings › MCP works without a project, and only project sections fall b
 });
 
 test("restores the settings section and each list detail selection", async () => {
-  assert.match(shellSource, /getLastSettingsSection\(projectTrustCwd\)/);
+  assert.match(shortcutSource, /getLastSettingsSection\(cwd\)/);
   assert.match(panelSource, /setLastSettingsSection\(initialSection\)/);
   assert.match(panelSource, /setLastSettingsSection\(nextSection\)/);
   for (const name of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"]) {
@@ -79,7 +83,9 @@ test("keeps visited settings sections mounted and contains nested Escape handlin
 test("focus moves into Settings as it opens and back to its opener as it closes", () => {
   // Left on the composer a bare /mcp opened Settings from, Escape stopped a running agent
   // and Settings stayed open (lib/stacked-dialog.test.mjs runs focusModalPanel()).
-  assert.match(panelSource, /const dialogRef = useRef<HTMLDivElement>\(null\);\n\s*useLayoutEffect\(\(\) => focusModalPanel\(document, dialogRef\.current, \{\n\s*restoreTextEntry: !window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches,\n\s*\}\), \[\]\);/);
+  assert.match(panelSource, /returnFocusRef\.current \?\?= focusModalPanel\(document, panel, \{/);
+  assert.match(panelSource, /restoreTextEntry: !window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches/);
+  assert.match(panelSource, /queueMicrotask\(\(\) => \{\s*if \(panel\?\.isConnected\) return;\s*returnFocusRef\.current\?\.\(\);/);
   assert.match(panelSource, /<div\n\s*ref=\{dialogRef\}\n\s*role="dialog"\n\s*aria-modal="true"\n\s*aria-label=\{t\("settings\.title"\)\}\n\s*tabIndex=\{-1\}/);
   // The dialog element is not a control: no focus ring around the whole page.
   assert.match(cssSource, /\.settings-dialog-backdrop:focus \{\n\s*outline: none;\n\}/);
@@ -92,7 +98,7 @@ test("Settings › MCP offers Trust through the page's trust dialog, which opens
   // The banner and Settings open the same dialog, for the same folder Settings shows.
   assert.match(shellSource, /const openProjectTrustDialog = useCallback\(\(\) => \{\n\s*setProjectTrustError\(null\);\n\s*setProjectTrustDialogOpen\(true\);\n\s*\}, \[\]\);/);
   assert.match(shellSource, /onClick=\{openProjectTrustDialog\}/);
-  assert.match(shellSource, /<SettingsPanel\n\s*cwd=\{projectTrustCwd\}/);
+  assert.match(shellSource, /<SettingsPanel\n\s*resolveReturnFocus=\{resolveSettingsReturnFocus\}\n\s*cwd=\{projectTrustCwd\}/);
   assert.match(shellSource, /<ProjectTrustDialog\n\s*cwd=\{projectTrustCwd\}/);
   // Rendered after Settings and stacked above it.
   assert.ok(shellSource.indexOf("<ProjectTrustDialog") > shellSource.indexOf("<SettingsPanel"));

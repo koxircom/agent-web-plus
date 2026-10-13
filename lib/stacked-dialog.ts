@@ -142,18 +142,23 @@ function entersText(element: Opener): boolean {
 export function focusModalPanel(
   doc: FocusDocument,
   panel: FocusContainer | null,
-  { restoreTextEntry = true }: { restoreTextEntry?: boolean } = {},
+  { restoreTextEntry = true, resolveReturnFocus }: {
+    restoreTextEntry?: boolean;
+    resolveReturnFocus?: (opener: Element) => Element | null;
+  } = {},
 ): () => void {
   const active = doc.activeElement;
   const inside = Boolean(active && panel && panel.contains(active));
   const opener = active && active !== doc.body && !inside ? active : null;
   if (panel && !inside) panel.focus({ preventScroll: true });
   return () => {
-    if (!opener || !opener.isConnected) return;
-    if (!restoreTextEntry && entersText(opener)) return;
+    if (!opener) return;
+    const target = resolveReturnFocus ? resolveReturnFocus(opener) : opener;
+    if (!target?.isConnected) return;
+    if (!restoreTextEntry && entersText(target)) return;
     const now = doc.activeElement;
     if (now && now !== doc.body && !(panel && panel.contains(now))) return;
-    const focusable = opener as Element & Partial<Focusable>;
+    const focusable = target as Element & Partial<Focusable>;
     if (typeof focusable.focus === "function") focusable.focus({ preventScroll: true });
   };
 }

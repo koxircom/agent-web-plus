@@ -27,7 +27,7 @@ const h = React.createElement;
 const messages = enLocale.messages;
 
 function render(element) {
-  return renderToStaticMarkup(h(I18nProvider, null, element));
+  return renderToStaticMarkup(h(I18nProvider, { initialLocale: "en" }, element));
 }
 
 function decode(html) {

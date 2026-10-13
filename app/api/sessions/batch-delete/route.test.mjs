@@ -125,3 +125,13 @@ test('a missing grandparent does not leave surviving forks linked to a nonexiste
  const payload=await(await post(['parent'])).json();assert.equal(payload.results[0].ok,true,JSON.stringify(payload));
  const header=JSON.parse((await readFile(child,'utf8')).split('\n')[0]);assert.equal(header.parentSession,undefined);
 });
+
+test('successful deletion forgets the execution receipt as well as the session file', async t=>{
+ const f=await fixture(t);await f.add('status-delete');
+ const {ProjectStatusLedger}=await jiti.import('../../../../lib/project-status-ledger.ts');
+ const previous=globalThis.__piProjectStatusLedger;const ledger=new ProjectStatusLedger();globalThis.__piProjectStatusLedger=ledger;t.after(()=>globalThis.__piProjectStatusLedger=previous);
+ ledger.begin('status-delete');ledger.finish('status-delete','error');
+ assert.equal(ledger.snapshot([],[]).statusSnapshot.executions.length,1);
+ const payload=await(await post(['status-delete'])).json();assert(payload.results[0].ok,JSON.stringify(payload));
+ assert.equal(ledger.snapshot([],[]).statusSnapshot.executions.length,0);
+});

@@ -12,13 +12,13 @@ const code=stripTypeScriptTypes(helper+'\n'+extract('  const handleSend = useCal
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{resolve,reject,promise};};
 const tick=()=>new Promise(r=>setImmediate(r));
 function harness(isNew=false){
- const newSession=deferred(),events=deferred(),command=deferred(),state={running:false,bash:false,messages:[],restored:[],notices:[],commands:[],stopping:false,sessionSubmissions:[]},ref=current=>({current});
+ const newSession=deferred(),events=deferred(),command=deferred(),state={running:false,bash:false,messages:[],restored:[],notices:[],commands:[],stopping:false,sessionSubmissions:[],promptScrollRevision:0},ref=current=>({current});
  const scope={crypto:webcrypto,AbortController,DOMException,Promise,useCallback:f=>f,waitForPromptPreparation:undefined,isNew,newSessionCwd:'/test',newSessionDraftKey:'new:draft:/test',newSessionModel:null,pendingSessionInfo,onSessionSubmissionChange:(...args)=>state.sessionSubmissions.push(args),session:isNew?null:{id:'s'},composerDraftKey:'draft',
   agentRunningRef:ref(false),bashRunningRef:ref(false),sessionIdRef:ref(isNew?null:'s'),ensuringNewSessionRef:ref(null),promptRunIdRef:ref(0),rpcPromptPendingRef:ref(false),optimisticUserMessageRef:ref(null),entryIdsRef:ref([]),pendingScrollToUserRef:ref(false),preparationRef:ref(null),stopInFlightRef:ref(null),executeBashRef:ref(null),
   ensureNewSession:()=>{const pending=newSession.promise.then(s=>{scope.sessionIdRef.current=s;return s;});scope.ensuringNewSessionRef.current=pending;return pending;},ensureEventsConnected:()=>events.promise,
   sendAgentCommand:async(s,c)=>{state.commands.push(c);if(c.type==='abort')await command.promise;},
   restoreSubmission:(...args)=>state.restored.push(args),setMessages:f=>state.messages=f(state.messages),setAgentRunning:v=>state.running=v,setBashRunning:v=>state.bash=v,setPendingBash:()=>{},setStopRequested:v=>state.stopping=v,
-  setAgentPhase:()=>{},setPromptAnchorActive:()=>{},setPendingModel:()=>{},dispatch:()=>{},bumpSessionEpoch:()=>{},cancelEventStreamGrace:()=>{},markOptimisticUserMessage:()=>{},userMessageKey:()=> 'user',promoteNewSession:()=>{},waitForPromptSettlement:()=>{},reconcileAgentState:()=>{},loadSession:async()=>{},closeEvents:()=>{},addNotice:n=>state.notices.push(n),isPromptRejectedError:()=>false,console};
+  setAgentPhase:()=>{},setPromptAnchorActive:()=>{},setPromptScrollRevision:update=>{state.promptScrollRevision=update(state.promptScrollRevision);},setPendingModel:()=>{},dispatch:()=>{},bumpSessionEpoch:()=>{},cancelEventStreamGrace:()=>{},markOptimisticUserMessage:()=>{},userMessageKey:()=> 'user',promoteNewSession:()=>{},waitForPromptSettlement:()=>{},reconcileAgentState:()=>{},loadSession:async()=>{},closeEvents:()=>{},addNotice:n=>state.notices.push(n),isPromptRejectedError:()=>false,console};
  const actions=vm.runInNewContext(code,scope);return{...actions,newSession,events,command,state,scope};
 }
 for(const phase of ['create','events'])test(`Stop during ${phase} retains the message without model dispatch`,async()=>{
@@ -47,6 +47,7 @@ test('normal preparation dispatches exactly once and repeated Stop shares acknow
 
 test('title and optimistic message appear before session creation and event connection', async()=>{
  const h=harness(true), sending=h.handleSend('即时标题'); await tick();
+ assert.equal(h.state.promptScrollRevision,1);
  assert.equal(h.state.sessionSubmissions[0][1].firstMessage,'即时标题');
  assert.equal(h.state.messages[0].content,'即时标题');
  assert.equal(h.state.commands.length,0);
