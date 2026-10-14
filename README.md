@@ -244,3 +244,7 @@ See [AGENTS.md](./AGENTS.md) for the architecture notes and detailed file map.
 ## License
 
 [MIT](./LICENSE)
+
+## 自动复盘与项目经验
+
+当前 main 源码内置可选的任务复盘、项目经验检索及经确认的技能生成；旧的 v1.3.74 发行包不包含，需要源码构建或后续发行包。原生「设置 → 自动复盘」启用，默认关闭，会产生额外模型调用。[功能、成本和隐私说明](docs/automatic-learning.md)。

@@ -1,3 +1,5 @@
+import { createLearningRecallExtension, reviewCompletedLearning } from "./learning-runtime";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { getPromptReceipt, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery } from "./prompt-delivery";
 import { ProjectStatusLedger } from "./project-status-ledger";
 import { createProgressCommentaryExtension } from "./progress-commentary";
@@ -615,6 +617,10 @@ export class AgentSessionWrapper {
     if (!this.agentRunNeedsCompletion || this.isRunning()) return;
     this.agentRunNeedsCompletion = false;
     if (this.suppressCompletionNotifications) return;
+    if (!this.chatOnly) {
+      try { reviewCompletedLearning(this.inner as unknown as AgentSession, this.cwd, this.latestUserEntryId() ?? "unknown"); }
+      catch (error) { console.warn("[pi-web] 后台复盘未启动:", error instanceof Error ? error.message : "存储不可用"); }
+    }
     try {
       this.onAgentRunComplete?.(this.sessionId);
     } catch (error) {
@@ -2822,6 +2828,7 @@ export async function startRpcSession(
         : {
             extensionFactories: [
               createProgressCommentaryExtension(),
+              createLearningRecallExtension(sessionCwd),
               ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
               createProjectCommandBashExtension({
