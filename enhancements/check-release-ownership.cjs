@@ -23,6 +23,7 @@ const NATIVE_SETTINGS_SECTIONS = Object.freeze([
   "agents",
   "plugins",
   "mcp",
+  "learning",
 ]);
 
 const BUNDLED_MODULES = Object.freeze([

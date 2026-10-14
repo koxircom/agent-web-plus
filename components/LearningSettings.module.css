@@ -1,0 +1,334 @@
+.root {
+  display: grid;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+
+.heading {
+  min-width: 0;
+}
+
+.heading h2,
+.recordsHeader h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.heading p {
+  max-width: 780px;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.header > :global(.config-switch) {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.error {
+  margin: -8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #d84848 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #d84848 8%, var(--bg));
+  color: color-mix(in srgb, #b42323 78%, var(--text));
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.records {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.recordsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recordsHeader h3 {
+  font-size: 14px;
+}
+
+.review {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-panel) 68%, var(--bg));
+  font-size: 12px;
+}
+
+.reviewLabel {
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.reviewError {
+  flex-basis: 100%;
+  color: color-mix(in srgb, #b42323 78%, var(--text));
+  line-height: 1.5;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 4%, var(--bg));
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.review_queued,
+.lesson_candidate {
+  border-color: color-mix(in srgb, #c27a13 40%, var(--border));
+  background: color-mix(in srgb, #c27a13 9%, var(--bg));
+  color: color-mix(in srgb, #9a5b00 82%, var(--text));
+}
+
+.review_running {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  color: var(--text);
+}
+
+.review_completed,
+.lesson_active,
+.lesson_published {
+  border-color: color-mix(in srgb, #23844b 38%, var(--border));
+  background: color-mix(in srgb, #23844b 9%, var(--bg));
+  color: color-mix(in srgb, #176b39 82%, var(--text));
+}
+
+.review_failed,
+.lesson_dismissed {
+  border-color: color-mix(in srgb, #d84848 40%, var(--border));
+  background: color-mix(in srgb, #d84848 8%, var(--bg));
+  color: color-mix(in srgb, #b42323 78%, var(--text));
+}
+
+.review_skipped {
+  color: var(--text-muted);
+}
+
+.empty {
+  margin: 0;
+  padding: 18px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.lessonList {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lesson {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-panel);
+}
+
+.lessonHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.lessonHeader h4 {
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 620;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.badges {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.lessonContent {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lessonFooter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.skillActions,
+.confirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+
+.preview h5 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.preview pre {
+  max-height: min(48vh, 420px);
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  touch-action: pan-y;
+}
+
+.confirmation {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.confirmation p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.skillPath {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.skillPath code {
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .root { gap: 16px; }
+
+  .header {
+    gap: 12px;
+    padding: 13px;
+  }
+
+  .heading h2 { font-size: 15px; }
+  .heading p { font-size: 12px; }
+
+  .recordsHeader { align-items: flex-start; }
+  .recordsHeader h3 { padding-top: 4px; }
+
+  .lesson { padding: 12px; }
+
+  .lessonHeader { flex-direction: column; }
+  .badges { justify-content: flex-start; }
+
+  .lessonFooter { align-items: flex-start; }
+  .skillActions { width: 100%; }
+  .skillActions :global(.config-button) { flex: 1 1 auto; }
+  .confirmActions :global(.config-button) { flex: 1 1 140px; }
+}
+
+@media (max-width: 360px) {
+  .header { flex-direction: column; }
+  .header > :global(.config-switch) { align-self: flex-end; }
+  .recordsHeader { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root *, .root *::before, .root *::after { scroll-behavior: auto; }
+}

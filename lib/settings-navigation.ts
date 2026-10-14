@@ -5,6 +5,7 @@ export const NATIVE_SETTINGS_SECTION_VALUES = [
   "agents",
   "plugins",
   "mcp",
+  "learning",
 ] as const;
 
 export const EXTENSION_SETTINGS_SECTION_VALUES = [

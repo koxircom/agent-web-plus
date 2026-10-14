@@ -73,7 +73,7 @@ function SettingsSectionLoading({ section, error, retry }: {
   retry?: () => void;
 }) {
   const { t } = useI18n();
-  const labels = { models: t("common.models"), skills: t("common.skills"), agents: t("common.agents"), plugins: t("common.plugins"), mcp: t("settings.mcp") };
+  const labels = { models: t("common.models"), skills: t("common.skills"), agents: t("common.agents"), plugins: t("common.plugins"), mcp: t("settings.mcp"), learning: "自动复盘" };
   return (
     <div className="settings-section-loading" role={error ? "alert" : "status"} aria-busy={!error}>
       <h2>{labels[section as keyof typeof labels]}</h2>
@@ -92,13 +92,15 @@ const loadSkillsConfig = () => import("./SkillsConfig").then((module) => module.
 const loadAgentsConfig = () => import("./AgentsConfig").then((module) => module.AgentsConfig);
 const loadPluginsConfig = () => import("./PluginsConfig").then((module) => module.PluginsConfig);
 const loadMcpConfig = () => import("./McpConfig").then((module) => module.McpConfig);
+const loadLearningSettings = () => import("./LearningSettings").then((module) => module.LearningSettings);
+const LearningSettings = dynamic(loadLearningSettings, { loading: (props) => <SettingsSectionLoading section="learning" {...props} /> });
 const ModelsConfig = dynamic(loadModelsConfig, { loading: (props) => <SettingsSectionLoading section="models" {...props} /> });
 const SkillsConfig = dynamic(loadSkillsConfig, { loading: (props) => <SettingsSectionLoading section="skills" {...props} /> });
 const AgentsConfig = dynamic(loadAgentsConfig, { loading: (props) => <SettingsSectionLoading section="agents" {...props} /> });
 const PluginsConfig = dynamic(loadPluginsConfig, { loading: (props) => <SettingsSectionLoading section="plugins" {...props} /> });
 const McpConfig = dynamic(loadMcpConfig, { loading: (props) => <SettingsSectionLoading section="mcp" {...props} /> });
 
-const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig };
+const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig, learning: loadLearningSettings };
 export function preloadSettingsSection(section: SettingsSection) {
   const loader = sectionLoaders[section as keyof typeof sectionLoaders];
   // Warm only the hovered/focused code chunk; no component/data request is mounted.
@@ -165,7 +167,7 @@ const SETTINGS_NAV_GROUPS: readonly NavGroupDef[] = [
   {
     id: "agent",
     titleKey: "settings.groupAgents",
-    sectionIds: ["models", "skills", "agents", "plugins", "mcp", "enhancements"],
+    sectionIds: ["models", "skills", "agents", "plugins", "mcp", "learning", "enhancements"],
   },
   {
     id: "data",
@@ -676,6 +678,7 @@ export function SettingsPanel({
       { id: "agents", label: t("common.agents"), requiresProject: true },
       { id: "plugins", label: t("common.plugins"), requiresProject: true },
       { id: "mcp", label: t("settings.mcp"), requiresProject: false },
+      { id: "learning", label: "自动复盘", requiresProject: false },
     ],
     [t],
   );
@@ -1171,6 +1174,8 @@ export function SettingsPanel({
               <PluginsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
             )}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
+
+          {sectionHost("learning", <LearningSettings cwd={cwd} />)}
 
           {/* 5 个 legacy extension section host */}
           {enabledExtensions.map((ext) =>

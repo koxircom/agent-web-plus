@@ -30,7 +30,7 @@ function fixture() {
       const enabledExtensions = LEGACY_SETTINGS_EXTENSIONS.filter((ext) => isExtensionEnabled(ext));
       const nativeSections = [
         { id: "general" }, { id: "models" }, { id: "skills" },
-        { id: "agents" }, { id: "plugins" }, { id: "mcp" },
+        { id: "agents" }, { id: "plugins" }, { id: "mcp" }, { id: "learning" },
       ];
       const sections = useMemo(() => {
         return [ ...nativeSections, ...enabledExtensions.map((ext) => ({ id: ext.id })) ];
