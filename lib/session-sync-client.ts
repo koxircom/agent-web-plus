@@ -35,9 +35,10 @@ export function buildSessionSyncUrl(options: {
 
 /** Only committed history changes invalidate disk/network snapshots. Streaming
  * deltas and replayed tool progress update separate state and must not starve
- * initial hydration before it even reaches fetch. */
+ * initial hydration before it even reaches fetch. Reconnection and completion are read barriers:
+ * a pre-handshake/settlement flight must not certify the current transcript. */
 export function invalidatesSessionHistory(eventType: string): boolean {
-  return /^(message_end|compaction_start|auto_compaction_start)$/.test(eventType);
+  return /^(connected|message_end|agent_settled|prompt_done|compaction_start|auto_compaction_start)$/.test(eventType);
 }
 
 // Epoch identity survives remounts without unbounded per-session counters.

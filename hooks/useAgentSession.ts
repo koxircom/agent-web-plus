@@ -39,16 +39,18 @@ import {
 } from "@/lib/session-sync-client";
 import { fetchHistoryPageContext } from "@/lib/session-history-page-client";
 import { isSessionResidentFresh, markSessionResidentFresh, waitForSessionPreload } from "@/lib/session-preload";
+import { clampModelThinkingLevel } from "@/lib/model-thinking-level";
 import { readSessionWireDisk } from "@/lib/session-sync-storage";
 import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { CONFIGURED_TOOL_PRESET, getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { mergeSessionStats, type SessionFileStats } from "@/lib/session-stats";
-import { userMessageKey, preservePendingUserMessage, type OptimisticUserMessage } from "@/lib/prompt-recovery";
+import { bindUserMessageIdentity, bindUserHistoryIdentities, reconcileDeliveredUserEntry, reconcileUserReceipt, preservePendingUserMessage, type OptimisticUserMessage } from "@/lib/prompt-recovery";
 import { waitForPromptPreparation } from "@/lib/prompt-preparation";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { isNestedToolExecutionEvent, isSystemMessageEvent } from "@/lib/agent-event-wire";
+import { markLatestAssistantRetryAttempt } from "@/lib/message-display";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import { CODEMODE_TOOL_NAME, getCodemodeProgress } from "@/lib/codemode-view";
 import { updateExtensionWidgets } from "@/lib/extension-widgets";
@@ -73,8 +75,6 @@ import {
 } from "@/lib/streaming-message";
 import {
   getEnhancementWindow,
-  markOptimisticUserMessage,
-  reconcileDeliveredUserMessage,
   registerSessionReloadAliases,
 } from "@/lib/enhancement-chat-bridge";
 import { recallSessionQueue } from "@/lib/queue-recall-client";
@@ -83,6 +83,7 @@ import { admitNativeNotification, isNativeNotificationEnabled, NATIVE_NOTIFICATI
 
 export interface SessionData {
   sessionId: string;
+  promptEntryIds?: Record<string, string>;
   filePath: string;
   totalActiveMs: number;
   tree: SessionTreeNode[];
@@ -570,9 +571,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       : null,
   );
   const currentThinkingLevel = currentThinkingOverride ?? liveThinkingLevel ?? contextThinkingLevel;
-  const displayThinkingLevel = isNew
+  const requestedDisplayThinkingLevel = isNew
     ? (newSessionThinkingLevel ?? newSessionDefaultThinkingLevel)
     : currentThinkingLevel ?? (data?.context.messages.length === 0 ? newSessionDefaultThinkingLevel : null);
+  const displayThinkingLevel = clampModelThinkingLevel(requestedDisplayThinkingLevel, displayModel
+    ? modelThinkingLevels[`${displayModel.provider}:${displayModel.modelId}`] : null);
   const composerDraftKey = session?.id ?? newSessionDraftKey ?? undefined;
 
   const syncLiveModel = useCallback((state?: AgentStateResponse) => {
@@ -686,7 +689,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (reuseResident && wireBaseline?.data) reconciled = { action: "unchanged", revision: wireBaseline.revision, preserveCurrentMessages: true };
       for (let attempt = 0; !reconciled && attempt < 2; attempt++) {
         const url = buildSessionSyncUrl({ sessionId: sid, baseRevision, force: options?.force || Boolean(options?.resident && !reuseResident), syncEnabled, treeFormat: "summary" });
-        const res = await fetch(url, options?.signal ? { signal: options.signal } : undefined);
+        // A newer epoch may request the same URL while an older read is still
+        // pending. Bypass the browser cache so it cannot queue behind that read.
+        const res = await fetch(url, { cache: "no-store", ...(options?.signal ? { signal: options.signal } : {}) });
         if (!isCurrentRead()) return null;
         if (res.status === 404 || res.status === 401 || res.status === 403) {
           if (res.status === 404) deleteSessionViewSnapshot(sid);
@@ -733,6 +738,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
       // A history read during preparation may predate the submitted prompt.
       // Keep its local echo visible without adding it to a certified baseline.
+      bindUserHistoryIdentities(d.context.messages, d.context.entryIds, d.promptEntryIds);
       const displayMessages = preservePendingUserMessage(d.context.messages, d.context.entryIds, sid, optimisticUserMessageRef.current);
       dataRef.current = d; messagesRef.current = displayMessages; entryIdsRef.current = d.context.entryIds;
       setData(d); setActiveLeafId(d.leafId); setMessages(displayMessages); setEntryIds(d.context.entryIds);
@@ -993,7 +999,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         && thinkingLevelOverrideRef.current === selectedThinkingLevel
       ) {
         setLiveThinkingLevel(asConcreteThinkingLevel(result.thinkingLevel));
-        if (!selectedThinkingLevel) {
+        if (selectedThinkingLevel) {
+          const effective = asConcreteThinkingLevel(result.thinkingLevel);
+          thinkingLevelOverrideRef.current = effective;
+          setNewSessionThinkingLevel(effective);
+        } else {
           setNewSessionDefaultThinkingLevel(asConcreteThinkingLevel(result.thinkingLevel));
         }
       }
@@ -1107,9 +1117,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   // Keep the selected session warm even while its agent is idle. The SSE lease
   // is renewed separately below and expires if the browser disappears.
+  // A cold view hydrates history before subscribing: completed-message events
+  // must not repeatedly invalidate its first read. The connected handshake then
+  // reconciles turns committed between that snapshot and the subscription.
   useEffect(() => {
     const sid = session?.id;
-    if (!sid) return;
+    if (!sid || data?.sessionId !== sid) return;
     // React Strict Mode re-runs every effect after a simulated unmount, in
     // declaration order. The mount-only effect below flips this ref to false
     // in its cleanup and only restores it when it re-runs *after* this one,
@@ -1120,7 +1133,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return () => {
       if (sessionIdRef.current === sid) eventConnectionRef.current?.close();
     };
-  }, [maintainEventsConnected, session?.id]);
+  }, [maintainEventsConnected, session?.id, data?.sessionId]);
 
   useEffect(() => {
     const sid = session?.id;
@@ -1141,6 +1154,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (
           !disposed
           && result.renewed === 0
+          && dataRef.current?.sessionId === sid
           && sessionIdRef.current === sid
           && sessionPropIdRef.current === sid
         ) {
@@ -1517,6 +1531,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (sid) void reconcileAgentState(sid);
   });
+  const reconcileSelectedHistory = useEffectEvent(() => {
+    const sid = sessionIdRef.current;
+    if (!sid || !sessionHookMountedRef.current) return;
+    if (agentRunningRef.current) void reconcileAgentState(sid);
+    else void loadSession(sid);
+  });
   const previousSessionRunningRef = useRef(opts.sessionRunning);
   useEffect(() => {
     const wasRunning = previousSessionRunningRef.current;
@@ -1524,20 +1544,35 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // The sidebar's authoritative running snapshot is an early completion
     // signal, not permission to clear a newly submitted prompt. Confirm it
     // through the same run-guarded runtime read before settling the composer.
-    if (wasRunning === true && opts.sessionRunning === false) reconcileRunningAgent();
+    if (wasRunning === true && opts.sessionRunning === false) reconcileSelectedHistory();
   }, [opts.sessionRunning]);
+  const catalogHistorySource = session ? `${session.id}:${session.path}:${session.modified}` : null;
+  const previousCatalogHistorySourceRef = useRef(catalogHistorySource);
+  const catalogHistoryDirtyRef = useRef(false);
   useEffect(() => {
-    if (!agentRunning) return;
+    if (previousCatalogHistorySourceRef.current !== catalogHistorySource) {
+      previousCatalogHistorySourceRef.current = catalogHistorySource;
+      catalogHistoryDirtyRef.current = true;
+      if (session?.id) bumpSessionEpoch(session.id);
+    }
+    // A list refresh can observe an entire turn that this tab never streamed.
+    // Keep the live writer in charge, then reconcile the selected idle view.
+    if (catalogHistoryDirtyRef.current && !agentRunning && !opts.sessionRunning && session?.id) {
+      catalogHistoryDirtyRef.current = false;
+      void loadSession(session.id);
+    }
+  }, [catalogHistorySource, agentRunning, opts.sessionRunning, session?.id, loadSession]);
+  useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === "visible") reconcileRunningAgent();
+      if (document.visibilityState === "visible") reconcileSelectedHistory();
     };
-    const interval = setInterval(reconcileRunningAgent, AGENT_STATE_RECONCILE_MS);
+    const interval = agentRunning ? setInterval(reconcileRunningAgent, AGENT_STATE_RECONCILE_MS) : null;
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("online", reconcileRunningAgent);
+    window.addEventListener("online", reconcileSelectedHistory);
     return () => {
-      clearInterval(interval);
+      if (interval !== null) clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("online", reconcileRunningAgent);
+      window.removeEventListener("online", reconcileSelectedHistory);
     };
   }, [agentRunning]);
 
@@ -1571,11 +1606,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           agentRunningRef.current = true;
           setAgentRunning(true);
           setAgentPhase({ kind: "waiting_model" });
+          // The stream snapshot only replays the current message. Completed
+          // turns missed while disconnected still belong to native history.
+          const sid = sessionIdRef.current;
+          if (sid) void loadSession(sid);
         } else if (agentRunningRef.current && !rpcPromptPendingRef.current) {
           // A connected snapshot can reveal that the server is already idle.
           // Keep a prompt whose POST is still awaiting acceptance alive.
           const sid = sessionIdRef.current;
           if (sid) void reconcileAgentState(sid);
+        } else if (!agentRunningRef.current && !rpcPromptPendingRef.current) {
+          // Reconnect does not replay turns completed while the tab was away.
+          // An idle handshake must validate history even when local state never
+          // observed agent_start. Share the existing native loader/flight.
+          const sid = sessionIdRef.current;
+          if (sid) void loadSession(sid, false, true);
         }
         break;
       }
@@ -1606,7 +1651,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "agent_settled": {
         const agentWasActive = sdkAgentActiveRef.current;
         sdkAgentActiveRef.current = false;
-        if (!agentWasActive) break;
+        if (!agentWasActive) {
+          const sid = sessionIdRef.current;
+          if (sid) void loadSession(sid);
+          break;
+        }
         // SDK settlement ends this run. The POST promise may still be unwinding;
         // it is not model activity and must not keep Stop / waiting visible.
 
@@ -1628,7 +1677,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const promptWasPending = rpcPromptPendingRef.current;
           rpcPromptPendingRef.current = false;
           optimisticUserMessageRef.current = null;
-          if (!promptWasPending && notifiedPromptRunIdRef.current === runId) break;
+          if (!promptWasPending && notifiedPromptRunIdRef.current === runId) {
+            const sid = sessionIdRef.current;
+            if (sid) void loadSession(sid);
+            break;
+          }
 
           const sid = sessionIdRef.current;
           if (sid) void loadSession(sid);
@@ -1697,9 +1750,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       case "message_end": {
         // Same late-event guard: after reconcile finished this run,
-        // loadSession already loaded this message from the session file —
-        // appending it again would duplicate it.
-        if (!agentRunningRef.current) break;
+        // append nothing, but verify disk: the commit may have arrived after
+        // the settlement read. Its epoch already superseded that older read.
+        if (!agentRunningRef.current) {
+          const sid = sessionIdRef.current;
+          if (sid) void loadSession(sid);
+          break;
+        }
         if (isSystemMessageEvent(event)) break;
         const completed = event.message as AgentMessage | undefined;
         if (completed && completed.role === "user") {
@@ -1713,33 +1770,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // already appended it optimistically. Consume only the still-adjacent
           // optimistic bubble; later same-text queue deliveries must render.
           const delivered = normalizeToolCalls(completed);
-          const deliveredKey = userMessageKey(delivered);
-          const optimisticKey = optimisticUserMessageRef.current ? userMessageKey(optimisticUserMessageRef.current.message) : null;
-          optimisticUserMessageRef.current = null;
-          if (!optimisticKey) {
+          const requestId = typeof event.requestId === "string" ? event.requestId : undefined;
+          bindUserMessageIdentity(delivered, { requestId, entryId: typeof event.entryId === "string" ? event.entryId : undefined });
+          const pending = optimisticUserMessageRef.current;
+          const ownsEcho = pending && (pending.requestId ? pending.requestId === requestId : !requestId);
+          if (ownsEcho) optimisticUserMessageRef.current = null;
+          if (!ownsEcho) {
             // Steering/follow-up delivery is a new user turn too. The initial
             // prompt already acquired its scroll intent in handleSend.
             pendingScrollToUserRef.current = true;
             setPromptAnchorActive(true);
             setPromptScrollRevision((revision) => revision + 1);
           }
-          setMessages((prev) => {
-            const fallback = () => {
-              const last = prev[prev.length - 1];
-              if (optimisticKey && last?.role === "user" && userMessageKey(last) === optimisticKey) {
-                return optimisticKey === deliveredKey
-                  ? prev
-                  : [...prev.slice(0, -1), delivered];
-              }
-              return [...prev, delivered];
-            };
-            return reconcileDeliveredUserMessage(prev, delivered, {
-              lastFingerprint: optimisticKey,
-              serverFingerprint: deliveredKey,
-              fingerprintFn: userMessageKey,
-              fallback,
-            });
-          });
+          setMessages((prev) => reconcileDeliveredUserEntry(prev, delivered, ownsEcho ? pending : null));
         } else if (completed) {
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
           if (completed.role === "toolResult") {
@@ -1835,7 +1878,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const sid = sessionIdRef.current;
         const requestId = event.requestId;
         if (!sid || typeof requestId !== "string") break;
-        const receipt = event.receipt as { status?: string } | undefined;
+        const receipt = event.receipt as { status?: string; entryId?: string } | undefined;
+        if (receipt?.status === "committed" && typeof receipt.entryId === "string") {
+          const entryId = receipt.entryId;
+          setMessages((prev) => reconcileUserReceipt(prev, requestId, entryId));
+        }
         if (typeof receipt?.status === "string") reconcilePromptSubmission(requestId, { status: receipt.status });
         break;
       }
@@ -1846,6 +1893,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       case "auto_retry_start":
+        setMessages((prev) => markLatestAssistantRetryAttempt(prev));
         setRetryInfo({ attempt: event.attempt as number, maxAttempts: event.maxAttempts as number, errorMessage: event.errorMessage as string | undefined });
         break;
       case "auto_retry_end":
@@ -1916,8 +1964,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         : message,
       timestamp: Date.now(),
     };
-    markOptimisticUserMessage(userMsg);
     optimisticUserMessageRef.current = { sessionId: sessionIdRef.current, message: userMsg, precedingEntryIds: entryIdsRef.current };
+    const onPromptRegistered = ({ requestId }: { requestId: string }) => {
+      const pending = optimisticUserMessageRef.current;
+      if (pending?.message === userMsg) {
+        pending.requestId = requestId;
+        bindUserMessageIdentity(userMsg, { requestId });
+      }
+    };
     setMessages((prev) => [...prev, userMsg]);
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
@@ -1960,7 +2014,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
-        });
+        }, { onPromptRegistered });
         promoteNewSession(1, message);
         if (result?.stopped) await reconcileAgentState(sid);
       } else if (session) {
@@ -1973,7 +2027,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
-        });
+        }, { onPromptRegistered });
         if (result?.stopped) await reconcileAgentState(session.id);
       } else {
         throw new Error("No active session for the prompt");
@@ -2168,10 +2222,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       newSessionModelOverrideRef.current = selectedModel;
       setNewSessionModel(selectedModel);
       setPendingModel(selectedModel);
+      const supported = modelThinkingLevels[`${provider}:${modelId}`];
+      if (thinkingLevelOverrideRef.current !== null) {
+        const effective = clampModelThinkingLevel(thinkingLevelOverrideRef.current, supported);
+        thinkingLevelOverrideRef.current = effective;
+        setNewSessionThinkingLevel(effective);
+      }
       if (thinkingLevelOverrideRef.current === null) {
         const pinned = thinkingLevelPinsRef.current[`${provider}/${modelId}`];
         setNewSessionDefaultThinkingLevel(
-          asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current,
+          clampModelThinkingLevel(asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current, supported),
         );
       }
       const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
@@ -2212,7 +2272,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       modelSwitchPendingRef.current = false;
       setModelSwitching(false);
     }
-  }, [addNotice, currentModelOverride, isNew, loadSession, setNewSessionModel]);
+  }, [addNotice, currentModelOverride, isNew, loadSession, modelThinkingLevels, setNewSessionModel]);
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -2579,7 +2639,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
   }, [addNotice, composerDraftKey, restoreSubmission]);
 
-  const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
+  const handleThinkingLevelChange = useCallback(async (requested: ThinkingLevelOption) => {
+    const level = requested === "auto" ? "auto" : clampModelThinkingLevel(requested, displayModel
+      ? modelThinkingLevels[`${displayModel.provider}:${displayModel.modelId}`] : null)!;
     if (level === "auto") {
       thinkingLevelOverrideRef.current = null;
       setNewSessionThinkingLevel(null);
@@ -2595,9 +2657,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
     if (!sid) return;
     try {
-      await sendAgentCommand(sid, { type: "set_thinking_level", level });
+      const result = await sendAgentCommand<{ thinkingLevel?: string }>(sid, { type: "set_thinking_level", level });
       if (sessionHookMountedRef.current && sessionIdRef.current === sid) {
-        setLiveThinkingLevel(level);
+        setLiveThinkingLevel(asConcreteThinkingLevel(result?.thinkingLevel) ?? level);
         setCurrentThinkingOverride(null);
       }
     } catch (e) {
@@ -2605,7 +2667,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setCurrentThinkingOverride(null);
       addNotice({ type: "error", message: `设置思考深度失败：${e instanceof Error ? e.message : String(e)}` });
     }
-  }, [addNotice, isNew]);
+  }, [addNotice, displayModel, isNew, modelThinkingLevels]);
 
   const handleToolPresetChange = useCallback(async (preset: ToolPreset) => {
     const toolNames = getToolNamesForPreset(preset);

@@ -104,6 +104,13 @@ test("includes project activity counts in accessible labels", () => {
   );
 });
 
+test("shows the interrupted state on the exact session row", () => {
+  assert.match(
+    sessionItemSource,
+    /rowStatus === "interrupted"[\s\S]*?title="本轮任务异常停止，点击会话查看具体错误"[\s\S]*?>异常停止<\/span>/,
+  );
+});
+
 test("formats session timestamps with the active locale", () => {
   assert.match(source, /import \{ formatRelativeTime \} from "@\/lib\/i18n\/format"/);
   assert.match(sessionItemSource, /const \{ locale, t \} = useI18n\(\)/);

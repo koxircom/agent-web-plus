@@ -43,25 +43,27 @@ const jiti = createJiti(import.meta.url);
 const { getToolExecutionProgress } = await jiti.import("../lib/tool-execution-progress.ts");
 const { completeActiveToolResult, getToolPublicStatus } = await jiti.import("../lib/tool-public-status.ts");
 const { isNestedToolExecutionEvent, isSystemMessageEvent } = await jiti.import("../lib/agent-event-wire.ts");
+const { markLatestAssistantRetryAttempt } = await jiti.import("../lib/message-display.ts");
 const queueHelpers = await jiti.import("../lib/extension-ui-queue.ts");
+const promptRecovery = await jiti.import("../lib/prompt-recovery.ts");
 const ref = (current) => ({ current });
 const noop = () => {};
 function hookHarness() {
-  const state = { messages: [], activeToolResults: new Map(), phase: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0 };
+  const state = { messages: [], activeToolResults: new Map(), phase: null, retryInfo: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0 };
   const setter = (key) => (value) => { state[key] = typeof value === "function" ? value(state[key]) : value; };
   const scope = {
-    ...queueHelpers, sessionIdRef: ref("session"), session: { id: "session" },
+    ...queueHelpers, ...promptRecovery, sessionIdRef: ref("session"), session: { id: "session" },
     agentRunningRef: ref(false), bashRunningRef: ref(false), promptRunIdRef: ref(0), agentStateRevisionRef: ref(0), extensionUiRevisionRef: ref(0),
     rpcPromptPendingRef: ref(false), optimisticUserMessageRef: ref(null), preparationRef: ref(null),
     entryIdsRef: ref([]), pendingScrollToUserRef: ref(false), ensuringNewSessionRef: ref(null),
     isNew: false, newSessionCwd: null, composerDraftKey: "draft", newSessionDraftKey: null,
-    setMessages: setter("messages"), setAgentPhase: setter("phase"), setActiveToolResults: setter("activeToolResults"),
+    setMessages: setter("messages"), setAgentPhase: setter("phase"), setRetryInfo: setter("retryInfo"), setActiveToolResults: setter("activeToolResults"),
     setExtensionDialogs: setter("dialogs"), setExtensionCustomUis: setter("custom"),
     setAgentRunning: noop, setPromptAnchorActive: noop, setPromptScrollRevision: noop, setStopRequested: noop, dispatch: noop,
     markOptimisticUserMessage: noop, bumpSessionEpoch: noop, cancelEventStreamGrace: noop, addNotice: noop,
     invalidatesSessionHistory: () => false, normalizeToolCalls: (value) => value,
     isSystemMessageEvent, isNestedToolExecutionEvent, CODEMODE_TOOL_NAME: "codemode",
-    getToolExecutionProgress, completeActiveToolResult,
+    getToolExecutionProgress, completeActiveToolResult, markLatestAssistantRetryAttempt,
     isPromptRejectedError: (error) => error.code === "rejected",
     waitForPromptPreparation: (operation) => operation,
     ensureEventsConnected: async () => {}, loadSession: async () => {},
@@ -76,6 +78,35 @@ function hookHarness() {
   scope.handleAgentEvent = callback("handleAgentEvent", scope);
   return { state, scope };
 }
+
+test("auto retry turns the completed provider failure into a non-terminal attempt", () => {
+  const { scope, state } = hookHarness();
+  state.messages = [{
+    role: "assistant",
+    provider: "openai-codex-responses",
+    model: "gpt-6.1-sol",
+    content: [],
+    stopReason: "error",
+    errorMessage: "Codex error: temporary upstream failure",
+  }];
+
+  scope.handleAgentEvent({
+    type: "auto_retry_start",
+    attempt: 1,
+    maxAttempts: 3,
+    errorMessage: "temporary upstream failure",
+  });
+
+  assert.equal(state.messages[0].retryAttempt, true);
+  assert.deepEqual(state.retryInfo, {
+    attempt: 1,
+    maxAttempts: 3,
+    errorMessage: "temporary upstream failure",
+  });
+
+  scope.handleAgentEvent({ type: "auto_retry_end" });
+  assert.equal(state.retryInfo, null);
+});
 
 test("only an authoritative pending-ID snapshot supersedes the fast interaction read", () => {
   const { scope } = hookHarness();
@@ -531,7 +562,7 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   assert.match(source, /sessionRunning\?: boolean/);
   assert.match(
     source,
-    /const sid = session\?\.id;[\s\S]*?if \(!sid\) return;[\s\S]*?maintainEventsConnected\(sid\)/,
+    /const sid = session\?\.id;[\s\S]*?if \(!sid \|\| data\?\.sessionId !== sid\) return;[\s\S]*?maintainEventsConnected\(sid\)/,
   );
   assert.match(source, /sessionPropIdRef\.current === sid/);
   assert.match(source, /SESSION_LEASE_RENEW_INTERVAL_MS = 30_000/);
@@ -873,7 +904,7 @@ test("restores an in-page session viewport without the default tail jump", () =>
   assert.match(chatWindowSource, /findChatScrollAnchor\(/);
   assert.match(chatWindowSource, /while \(hasMore && before && !controller\.signal\.aborted\)/);
   assert.match(chatWindowSource, /context\.oldestEntryId === position\.oldestEntryId/);
-  assert.match(chatWindowSource, /if \(!context\) \{\s*scrollToBottom\("instant"\);\s*setPendingScrollRestore\(null\);/);
+  assert.match(chatWindowSource, /if \(!context\) \{\s*outcome = "error";\s*scrollToBottom\("instant"\);\s*setPendingScrollRestore\(null\);/);
   assert.match(chatWindowSource, /scrollToMessage\(element, position\.anchorOffset\)/);
   assert.match(chatWindowSource, /visibility: pendingScrollRestore \? "hidden" : undefined/);
 });
@@ -997,8 +1028,13 @@ test("loadSession suppresses AbortError from polluting UI error and conducts bou
     source.indexOf("  const loadContext = useCallback"),
   );
 
-  // 1. fetch signal pass-through verification
-  assert.match(loadSessionSource, /const res = await fetch\(url, options\?\.signal \? \{ signal: options\.signal \} : undefined\);/);
+  // 1. Evaluate the actual request options: fresh reads preserve caller aborts.
+  const loadDeclaration = findNode(hookFile, node => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === "loadSession");
+  const historyFetch = findNode(loadDeclaration, node => ts.isCallExpression(node)
+    && node.expression.getText(hookFile) === "fetch" && node.arguments[0]?.getText(hookFile) === "url");
+  const signal = new AbortController().signal;
+  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: { signal } }), { cache: "no-store", signal });
+  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: undefined }), { cache: "no-store" });
   assert.match(loadSessionSource, /const stateRes = await fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(sid\)\}\/state`, options\?\.signal \? \{ signal: options\.signal \} : undefined\);/);
 
   // 2. AbortError detection & UI error suppression (positive & negative cases)
@@ -1050,8 +1086,6 @@ test("queued user delivery acquires a fresh native scroll intent without duplica
   let revision = 0;
   scope.agentRunningRef.current = true;
   scope.setPromptScrollRevision = (update) => { revision = update(revision); };
-  scope.userMessageKey = (message) => JSON.stringify(message.content);
-  scope.reconcileDeliveredUserMessage = (_prev, _message, options) => options.fallback();
   const initial = { role: "user", content: "initial", timestamp: 1 };
   state.messages = [initial];
   scope.optimisticUserMessageRef.current = { message: initial };
@@ -1076,6 +1110,8 @@ test("new user turns cancel a stale history restore while ordinary pagination ke
       prevScrollDistanceRef: ref(1500), pendingHistoryVisibleCountRef: ref(null),
       loadingOlderRef: ref(true), visibleCount: 50, scrollContainerRef: ref(container),
       restoreScrollTop: (height, distance) => height - distance };
+    scope.activeHistoryLoadRef = ref({ kind: revision === 1 ? "local" : "network" });
+    scope.clearHistoryLoadGuard = operation => { if (operation.kind === "local") scope.loadingOlderRef.current = false; };
     evaluate(effect.arguments[0], chatFile, scope)();
     assert.equal(container.scrollTop, revision === 1 ? 500 : 100);
     assert.equal(scope.prevScrollDistanceRef.current, null);
@@ -1093,6 +1129,8 @@ test("cancelled local history restoration releases its page guard after the rend
     prevScrollDistanceRef: ref(1500), pendingHistoryVisibleCountRef: ref(100),
     loadingOlderRef: ref(true), visibleCount: 50, scrollContainerRef: ref(container),
     restoreScrollTop: () => { throw Error("old anchor must not be restored"); } };
+  scope.activeHistoryLoadRef = ref({ kind: "local" });
+  scope.clearHistoryLoadGuard = () => { scope.loadingOlderRef.current = false; };
   const run = evaluate(effect.arguments[0], chatFile, scope);
   run();
   assert.equal(scope.loadingOlderRef.current, true);
@@ -1106,9 +1144,9 @@ test("cancelled local history restoration releases its page guard after the rend
 
 test("receipt recovery clock survives changing UI callbacks without losing their latest owner", async () => {
   const effect = findNode(hookFile,node=>ts.isCallExpression(node) && node.expression.getText(hookFile)==="useEffect"
-    && node.arguments[0]?.getText(hookFile).includes("const uncertain = unconfirmedSubmissions"));
+    && node.arguments[0]?.getText(hookFile).includes("const pending = unconfirmedSubmissions"));
   const row={requestId:"r",sessionId:"s",status:"uncertain"};
-  const scope={unconfirmedSubmissions:[row],confirmPendingSubmission:async()=>{},document:{visibilityState:"visible",addEventListener(){},removeEventListener(){}},window:{addEventListener(){},removeEventListener(){}},setInterval(fn,ms){assert.equal(ms,8000);scope.tick=fn;return 1;},clearInterval(){},};
+  const scope={unconfirmedSubmissions:[row],isPromptSubmissionDispatching:()=>false,confirmPendingSubmission:async()=>{},document:{visibilityState:"visible",addEventListener(){},removeEventListener(){}},window:{addEventListener(){},removeEventListener(){}},setInterval(fn,ms){assert.equal(ms,8000);scope.tick=fn;return 1;},clearInterval(){},};
   let owner=0,reads=[];scope.confirmPendingSubmission=async()=>{reads.push(owner);};
   // Model React's event function: stable scheduling, current callback on dispatch.
   scope.confirmUncertainSubmission=async row=>scope.confirmPendingSubmission(row);
@@ -1122,4 +1160,51 @@ test("receipt recovery clock survives changing UI callbacks without losing their
   }
   scope.tick();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(reads,[0,31]);
   cleanup();scope.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads.length,2);
+});
+
+
+test("a running reconnect reads missed history while retaining the active run", () => {
+  const { scope } = hookHarness();
+  const reads = [];
+  scope.sdkAgentActiveRef = ref(false);
+  scope.loadSession = async (sid) => { reads.push(sid); };
+  scope.handleAgentEvent({ type: "connected", isStreaming: true });
+  assert.deepEqual(reads, ["session"]);
+  assert.equal(scope.agentRunningRef.current, true);
+  assert.equal(scope.sdkAgentActiveRef.current, true);
+});
+
+
+test("a cold session hydrates before SSE while cached and Strict Mode mounts still subscribe immediately", () => {
+  const start = source.indexOf("  // Keep the selected session warm even while its agent is idle.");
+  const effect = findNode(hookFile, node => ts.isCallExpression(node)
+    && node.expression.getText(hookFile) === "useEffect" && node.getStart(hookFile) > start
+    && node.arguments[0]?.getText(hookFile).includes("data?.sessionId !== sid"));
+  const subscribed = [], closed = [];
+  const scope = { session: { id: "session" }, data: null, sessionHookMountedRef: ref(true),
+    sessionIdRef: ref("session"), maintainEventsConnected: sid => subscribed.push(sid),
+    eventConnectionRef: ref({ close: () => closed.push(true) }) };
+  const mount = evaluate(effect.arguments[0], hookFile, scope);
+  assert.equal(mount(), undefined);
+  assert.equal(subscribed.length, 0, "message_end and connected cannot starve the initial HTTP snapshot");
+  scope.data = { sessionId: "other" };
+  mount(); assert.equal(subscribed.length, 0, "a prior session's resident data is not hydration");
+  scope.data = { sessionId: "session", context: { messages: [] } };
+  const cleanup = mount(); assert.deepEqual(subscribed, ["session"]);
+  cleanup(); assert.equal(closed.length, 1);
+  scope.sessionHookMountedRef.current = false;
+  mount(); assert.equal(scope.sessionHookMountedRef.current, true);
+  assert.deepEqual(subscribed, ["session", "session"], "Strict Mode reopens the hydrated view");
+});
+
+test("lease recovery cannot subscribe to a cold session before history hydration", async () => {
+  const declaration = findNode(hookFile, node => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === "renewLease");
+  const calls = [];
+  const scope = { disposed: false, renewing: false, sid: "session", sessionIdRef: ref("session"), sessionPropIdRef: ref("session"),
+    dataRef: ref(null), fetch: async () => ({ ok: true, json: async () => ({ renewed: 0 }) }),
+    closeEvents: () => calls.push("close"), maintainEventsConnected: sid => calls.push(sid) };
+  const renew = evaluate(declaration.initializer, hookFile, scope);
+  await renew(); assert.deepEqual(calls, []);
+  scope.dataRef.current = { sessionId: "session" };
+  await renew(); assert.deepEqual(calls, ["close", "session"]);
 });

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, typ
 import { isMessageGroupAnchor } from "@/lib/message-display";
 import type { AgentMessage, TextContent, UserMessage } from "@/lib/types";
 import { useMinimapBookmarks } from "@/hooks/useMinimapBookmarks";
+import { useMobileHorizontalSwipe } from "@/hooks/useMobileHorizontalSwipe";
 import { stripDimensionNotes } from "./MessageView";
 import styles from "./ChatMinimap.module.css";
 
@@ -245,6 +246,19 @@ export function ChatMinimap({
     fillsHeight: false,
   });
   const previewBoxRef = useRef<HTMLDivElement>(null);
+
+  // 原生实现手机竖屏导航面板右滑关闭，条目按钮支持手势且抑制 ghost click
+  useMobileHorizontalSwipe({
+    containerRef: previewBoxRef,
+    direction: "right",
+    enabled: Boolean(overlay),
+    threshold: 40,
+    dominantRatio: 1.3,
+    allowOnButtons: true,
+    onSwipe: () => {
+      onClose?.();
+    },
+  });
   const previewItemRefs = useRef(new Map<number, HTMLDivElement>());
   const previewHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNodeLockRef = useRef<{ index: number; until: number } | null>(null);
@@ -1409,7 +1423,6 @@ export function ChatMinimap({
                   💬 共 {totalTurnsCount} 轮 · 已显示 {visibleTurnsCount} 轮{focusLabel}
                 </span>
               </div>
-              {overlay && <button type="button" className={styles.closeOverlay} aria-label="关闭会话导航" onClick={onClose}>×</button>}
               <button
                 type="button"
                 className={`${styles.loadEarlier} ${isLoadingEarlier ? styles.loading : ""}`}

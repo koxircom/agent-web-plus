@@ -10,8 +10,10 @@ import {
   invalidateSessionListCache,
   invalidateSessionManagerCache,
   getSessionFileFingerprint,
+  readSessionHeader,
 } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { getPromptEntryIds } from "@/lib/prompt-delivery";
 import { startServerPerf } from "@/lib/perf";
 import { jsonResponse } from "@/lib/json-response";
 import { negotiateSessionSync, type SessionSyncScope } from "@/lib/session-sync-server";
@@ -58,10 +60,21 @@ export async function GET(
     const liveRpc = selectSessionReadRuntime(liveWrapper);
     const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
     if (!liveRpc && !resolvedPath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      return NextResponse.json({ error: "Session not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
     }
 
     const filePath = liveRpc?.sessionFile || resolvedPath || "";
+    if (searchParams.get("lookup") === "1") {
+      // A search click needs only current identity, never a full history parse.
+      let exists = Boolean(liveRpc);
+      if (!exists) {
+        try { exists = getSessionFileFingerprint(filePath) !== null && readSessionHeader(filePath)?.id === id; }
+        catch { /* A concurrent removal is an unavailable result. */ }
+      }
+      return NextResponse.json(exists ? { sessionId: id, exists: true } : { error: "Session not found" }, {
+        status: exists ? 200 : 404, headers: { "Cache-Control": "no-store" },
+      });
+    }
     const summaryTree = searchParams.get("tree") === "summary";
     const deferToolResults = searchParams.get("deferTools") === "1";
     const deferThinking = searchParams.has("deferThinking");
@@ -166,6 +179,7 @@ export async function GET(
 
       return {
         sessionId: id,
+        promptEntryIds: Object.fromEntries(Object.entries(getPromptEntryIds(id)).filter(([, entryId]) => context.entryIds.includes(entryId))),
         filePath: actualFilePath,
         info,
         leafId,
@@ -259,11 +273,11 @@ export async function PATCH(
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    const { results } = await deleteSessions([id]);
+    const { results, auditWarning } = await deleteSessions([id], { origin: "api-single" });
     const result = results[0];
     if (result.missing) return NextResponse.json({ error: "Session not found" }, { status: 404 });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...(auditWarning ? { auditWarning } : {}) });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

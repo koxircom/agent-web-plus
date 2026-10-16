@@ -129,3 +129,8 @@ After installation:
 - Verify the installed `package.json` reports `"version": "${VERSION}"`, `"piWebEdition": "koxir-standalone"`, and `"standalone": true`.
 - Restart or reload the target service following the environment's maintenance protocol and confirm `/login` (HTTP 200) and version status.
 - Remove the local temporary `pi-web-plus-${VERSION}.tgz` artifact from the working tree so `git status` remains clean.
+
+
+## 2026-10-14 主动质量门禁
+
+当前可执行质量闭环见 [quality.md](quality.md)。打包 prepack 强制执行同源码/已安装依赖指纹的分片 release gate；失败、缺文件、运行中漂移不能打包。原生完整包、只读运行入口及空闲受控发布仍各自验收。历史版本说明保留作为历史，不作为当前 SDK/目标基线。

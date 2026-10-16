@@ -5,7 +5,6 @@ import type { SessionInfo } from "./types";
 const MAX_FILES = 500;
 const MAX_RESULTS = 30;
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_LINE_CHARS = 1024 * 1024;
 const TIME_BUDGET_MS = 3000;
 
 export interface SessionSearchResult {
@@ -54,10 +53,6 @@ export async function searchSessionContents(
         if (signal.aborted || Date.now() >= deadline) {
           response.truncated = true;
           break;
-        }
-        if (line.length > MAX_LINE_CHARS) {
-          response.truncated = true;
-          continue;
         }
         let entry;
         try { entry = JSON.parse(line); } catch { continue; }

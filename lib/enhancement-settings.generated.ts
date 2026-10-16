@@ -18,11 +18,6 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
-  "user-message-reconcile": {
-    "defaultEnabled": true,
-    "moduleId": "conversation-navigation",
-    "moduleDefaultEnabled": true
-  },
   "general-settings-dashboard": {
     "defaultEnabled": true,
     "moduleId": "local-workspace",
@@ -91,6 +86,11 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
   "live-stopwatch": {
     "defaultEnabled": true,
     "moduleId": "task-insights",
+    "moduleDefaultEnabled": true
+  },
+  "model-scope-warning": {
+    "defaultEnabled": true,
+    "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
   "quick-quote": {

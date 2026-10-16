@@ -1229,6 +1229,11 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     onSelectSession(s, false, entryId, blockIndex);
   }, [onSelectSession]);
 
+  const handleUnavailableSearchSession = useCallback((sessionId: string) => {
+    setAllSessions((current) => current.filter((session) => session.id !== sessionId));
+    void loadSessions(false, true);
+  }, [loadSessions]);
+
   const handleNewSession = useCallback(() => {
     const effectiveCwd = selectedCwd ?? selectedCwdProp ?? allSessions[0]?.cwd ?? (homeDir || null);
     if (!effectiveCwd) return;
@@ -2021,7 +2026,10 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
           overflow: "hidden",
         }}
       >
-        <SessionSearch open={sessionSearchOpen} query={sessionSearchQuery} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList}>
+        {error && <div role="status" data-pi-catalog-stale="true" title={error} style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
+          {t(allSessions.length ? "sidebar.catalogStale" : "sidebar.catalogReadFailed")}
+        </div>}
+        <SessionSearch open={sessionSearchOpen} query={sessionSearchQuery} sessions={allSessions} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList} onUnavailableSession={handleUnavailableSearchSession}>
         <div
           ref={listScrollRef}
           onScroll={handleListScroll}
@@ -2036,11 +2044,6 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.loading")}
-          </div>
-        )}
-        {error && (
-          <div style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
-            {error}
           </div>
         )}
         {!loading && !error && sessionFamilies.length === 0 && (
@@ -2609,6 +2612,8 @@ function SessionItem({
                 <span title="服务端任务状态暂不可确认">状态待确认</span>
               ) : rowStatus === "attention" ? (
                 <span title="等待你的回复" style={{ color: "#f59e0b" }}>待回复</span>
+              ) : rowStatus === "interrupted" ? (
+                <span title="本轮任务异常停止，点击会话查看具体错误" style={{ color: "#f87171", fontWeight: 600 }}>异常停止</span>
               ) : (taskStatus ? rowStatus === "running" : isRunning) ? (
                 <RunningSessionIndicator />
               ) : isUnread ? (

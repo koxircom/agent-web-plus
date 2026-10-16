@@ -1,5 +1,7 @@
 const CACHE_PREFIX = "pi-web";
-const CACHE_VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
+// The offline shell changed independently of the app version, so make this
+// worker precache it into a fresh cache instead of reusing an installed copy.
+const CACHE_VERSION = `${new URL(self.location.href).searchParams.get("v") || "dev"}-plus-offline-v2`;
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const OFFLINE_URL = "/offline.html";
 const PRECACHE_URLS = [

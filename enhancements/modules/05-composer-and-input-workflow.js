@@ -1,3 +1,9 @@
+  // Queue bootstrap can call the hoisted composer resolver before modes init.
+  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
+  let lastTrackedModeUrlSessionId = undefined;
+  let lastTrackedModeNativeDraftKey = undefined;
+  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
+
   // ==========================================
   // 2.6 AI Quick Actions (同轮 AI 结构化选择 + 安全兜底)
   // ==========================================
@@ -4755,6 +4761,7 @@
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
     removeComposerQueuePanel();
   });
+  window.dispatchEvent(new Event("pi:native-queue-ready"));
   window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
@@ -5383,11 +5390,6 @@
       return null;
     }
   }
-
-  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
-  let lastTrackedModeUrlSessionId = undefined;
-  let lastTrackedModeNativeDraftKey = undefined;
-  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
 
   function readComposerNativeDraftKey() {
     try {
@@ -8108,7 +8110,7 @@
   window.__PI_ENH_IS_MOBILE_ENV__ = isMobileEnvironment;
 
   // ==========================================
-  // Mobile Swipe Drawer (手机手势右滑打开会话与关闭文件面板)
+  // Mobile Swipe Drawer (手机手势右滑打开会话、右边缘左滑打开会话导航与关闭文件面板)
   // ==========================================
   let mobileSwipeTracking = false;
   let mobileSwipeStartX = 0;
@@ -8134,6 +8136,8 @@
   function getFilePanelElement() {
     return (typeof document !== "undefined" && (document.getElementById("file-panel") || document.querySelector(".right-panel-container"))) || null;
   }
+
+
 
   function isMobileDrawerMode() {
     if (typeof window === "undefined") return true;
@@ -8258,6 +8262,7 @@
       filePanel.style.transition = "";
       filePanel.style.transform = "";
     }
+
   }
 
   // 关键防护：精准识别拖动调整宽度（Resize Handle / isResizing），坚决避让绝不误关闭侧边栏
@@ -8381,7 +8386,9 @@
   }
 
   function handleMobileSwipeTouchStart(e) {
-    if (!isPluginEnabled("mobile-swipe-drawer")) return;
+    if (!isPluginEnabled("mobile-swipe-drawer")) {
+      return;
+    }
     if (mobileSwipeResetTimer) {
       resetMobileSwipeStyles();
     }
@@ -8428,20 +8435,41 @@
       return;
     }
 
+    // 4. 关键原则：触摸起点在 native 导航层一律早退，聊天左滑由原生 own
+    if (
+      (targetEl && targetEl.closest && targetEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']")) ||
+      (pointEl && pointEl.closest && pointEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']"))
+    ) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
     const winWidth = typeof window !== "undefined" && typeof window.innerWidth === "number" ? window.innerWidth : 390;
     const isDrawer = isMobileDrawerMode();
     const isSidebarCurrentlyOpen = isSessionSidebarOpen();
+    const isFilePanelCurrentlyOpen = isFilePanelOpen();
 
-    // 4. 起始 X 范围检测：
-    // 当侧边栏已打开时，用户想左滑收起，允许在屏幕任意水平位置（包括侧边栏内部、右边缘外及遮罩层）触发！
-    // 仅当侧边栏关闭时，才限制最大起始 X 坐标，防止与主聊天右侧区域发生歧义
-    if (!isSidebarCurrentlyOpen) {
+    // 5. 起始手势目标分类 (Target Type) 与范围检测：仅保留 session-sidebar 与 file-panel
+    if (isFilePanelCurrentlyOpen) {
+      mobileSwipeTargetType = "file-panel";
+      mobileSwipeInitialFilePanelOpen = true;
+      mobileSwipeInitialOpen = false;
+    } else if (isSidebarCurrentlyOpen) {
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = true;
+      mobileSwipeInitialFilePanelOpen = false;
+    } else {
+      // 侧边栏未打开：只有在允许滑出的屏幕区域才锁定为 session-sidebar
       const maxStartX = isDrawer ? Math.max(280, winWidth * 0.85) : Math.min(580, winWidth * 0.75);
       if (touch.clientX > maxStartX) {
         mobileSwipeTracking = false;
         mobileSwipeEligible = false;
         return;
       }
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = false;
+      mobileSwipeInitialFilePanelOpen = false;
     }
 
     mobileSwipeStartX = touch.clientX;
@@ -8451,16 +8479,14 @@
     mobileSwipeEligible = true;
     mobileSwipeIntent = null;
 
-    mobileSwipeInitialFilePanelOpen = isFilePanelOpen();
-    mobileSwipeInitialOpen = isSidebarCurrentlyOpen;
-
-    // 缓存侧边栏宽度并准备 GPU 合成层，消除滑动期间每次 touchmove 的强制重排（Reflow）
-    const currentSidebar = getSessionSidebarElement();
-    if (currentSidebar) {
-      mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
-      if (currentSidebar.style) currentSidebar.style.willChange = "transform";
-    } else {
-      mobileSwipeCachedWidth = 280;
+    if (mobileSwipeTargetType === "session-sidebar") {
+      const currentSidebar = getSessionSidebarElement();
+      if (currentSidebar) {
+        mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
+        if (currentSidebar.style) currentSidebar.style.willChange = "transform";
+      } else {
+        mobileSwipeCachedWidth = 280;
+      }
     }
   }
 
@@ -8503,13 +8529,28 @@
       }
     }
 
-    // 2. 意图已锁定为水平滑动：立即阻止原生滚动抢占，保持跟手平滑响应
+    // 关键防抢占：当侧边栏与文件面板均未打开时，负向滑动（deltaX <= 0 向左划）
+    // 属于聊天原生左滑打开导航手势，05 模块绝不 preventDefault，直接早退放弃
+    if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
+    // 2. 意图已锁定为水平滑动：
     if (mobileSwipeIntent === "horizontal") {
+      // 再次确认：如果未打开侧边栏且 deltaX <= 0，绝不 preventDefault
+      if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+        mobileSwipeTracking = false;
+        mobileSwipeEligible = false;
+        return;
+      }
+
       if (e.cancelable && typeof e.preventDefault === "function") {
         e.preventDefault();
       }
 
-      // 优先判定：右侧文件面板打开且向右滑，驱动文件面板关闭
+      // 判定 1：右侧文件面板打开且向右滑，驱动文件面板关闭
       if (mobileSwipeInitialFilePanelOpen && deltaX > 0) {
         const filePanel = getFilePanelElement();
         if (filePanel) {
@@ -8519,7 +8560,7 @@
         return;
       }
 
-      // 会话列表滑动逻辑
+      // 判定 3：会话列表滑动逻辑
       const isDrawer = isMobileDrawerMode();
       const sidebar = getSessionSidebarElement();
       const backdrop = getSidebarBackdropElement();
@@ -8743,6 +8784,7 @@
     closeSessionSidebar,
     isFilePanelOpen,
     closeFilePanel,
+
     getSidebarToggleButton,
     isCodeBlockOrScrollableElement,
     isTouchOnHorizontalScrollable,
@@ -10045,7 +10087,3 @@
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
-
-  // The native queue responds synchronously. Announce readiness only after
-  // its composer/session dependencies have finished initializing.
-  window.dispatchEvent(new Event("pi:native-queue-ready"));

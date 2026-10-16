@@ -32,11 +32,27 @@ interface OpenSettingsBridgeState {
 const SIDEBAR_BRIDGE_KEYS = [
   "__PI_ENH_REFRESH_SESSIONS__",
   "__PI_ENH_GET_RAW_SESSIONS__",
+  "__PI_ENH_GET_SEARCH_CATALOG__",
   "__PI_ENH_RERENDER_SESSIONS__",
   "__PI_ENH_SESSION_DELETED__",
   "__PI_ENH_SET_UNREAD_SESSION__",
   "__PI_ENH_IS_SESSION_UNREAD__",
 ] as const;
+
+/** Search membership/content identity; ordinary activity timestamps do not change it. */
+export function getSessionSearchCatalogScope(sessions: readonly unknown[]): string {
+  return JSON.stringify(sessions.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const session = value as Record<string, unknown>;
+    if (typeof session.id !== "string" || session.transient || session.submissionPending) return [];
+    return [[session.id, ...["path", "cwd", "name", "firstMessage"].map((key) =>
+      typeof session[key] === "string" ? session[key] : ""),
+      typeof session.messageCount === "number" && Number.isFinite(session.messageCount)
+        ? session.messageCount
+        : null,
+    ]];
+  }).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+}
 
 const sidebarBridgeRegistry = new WeakMap<object, SidebarBridgeState>();
 const openSettingsBridgeRegistry = new WeakMap<object, OpenSettingsBridgeState>();
@@ -78,6 +94,10 @@ function getOrCreateSidebarBridgeState(win: WindowRecord): SidebarBridgeState {
         }
       }
       return fallbackArray;
+    },
+    __PI_ENH_GET_SEARCH_CATALOG__: () => {
+      const sessions = (installed.__PI_ENH_GET_RAW_SESSIONS__ as () => unknown[])();
+      return { sessions, scope: getSessionSearchCatalogScope(sessions) };
     },
     __PI_ENH_RERENDER_SESSIONS__: () => {
       for (const handle of handles) {

@@ -12,7 +12,7 @@ export type PromptReceipt =
   | { status: "cancelled" }
   | { status: "recalled" }
   | { status: "rejected"; error: string };
-type RecordEntry = { fingerprint: string; receipt: PromptReceipt; at: number; command?: Record<string, unknown> };
+type RecordEntry = { fingerprint: string; receipt: PromptReceipt; at: number; command?: Record<string, unknown>; entryId?: string };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const RETENTION_MS = 24 * 60 * 60 * 1000;
 const isTerminal = (status: PromptReceipt["status"]) => ["committed", "rejected", "cancelled", "recalled"].includes(status);
@@ -22,7 +22,9 @@ const canExpire = (status: PromptReceipt["status"]) => isTerminal(status) && sta
  * first; oversized/older entries fall back to a streaming read, never a
  * synchronous allocation and parse of the entire transcript on the server. */
 async function syncNativeUserEntry(filePath: string, entryId: string): Promise<void> {
-  const file = await open(filePath, "r");
+  // Windows FlushFileBuffers requires a writable handle. r+ never creates,
+  // truncates or changes content; Linux keeps its existing read-only handle.
+  const file = await open(filePath, process.platform === "win32" ? "r+" : "r");
   const matches = (line: string) => {
     try {
       const entry = JSON.parse(line);
@@ -119,6 +121,9 @@ export function createPromptDeliveryStore(agentDir: string) {
       let entryId: string | undefined;
       if ("entryId" in evidence) {
         entryId = evidence.entryId;
+        // Presentation identity is known after the SDK append. This is not a
+        // committed acknowledgement: the existing fsync gate below still owns it.
+        row.entryId = entryId;
         // Identity comes from the live SDK's persisted entry, never matching text.
         await syncNativeUserEntry(evidence.sessionFile, entryId);
       }
@@ -184,12 +189,17 @@ export function createPromptDeliveryStore(agentDir: string) {
     return result;
   }
   const isCommitting = (sid: string, requestId: string) => committing.has(JSON.stringify([sid, requestId]));
-  return { run, receipt, commit, isCommitting, unconfirmed, cancel, recall, acknowledgeRecall, pending };
+  const entryIds = (sid: string): Record<string, string> => Object.fromEntries([...session(sid)].flatMap(([requestId, row]) => {
+    const entryId = row.receipt.status === "committed" ? row.receipt.entryId : row.entryId;
+    return entryId && !["cancelled", "recalled", "rejected"].includes(row.receipt.status) ? [[requestId, entryId]] : [];
+  }));
+  return { run, receipt, commit, isCommitting, unconfirmed, cancel, recall, acknowledgeRecall, pending, entryIds };
 }
 const key = Symbol.for("pi-web:durable-prompt-delivery-v1");
 const registry = globalThis as typeof globalThis & { [key]?: ReturnType<typeof createPromptDeliveryStore> };
 function store() { return registry[key] ??= createPromptDeliveryStore(getAgentDir()); }
 export const getPromptReceipt = (sid: string, requestId: string) => store().receipt(sid, requestId);
+export const getPromptEntryIds = (sid: string) => store().entryIds(sid);
 export const isPromptDeliveryCommitting = (sid: string, requestId: string) => store().isCommitting(sid, requestId);
 export const getUncommittedPromptSubmissions = (sid: string) => store().pending(sid);
 export const markPromptDeliveryUnconfirmed = (sid: string, requestId: string) => store().unconfirmed(sid, requestId);

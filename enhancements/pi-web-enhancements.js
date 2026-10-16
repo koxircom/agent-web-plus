@@ -431,13 +431,6 @@
       defaultEnabled: true,
     },
     {
-      id: "user-message-reconcile",
-      name: "用户消息状态对齐与大图去重",
-      desc: "智能对齐发送含大图消息时的乐观状态与服务端 SSE 消息，消除重复追加气泡，修复 React 状态并杜绝旧轮误匹配。",
-      category: "交互增强",
-      defaultEnabled: true,
-    },
-    {
       id: "general-settings-dashboard",
       name: "常规设置双列布局与服务重启",
       desc: "将设置弹窗“常规”面板优化为现代双列卡片仪表盘布局，消除右侧大片空白，并在页面维护模块增加一键重启 Pi Web 服务功能。",
@@ -525,7 +518,7 @@
     {
       id: "pi-mail-auto-collapse",
       name: "协作消息自动折叠",
-      desc: "跨会话协作消息默认显示主题摘要，支持展开、收起与可读内容复制。",
+      desc: "跨会话协作消息长卡片默认收起为单行亲民摘要，仅呈现「协作消息 · 已收到」并支持随时展开/收起及原文复制。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -534,6 +527,13 @@
       name: "实时执行秒表",
       desc: "任务运行中在会话内显示执行时长；标签页标题由统一状态管理，避免计时前缀闪烁。", 
       category: "运行监控",
+      defaultEnabled: true,
+    },
+    {
+      id: "model-scope-warning",
+      name: "隐藏模型范围警告",
+      desc: "隐藏输入区的模型范围警告，并在模型菜单对应选项后显示黄色提示图标；关闭插件后恢复原生警告。",
+      category: "显示增强",
       defaultEnabled: true,
     },
     {
@@ -630,7 +630,7 @@
     {
       id: "project-status-indicator",
       name: "跨项目会话状态提示",
-      desc: "当前项目有未读完成或待回答会话时，标签页标题显示项目名和去重合计数；Pi 图标以蓝色数字徽标标记未读完成，以橙色数字徽标标记待处理。阅读完成或服务器确认答复后计数减少，折叠会话不会清除计数。", 
+      desc: "精简标签页标题，移除冗余 Pi Web 标识与跳动的计时秒数。运行中以蓝色小球 🔵 纯净指示，需要确认 🟠、错误 🔴、已完成 🟢 显示状态文字与对应颜色小球；多标签页一目了然。", 
       category: "运行监控",
       defaultEnabled: true,
     },
@@ -811,8 +811,8 @@
     },
     {
       id: "mobile-swipe-drawer",
-      name: "移动端手势滑出会话与文件面板",
-      desc: "在手机触摸屏上，向右滑动可顺畅滑出打开会话列表面板（代码块与水平滚动区域优先内部滚动不冲突）；侧边栏打开时向左滑动顺畅收起，打开文件面板时向右滑动可收起文件面板。",
+      name: "移动端手势滑出会话、导航与文件面板",
+      desc: "在手机触摸屏上，向右滑动滑出打开会话列表面板，侧边栏打开时向左滑动收起；屏幕右边缘向左滑打开会话导航，会话导航打开时向右滑收起；文件面板打开时向右滑动收起文件面板（代码块与水平滚动区域优先内部滚动不冲突）。",
       category: "交互增强",
       defaultEnabled: true,
     },
@@ -985,7 +985,7 @@
   const ENHANCEMENT_SETTINGS_STORAGE_KEY = "pi-enh-settings-v1";
   const ENHANCEMENT_PLUGIN_SETTINGS = {
     "minimap-full-nav": {
-      initialTurns: { type: "number", defaultValue: 5, min: 5, max: 50, legacyKey: "pi-enh-minimap-initial-turns" },
+      initialTurns: { type: "number", defaultValue: 5, min: 1, max: 50, legacyKey: "pi-enh-minimap-initial-turns" },
       stepTurns: { type: "number", defaultValue: 5, min: 1, max: 50, legacyKey: "pi-enh-minimap-step-turns" },
     },
     "session-pin-archive": {
@@ -1005,7 +1005,7 @@
   };
   const ENHANCEMENT_MODULES = [
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
-    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["user-message-reconcile", "task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
+    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
     { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
     { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer"] },
@@ -1013,7 +1013,7 @@
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
     { id: "background-attention", name: "后台会话提醒", desc: "管理跨项目状态、提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
     { id: "notification-management", name: "通知管理", desc: "管理所有站内通知、网页操作提示、提示音与桌面提醒，并查看通知历史。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["notification-center"] },
-    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
+    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护、模型警告可见性和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["model-scope-warning", "esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
     { id: "local-workspace", name: "本地工作区工具", desc: "管理本地路径直达和会话缓存。", category: "快捷操作", version: "1.0.0", defaultEnabled: true, features: ["local-path-launcher", "obsidian-markdown-viewer", "excel-sheet-preview", "session-memory-cache", "session-history-integrity", "session-history-order-guard", "cross-device-session-sync", "session-panel-binding", "file-panel-overlay-guard", "general-settings-dashboard", "workspace-picker-hover", "pi-web-plus-branding"] },
     { id: "preference-memory", name: "偏好记忆", desc: "管理思考深度的跨会话记忆与浏览器增强设置归档。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["thinking-persistence", "enhancement-settings-archive"] },
   ];
@@ -1384,12 +1384,17 @@
       window.__PI_ENH_CRASH_DIAGNOSTICS__?.setEnabled(enabled);
     } else if (id === "notification-center") {
       applyNotificationVisibility();
+      if (enabled) {
+        initNotificationCapture();
+      }
     } else if (id === "obsidian-markdown-viewer") {
       if (!enabled) removeMarkdownViewerEnhancements();
       else syncMarkdownViewerMode();
     } else if (id === "excel-sheet-preview") {
       if (!enabled && typeof removeExcelViewerEnhancements === "function") removeExcelViewerEnhancements();
       else if (typeof syncExcelViewerMode === "function") syncExcelViewerMode();
+    } else if (id === "model-scope-warning") {
+      syncModelScopeWarnings();
     } else if (id === "turn-duration") {
       if (!enabled) {
         for (const badge of document.querySelectorAll(".pi-enh-duration-badge")) {
@@ -1454,7 +1459,24 @@
         removeCompactionEnhancements();
       }
     } else if (id === "pi-mail-auto-collapse") {
-      window.dispatchEvent(new Event("pi-mail-collapse-change"));
+      if (typeof syncPiMailActiveState === "function") {
+        syncPiMailActiveState();
+      } else if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_PI_MAIL_ACTIVE_STATE__ === "function") {
+        window.__PI_ENH_SYNC_PI_MAIL_ACTIVE_STATE__();
+      }
+      if (enabled) {
+        if (typeof syncPiMailCards === "function") {
+          syncPiMailCards();
+        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_PI_MAIL_CARDS__ === "function") {
+          window.__PI_ENH_SYNC_PI_MAIL_CARDS__();
+        }
+      } else {
+        if (typeof removePiMailEnhancements === "function") {
+          removePiMailEnhancements();
+        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_REMOVE_PI_MAIL_ENHANCEMENTS__ === "function") {
+          window.__PI_ENH_REMOVE_PI_MAIL_ENHANCEMENTS__();
+        }
+      }
     } else if (id === "live-stopwatch") {
       if (!enabled) {
         for (const timer of document.querySelectorAll(".pi-enh-live-timer")) {
@@ -1516,7 +1538,8 @@
     } else if (id === "minimap-full-nav") {
       syncMinimapEnhancements();
     } else if (id === "scroll-to-bottom") {
-      syncScrollBottomPreferences();
+      if (!enabled) removeScrollBottomButton();
+      else syncScrollBottomButton();
     } else if (id === "local-path-launcher") {
       if (!enabled) removeLocalPathLauncher();
       else syncLocalPathLauncher();
@@ -1699,6 +1722,203 @@
     }
   }
 
+  const MODEL_SCOPE_WARNING_MARKER = "data-pi-enh-model-scope-warning";
+  const MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY = "data-pi-enh-model-scope-warning-display";
+  const MODEL_SCOPE_WARNING_ICON_SELECTOR = ".pi-enh-model-scope-warning-icon";
+  const MODEL_SCOPE_WARNING_TEXT_MARKERS = [
+    "模型范围警告",
+    "model scope warning",
+    "no models match pattern",
+  ];
+  const MODEL_SCOPE_WARNING_PATTERN_RE = /no models match(?:es)? pattern\s+(?:["“'‘]([^"”'’\r\n]+)["”'’]|([^\s,;]+))/gi;
+  const MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE = /:(?:none|off|minimal|low|medium|high|xhigh|max)$/i;
+
+  function isModelScopeWarningCard(card) {
+    if (!card || card.getAttribute?.("role") !== "alert") return false;
+    const text = String(card.textContent || "").toLocaleLowerCase();
+    return MODEL_SCOPE_WARNING_TEXT_MARKERS.some((marker) => text.includes(marker.toLocaleLowerCase()));
+  }
+
+  function restoreModelScopeWarningCard(card) {
+    if (!card?.hasAttribute?.(MODEL_SCOPE_WARNING_MARKER)) return;
+    if (card.style) {
+      card.style.display = card.getAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY) || "";
+    }
+    card.removeAttribute(MODEL_SCOPE_WARNING_MARKER);
+    card.removeAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY);
+  }
+
+  function removeModelScopeWarningIndicators() {
+    for (const icon of document.querySelectorAll(MODEL_SCOPE_WARNING_ICON_SELECTOR)) {
+      icon.remove();
+    }
+  }
+
+  function clearModelScopeWarningVisibility() {
+    for (const card of document.querySelectorAll('[role="alert"]')) {
+      restoreModelScopeWarningCard(card);
+    }
+    removeModelScopeWarningIndicators();
+    document.documentElement?.classList?.remove("pi-enh-model-scope-warning-hidden");
+  }
+
+  function normalizeModelScopeIdentity(value) {
+    return String(value || "").toLocaleLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function collectModelScopeWarningPatterns(cards) {
+    const patternsByModel = new Map();
+    for (const card of cards) {
+      const text = String(card.textContent || "");
+      MODEL_SCOPE_WARNING_PATTERN_RE.lastIndex = 0;
+      let match;
+      while ((match = MODEL_SCOPE_WARNING_PATTERN_RE.exec(text))) {
+        const rawPattern = String(match[1] || match[2] || "").trim().replace(/[.!?]+$/, "");
+        const modelRef = rawPattern.replace(MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE, "").trim();
+        if (!modelRef) continue;
+        const key = modelRef.toLocaleLowerCase();
+        let warning = patternsByModel.get(key);
+        if (!warning) {
+          const parts = modelRef.split("/").filter(Boolean);
+          warning = {
+            modelRef,
+            provider: parts.length > 1 ? parts[0] : "",
+            modelName: parts[parts.length - 1] || modelRef,
+            rawPatterns: new Set(),
+          };
+          patternsByModel.set(key, warning);
+        }
+        warning.rawPatterns.add(rawPattern);
+      }
+    }
+    return Array.from(patternsByModel.values());
+  }
+
+  function getModelScopeOptionProvider(option, listbox) {
+    const group = option?.parentElement;
+    if (!group || group === listbox) return "";
+    for (const child of Array.from(group.children || [])) {
+      if (child === option || child.matches?.('button[role="option"]')) continue;
+      if (child.querySelector?.('button[role="option"]')) continue;
+      const label = String(child.textContent || "").trim();
+      if (label) return label;
+    }
+    return "";
+  }
+
+  function modelScopeWarningMatchesOption(option, listbox, warning) {
+    const modelNameIdentity = normalizeModelScopeIdentity(warning.modelName);
+    const modelRefIdentity = normalizeModelScopeIdentity(warning.modelRef);
+    const explicitModel = option.getAttribute("data-model-id") ||
+      option.getAttribute("data-model") ||
+      option.getAttribute("data-provider-model") ||
+      option.getAttribute("value") || "";
+    if (explicitModel) {
+      const explicitIdentity = normalizeModelScopeIdentity(explicitModel.replace(MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE, ""));
+      if (explicitIdentity === modelRefIdentity || explicitIdentity === modelNameIdentity) {
+        const explicitProvider = option.getAttribute("data-provider") || "";
+        return !warning.provider || !explicitProvider ||
+          normalizeModelScopeIdentity(explicitProvider) === normalizeModelScopeIdentity(warning.provider);
+      }
+    }
+
+    const labelNode = option.querySelector?.("[title]");
+    const label = String(labelNode?.getAttribute("title") || labelNode?.textContent || option.textContent || "").trim();
+    const labelIdentity = normalizeModelScopeIdentity(label);
+    if (!modelNameIdentity || !labelIdentity.includes(modelNameIdentity)) return false;
+
+    const provider = option.getAttribute("data-provider") || getModelScopeOptionProvider(option, listbox);
+    return !warning.provider || !provider ||
+      normalizeModelScopeIdentity(provider) === normalizeModelScopeIdentity(warning.provider);
+  }
+
+  function createModelScopeWarningIcon(warning) {
+    const svgNamespace = "http://www.w3.org/2000/svg";
+    const icon = document.createElementNS(svgNamespace, "svg");
+    icon.classList.add("pi-enh-model-scope-warning-icon");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("width", "15");
+    icon.setAttribute("height", "15");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "#eab308");
+    icon.setAttribute("stroke-width", "2");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.setAttribute("role", "img");
+    icon.style.cssText = "display:block;width:15px;height:15px;flex:0 0 15px;margin-left:6px;color:#eab308";
+
+    const triangle = document.createElementNS(svgNamespace, "path");
+    triangle.setAttribute("d", "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z");
+    const exclamation = document.createElementNS(svgNamespace, "path");
+    exclamation.setAttribute("d", "M12 9v4");
+    const dot = document.createElementNS(svgNamespace, "circle");
+    dot.setAttribute("cx", "12");
+    dot.setAttribute("cy", "17");
+    dot.setAttribute("r", "0.5");
+    dot.setAttribute("fill", "#eab308");
+    dot.setAttribute("stroke", "none");
+    icon.append(triangle, exclamation, dot);
+    return icon;
+  }
+
+  function syncModelScopeWarningIndicators(warnings) {
+    const matchedOptions = new Set();
+    if (warnings.length) {
+      for (const listbox of document.querySelectorAll('.model-selector div[role="listbox"]')) {
+        for (const option of listbox.querySelectorAll('[role="option"]')) {
+          const matchedWarnings = warnings.filter((warning) => modelScopeWarningMatchesOption(option, listbox, warning));
+          if (!matchedWarnings.length) continue;
+          matchedOptions.add(option);
+          let icon = option.querySelector(MODEL_SCOPE_WARNING_ICON_SELECTOR);
+          if (!icon) {
+            icon = createModelScopeWarningIcon(matchedWarnings[0]);
+            option.appendChild(icon);
+          }
+          const tooltip = `模型范围警告：${matchedWarnings.flatMap((warning) =>
+            Array.from(warning.rawPatterns, (pattern) => `No models match pattern "${pattern}"`)
+          ).join("；")}`;
+          if (icon.getAttribute("title") !== tooltip) icon.setAttribute("title", tooltip);
+          if (icon.getAttribute("aria-label") !== tooltip) icon.setAttribute("aria-label", tooltip);
+        }
+      }
+    }
+    for (const icon of document.querySelectorAll(MODEL_SCOPE_WARNING_ICON_SELECTOR)) {
+      if (!matchedOptions.has(icon.parentElement)) icon.remove();
+    }
+    return matchedOptions.size;
+  }
+
+  function syncModelScopeWarnings() {
+    const matchingCards = [];
+    for (const card of document.querySelectorAll('[role="alert"]')) {
+      if (isModelScopeWarningCard(card)) {
+        matchingCards.push(card);
+      } else {
+        restoreModelScopeWarningCard(card);
+      }
+    }
+
+    if (!isPluginEnabled("model-scope-warning")) {
+      for (const card of matchingCards) restoreModelScopeWarningCard(card);
+      removeModelScopeWarningIndicators();
+      document.documentElement?.classList?.remove("pi-enh-model-scope-warning-hidden");
+      return;
+    }
+
+    for (const card of matchingCards) {
+      if (!card.hasAttribute(MODEL_SCOPE_WARNING_MARKER)) {
+        card.setAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY, card.style?.display || "");
+      }
+      card.setAttribute(MODEL_SCOPE_WARNING_MARKER, "true");
+      if (card.style && card.style.display !== "none") card.style.display = "none";
+    }
+
+    const warningPatterns = collectModelScopeWarningPatterns(matchingCards);
+    syncModelScopeWarningIndicators(warningPatterns);
+    document.documentElement?.classList?.toggle("pi-enh-model-scope-warning-hidden", matchingCards.length > 0);
+  }
+
+  window.__PI_ENH_SYNC_MODEL_SCOPE_WARNINGS__ = syncModelScopeWarnings;
   window.__PI_ENH_PLUGINS__ = ENHANCEMENT_PLUGINS;
   window.__PI_ENH_MODULES__ = ENHANCEMENT_MODULES;
   window.__PI_ENH_SUITE_VERSION__ = ENHANCEMENT_SUITE_VERSION;
@@ -1713,160 +1933,7 @@
   window.__PI_ENH_SET_PLUGIN_SETTING__ = setPluginSetting;
   window.__PI_ENH_CONFIG__ = getEnhancementConfig();
 
-  // ==========================================
-  // 用户消息状态对齐与大图去重 (User Message Reconcile)
-  // ==========================================
-
-  function extractContentText(content) {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
-        .map((part) => (part && typeof part === "object" && part.type === "text" && typeof part.text === "string" ? part.text : ""))
-        .filter(Boolean)
-        .join("\n");
-    }
-    return "";
-  }
-
-  function extractContentImages(content) {
-    if (!Array.isArray(content)) return [];
-    return content.filter((part) => part && typeof part === "object" && part.type === "image");
-  }
-
-  function stripDimensionNotes(text) {
-    if (typeof text !== "string") return "";
-    return text.replace(/\n*\s*\[Image:\s*original\s+[\s\S]*?\]\s*/gi, "").trim();
-  }
-
-  function reconcileUserMessage(prevMessages, serverMsg, options = {}) {
-    const fallback = typeof options.fallback === "function"
-      ? options.fallback
-      : () => [...(Array.isArray(prevMessages) ? prevMessages : []), serverMsg];
-
-    if (!isPluginEnabled("user-message-reconcile")) {
-      return fallback();
-    }
-
-    if (!Array.isArray(prevMessages) || prevMessages.length === 0) {
-      return [serverMsg];
-    }
-
-    if (!serverMsg || serverMsg.role !== "user") {
-      return fallback();
-    }
-
-    const lastFingerprint = options.lastFingerprint;
-    const serverFingerprint = options.serverFingerprint;
-    const fingerprintFn = typeof options.fingerprintFn === "function" ? options.fingerprintFn : null;
-
-    // 严格倒序扫描：向后仅跳过 role 为 system 或 custom 的元数据消息
-    // assistant / toolResult / 其他任何角色均视为边界，绝不跨越
-    let targetIdx = -1;
-    for (let i = prevMessages.length - 1; i >= 0; i--) {
-      const msg = prevMessages[i];
-      if (!msg) break;
-      if (msg.role === "system" || msg.role === "custom") {
-        continue;
-      }
-      if (msg.role === "user") {
-        targetIdx = i;
-        break;
-      }
-      break;
-    }
-
-    if (targetIdx === -1) {
-      return fallback();
-    }
-
-    const targetMsg = prevMessages[targetIdx];
-    if (!targetMsg) {
-      return fallback();
-    }
-
-    // 替换候选必须保留后缀元数据，不能 slice(0, -1) 误删 system/custom
-    const replaceTarget = () => [
-      ...prevMessages.slice(0, targetIdx),
-      serverMsg,
-      ...prevMessages.slice(targetIdx + 1)
-    ];
-
-    // 1. 防重复 SSE：
-    // 1a. 若目标消息已是本次服务端消息（相同对象引用）
-    if (targetMsg === serverMsg) {
-      return prevMessages;
-    }
-    // 1b. 权威 ID 判定：
-    if (serverMsg.id && targetMsg.id) {
-      if (serverMsg.id === targetMsg.id) {
-        return prevMessages;
-      }
-      // 权威 id 冲突：两者都有不同权威 ID 时，不去重且不替换，直接 fallback 追加
-      return fallback();
-    }
-
-    const isOptimistic = Boolean(targetMsg && targetMsg.__piEnhOptimistic);
-
-    // 1c. 服务端消息无 id（或服务端 ID 不可靠），但属于不同引用的重复 SSE 事件：
-    // 必须仅对非乐观消息、相同 timestamp 且精确相同 fingerprint 才去重；禁止纯文本/时间窗吞同文历史
-    const hasValidTimestamp = typeof serverMsg.timestamp === "number" &&
-      typeof targetMsg.timestamp === "number" &&
-      serverMsg.timestamp === targetMsg.timestamp;
-
-    if (!isOptimistic && hasValidTimestamp) {
-      let isExactFingerprint = false;
-      if (fingerprintFn) {
-        const fpTarget = fingerprintFn(targetMsg);
-        const fpServer = typeof serverFingerprint === "string" ? serverFingerprint : fingerprintFn(serverMsg);
-        isExactFingerprint = Boolean(fpTarget && fpServer && fpTarget === fpServer);
-      } else if (serverFingerprint && typeof lastFingerprint === "string") {
-        isExactFingerprint = lastFingerprint === serverFingerprint;
-      } else {
-        isExactFingerprint = JSON.stringify(targetMsg.content) === JSON.stringify(serverMsg.content);
-      }
-
-      if (isExactFingerprint) {
-        return prevMessages;
-      }
-    }
-
-    // 2. 深度比对当前回合乐观消息与服务端消息：
-    // 铁律：仅在明确具有 __piEnhOptimistic 标记时才做文本/图片归一化替换！
-    // 绝不能对无标记的已持久化历史消息凭同文误吞
-    if (isOptimistic) {
-      const textA = extractContentText(targetMsg.content).trim();
-      const textB = extractContentText(serverMsg.content).trim();
-      const imgsA = extractContentImages(targetMsg.content);
-      const imgsB = extractContentImages(serverMsg.content);
-
-      // 2a. 高分辨率图片消息对齐：两端包含相同数量的图片，
-      // 且服务端文本在剥离 [Image: original ...] 尺寸标注后与乐观消息文本一致
-      if (imgsA.length > 0 && imgsA.length === imgsB.length) {
-        const cleanTextB = stripDimensionNotes(textB);
-        const cleanTextA = stripDimensionNotes(textA);
-        if (textA === textB || textA === cleanTextB || cleanTextA === cleanTextB) {
-          return replaceTarget();
-        }
-      }
-
-      // 2b. 纯文本消息对齐：文本完全一致时将客户端乐观项替换为权威服务端消息
-      if (imgsA.length === 0 && imgsB.length === 0 && textA.length > 0 && textA === textB) {
-        return replaceTarget();
-      }
-    }
-
-    // 2c. 原生指纹完全匹配（在标记缺失时仍保留原有兜底）：
-    // 若发送时记录的 lastFingerprint 还在且与目标消息匹配，
-    // 原生指纹匹配也应替换为权威对象避免后续重放
-    if (lastFingerprint && fingerprintFn && fingerprintFn(targetMsg) === lastFingerprint) {
-      return replaceTarget();
-    }
-
-    // 3. 其他情况（不同文本、不同内容、历史未标记消息）：绝不乱去重，走 fallback 追加
-    return fallback();
-  }
-
-  window.__PI_ENH_RECONCILE_USER_MESSAGE__ = reconcileUserMessage;
+  // User-message identity and reconciliation belong to the native session hook.
 
   // ==========================================
   // 0.1 Codex-style Session Pin & Archive (会话置顶与归档状态)
@@ -1936,11 +2003,6 @@
   const pendingModelMetadataQueue = [];
   let activeModelMetadataWorkers = 0;
 
-  function isPersistentSessionModelId(sessionId) {
-    return typeof sessionId === "string" && sessionId.length > 0 &&
-      !sessionId.startsWith("new:") && !sessionId.startsWith("parked-new:");
-  }
-
   function loadPersistedSessionModelMetadata() {
     try {
       const raw = localStorage.getItem(SESSION_MODEL_STORAGE_KEY);
@@ -1948,7 +2010,7 @@
       const parsed = JSON.parse(raw);
       if (typeof parsed !== "object" || parsed === null) return;
       for (const [sId, item] of Object.entries(parsed)) {
-        if (!isPersistentSessionModelId(sId) || !item || typeof item !== "object" || !item.modelId) continue;
+        if (!sId || !item || typeof item !== "object" || !item.modelId) continue;
         const updatedAt = Number(item.updatedAt) || 0;
         sessionModelMetadata.set(sId, {
           provider: item.provider || "",
@@ -1966,7 +2028,7 @@
     try {
       const validEntries = [];
       for (const [sId, meta] of sessionModelMetadata.entries()) {
-        if (!isPersistentSessionModelId(sId) || !meta?.modelId) continue;
+        if (!sId || !meta?.modelId) continue;
         validEntries.push({
           id: sId,
           provider: meta.provider || "",
@@ -1991,7 +2053,7 @@
   }
 
   function recordSessionModelMetadataFromPayload(sessionId, payload) {
-    if (!isPersistentSessionModelId(sessionId) || !payload?.context?.model?.modelId) return;
+    if (!sessionId || !payload?.context?.model?.modelId) return;
     const m = payload.context.model;
     const now = Date.now();
     sessionModelMetadata.set(sessionId, {
@@ -2063,7 +2125,7 @@
   function renderSessionModelLabel(row, metadata) {
     const existing = row.querySelector(".pi-enh-session-model-badge");
     // 关键守卫：若当前行处于编辑状态（包含 input 或标记为 editing），严禁强行显示模型名字
-    if (row.querySelector('input:not([type="checkbox"])') || row.getAttribute("data-pi-enh-editing") === "true") {
+    if (row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
       existing?.remove();
       return;
     }
@@ -2108,7 +2170,7 @@
   }
 
   async function fetchSessionModelMetadata(sessionId) {
-    if (!isPersistentSessionModelId(sessionId) || sessionModelRequests.has(sessionId)) return;
+    if (!sessionId || sessionModelRequests.has(sessionId)) return;
     sessionModelRequests.add(sessionId);
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}?deferThinking=1&deferMedia=1&tail=1`, { cache: "no-store" });
@@ -2150,7 +2212,7 @@
   }
 
   function enqueueSessionModelMetadata(sessionId) {
-    if (!isPersistentSessionModelId(sessionId) || sessionModelRequests.has(sessionId) || pendingModelMetadataQueue.includes(sessionId)) return;
+    if (!sessionId || sessionModelRequests.has(sessionId) || pendingModelMetadataQueue.includes(sessionId)) return;
     pendingModelMetadataQueue.push(sessionId);
     pumpSessionModelMetadataQueue();
   }
@@ -2187,7 +2249,7 @@
     const now = Date.now();
     for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]")) {
       const sessionId = row.getAttribute("data-pi-enh-session-id");
-      if (!isPersistentSessionModelId(sessionId)) continue;
+      if (!sessionId) continue;
       const metadata = sessionModelMetadata.get(sessionId);
       if (metadata && metadata.modelId) {
         renderSessionModelLabel(row, metadata);
@@ -2654,8 +2716,9 @@
       writeSessionTagsDefinitions(replayedDefs);
       writeSessionTagMappings(replayedMappings);
       syncSessionTags();
-      // Decorations only change presentation. React's existing bridge has
-      // already rerendered the rows; do not refetch every transcript here.
+      if (typeof requestSessionListRefresh === "function") {
+        requestSessionListRefresh(false, true);
+      }
     }
 
     if (state.sessionColors && typeof state.sessionColors === "object" && !Array.isArray(state.sessionColors)) {
@@ -2686,16 +2749,12 @@
           : `${getDurableStateBaseUrl()}/enhancement-state?instance=${getDurableStateInstanceParam()}`;
         let res, data;
         try {
-          const initialState = !force && window.__PI_ENH_INITIAL_DURABLE_STATE__;
-          delete window.__PI_ENH_INITIAL_DURABLE_STATE__;
-          const fetchRes = initialState
-            ? await Promise.resolve({ resp: { ok: true, status: 200 }, json: initialState })
-            : await fetchModelsConfigBounded(endpoint, {
-              method: "GET",
-              credentials: "include",
-              cache: "no-store",
-              readJson: true,
-            }, 15000);
+          const fetchRes = await fetchModelsConfigBounded(endpoint, {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+            readJson: true,
+          }, 15000);
           res = fetchRes?.resp;
           data = fetchRes?.json;
         } catch (netErr) {
@@ -3989,34 +4048,94 @@
     return count;
   }
 
-  let lastNativeSessionTagsSignature = null;
-  let lastNativeSessionTagsBridge = null;
+  function syncSessionTagsRow(row, sessionId) {
+    if (!row || !sessionId) return;
 
-  function notifyNativeSessionTagsChanged() {
-    const bridge = window.__PI_ENH_RERENDER_SESSIONS__;
-    if (typeof bridge !== "function") return;
-    const signature = JSON.stringify([
-      isPluginEnabled("session-tags"),
-      readSessionTagsDefinitions(),
-      readSessionTagMappings(),
-    ]);
-    if (signature === lastNativeSessionTagsSignature && bridge === lastNativeSessionTagsBridge) return;
-    // Commit before notifying: native row rendering schedules another sidebar sync.
-    lastNativeSessionTagsSignature = signature;
-    lastNativeSessionTagsBridge = bridge;
-    bridge();
-  }
+    // 行内重命名守卫：处于编辑状态时隐藏标签
+    if (!isPluginEnabled("session-tags") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+      row.querySelector(".pi-enh-session-tags-row")?.remove();
+      row.removeAttribute("data-pi-enh-has-tags");
+      return;
+    }
 
-  function syncSessionTagsRow() {
-    notifyNativeSessionTagsChanged();
+    const tags = getSessionTags(sessionId);
+    let tagsRow = row.querySelector(".pi-enh-session-tags-row");
+
+    if (tags.length === 0) {
+      tagsRow?.remove();
+      row.removeAttribute("data-pi-enh-has-tags");
+      return;
+    }
+
+    row.setAttribute("data-pi-enh-has-tags", "true");
+
+    if (!tagsRow) {
+      tagsRow = document.createElement("div");
+      tagsRow.className = "pi-enh-session-tags-row";
+    }
+
+    const contentHost = row.querySelector(".pi-enh-session-meta")?.parentElement ||
+      row.querySelector("div[style*='flex: 1'], div[style*='flex:1']") ||
+      row.firstElementChild;
+
+    if (!contentHost) {
+      tagsRow.remove();
+      return;
+    }
+
+    const metaDiv = contentHost.querySelector(".pi-enh-session-meta") ||
+      (contentHost.children && contentHost.children.length >= 2 ? contentHost.children[1] : null);
+
+    if (metaDiv && metaDiv.nextSibling !== tagsRow) {
+      metaDiv.after(tagsRow);
+    } else if (tagsRow.parentElement !== contentHost) {
+      contentHost.appendChild(tagsRow);
+    }
+
+    const visibleTags = tags.slice(0, 2);
+    const overflowCount = tags.length - visibleTags.length;
+
+    let pillsHtml = visibleTags.map((tag) => {
+      const palette = getTagPaletteItem(tag.color);
+      return `<span class="pi-enh-session-tag-pill" style="background:${palette.bg};border:1px solid ${palette.border};color:${palette.color};" title="${escapeHtml(tag.name)}">
+        <span class="pi-enh-tag-dot" style="background:${tag.color};"></span>
+        <span class="pi-enh-tag-name">${escapeHtml(tag.name)}</span>
+      </span>`;
+    }).join("");
+
+    if (overflowCount > 0) {
+      const allTagNames = tags.map((t) => t.name).join("、");
+      pillsHtml += `<span class="pi-enh-session-tag-pill pi-enh-session-tag-more" style="background:rgba(156,163,175,0.16);border:1px solid rgba(156,163,175,0.35);color:#9ca3af;" title="全部标签：${escapeHtml(allTagNames)}">+${overflowCount}</span>`;
+    }
+
+    if (tagsRow.__renderedHtml !== pillsHtml || !tagsRow.firstElementChild) {
+      tagsRow.innerHTML = pillsHtml;
+      tagsRow.__renderedHtml = pillsHtml;
+    }
   }
 
   function removeSessionTagsRowAll() {
-    notifyNativeSessionTagsChanged();
+    for (const el of document.querySelectorAll(".pi-enh-session-tags-row")) {
+      el.remove();
+    }
+    for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-tags]")) {
+      row.removeAttribute("data-pi-enh-has-tags");
+    }
   }
 
   function syncSessionTags() {
-    notifyNativeSessionTagsChanged();
+    if (!isPluginEnabled("session-tags")) {
+      removeSessionTagsRowAll();
+      syncSessionOdooAddonsLayout();
+      return;
+    }
+    const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    for (const row of rows) {
+      const sessionId = row.getAttribute("data-pi-enh-session-id");
+      if (sessionId) {
+        syncSessionTagsRow(row, sessionId);
+      }
+    }
     syncSessionOdooAddonsLayout();
   }
 
@@ -4630,7 +4749,6 @@
     });
   }
 
-  window.__PI_ENH_GET_SESSION_TAGS__ = (sessionId) => isPluginEnabled("session-tags") ? getSessionTags(sessionId) : [];
   window.__PI_ENH_READ_SESSION_TAGS__ = readSessionTagsDefinitions;
   window.__PI_ENH_WRITE_SESSION_TAGS__ = writeSessionTagsDefinitions;
   window.__PI_ENH_READ_SESSION_TAG_MAPPINGS__ = readSessionTagMappings;
@@ -4844,11 +4962,95 @@
     return normalizeSessionOdooAddonItems(items, sessionId, manifest);
   }
 
+  function syncSessionOdooAddonsHeight(row, sessionId) {
+    const height = getSessionItemHeight(sessionId) + "px";
+    if (row.style.height !== height) row.style.height = height;
+    const wrapper = row.parentElement;
+    if (wrapper?.style.position === "absolute" && wrapper.style.height !== height) wrapper.style.height = height;
+  }
+
+  function removeSessionOdooAddonsAll() {
+    for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-odoo-addons='true']")) {
+      row.querySelector(".pi-enh-session-odoo-addons")?.remove();
+      row.removeAttribute("data-pi-enh-has-odoo-addons");
+      syncSessionOdooAddonsHeight(row, row.dataset.piEnhSessionId);
+    }
+  }
+
+  function syncSessionOdooAddonsRow(row, sessionId) {
+    if (!row || !sessionId) return;
+
+    if (!isPluginEnabled("session-odoo-addons") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+      row.querySelector(".pi-enh-session-odoo-addons")?.remove();
+      row.removeAttribute("data-pi-enh-has-odoo-addons");
+      syncSessionOdooAddonsHeight(row, sessionId);
+      return;
+    }
+
+    const addons = getSessionOdooAddons(sessionId);
+    let container = row.querySelector(".pi-enh-session-odoo-addons");
+
+    if (addons.length === 0) {
+      container?.remove();
+      row.removeAttribute("data-pi-enh-has-odoo-addons");
+      syncSessionOdooAddonsHeight(row, sessionId);
+      return;
+    }
+
+    if (row.getAttribute("data-pi-enh-has-odoo-addons") !== "true") row.setAttribute("data-pi-enh-has-odoo-addons", "true");
+
+    if (!container) {
+      container = document.createElement("div");
+      container.className = "pi-enh-session-odoo-addons";
+    }
+
+    // 独立的全宽第二行，不挤占第一行标题、标签与操作按钮，也不继承元数据截断。
+    if (container.parentElement !== row) row.appendChild(container);
+
+    // 渲染每个插件一行：仅显示插件的技术标识名称（不显示中文，如仅显示 kx_srm）
+    let html = "";
+    const activeManifest = window.__PI_ENH_ODOO_ADDONS_MANIFEST__;
+    for (const addon of addons) {
+      const tech = (typeof addon === "string" ? addon : (addon.technical || addon.name || "")).trim();
+      if (!tech) continue;
+      const isLatest = isLatestSessionForOdooAddon(sessionId, tech, activeManifest);
+      const baseTooltip = addon.status ? `${tech} · ${addon.status}` : tech;
+      const tooltip = isLatest ? `${baseTooltip} · 最新实际更新会话` : `${baseTooltip} · 历史更新会话`;
+      const ariaLabel = isLatest ? `${tech}（最新实际更新会话）` : `${tech}（历史更新会话）`;
+      const pillClass = isLatest ? "pi-enh-odoo-addon-pill is-latest" : "pi-enh-odoo-addon-pill";
+
+      html += `<div class="pi-enh-odoo-addon-row">
+        <span class="${pillClass}" data-pi-enh-latest="${isLatest ? "true" : "false"}" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(ariaLabel)}">
+          <span class="pi-enh-odoo-addon-dot" aria-hidden="true"></span>
+          <span class="pi-enh-odoo-addon-name">${escapeHtml(tech)}</span>
+        </span>
+      </div>`;
+    }
+
+    // 不重复替换相同节点，避免 MutationObserver 自激和悬停/选择闪烁。
+    if (container.__renderedHtml !== html && container.innerHTML !== html) {
+      container.innerHTML = html;
+    }
+    container.__renderedHtml = html;
+    syncSessionOdooAddonsHeight(row, sessionId);
+  }
+
   function syncSessionOdooAddonsLayout() {
     // React 的刷新是异步的；切换开关/热加载时，同步用同一高度函数重排整组，
     // 不能只改变某一行高度而暂时保留下方旧坐标。
-    // An empty native group list is valid (for example, a tag filter with no matches).
-    // Layout must not request another render or restore stale bootstrap groups.
+    if (!Array.isArray(latestKnownSessionGroups) || !latestKnownSessionGroups.length) {
+      if (Array.isArray(window.__PI_ENH_EARLY_SESSION_GROUPS__) && window.__PI_ENH_EARLY_SESSION_GROUPS__.length > 0) {
+        processSessionGroups(window.__PI_ENH_EARLY_SESSION_GROUPS__);
+      }
+      if ((!Array.isArray(latestKnownSessionGroups) || !latestKnownSessionGroups.length) && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
+        try {
+          const raw = window.__PI_ENH_GET_RAW_SESSIONS__();
+          if (Array.isArray(raw) && raw.length > 0) {
+            window.__PI_ENH_RERENDER_SESSIONS__?.();
+          }
+        } catch (e) {}
+      }
+    }
 
     const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
     if (!rows || rows.length === 0) {
@@ -4894,6 +5096,7 @@
           const index = indices.get(entry.sid);
           const top = getSessionItemTop(index, groups) + "px";
           if (entry.wrapper.style.top !== top) entry.wrapper.style.top = top;
+          syncSessionOdooAddonsHeight(entry.row, entry.sid);
         }
         const height = (SESSION_NORMAL_ITEM_HEIGHT * groups.length + getSessionHeadersHeight(groups)) + "px";
         if (container.style.height !== height) container.style.height = height;
@@ -4912,9 +5115,21 @@
     }
   }
 
-  // Explicit state notifications only. SessionSidebar owns addon DOM and row lifecycle.
   function syncSessionOdooAddons() {
-    window.__PI_ENH_RERENDER_SESSIONS__?.();
+    if (!isPluginEnabled("session-odoo-addons")) {
+      removeSessionOdooAddonsAll();
+      syncSessionOdooAddonsLayout();
+      return;
+    }
+
+    const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    for (const row of rows) {
+      const sessionId = row.getAttribute("data-pi-enh-session-id");
+      if (sessionId) {
+        syncSessionOdooAddonsRow(row, sessionId);
+      }
+    }
+    syncSessionOdooAddonsLayout();
   }
 
   let activeOdooAddonsRefreshPromise = null;
@@ -5038,7 +5253,12 @@
         }
 
         window.__PI_ENH_ODOO_ADDONS_MANIFEST__ = nextManifest;
-        if (contentChanged) syncSessionOdooAddons();
+        syncSessionOdooAddons();
+        if (contentChanged) {
+          try {
+            window.__PI_ENH_RERENDER_SESSIONS__?.();
+          } catch (e) {}
+        }
         return { updated: true, changed: contentChanged, versionChanged, revision: nextRev };
       } catch (err) {
         return { updated: false, changed: false, error: err && err.message ? err.message : "FETCH_ERROR" };
@@ -5947,12 +6167,12 @@
     return false;
   }
 
-  function markSessionAsDeleted(sessionId, retentionMs = 60000, notify = true) {
+  function markSessionAsDeleted(sessionId, retentionMs = 60000) {
     if (!sessionId) return;
     pendingDeletedSessionIds.add(sessionId);
     confirmedDeletedSessionIds.set(sessionId, Date.now() + retentionMs);
     try {
-      if (notify && typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+      if (typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
         window.__PI_ENH_RERENDER_SESSIONS__();
       }
     } catch (e) {}
@@ -5964,12 +6184,12 @@
     confirmedDeletedSessionIds.set(sessionId, Date.now() + retentionMs);
   }
 
-  function restoreSessionDeleteState(sessionId, notify = true) {
+  function restoreSessionDeleteState(sessionId) {
     if (!sessionId) return;
     pendingDeletedSessionIds.delete(sessionId);
     confirmedDeletedSessionIds.delete(sessionId);
     try {
-      if (notify && typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+      if (typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
         window.__PI_ENH_RERENDER_SESSIONS__();
       }
     } catch (e) {}
@@ -6977,6 +7197,7 @@
   window.__PI_ENH_GET_ARCHIVE_RETENTION_DAYS__ = getArchiveRetentionDays;
   window.__PI_ENH_SET_ARCHIVE_RETENTION_DAYS__ = setArchiveRetentionDays;
   window.__PI_ENH_PURGE_EXPIRED_ARCHIVES__ = purgeExpiredArchives;
+
   // ==========================================
   // 0.2 Session Memory Cache (会话内存秒开与长会话优化)
   // ==========================================
@@ -9126,17 +9347,24 @@
     return `${(query || "").trim().toLowerCase()}::${tagId || "all"}`;
   }
 
-  function getFromSearchCache(key) {
+  function getNativeSearchCatalog() {
+    try {
+      const snapshot = window.__PI_ENH_GET_SEARCH_CATALOG__?.();
+      return snapshot && Array.isArray(snapshot.sessions) && typeof snapshot.scope === "string" ? snapshot : null;
+    } catch (_) { return null; }
+  }
+
+  function getFromSearchCache(key, catalogScope) {
     const entry = SESSION_SEARCH_CACHE.get(key);
     if (!entry) return null;
-    if (Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
+    if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
       SESSION_SEARCH_CACHE.delete(key);
       return null;
     }
     return entry.data;
   }
 
-  function setToSearchCache(key, data) {
+  function setToSearchCache(key, data, catalogScope) {
     if (!key || !data) return;
     if (SESSION_SEARCH_CACHE.size >= SEARCH_CACHE_MAX_SIZE) {
       const oldestKey = SESSION_SEARCH_CACHE.keys().next().value;
@@ -9145,6 +9373,7 @@
     SESSION_SEARCH_CACHE.set(key, {
       timestamp: Date.now(),
       data,
+      catalogScope,
     });
   }
 
@@ -9152,12 +9381,13 @@
     SESSION_SEARCH_CACHE.clear();
   }
 
-  function findNarrowableParentCache(query) {
+  function findNarrowableParentCache(query, catalogScope) {
     const qClean = (query || "").trim().toLowerCase();
     if (!qClean) return null;
 
     // 1. 尝试找前缀词缓存：例如当前是 "解耦"，检查是否已有 "解" 的完整缓存
     for (const [cacheKey, entry] of SESSION_SEARCH_CACHE.entries()) {
+      if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) continue;
       const [cachedQ, cachedTag] = cacheKey.split("::");
       if (cachedTag !== (activeSessionFilterTagId || "all")) continue;
       if (cachedQ && cachedQ.length < qClean.length && qClean.startsWith(cachedQ)) {
@@ -9443,9 +9673,15 @@
       return realFetch(input, init);
     }
 
+    // Native catalogue ownership is required before local metadata can add hits.
+    // Older tabs without this bridge use the authoritative server search.
+    const catalog = getNativeSearchCatalog();
+    if (!catalog) return realFetch(input, init);
+    const catalogById = new Map(catalog.sessions.filter((s) => s?.id && !s.transient && !s.submissionPending).map((s) => [s.id, s]));
+
     // 1. 优先命中 0ms 闪电 LRU 缓存
     const cacheKey = getSearchCacheKey(query, activeSessionFilterTagId);
-    const cachedData = getFromSearchCache(cacheKey);
+    const cachedData = getFromSearchCache(cacheKey, catalog.scope);
     if (cachedData) {
       scheduleSearchResultsHighlight();
       return createCachedResponse(cachedData, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_CACHE");
@@ -9454,7 +9690,7 @@
     const keywords = query.split(/\s+/).map((k) => k.trim()).filter(Boolean);
 
     // 1.1 前缀或多词子集内存收窄匹配 (0ms 瞬发响应)
-    const narrowableParent = findNarrowableParentCache(query);
+    const narrowableParent = findNarrowableParentCache(query, catalog.scope);
     if (narrowableParent) {
       const parentResults = narrowableParent.data.results || [];
       const filtered = [];
@@ -9462,7 +9698,7 @@
       for (const item of parentResults) {
         const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
         const sid = item.session?.id;
-        const sess = sid ? knownSessionsMap.get(sid) : null;
+        const sess = sid ? catalogById.get(sid) : null;
         const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
         const combined = fullSnippet + " " + sessMeta;
 
@@ -9477,7 +9713,7 @@
           results: filtered,
           truncated: narrowableParent.data.truncated || false,
         };
-        setToSearchCache(cacheKey, narrowedJson);
+        setToSearchCache(cacheKey, narrowedJson, catalog.scope);
         scheduleSearchResultsHighlight();
         return createCachedResponse(narrowedJson, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_NARROWED");
       }
@@ -9489,11 +9725,6 @@
     }
     activeSearchAbortController = new AbortController();
     const currentAbortSignal = activeSearchAbortController.signal;
-
-    // 3. 内存索引预热保证
-    if (knownSessionsMap.size === 0) {
-      await prewarmSessionSearchIndex();
-    }
 
     let nativeResults = [];
     let isTruncated = false;
@@ -9531,7 +9762,7 @@
           for (const item of primaryList) {
             const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
             const sid = item.session?.id;
-            const sess = sid ? knownSessionsMap.get(sid) : null;
+            const sess = sid ? catalogById.get(sid) : null;
             const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
             const combined = fullSnippet + " " + sessMeta;
 
@@ -9551,7 +9782,7 @@
     const titleMatches = [];
 
     // 本地标题/首条消息多关键词 AND 匹配
-    for (const [id, s] of knownSessionsMap.entries()) {
+    for (const [id, s] of catalogById.entries()) {
       if (seenSessionIds.has(id)) continue;
       const name = (s.name || "").trim();
       const firstMsg = (s.firstMessage || "").trim();
@@ -9589,7 +9820,7 @@
       seenSessionIds.add(id);
     }
 
-    let mergedResults = [...titleMatches, ...nativeResults];
+    let mergedResults = [...titleMatches, ...nativeResults].filter((r) => catalogById.has(r.session?.id));
 
     // 结合标签过滤：若选中了具体标签，严格过滤出满足该标签的会话
     if (isPluginEnabled("session-tags") && activeSessionFilterTagId && activeSessionFilterTagId !== "all") {
@@ -9606,7 +9837,7 @@
     };
 
     // 保存至 LRU 高性能缓存
-    setToSearchCache(cacheKey, mergedJson);
+    if (getNativeSearchCatalog()?.scope === catalog.scope) setToSearchCache(cacheKey, mergedJson, catalog.scope);
 
     // 触发搜索关键词全量高亮与导航
     scheduleSearchResultsHighlight();
@@ -11379,8 +11610,8 @@
     const urlStr = typeof input === "string" ? input : input?.url ? input.url : String(input);
     // HEAD is a read-only validator, never an Agent command or cache mutation.
     if (method === "HEAD") return activeFetch(input, init);
-    // Native versioned envelopes own their exact baseline; directly return activeFetch without caching or rewriting.
-    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?sync=1(?=[&#]|$)/.test(urlStr)) {
+    // Native sync envelopes and current-identity lookups must bypass all history caches.
+    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?(?:sync|lookup)=1(?=[&#]|$)/.test(urlStr)) {
       return activeFetch(input, init);
     }
     // Interaction queues and prompt receipts belong to the live server.
@@ -18005,6 +18236,12 @@
     };
     renderAskUserBatchPrototype();
   }
+  // Queue bootstrap can call the hoisted composer resolver before modes init.
+  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
+  let lastTrackedModeUrlSessionId = undefined;
+  let lastTrackedModeNativeDraftKey = undefined;
+  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
+
   // ==========================================
   // 2.6 AI Quick Actions (同轮 AI 结构化选择 + 安全兜底)
   // ==========================================
@@ -22762,6 +22999,7 @@
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
     removeComposerQueuePanel();
   });
+  window.dispatchEvent(new Event("pi:native-queue-ready"));
   window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
@@ -23390,11 +23628,6 @@
       return null;
     }
   }
-
-  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
-  let lastTrackedModeUrlSessionId = undefined;
-  let lastTrackedModeNativeDraftKey = undefined;
-  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
 
   function readComposerNativeDraftKey() {
     try {
@@ -26115,7 +26348,7 @@
   window.__PI_ENH_IS_MOBILE_ENV__ = isMobileEnvironment;
 
   // ==========================================
-  // Mobile Swipe Drawer (手机手势右滑打开会话与关闭文件面板)
+  // Mobile Swipe Drawer (手机手势右滑打开会话、右边缘左滑打开会话导航与关闭文件面板)
   // ==========================================
   let mobileSwipeTracking = false;
   let mobileSwipeStartX = 0;
@@ -26141,6 +26374,8 @@
   function getFilePanelElement() {
     return (typeof document !== "undefined" && (document.getElementById("file-panel") || document.querySelector(".right-panel-container"))) || null;
   }
+
+
 
   function isMobileDrawerMode() {
     if (typeof window === "undefined") return true;
@@ -26265,6 +26500,7 @@
       filePanel.style.transition = "";
       filePanel.style.transform = "";
     }
+
   }
 
   // 关键防护：精准识别拖动调整宽度（Resize Handle / isResizing），坚决避让绝不误关闭侧边栏
@@ -26388,7 +26624,9 @@
   }
 
   function handleMobileSwipeTouchStart(e) {
-    if (!isPluginEnabled("mobile-swipe-drawer")) return;
+    if (!isPluginEnabled("mobile-swipe-drawer")) {
+      return;
+    }
     if (mobileSwipeResetTimer) {
       resetMobileSwipeStyles();
     }
@@ -26435,20 +26673,41 @@
       return;
     }
 
+    // 4. 关键原则：触摸起点在 native 导航层一律早退，聊天左滑由原生 own
+    if (
+      (targetEl && targetEl.closest && targetEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']")) ||
+      (pointEl && pointEl.closest && pointEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']"))
+    ) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
     const winWidth = typeof window !== "undefined" && typeof window.innerWidth === "number" ? window.innerWidth : 390;
     const isDrawer = isMobileDrawerMode();
     const isSidebarCurrentlyOpen = isSessionSidebarOpen();
+    const isFilePanelCurrentlyOpen = isFilePanelOpen();
 
-    // 4. 起始 X 范围检测：
-    // 当侧边栏已打开时，用户想左滑收起，允许在屏幕任意水平位置（包括侧边栏内部、右边缘外及遮罩层）触发！
-    // 仅当侧边栏关闭时，才限制最大起始 X 坐标，防止与主聊天右侧区域发生歧义
-    if (!isSidebarCurrentlyOpen) {
+    // 5. 起始手势目标分类 (Target Type) 与范围检测：仅保留 session-sidebar 与 file-panel
+    if (isFilePanelCurrentlyOpen) {
+      mobileSwipeTargetType = "file-panel";
+      mobileSwipeInitialFilePanelOpen = true;
+      mobileSwipeInitialOpen = false;
+    } else if (isSidebarCurrentlyOpen) {
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = true;
+      mobileSwipeInitialFilePanelOpen = false;
+    } else {
+      // 侧边栏未打开：只有在允许滑出的屏幕区域才锁定为 session-sidebar
       const maxStartX = isDrawer ? Math.max(280, winWidth * 0.85) : Math.min(580, winWidth * 0.75);
       if (touch.clientX > maxStartX) {
         mobileSwipeTracking = false;
         mobileSwipeEligible = false;
         return;
       }
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = false;
+      mobileSwipeInitialFilePanelOpen = false;
     }
 
     mobileSwipeStartX = touch.clientX;
@@ -26458,16 +26717,14 @@
     mobileSwipeEligible = true;
     mobileSwipeIntent = null;
 
-    mobileSwipeInitialFilePanelOpen = isFilePanelOpen();
-    mobileSwipeInitialOpen = isSidebarCurrentlyOpen;
-
-    // 缓存侧边栏宽度并准备 GPU 合成层，消除滑动期间每次 touchmove 的强制重排（Reflow）
-    const currentSidebar = getSessionSidebarElement();
-    if (currentSidebar) {
-      mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
-      if (currentSidebar.style) currentSidebar.style.willChange = "transform";
-    } else {
-      mobileSwipeCachedWidth = 280;
+    if (mobileSwipeTargetType === "session-sidebar") {
+      const currentSidebar = getSessionSidebarElement();
+      if (currentSidebar) {
+        mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
+        if (currentSidebar.style) currentSidebar.style.willChange = "transform";
+      } else {
+        mobileSwipeCachedWidth = 280;
+      }
     }
   }
 
@@ -26510,13 +26767,28 @@
       }
     }
 
-    // 2. 意图已锁定为水平滑动：立即阻止原生滚动抢占，保持跟手平滑响应
+    // 关键防抢占：当侧边栏与文件面板均未打开时，负向滑动（deltaX <= 0 向左划）
+    // 属于聊天原生左滑打开导航手势，05 模块绝不 preventDefault，直接早退放弃
+    if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
+    // 2. 意图已锁定为水平滑动：
     if (mobileSwipeIntent === "horizontal") {
+      // 再次确认：如果未打开侧边栏且 deltaX <= 0，绝不 preventDefault
+      if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+        mobileSwipeTracking = false;
+        mobileSwipeEligible = false;
+        return;
+      }
+
       if (e.cancelable && typeof e.preventDefault === "function") {
         e.preventDefault();
       }
 
-      // 优先判定：右侧文件面板打开且向右滑，驱动文件面板关闭
+      // 判定 1：右侧文件面板打开且向右滑，驱动文件面板关闭
       if (mobileSwipeInitialFilePanelOpen && deltaX > 0) {
         const filePanel = getFilePanelElement();
         if (filePanel) {
@@ -26526,7 +26798,7 @@
         return;
       }
 
-      // 会话列表滑动逻辑
+      // 判定 3：会话列表滑动逻辑
       const isDrawer = isMobileDrawerMode();
       const sidebar = getSessionSidebarElement();
       const backdrop = getSidebarBackdropElement();
@@ -26750,6 +27022,7 @@
     closeSessionSidebar,
     isFilePanelOpen,
     closeFilePanel,
+
     getSidebarToggleButton,
     isCodeBlockOrScrollableElement,
     isTouchOnHorizontalScrollable,
@@ -28052,10 +28325,6 @@
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
-
-  // The native queue responds synchronously. Announce readiness only after
-  // its composer/session dependencies have finished initializing.
-  window.dispatchEvent(new Event("pi:native-queue-ready"));
   // ==========================================
   // 3. Task Total Duration & Turn Usage Tooltips (点击展开耗时拆解与消耗明细气泡)
   // ==========================================

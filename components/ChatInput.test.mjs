@@ -453,7 +453,7 @@ test("file mention menu remeasures when its layout container shifts the anchor",
   assert.match(block, /anchorObserver\?\.observe\(layoutContainer\)/);
 });
 
-test("compresses large images while preserving small images and GIFs", async () => {
+test("keeps large PNG screenshots as PNG at 2048px and uses JPEG compression only for photos", async () => {
   assert.equal(shouldCompressImageFile({ size: 1024 * 1024, type: "image/png" }), false);
   assert.equal(shouldCompressImageFile({ size: 1024 * 1024 + 1, type: "image/png" }), true);
   assert.equal(shouldCompressImageFile({ size: 2 * 1024 * 1024, type: "image/gif" }), false);
@@ -464,13 +464,8 @@ test("compresses large images while preserving small images and GIFs", async () 
     document: globalThis.document,
   };
   let bitmapCalls = 0;
-  let closed = false;
-  const canvas = {
-    width: 0,
-    height: 0,
-    getContext: () => ({ fillStyle: "", fillRect() {}, drawImage() {} }),
-    toDataURL: () => "data:image/jpeg;base64,COMPRESSED",
-  };
+  let closeCalls = 0;
+  const canvases = [];
 
   globalThis.FileReader = class {
     readAsDataURL() {
@@ -480,23 +475,51 @@ test("compresses large images while preserving small images and GIFs", async () 
   };
   globalThis.createImageBitmap = async () => {
     bitmapCalls += 1;
-    return { width: 2048, height: 1024, close() { closed = true; } };
+    return { width: 4096, height: 2048, close() { closeCalls += 1; } };
   };
-  globalThis.document = { createElement: () => canvas };
+  globalThis.document = {
+    createElement: () => {
+      const context = { fillStyle: "", fillRectCalls: 0, fillRect() { this.fillRectCalls += 1; }, drawImage() {} };
+      const canvas = {
+        width: 0,
+        height: 0,
+        context,
+        toDataURLCalls: [],
+        getContext: () => context,
+        toDataURL(...args) {
+          this.toDataURLCalls.push(args);
+          return args[0] === "image/png"
+            ? "data:image/png;base64,PNG_COMPRESSED"
+            : "data:image/jpeg;base64,JPEG_COMPRESSED";
+        },
+      };
+      canvases.push(canvas);
+      return canvas;
+    },
+  };
 
   try {
     assert.deepEqual(await compressImageFile({ size: 1024, type: "image/png" }), {
       data: "ORIGINAL",
       mimeType: "image/png",
     });
-    assert.deepEqual(await compressImageFile({ size: 2 * 1024 * 1024, type: "image/png" }), {
-      data: "COMPRESSED",
+    assert.deepEqual(await compressImageFile({ size: 3 * 1024 * 1024, type: "image/png" }), {
+      data: "PNG_COMPRESSED",
+      mimeType: "image/png",
+    });
+    assert.deepEqual(await compressImageFile({ size: 3 * 1024 * 1024, type: "image/jpeg" }), {
+      data: "JPEG_COMPRESSED",
       mimeType: "image/jpeg",
     });
-    assert.equal(bitmapCalls, 1);
-    assert.equal(canvas.width, 1024);
-    assert.equal(canvas.height, 512);
-    assert.equal(closed, true);
+    assert.equal(bitmapCalls, 2);
+    assert.deepEqual(
+      canvases.map(({ width, height, toDataURLCalls, context }) => ({ width, height, toDataURLCalls, fillRectCalls: context.fillRectCalls })),
+      [
+        { width: 2048, height: 1024, toDataURLCalls: [["image/png"]], fillRectCalls: 0 },
+        { width: 1024, height: 512, toDataURLCalls: [["image/jpeg", 0.85]], fillRectCalls: 1 },
+      ],
+    );
+    assert.equal(closeCalls, 2);
   } finally {
     globalThis.FileReader = originals.FileReader;
     globalThis.createImageBitmap = originals.createImageBitmap;

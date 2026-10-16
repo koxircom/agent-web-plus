@@ -582,7 +582,8 @@ export function buildSlashCommandLayout(
 }
 
 const CLIENT_IMAGE_COMPRESSION_THRESHOLD_BYTES = 1024 * 1024;
-const CLIENT_MAX_IMAGE_SIDE = 1024;
+const CLIENT_MAX_SCREENSHOT_SIDE = 2048;
+const CLIENT_MAX_PHOTO_SIDE = 1024;
 const CLIENT_JPEG_QUALITY = 0.85;
 
 export function shouldCompressImageFile(file: Pick<File, "size" | "type">): boolean {
@@ -613,18 +614,26 @@ export async function compressImageFile(file: File): Promise<{ data: string; mim
   if (!bitmap) return original();
 
   try {
-    const scale = Math.min(1, CLIENT_MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    const preservePng = file.type === "image/png";
+    const outputMimeType = preservePng ? "image/png" : "image/jpeg";
+    const maxSide = preservePng ? CLIENT_MAX_SCREENSHOT_SIDE : CLIENT_MAX_PHOTO_SIDE;
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const ctx = canvas.getContext("2d");
     if (!ctx) return original();
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!preservePng) {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL("image/jpeg", CLIENT_JPEG_QUALITY).split(",")[1];
+    const data = (preservePng
+      ? canvas.toDataURL(outputMimeType)
+      : canvas.toDataURL(outputMimeType, CLIENT_JPEG_QUALITY)
+    ).split(",")[1];
     return data && data.length < Math.ceil(file.size / 3) * 4
-      ? { data, mimeType: "image/jpeg" }
+      ? { data, mimeType: outputMimeType }
       : original();
   } catch {
     return original();

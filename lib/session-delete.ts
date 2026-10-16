@@ -10,6 +10,7 @@ import { abortSubagent, getRpcSession, getRpcSessionInfos, forgetRpcProjectStatu
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
 import type { SessionEntry, SessionHeader, SessionInfo } from "./types";
 import { deletedPaths as tombstones, ensureSessionWriteGuardInstalled, sealAndDeleteSync } from "./usage-delete-guard";
+import { createSessionDeletionAudit, type SessionDeletionOrigin } from "./session-deletion-audit";
 
 type DeleteContext = { sessions: SessionInfo[]; knownPaths: Set<string>; directoryFiles: (dir: string) => Promise<string[]> };
 type ChildReparent = {
@@ -339,9 +340,9 @@ async function prepareSessionDelete(id: string, context: DeleteContext): Promise
 
 // Serialize destructive requests so overlapping batches cannot race reparenting or sealing.
 declare global { var __piSessionDeleteQueue: Promise<unknown> | undefined; }
-export function deleteSessions(ids: string[]) {
+export function deleteSessions(ids: string[], options: { origin?: SessionDeletionOrigin } = {}) {
   const pending = (globalThis.__piSessionDeleteQueue ?? Promise.resolve())
-    .catch(() => undefined).then(() => executeDeleteSessions([...new Set(ids)]));
+    .catch(() => undefined).then(() => executeDeleteSessions([...new Set(ids)], options.origin ?? "native"));
   globalThis.__piSessionDeleteQueue = pending;
   void pending.finally(() => {
     if (globalThis.__piSessionDeleteQueue === pending) globalThis.__piSessionDeleteQueue = undefined;
@@ -349,7 +350,7 @@ export function deleteSessions(ids: string[]) {
   return pending;
 }
 
-async function executeDeleteSessions(ids: string[]) {
+async function executeDeleteSessions(ids: string[], origin: SessionDeletionOrigin) {
   ensureSessionWriteGuardInstalled();
   const files = new Map<string, Promise<string[]>>();
   const sessions = mergeSessionLists(await listAllSessions({ force: true }), getRpcSessionInfos({ includeTransient: true }));
@@ -385,6 +386,8 @@ async function executeDeleteSessions(ids: string[]) {
   const persisted = new Map<string, string>();
   const unpersisted = new Map<string, string>();
   const deleted = new Set<string>();
+  const audit = createSessionDeletionAudit();
+  let auditPlan: ReturnType<typeof audit.begin> | undefined;
   let deleteError: string | undefined;
   const confirm = (id: string, path: string) => {
     deleted.add(id);
@@ -416,6 +419,7 @@ async function executeDeleteSessions(ids: string[]) {
         throw new Error(`Cannot reparent active child session ${reparent.sessionId}; stop it and retry.`);
       }
     }
+    auditPlan = audit.begin(ids, [...targets.keys()], origin);
     for (const reparent of reparents.values()) await reparentChildSession(reparent);
 
     // Close selected wrappers only after every required reparent write succeeds.
@@ -440,5 +444,11 @@ async function executeDeleteSessions(ids: string[]) {
     const ok = [...paths.paths.keys()].every((deletedId) => deleted.has(deletedId));
     results.set(id, { id, ok, ...(ok ? {} : { error: deleteError ?? "会话未能完全删除" }) });
   }
-  return { results: ids.map((id) => results.get(id)!), deletedSessionIds: [...deleted] };
+  const rows = ids.map((id) => results.get(id)!);
+  let auditWarning: string | undefined;
+  if (auditPlan) {
+    try { audit.finish(auditPlan, { deletedIds: [...deleted], missingIds: rows.filter(row => row.missing).map(row => row.id), failedIds: rows.filter(row => !row.ok).map(row => row.id) }); }
+    catch { auditWarning = "删除结果已确认，但审计完成记录写入失败，请检查审计存储。"; }
+  }
+  return { results: rows, deletedSessionIds: [...deleted], ...(auditWarning ? { auditWarning } : {}) };
 }

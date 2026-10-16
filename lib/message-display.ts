@@ -39,8 +39,21 @@ export function getAssistantErrorMessage(
   message: AssistantMessage,
   options: DisplayOptions = {},
 ): string | null {
-  if (options.isStreaming || message.stopReason !== "error") return null;
+  if (options.isStreaming || message.retryAttempt || message.stopReason !== "error") return null;
   return message.errorMessage?.trim() || "Unknown provider error";
+}
+
+/** Mark only the latest completed provider failure as superseded by auto-retry. */
+export function markLatestAssistantRetryAttempt(messages: AgentMessage[]): AgentMessage[] {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant" || message.stopReason !== "error") continue;
+    if (message.retryAttempt) return messages;
+    const next = [...messages];
+    next[index] = { ...message, retryAttempt: true };
+    return next;
+  }
+  return messages;
 }
 
 /**

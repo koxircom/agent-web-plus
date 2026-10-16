@@ -25,6 +25,7 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile, allowsAutomaticEditableFocus, focusEditable } from "@/hooks/useIsMobile";
 import { useChatColumnInset } from "@/hooks/useChatColumnInset";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
+import { useMobileHorizontalSwipe } from "@/hooks/useMobileHorizontalSwipe";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ToolEntry } from "@/lib/tool-presets";
 import type { SettingsSection } from "@/lib/settings-navigation";
@@ -1165,8 +1166,23 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   }, [beginHistoryLoad, clearHistoryLoadGuard, isCurrentHistoryLoad, scrollContainerRef, session?.id, sessionIdRef, setHistoryLoadOutcome]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+  const isScrollAvailable = !isEmptyNew && (!loading || messages.length > 0) && !(error && messages.length === 0);
+  const swipeEnabled = isMobile && !mobileNavigationOpen && isScrollAvailable;
   const columnEndInset = useChatColumnInset(scrollContainerRef, !loading && !error && !isEmptyNew, isMobile ? 0 : CHAT_MINIMAP_WIDTH);
   useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
+
+  // 原生实现手机竖屏聊天左滑打开会话导航（不限边缘，正文可滑；enabled严格映射渲染分支，有缓存不解绑）
+  useMobileHorizontalSwipe({
+    containerRef: scrollContainerRef,
+    direction: "left",
+    enabled: swipeEnabled,
+    threshold: 40,
+    dominantRatio: 1.3,
+    allowOnButtons: false,
+    onSwipe: () => {
+      onMobileNavigationOpenChange?.(true);
+    },
+  });
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
@@ -1342,7 +1358,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     </Fragment>
   );
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <div
         data-pi-enh-native-minimap="true"

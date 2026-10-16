@@ -44,7 +44,7 @@ export async function sendAgentCommand<T = unknown>(
   if (requestId) {
     dispatchingPrompts.add(requestId);
     try {
-      retainPromptSubmission({ requestId, sessionId, message: String(command.message ?? ""),
+      await retainPromptSubmission({ requestId, sessionId, message: String(command.message ?? ""),
         images: command.images as Array<{ data: string; mimeType: string }> | undefined,
         status: "sending", createdAt: Date.now(),
         ...(command.streamingBehavior === "steer" || command.streamingBehavior === "followUp" ? { streamingBehavior: command.streamingBehavior } : {}),

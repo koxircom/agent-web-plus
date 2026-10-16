@@ -37,6 +37,16 @@ test("New session is remembered as this tab's selection", () => {
   assert.match(body, /replaceSessionUrl\(`\?cwd=\$\{encodeURIComponent\(cwd\)\}`/);
 });
 
+test("explicit cwd arms initial synchronization before child effects can restore history", () => {
+  assert.match(
+    source,
+    /const suppressCwdBumpRef = useRef\(initialNavigation\.requestedCwd !== null\);/,
+  );
+  assert.ok(
+    source.indexOf("const suppressCwdBumpRef") < source.indexOf("const handleCwdChange"),
+  );
+});
+
 test("deleting the current session forgets its tab memory", () => {
   const start = source.indexOf("  const handleSessionDeleted = useCallback");
   const end = source.indexOf("  const handleOpenFile = useCallback", start);

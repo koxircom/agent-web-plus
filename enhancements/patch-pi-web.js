@@ -223,34 +223,6 @@ function repairComposerInitialMount(content) {
   });
 }
 
-function patchUserMessageReconcile(content) {
-  if (typeof content !== "string" || !content) return content;
-
-  // 1. 在乐观消息创建时给其添加非枚举 __piEnhOptimistic 标记（仅新乐观对象，幂等，严禁写其他消息）
-  if (!content.includes("__piEnhOptimistic")) {
-    const optimisticPattern = /([a-zA-Z0-9_$]+)=(\{role:"user",content:[\s\S]*?,timestamp:Date\.now\(\)\});(\s*)([a-zA-Z0-9_$]+)\(\s*([a-zA-Z0-9_$]+)\s*=>\s*\[\.\.\.\5,\1\]\),\s*([a-zA-Z0-9_$]+)\.current=([a-zA-Z0-9_$]+)\(\1\)/;
-    if (optimisticPattern.test(content)) {
-      content = content.replace(optimisticPattern, (match, msgVar, msgInit, space, setMessages, prevVar, refVar, fpFn) => {
-        return `${msgVar}=${msgInit};try{Object.defineProperty(${msgVar},"__piEnhOptimistic",{value:!0,configurable:!0})}catch(_){};${space}${setMessages}(${prevVar}=>[...${prevVar},${msgVar}]),${refVar}.current=${fpFn}(${msgVar})`;
-      });
-    }
-  }
-
-  // 2. 注入服务端接收 message_end 阶段的 reconcile hook 调用
-  if (!content.includes("__PI_ENH_RECONCILE_USER_MESSAGE__")) {
-    const pattern = /let\s+([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\(([a-zA-Z0-9_$]+)\),([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\(\1\),([a-zA-Z0-9_$]+)=([a-zA-Z0-9_$]+)\.current;\7\.current=null,([a-zA-Z0-9_$]+)\(\s*([a-zA-Z0-9_$]+)\s*=>\s*\{\s*let\s+([a-zA-Z0-9_$]+)=\9\[\9\.length-1\];\s*return\s+\6&&\10\?\.role==="user"&&\5\(\10\)===\6\?\6===\4\?\9:\[\.\.\.\9\.slice\(0,-1\),\1\]:\[\.\.\.\9,\1\]\s*\}\)/;
-
-    if (pattern.test(content)) {
-      content = content.replace(pattern, (match, serverMsg, reFn, rawMsg, serverFp, fpFn, lastFp, refVar, setMessages, prevList, lastItem) => {
-        return `let ${serverMsg}=${reFn}(${rawMsg}),${serverFp}=${fpFn}(${serverMsg}),${lastFp}=${refVar}.current;${refVar}.current=null,${setMessages}(${prevList}=>{let ${lastItem}=${prevList}[${prevList}.length-1],fallback=()=>${lastFp}&&${lastItem}?.role==="user"&&${fpFn}(${lastItem})===${lastFp}?${lastFp}===${serverFp}?${prevList}:[...${prevList}.slice(0,-1),${serverMsg}]:[...${prevList},${serverMsg}];try{let hook=typeof window!=="undefined"&&window.__PI_ENH_RECONCILE_USER_MESSAGE__;if(typeof hook==="function")return hook(${prevList},${serverMsg},{lastFingerprint:${lastFp},serverFingerprint:${serverFp},fingerprintFn:${fpFn},fallback})}catch(err){}return fallback()})`;
-      });
-    } else {
-      console.warn("[patch-pi-web] patchUserMessageReconcile: upstream message_end pattern not found or changed");
-    }
-  }
-
-  return content;
-}
 
 function patchDirectToolbarControls(content) {
   let s_idx = -1;
@@ -2383,12 +2355,6 @@ ${fastPluginReaderCode ? fastPluginReaderCode + "\n\n" : ""}` +
           const repairedMarkdownImages = patchMarkdownFileImageSupport(content);
           if (repairedMarkdownImages !== content) {
             content = repairedMarkdownImages;
-            modified = true;
-          }
-
-          const repairedUserMessageReconcile = patchUserMessageReconcile(content);
-          if (repairedUserMessageReconcile !== content) {
-            content = repairedUserMessageReconcile;
             modified = true;
           }
 

@@ -22,7 +22,7 @@
 PI Web Plus には Node.js 22.19.0 以降（`node >=22.19`）が必要です。`node --version` でバージョンを確認してから、[`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) の公式 `.tgz` パッケージをグローバルにインストールして `pi-web` を起動します：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 pi-web
 ```
 
@@ -74,10 +74,10 @@ PI_WEB_PASSWORD='十分に長いランダムなパスワード' pi-web --hostnam
 
 サーバー側のモデルリクエストと API リクエストは、標準の `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 環境変数を使用します。
 
-macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz)からインストールして起動）：
+macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz)からインストールして起動）：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -87,7 +87,7 @@ pi-web
 Windows PowerShell：
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

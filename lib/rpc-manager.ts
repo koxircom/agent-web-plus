@@ -1,3 +1,5 @@
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { clampModelThinkingLevel, type ModelThinkingLevel } from "./model-thinking-level";
 import { getPromptReceipt, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery } from "./prompt-delivery";
 import { ProjectStatusLedger } from "./project-status-ledger";
 import { createProgressCommentaryExtension } from "./progress-commentary";
@@ -537,6 +539,7 @@ export class AgentSessionWrapper {
 
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+      let deliveredRequestId: string | undefined;
       if (event.type === "message_start") {
         reconcileDeliveredImageOnlyMessage(this.inner, event.message);
         if ((event.message as { role?: string } | undefined)?.role === "user" && this.startedPromptRequestId) {
@@ -546,6 +549,7 @@ export class AgentSessionWrapper {
       }
       if (event.type === "message_end" && event.message && typeof event.message === "object") {
         const requestId = this.promptReceiptMessages.get(event.message);
+        deliveredRequestId = requestId;
         if (requestId) {
           this.promptReceiptMessages.delete(event.message);
           const message = event.message;
@@ -578,7 +582,7 @@ export class AgentSessionWrapper {
       // Deliver the user bubble and current queue as one wire event. A consumer
       // need not wait for a DOM mirror or another state request to remove it.
       if (event.type === "message_end" && (event.message as { role?: string } | undefined)?.role === "user") {
-        this.emit({ ...event, queuedMessages: {
+        this.emit({ ...event, ...(deliveredRequestId ? { requestId: deliveredRequestId } : {}), queuedMessages: {
           steering: [...this.inner.getSteeringMessages()],
           followUp: [...this.inner.getFollowUpMessages()],
         } } as AgentEvent);
@@ -841,7 +845,7 @@ export class AgentSessionWrapper {
     if (requestId && this.inner.sessionFile) this.confirmPromptDelivery(requestId, { sessionFile: this.inner.sessionFile, entryId });
     if (this.inner.sessionFile) cacheSessionPath(this.inner.sessionId, this.inner.sessionFile);
     invalidateSessionListCache();
-    this.emit({ type: "message_end", message, entryId });
+    this.emit({ type: "message_end", message, entryId, ...(requestId ? { requestId } : {}) });
     return { stopped: true, entryId };
   }
 
@@ -1244,14 +1248,20 @@ export class AgentSessionWrapper {
           if (this.inner.modelRuntime.checkAuth && !await this.inner.modelRuntime.checkAuth(provider)) {
             throw new Error("所选模型认证失败，请检查该模型的认证配置。");
           }
-          this.saveNextTurnSettings({ ...this.nextTurnSettings, model: { id: model.id, provider: model.provider } });
+          const requestedThinking = this.nextTurnSettings.thinkingLevel
+            ?? this.inner.settingsManager?.getModelThinkingLevel(model.provider, model.id)
+            ?? this.inner.settingsManager?.getDefaultThinkingLevel()
+            ?? this.inner.agent.state?.thinkingLevel ?? "off";
+          const thinkingLevel = clampModelThinkingLevel(requestedThinking as ModelThinkingLevel,
+            getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]))!;
+          this.saveNextTurnSettings({ ...this.nextTurnSettings, model: { id: model.id, provider: model.provider }, thinkingLevel });
         } else {
           await this.inner.setModel(model);
           if (this.nextTurnSettings.model) this.saveNextTurnSettings({ ...this.nextTurnSettings, model: undefined });
         }
         invalidateModelsCache();
         invalidateSessionListCache();
-        return { id: model.id, provider: model.provider };
+        return { id: model.id, provider: model.provider, thinkingLevel: this.nextTurnSettings.thinkingLevel ?? this.inner.agent.state?.thinkingLevel ?? "off" };
       }
 
       case "fork": {
@@ -1372,13 +1382,19 @@ export class AgentSessionWrapper {
         if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level)) {
           throw new Error("思考深度参数无效，请重新选择。");
         }
-        if (this.isRunning()) this.saveNextTurnSettings({ ...this.nextTurnSettings, thinkingLevel: level });
+        if (this.isRunning()) {
+          const selected = this.nextTurnSettings.model ?? this.inner.model;
+          const model = selected && this.inner.modelRuntime.getModel(selected.provider, selected.id);
+          const thinkingLevel = clampModelThinkingLevel(level as ModelThinkingLevel, model
+            ? getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]) : null)!;
+          this.saveNextTurnSettings({ ...this.nextTurnSettings, thinkingLevel });
+        }
         else {
           this.setThinkingLevel(level);
           if (this.nextTurnSettings.thinkingLevel !== undefined) this.saveNextTurnSettings({ ...this.nextTurnSettings, thinkingLevel: undefined });
         }
         invalidateSessionListCache();
-        return null;
+        return { thinkingLevel: this.nextTurnSettings.thinkingLevel ?? this.inner.agent.state?.thinkingLevel ?? "off" };
       }
 
       case "compact": {

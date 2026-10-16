@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import vm from 'node:vm';
-import {preservePendingUserMessage} from '../lib/prompt-recovery.ts';
+import {preservePendingUserMessage,bindUserHistoryIdentities} from '../lib/prompt-recovery.ts';
 
 // Execute the real load callback with controlled network completion order.
 const source=readFileSync(new URL('./useAgentSession.ts',import.meta.url),'utf8');
@@ -15,7 +15,7 @@ function harness(){
   const ref=current=>({current});
   const scope={useCallback:f=>f,isSessionMemoryCacheEnabled:()=>false,getSessionEpoch:()=>epoch,bumpSessionEpoch:()=>++epoch,isEpochFresh:(_,e)=>e===epoch,
     sessionHookMountedRef:ref(true),sessionIdRef:ref('s'),latestLoadRequestRef:ref(null),loadFlightsRef:ref(new Map()),
-    preservePendingUserMessage,optimisticUserMessageRef:ref(null),getSessionWireBaseline:()=>null,dataRef:ref(null),messagesRef:ref([]),entryIdsRef:ref([]),historyCursorRef:ref(null),hasEarlierMessagesRef:ref(false),
+    preservePendingUserMessage,bindUserHistoryIdentities,optimisticUserMessageRef:ref(null),getSessionWireBaseline:()=>null,dataRef:ref(null),messagesRef:ref([]),entryIdsRef:ref([]),historyCursorRef:ref(null),hasEarlierMessagesRef:ref(false),
     buildSessionSyncUrl:()=>'/history',fetch:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),reconcileSyncResponse:({payload})=>({action:'legacy',data:payload}),
     preserveLoadedHistoryPrefix:d=>d,deleteSessionViewSnapshot:()=>{},setLoading:v=>state.loading=v,setData:d=>state.history=d,setMessages:m=>state.messages=m,setEntryIds:()=>{},setActiveLeafId:()=>{},setHistoryCursor:()=>{},setHasEarlierMessages:()=>{},
     sessionToolsPinnedRef:ref(false),CONFIGURED_TOOL_PRESET:'configured',setToolPresetState:()=>{},modelSwitchPendingRef:ref(false),setCurrentModelOverride:()=>{},setCurrentThinkingOverride:()=>{},setError:e=>state.error=e,syncLiveModel:()=>{},

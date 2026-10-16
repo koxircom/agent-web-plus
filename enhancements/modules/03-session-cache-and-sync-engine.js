@@ -2147,17 +2147,24 @@
     return `${(query || "").trim().toLowerCase()}::${tagId || "all"}`;
   }
 
-  function getFromSearchCache(key) {
+  function getNativeSearchCatalog() {
+    try {
+      const snapshot = window.__PI_ENH_GET_SEARCH_CATALOG__?.();
+      return snapshot && Array.isArray(snapshot.sessions) && typeof snapshot.scope === "string" ? snapshot : null;
+    } catch (_) { return null; }
+  }
+
+  function getFromSearchCache(key, catalogScope) {
     const entry = SESSION_SEARCH_CACHE.get(key);
     if (!entry) return null;
-    if (Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
+    if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
       SESSION_SEARCH_CACHE.delete(key);
       return null;
     }
     return entry.data;
   }
 
-  function setToSearchCache(key, data) {
+  function setToSearchCache(key, data, catalogScope) {
     if (!key || !data) return;
     if (SESSION_SEARCH_CACHE.size >= SEARCH_CACHE_MAX_SIZE) {
       const oldestKey = SESSION_SEARCH_CACHE.keys().next().value;
@@ -2166,6 +2173,7 @@
     SESSION_SEARCH_CACHE.set(key, {
       timestamp: Date.now(),
       data,
+      catalogScope,
     });
   }
 
@@ -2173,12 +2181,13 @@
     SESSION_SEARCH_CACHE.clear();
   }
 
-  function findNarrowableParentCache(query) {
+  function findNarrowableParentCache(query, catalogScope) {
     const qClean = (query || "").trim().toLowerCase();
     if (!qClean) return null;
 
     // 1. 尝试找前缀词缓存：例如当前是 "解耦"，检查是否已有 "解" 的完整缓存
     for (const [cacheKey, entry] of SESSION_SEARCH_CACHE.entries()) {
+      if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) continue;
       const [cachedQ, cachedTag] = cacheKey.split("::");
       if (cachedTag !== (activeSessionFilterTagId || "all")) continue;
       if (cachedQ && cachedQ.length < qClean.length && qClean.startsWith(cachedQ)) {
@@ -2464,9 +2473,15 @@
       return realFetch(input, init);
     }
 
+    // Native catalogue ownership is required before local metadata can add hits.
+    // Older tabs without this bridge use the authoritative server search.
+    const catalog = getNativeSearchCatalog();
+    if (!catalog) return realFetch(input, init);
+    const catalogById = new Map(catalog.sessions.filter((s) => s?.id && !s.transient && !s.submissionPending).map((s) => [s.id, s]));
+
     // 1. 优先命中 0ms 闪电 LRU 缓存
     const cacheKey = getSearchCacheKey(query, activeSessionFilterTagId);
-    const cachedData = getFromSearchCache(cacheKey);
+    const cachedData = getFromSearchCache(cacheKey, catalog.scope);
     if (cachedData) {
       scheduleSearchResultsHighlight();
       return createCachedResponse(cachedData, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_CACHE");
@@ -2475,7 +2490,7 @@
     const keywords = query.split(/\s+/).map((k) => k.trim()).filter(Boolean);
 
     // 1.1 前缀或多词子集内存收窄匹配 (0ms 瞬发响应)
-    const narrowableParent = findNarrowableParentCache(query);
+    const narrowableParent = findNarrowableParentCache(query, catalog.scope);
     if (narrowableParent) {
       const parentResults = narrowableParent.data.results || [];
       const filtered = [];
@@ -2483,7 +2498,7 @@
       for (const item of parentResults) {
         const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
         const sid = item.session?.id;
-        const sess = sid ? knownSessionsMap.get(sid) : null;
+        const sess = sid ? catalogById.get(sid) : null;
         const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
         const combined = fullSnippet + " " + sessMeta;
 
@@ -2498,7 +2513,7 @@
           results: filtered,
           truncated: narrowableParent.data.truncated || false,
         };
-        setToSearchCache(cacheKey, narrowedJson);
+        setToSearchCache(cacheKey, narrowedJson, catalog.scope);
         scheduleSearchResultsHighlight();
         return createCachedResponse(narrowedJson, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_NARROWED");
       }
@@ -2510,11 +2525,6 @@
     }
     activeSearchAbortController = new AbortController();
     const currentAbortSignal = activeSearchAbortController.signal;
-
-    // 3. 内存索引预热保证
-    if (knownSessionsMap.size === 0) {
-      await prewarmSessionSearchIndex();
-    }
 
     let nativeResults = [];
     let isTruncated = false;
@@ -2552,7 +2562,7 @@
           for (const item of primaryList) {
             const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
             const sid = item.session?.id;
-            const sess = sid ? knownSessionsMap.get(sid) : null;
+            const sess = sid ? catalogById.get(sid) : null;
             const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
             const combined = fullSnippet + " " + sessMeta;
 
@@ -2572,7 +2582,7 @@
     const titleMatches = [];
 
     // 本地标题/首条消息多关键词 AND 匹配
-    for (const [id, s] of knownSessionsMap.entries()) {
+    for (const [id, s] of catalogById.entries()) {
       if (seenSessionIds.has(id)) continue;
       const name = (s.name || "").trim();
       const firstMsg = (s.firstMessage || "").trim();
@@ -2610,7 +2620,7 @@
       seenSessionIds.add(id);
     }
 
-    let mergedResults = [...titleMatches, ...nativeResults];
+    let mergedResults = [...titleMatches, ...nativeResults].filter((r) => catalogById.has(r.session?.id));
 
     // 结合标签过滤：若选中了具体标签，严格过滤出满足该标签的会话
     if (isPluginEnabled("session-tags") && activeSessionFilterTagId && activeSessionFilterTagId !== "all") {
@@ -2627,7 +2637,7 @@
     };
 
     // 保存至 LRU 高性能缓存
-    setToSearchCache(cacheKey, mergedJson);
+    if (getNativeSearchCatalog()?.scope === catalog.scope) setToSearchCache(cacheKey, mergedJson, catalog.scope);
 
     // 触发搜索关键词全量高亮与导航
     scheduleSearchResultsHighlight();
@@ -4400,8 +4410,8 @@
     const urlStr = typeof input === "string" ? input : input?.url ? input.url : String(input);
     // HEAD is a read-only validator, never an Agent command or cache mutation.
     if (method === "HEAD") return activeFetch(input, init);
-    // Native versioned envelopes own their exact baseline; directly return activeFetch without caching or rewriting.
-    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?sync=1(?=[&#]|$)/.test(urlStr)) {
+    // Native sync envelopes and current-identity lookups must bypass all history caches.
+    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?(?:sync|lookup)=1(?=[&#]|$)/.test(urlStr)) {
       return activeFetch(input, init);
     }
     // Interaction queues and prompt receipts belong to the live server.

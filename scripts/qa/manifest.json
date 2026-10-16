@@ -1,0 +1,404 @@
+{
+  "schema": 1,
+  "runnerVersion": "1",
+  "runtime": {
+    "requiredPackages": [
+      "next",
+      "react",
+      "react-dom",
+      "typescript",
+      "playwright",
+      "esbuild",
+      "@earendil-works/pi-agent-core",
+      "@earendil-works/pi-ai",
+      "@earendil-works/pi-coding-agent",
+      "@earendil-works/pi-tui"
+    ]
+  },
+  "fingerprint": {
+    "paths": [
+      "app",
+      "components",
+      "hooks",
+      "lib",
+      "tests",
+      "scripts",
+      "enhancements",
+      "package.json",
+      "package-lock.json",
+      "bin",
+      "public",
+      "tsconfig.json",
+      "next.config.ts",
+      "proxy.ts",
+      "instrumentation.ts",
+      "instrumentation-node.ts",
+      "postcss.config.mjs",
+      "tailwind.config.ts"
+    ],
+    "excludeDirs": [
+      "node_modules",
+      ".next",
+      "output",
+      "dist",
+      "build",
+      "cache",
+      ".cache",
+      "__pycache__",
+      ".quality-runs"
+    ],
+    "excludeFilePatterns": [
+      "*.bundle.js",
+      "*.bundle.mjs",
+      "*.cache",
+      "*.cache.json",
+      "pi-*-manifest.json",
+      "pi-usage-ledger*.json",
+      "*.before-*"
+    ]
+  },
+  "suites": {
+    "discovery": {
+      "description": "Small inherited fixtures used to discover current baseline failures.",
+      "shards": [
+        {
+          "name": "hooks-use-agent-session-inherited",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "hooks/useAgentSession.test.mjs"
+          ],
+          "files": [
+            "hooks/useAgentSession.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "session-sync-and-event-wire",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/session-sync-client.test.mjs",
+            "lib/agent-event-wire.test.mjs"
+          ],
+          "files": [
+            "lib/session-sync-client.test.mjs",
+            "lib/agent-event-wire.test.mjs"
+          ],
+          "timeoutSeconds": 120
+        }
+      ]
+    },
+    "focused": {
+      "description": "Deterministic identity, sync, search, and browser regression shards.",
+      "shards": [
+        {
+          "name": "prompt-identity-core",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/prompt-recovery.test.mjs",
+            "lib/prompt-delivery.test.mjs",
+            "lib/agent-client.test.mjs",
+            "lib/prompt-durability.integration.test.mjs"
+          ],
+          "files": [
+            "lib/prompt-recovery.test.mjs",
+            "lib/prompt-delivery.test.mjs",
+            "lib/agent-client.test.mjs",
+            "lib/prompt-durability.integration.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "session-sync-core",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/session-sync-client.test.mjs",
+            "lib/agent-event-wire.test.mjs",
+            "app/api/sessions/[id]/lookup.test.mjs"
+          ],
+          "files": [
+            "lib/session-sync-client.test.mjs",
+            "lib/agent-event-wire.test.mjs",
+            "app/api/sessions/[id]/lookup.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "session-search-core",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/session-list-scanner.test.mjs",
+            "lib/session-search.test.mjs",
+            "lib/session-search-cache.test.mjs",
+            "lib/enhancement-sidebar-bridge.test.mjs"
+          ],
+          "files": [
+            "lib/session-list-scanner.test.mjs",
+            "lib/session-search.test.mjs",
+            "lib/session-search-cache.test.mjs",
+            "lib/enhancement-sidebar-bridge.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "react-user-message-identity",
+          "command": [
+            "node",
+            "tests/user-message-identity.pw.mjs"
+          ],
+          "files": [
+            "tests/user-message-identity.pw.mjs"
+          ],
+          "timeoutSeconds": 240
+        },
+        {
+          "name": "browser-session-search-stale",
+          "command": [
+            "node",
+            "tests/session-search-stale.pw.mjs"
+          ],
+          "files": [
+            "tests/session-search-stale.pw.mjs"
+          ],
+          "timeoutSeconds": 240
+        },
+        {
+          "name": "browser-session-resilience",
+          "command": [
+            "node",
+            "tests/session-resilience.pw.mjs"
+          ],
+          "files": [
+            "tests/session-resilience.pw.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "model-thinking-core",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/model-thinking-level.test.mjs",
+            "lib/next-turn-settings.test.mjs",
+            "lib/rpc-manager.test.mjs"
+          ],
+          "files": [
+            "lib/model-thinking-level.test.mjs",
+            "lib/next-turn-settings.test.mjs",
+            "lib/rpc-manager.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "browser-model-thinking-switch",
+          "command": [
+            "node",
+            "tests/model-thinking-switch.pw.mjs"
+          ],
+          "files": [
+            "tests/model-thinking-switch.pw.mjs"
+          ],
+          "timeoutSeconds": 180
+        }
+      ]
+    },
+    "release": {
+      "description": "Release gate shards; every listed identity/search check and TypeScript validation must pass.",
+      "shards": [
+        {
+          "name": "release-prompt-identity",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/prompt-recovery.test.mjs",
+            "lib/prompt-delivery.test.mjs",
+            "lib/agent-client.test.mjs",
+            "lib/prompt-durability.integration.test.mjs"
+          ],
+          "files": [
+            "lib/prompt-recovery.test.mjs",
+            "lib/prompt-delivery.test.mjs",
+            "lib/agent-client.test.mjs",
+            "lib/prompt-durability.integration.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-session-sync",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/session-sync-client.test.mjs",
+            "lib/agent-event-wire.test.mjs",
+            "app/api/sessions/[id]/lookup.test.mjs"
+          ],
+          "files": [
+            "lib/session-sync-client.test.mjs",
+            "lib/agent-event-wire.test.mjs",
+            "app/api/sessions/[id]/lookup.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-session-search",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/session-list-scanner.test.mjs",
+            "lib/session-search.test.mjs",
+            "lib/session-search-cache.test.mjs",
+            "lib/enhancement-sidebar-bridge.test.mjs"
+          ],
+          "files": [
+            "lib/session-list-scanner.test.mjs",
+            "lib/session-search.test.mjs",
+            "lib/session-search-cache.test.mjs",
+            "lib/enhancement-sidebar-bridge.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-use-agent-session",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "hooks/useAgentSession.test.mjs",
+            "lib/composer-bootstrap.test.mjs"
+          ],
+          "files": [
+            "hooks/useAgentSession.test.mjs",
+            "lib/composer-bootstrap.test.mjs"
+          ],
+          "timeoutSeconds": 240
+        },
+        {
+          "name": "release-session-deletion-audit",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/session-deletion-audit.test.mjs",
+            "lib/session-deletion-audit.integration.test.mjs"
+          ],
+          "files": [
+            "lib/session-deletion-audit.test.mjs",
+            "lib/session-deletion-audit.integration.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-quality-runner-integrity",
+          "command": [
+            "python3",
+            "scripts/qa/test_integrity.py"
+          ],
+          "files": [
+            "scripts/qa/test_integrity.py"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-react-user-message-identity",
+          "command": [
+            "node",
+            "tests/user-message-identity.pw.mjs"
+          ],
+          "files": [
+            "tests/user-message-identity.pw.mjs"
+          ],
+          "timeoutSeconds": 240
+        },
+        {
+          "name": "release-browser-session-search-stale",
+          "command": [
+            "node",
+            "tests/session-search-stale.pw.mjs"
+          ],
+          "files": [
+            "tests/session-search-stale.pw.mjs"
+          ],
+          "timeoutSeconds": 240
+        },
+        {
+          "name": "release-typescript",
+          "command": [
+            "node",
+            "node_modules/typescript/bin/tsc",
+            "--noEmit"
+          ],
+          "files": [
+            "tsconfig.json",
+            "package.json",
+            "package-lock.json"
+          ],
+          "timeoutSeconds": 300
+        },
+        {
+          "name": "browser-session-resilience",
+          "command": [
+            "node",
+            "tests/session-resilience.pw.mjs"
+          ],
+          "files": [
+            "tests/session-resilience.pw.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "model-thinking-core",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/model-thinking-level.test.mjs",
+            "lib/next-turn-settings.test.mjs",
+            "lib/rpc-manager.test.mjs"
+          ],
+          "files": [
+            "lib/model-thinking-level.test.mjs",
+            "lib/next-turn-settings.test.mjs",
+            "lib/rpc-manager.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "browser-model-thinking-switch",
+          "command": [
+            "node",
+            "tests/model-thinking-switch.pw.mjs"
+          ],
+          "files": [
+            "tests/model-thinking-switch.pw.mjs"
+          ],
+          "timeoutSeconds": 180
+        }
+      ]
+    }
+  }
+}

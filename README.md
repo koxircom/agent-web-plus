@@ -1,6 +1,6 @@
-> **PI Web Plus 1.3.74** 基于 Pi Coding Agent 1.2.0。通过 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/tag/v1.3.74) 安装预构建包；本地服务默认只监听 `127.0.0.1`。
+> **PI Web Plus v1.3.39** 基于 Pi Coding Agent 1.0.4。通过 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/tag/v1.3.39) 安装预构建包；本地服务默认只监听 `127.0.0.1`。
 
-> 1.3.39：移除侧边栏重复的文字状态标签和旧资源，补充脱敏实景图；包含截至 1.3.37 的改进，基于 Pi Coding Agent 1.2.0。
+> 1.3.39：移除侧边栏重复的文字状态标签和旧资源，补充脱敏实景图；包含截至 1.3.37 的改进，基于 Pi Coding Agent 1.0.4。
 
 # PI Web Plus
 
@@ -77,7 +77,7 @@ PI Web Plus 保留并扩展 agegr 的 pi-web 开源项目，许可证及原版�
 PI Web Plus requires Node.js 22.19.0 or newer (`node >=22.19`). Check your version with `node --version`, then install the prebuilt release tarball from [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) and start `pi-web`:
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.39/pi-web-plus-1.3.39.tgz
 pi-web
 ```
 
@@ -131,10 +131,10 @@ Password authentication does not encrypt the connection. Do not expose Pi Web ov
 
 Server-side model and API requests honor the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
 
-On macOS or Linux (after installing the [GitHub Release tarball](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz)):
+On macOS or Linux (after installing the [GitHub Release tarball](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.39/pi-web-plus-1.3.39.tgz)):
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.39/pi-web-plus-1.3.39.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -144,7 +144,7 @@ pi-web
 On Windows PowerShell:
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.39/pi-web-plus-1.3.39.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

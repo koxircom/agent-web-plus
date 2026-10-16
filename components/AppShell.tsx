@@ -495,6 +495,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setMobileNavigationOpen(false);
   }, [isMobile, selectedSession?.id, newSessionDraftId]);
 
+
   useEffect(() => {
     if (!activeTopPanel || !topBarRef.current) return;
     const update = () => {
@@ -591,8 +592,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setInitialNavigation(next);
     if (next.sessionId) setInitialSessionRestored(false);
   }, [initialNavigation]);
-  // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
-  const suppressCwdBumpRef = useRef(false);
+  // Arm this before child effects run: SessionSidebar reports its initial cwd
+  // before the async validator resolves, and that notification must not restore
+  // the workspace's previous session over an explicit ?cwd= new-chat URL.
+  const suppressCwdBumpRef = useRef(initialNavigation.requestedCwd !== null);
   // Guards the async workspace restore so a slow response from an earlier
   // switch cannot resurrect a session into a project the user already left.
   const workspaceRestoreTokenRef = useRef(0);
