@@ -1,250 +1,153 @@
-> **PI Web Plus 1.3.74** 基于 Pi Coding Agent 1.2.0。通过 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/tag/v1.3.74) 安装预构建包；本地服务默认只监听 `127.0.0.1`。
+# Agent Web Plus
 
-> 1.3.39：移除侧边栏重复的文字状态标签和旧资源，补充脱敏实景图；包含截至 1.3.37 的改进，基于 Pi Coding Agent 1.2.0。
+**在电脑和手机的同一个网页工作台，使用 Pi Agent 与 Codex。**
 
-# PI Web Plus
+Agent Web Plus 原名 **Pi Web Plus**。现在它支持两种执行引擎：Pi Agent 在 Web 服务所在环境运行；Codex 通过项目内置执行端连接你自己的 Codex CLI。两种引擎共用聊天、输入框、会话导航与设置界面，切换时保留各自的会话和工作目录。
 
-[简体中文说明](./README.zh-CN.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
+手机是同一后台的访问入口。将 Web 服务部署在自己的电脑、WSL 或服务器后，可以在另一台设备上继续查看同一会话、跟踪执行过程、发送后续消息。
 
-PI Web Plus 是 [Pi Coding Agent](https://github.com/earendil-works/pi) 的本地浏览器工作台，基于 [agegr/pi-web](https://github.com/agegr/pi-web) 开源项目持续维护。它与 pi 共用本机配置和会话文件，让你在浏览器中继续对话、运行智能体、管理模型，并查看项目文件。
+[下载安装包](https://github.com/koxircom/pi-web-plus/releases/latest) · [Codex 配置](docs/codex-engine.md) · [旧用户升级](docs/agent-web-compatibility.md) · [反馈问题](https://github.com/koxircom/pi-web-plus/issues)
 
-## PI Web Plus 的特色
+## 在 Pi Agent 与 Codex Agent 之间切换
 
-- **手机图片编辑**：点开输入框里的图片即可裁剪，或用画笔、矩形标注；保存时可替换当前附件，也可将标注图下载到本地。编辑工具适配手机触控。
-- **会话分组与标签**：会话按项目和 worktree 归集；可置顶、归档、标记未读，并添加多维彩色标签，便于整理长期任务。
-- **增强会话搜索**：用 `Ctrl+F`（macOS 为 `⌘F`）打开搜索，查找会话正文并查看命中片段；选择结果可回到对应消息。项目与归档搜索结果可折叠。
-- **紧凑输入与队列操作**：窄屏友好的输入区将模型和思考级别放在一起；运行中的任务可切换后续模型，并查看、取回排队消息，不打断当前回复。
-- **会话驻留与阅读恢复**：近期会话视图可在标签页缓存并预载；切换回来时恢复该会话的消息锚点和阅读位置。长历史采用分页与视口虚拟化，并支持手机与电脑间同步会话更新。
-- **轻量引用与过程阅读**：选中文字即可复制或引用，给引用添加带序号的可选评论；工具结果集中折叠，便于连续阅读任务说明和回复。
-- **本地项目工作区**：浏览和上传项目文件、查看 Git diff、预览常见文本与媒体文件，并通过 Git worktree 切换工作目录。模型、Provider 登录、插件包和技能也可从网页管理。
+**左上角的 Agent 名称就是切换入口。** 点击名称旁的下拉箭头，在 **Pi Agent** 与 **Codex** 之间选择；界面中的「Codex」就是本文所说的 Codex Agent。手机和电脑使用同一个入口。
 
-PI Web Plus 保留并扩展 agegr 的 pi-web 开源项目，许可证及原版权声明见 [MIT License](./LICENSE)。本项目使用 [Pi Coding Agent](https://github.com/earendil-works/pi)。
+### 第一次启用 Codex
 
-## 实际界面
+1. 在执行主机准备自己的 **Codex CLI**、登录状态和工作区，并启动本项目附带的 Codex 执行端。执行端通常运行在 Linux / WSL，需要 Python 3.11+，不强制使用 Docker。
+2. 打开 **设置 → 执行引擎**，启用 **Codex**，填写 Web 服务端可访问的执行端地址。只有执行端启用了密码认证时才填写对应账号和密码。
+3. 点击 **保存设置**，再点击 **检测已保存配置**，确认连接和工作区可用。
+4. 回到左上角，点击 **Pi Agent ▾ → Codex**，选择工作目录，打开已有 Codex 会话，或点击 **＋** 新建 Codex 会话。
+5. 要继续使用 Pi，点击 **Codex ▾ → Pi Agent**。Pi 的模型仍在 **设置 → 模型** 中配置，Codex 使用执行主机自己的 CLI 登录及模型配置。
 
-以下图片均在独立演示环境中拍摄。项目、对话、图片和标签全部为虚构示例，不含真实会话、账号、密钥或设备地址。
+Codex 未启用时，下拉菜单中的 Codex 选项不可选。开启开关本身不会安装 CLI 或启动执行端，完整步骤见 [Codex 安装与连接](docs/codex-engine.md)。
 
-### 会话工作区
+### 切换后，哪些内容会跟着变化
 
-项目会话列表、文件浏览器与对话区集中展示；运行状态沿用列表左侧指示，不再增加右侧文字状态标签。
-
-![会话工作区](docs/screenshots/overview.png)
-
-### 图片预览
-
-点击会话中的图片可打开独立预览，关闭后回到原来的阅读位置。
-
-![图片预览](docs/screenshots/image-preview.png)
-
-### 会话导航
-
-按轮次查看问题摘要，定位长会话中的对应消息，并管理导航书签。
-
-![会话导航](docs/screenshots/navigation.png)
-
-### 引用与评论
-
-鼠标完成文本选择后显示复制与引用操作；引用可附加简短评论，再汇总到输入框。
-
-![引用与评论](docs/screenshots/quote.png)
-
-### 正文搜索
-
-搜索会话正文并查看命中片段，点击结果跳转到对应消息。
-
-![正文搜索](docs/screenshots/search.png)
-
-### 分类与标签
-
-为会话添加彩色标签，按任务类别整理项目；标签可统一维护。
-
-![会话分类](docs/screenshots/categories.png)
-
-### 增强功能
-
-按功能模块管理阅读导航、输入附件、引用、会话列表和通知偏好。
-
-![增强设置](docs/screenshots/enhancements.png)
-
-### 设置页面
-
-统一管理外观、聊天布局、模型、技能和子代理；公开示例仅展示界面偏好。
-
-![设置页面](docs/screenshots/settings.png)
-
-## Quick Start
-
-PI Web Plus requires Node.js 22.19.0 or newer (`node >=22.19`). Check your version with `node --version`, then install the prebuilt release tarball from [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) and start `pi-web`:
-
-```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
-pi-web
-```
-
-> **Important**: The package name in `package.json` remains `@agegr/pi-web` for compatibility, but PI Web Plus is distributed exclusively through [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases). Do **not** pull or install `@agegr/pi-web` from the public npm registry; that is the legacy upstream package, not the PI Web Plus release.
-
-The CLI opens a browser after the server is ready. If it does not, open [http://127.0.0.1:30141](http://127.0.0.1:30141). Pi Web listens only on `127.0.0.1` by default.
-
-If no model provider is configured yet, open the **Models** panel to sign in or add an API key.
-
-The command above installs v1.3.39. To install or upgrade to another release, stop the running process with `Ctrl+C`, replace `v1.3.39` and `1.3.39` in the URL with the target `<version>` from [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases), and run the install command again:
-
-```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v<version>/pi-web-plus-<version>.tgz
-```
-
-To uninstall, run `npm uninstall -g @agegr/pi-web`.
-
-## Configuration
-
-For port and hostname, command-line options override the corresponding environment variables. Either `--no-open` or `PI_WEB_NO_OPEN=1` disables automatic browser opening. Run `pi-web --help` (or `-h`) to print startup options and exit without starting the server. Unknown options exit with an error.
-
-| Option or environment variable | Purpose | Default |
+| 项目 | Pi Agent | Codex Agent |
 | --- | --- | --- |
-| `--help`, `-h` | Print startup options and exit | — |
-| `--port <port>`, `-p <port>`, or `PORT` | Server port | `30141` |
-| `--hostname <host>`, `-H <host>`, or `PI_WEB_HOSTNAME` | Bind hostname | `127.0.0.1` |
-| `--no-open` or `PI_WEB_NO_OPEN=1` | Do not open a browser automatically | Browser opens |
-| `PI_WEB_SKIP_VERSION_CHECK=1` | Disable Pi Web update checks | Unset |
-| `PI_WEB_ALLOWED_HOSTS` | Additional exact proxy or custom hostnames, comma-separated | Unset |
-| `PI_WEB_PASSWORD` | Enable browser password login; API clients may use Basic Auth with username `pi` | Authentication disabled |
-| `PI_WEB_IDLE_TIMEOUT_MS` | Session idle timeout in milliseconds, up to `2147483647`; `0` disables idle shutdown; invalid or out-of-range values use the default | `600000` (10 min) |
+| 会话列表 | Pi 的本机会话 | Codex 执行端允许访问的原生会话 |
+| 工作目录 | Web 服务所在环境的目录 | Codex 执行主机上的工作区目录 |
+| 新建会话 | 「＋」创建 Pi 会话 | 「＋」创建 Codex 会话 |
+| 模型与登录 | Pi 的模型提供方、凭据与配置 | Codex CLI 自己的登录、模型与思考深度 |
+| 执行能力 | Pi 工具、扩展、技能等能力 | 执行端声明支持的 Codex 原生能力 |
 
-For example:
+聊天布局、输入框、图片编辑、会话导航和设置仍使用同一套前端。两种引擎各自保留会话归属和工作目录；切换不会把 Pi 会话转换成 Codex 会话，也不会停止原来在后台运行的任务。新建会话使用当前选中的 Agent。
+
+## Codex Agent 可以做什么
+
+- **继续原生会话**：查看 Codex 工作区、会话历史、模型回复和工具执行过程，发送文本、图片和文件附件；长会话可通过轮次导航定位。
+- **排队与引导**：给运行中的任务添加普通后续消息，查看或调整队列，取回、删除条目，或将排队内容引导到当前任务。断线后从后台核对状态与交接记录。
+- **目标与计划**：使用 Codex 原生目标和计划模式，目标摘要持续显示在输入框上方。发送成功后，下一条输入回到普通模式；已有目标继续按原生状态显示。
+- **上下文与用量**：查看上下文占用和 Token 消耗；在用量统计中选择 **Pi Agent / Codex / 全部**，并展开子任务名称、日期与消耗。Codex 未提供费用时明确显示不可得。
+- **电脑、手机接续**：访问同一个 Web 后台即可查看同一会话。浏览器关闭或临时断网不代表 Codex 任务结束，重连后读取后台状态。
+- **辨认 CLI 版本**：分别显示已安装版本与运行中版本。管理员启用运行时更新后，在满足空闲条件时切换进程。
+
+### 与 Codex 桌面端共享历史和队列
+
+需要将执行端的 `historyHome`、`historySocket` 配置到桌面端使用的同一个原生运行时，且 CLI 支持相应队列接口。配置完成后，网页与桌面接续同一会话，**普通消息共用 Codex 原生队列**。独立运行时之间不会自动共享；只填写服务地址也不会自动找到任意电脑上的桌面会话。
+
+计划/目标模式暂不能逐条保存在原生队列中，因此任务忙碌时，此类输入留在草稿，提示空闲后发送。队列交接由后台保存原文、附件和请求标识，并核对回执；结果不明时不盲目重发，也不承诺任何故障下都恰好执行一次。
+
+Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端、HTML 导出及会话删除；相应入口按引擎能力显示。具体部署和能力范围见 [Codex 配置说明](docs/codex-engine.md)。
+
+## 两种 Agent 共用的工作台功能
+
+| 场景 | 当前能力 |
+| --- | --- |
+| 两种 Agent，一个工作台 | 左上角切换 Pi Agent / Codex；公共界面与交互统一维护，执行能力按引擎显示。 |
+| 管理长期任务 | 工作目录分组、会话置顶、归档、彩色标签、正文搜索及长会话轮次导航。 |
+| 在手机上继续工作 | 自适应聊天界面、触控图片编辑、文件附件、草稿与阅读位置恢复。 |
+| 排队和补充消息 | 查看后台队列、取回或删除条目、向进行中的任务补充内容；重连后核对后台状态。 |
+| 查看目标和计划 | Codex 支持原生目标状态与计划模式；已有目标显示在输入框上方。 |
+| 看清上下文与用量 | 顶栏显示上下文和 Token；用量统计可按 Pi、Codex 或全部筛选，并展开子任务明细。 |
+| 区分 CLI 版本 | 分别显示已安装与运行中版本；启用运行时更新后，在满足空闲条件时切换进程。 |
+| 复用项目经验 | 内置自动复盘与经验检索，技能候选经确认后采用，见 [自动复盘](docs/automatic-learning.md)。 |
+| 接续原有数据 | 兼容旧命令、配置目录、会话、置顶与设置；改名无需重新建立历史。 |
+
+## 安装与启动
+
+项目显示名为 Agent Web Plus，仓库地址继续沿用 `koxircom/pi-web-plus`。本文介绍面向 **1.4.0**（Pi SDK **1.3.0**）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
+
+> **发布状态：1.4.0 安装包尚未公开。** 本页先更新双引擎介绍；旧版 Pi Web Plus 不包含全部 Codex 功能。以下 Release 安装命令需等 v1.4.0 发布后使用，发布前下载地址不可用。源码与安装包是否可用，以仓库提交和 Releases 实际内容为准。
 
 ```bash
-pi-web --help
-pi-web -p 8080 -H 0.0.0.0 --no-open
+npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.4.0/pi-web-plus-1.4.0.tgz
+agent-web --no-open
 ```
 
-### Remote Access
-
-Binding to a non-loopback address exposes an agent that can execute high-privilege actions. On a trusted LAN, require a long random password:
+也可下载源码 ZIP 后解压构建，或使用 Git：
 
 ```bash
-PI_WEB_PASSWORD='a-long-random-password' pi-web --hostname 0.0.0.0
+git clone https://github.com/koxircom/pi-web-plus.git agent-web-plus
+cd agent-web-plus
+npm ci
+npm run build
+node bin/agent-web.js
 ```
 
-Password authentication does not encrypt the connection. Do not expose Pi Web over plain HTTP to the internet; use HTTPS through a trusted reverse proxy or a trusted VPN. If a reverse proxy sends an external hostname, add that exact name to `PI_WEB_ALLOWED_HOSTS`. This allow-list does not change the address Pi Web binds to.
+服务默认只监听 `127.0.0.1:30141`。浏览器没有自动打开时，访问 [本机工作台](http://127.0.0.1:30141)。运行源码无需全局安装其他 Pi Web 包。
 
-### HTTP Proxy
+正式构建包与 SHA256 校验文件在 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/latest)。仅从本仓库正式发布的构建包安装；不要把 npm 上的上游 `@agegr/pi-web` 当作本项目的新版本。
 
-Server-side model and API requests honor the standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables.
+### 仅使用 Pi Agent
 
-On macOS or Linux (after installing the [GitHub Release tarball](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz)):
+打开「设置 → 模型」添加自己的模型凭据或登录提供方，然后在左上角选择 **Pi Agent**。已有 Pi 用户保持原来的数据目录即可，默认读取 `~/.pi/agent`。
+
+### 启用 Codex Agent
+
+安装 Web 后，按上方 [第一次启用 Codex](#第一次启用-codex) 完成执行端配置，再从左上角切换。执行端随本项目提供，仍需要用户自己的 Codex CLI 和登录状态。详细配置见 [Codex 安装与连接](docs/codex-engine.md)。
+
+## 原用户升级：数据与命令兼容
+
+- 推荐命令为 `agent-web`，原 `pi-web` 继续可用；源码直接启动可用 `node bin/agent-web.js` 或 `node bin/pi-web.js`。
+- 默认数据目录继续是 `~/.pi/agent`，原 `PI_CODING_AGENT_DIR` 与 `PI_WEB_*` 配置继续有效。
+- 新别名 `AGENT_WEB_DATA_DIR` 可以指向原数据目录。两个目录变量同时存在时必须指向同一目录，冲突时拒绝启动，不自动搬移或合并数据。
+- 会话身份、置顶、设置、Cookie、localStorage 和 IndexedDB 的兼容键保留。保持原主机和端口，浏览器仍能找到原草稿与偏好。
+- npm 包内部标识暂保留 `@agegr/pi-web`，以便既有构建包原位升级；项目品牌与源码仓库由本项目独立维护。不要同时安装另一份上游包覆盖它。
+
+完整说明见 [改名兼容与数据接续](docs/agent-web-compatibility.md)。升级前停止旧进程，备份原数据目录；升级后继续使用同一目录，不需要清空历史或重新建立置顶。
+
+## 局域网访问
+
+如需让手机访问，使用自己的主机局域网地址，并设置访问密码：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
-HTTP_PROXY=http://127.0.0.1:7890 \
-HTTPS_PROXY=http://127.0.0.1:7890 \
-NO_PROXY=localhost,127.0.0.1 \
-pi-web
+# 将示例密码替换为自己的长随机密码，不要提交到仓库。
+PI_WEB_PASSWORD='replace-with-your-own-long-random-password' \
+node bin/agent-web.js --hostname 0.0.0.0 --no-open
 ```
 
-On Windows PowerShell:
+Windows PowerShell：
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.74/pi-web-plus-1.3.74.tgz
-$env:HTTP_PROXY = "http://127.0.0.1:7890"
-$env:HTTPS_PROXY = "http://127.0.0.1:7890"
-$env:NO_PROXY = "localhost,127.0.0.1"
-pi-web
+$env:PI_WEB_PASSWORD = "replace-with-your-own-long-random-password"
+node bin/agent-web.js --hostname 0.0.0.0 --no-open
 ```
 
-## Notes
+手机访问 `http://你的主机地址:30141`。公网访问应使用 HTTPS 反向代理或可信 VPN；配置外部域名时，将准确域名加入 `PI_WEB_ALLOWED_HOSTS`。模型请求可使用标准 `HTTP_PROXY`、`HTTPS_PROXY` 与 `NO_PROXY`。
 
-- **Agent data**: Pi Web reads pi data from `~/.pi/agent` by default, including session files under `sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`. Set `PI_CODING_AGENT_DIR` to use another pi agent directory.
-- **Filesystem access**: Pi Web must be able to read the agent data directory and the working directories recorded by its sessions. Run Pi Web in the same filesystem environment as pi when sharing existing sessions.
-- **Shared configuration**: the Models panel uses pi's model, settings, and credential storage, so changes are visible to both interfaces.
-- **File access boundary**: the file browser is limited to working directories selected in Pi Web and project or session roots it already knows about; it is not a general filesystem browser.
-- **Git worktrees**: see [Worktrees in Pi Web](./docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
+`node bin/agent-web.js --help` 可查看端口和监听选项。原环境变量不因改名改变。
 
-### Downstream Session Context Menu
+## 部署边界
 
-Electron wrappers and other downstream integrations can provide a session-row
-context menu without patching `SessionSidebar`. Listen for the cancelable
-`pi-web:session-row-contextmenu` browser event and call `preventDefault()`
-synchronously when the integration will handle it:
+公开源码不包含个人会话、账号、私有主机清单或特定设备重启脚本。同一后台的会话和置顶通过原生状态接口共享；跨不同独立服务器的软件分发、重启和回滚，需要部署者自己的管理方式，项目不自动探测私人设备。
 
-```js
-window.addEventListener("pi-web:session-row-contextmenu", (event) => {
-  event.preventDefault();
-  const { id, path, cwd, name, clientX, clientY, refresh } = event.detail;
+`demo/mock/captured/` 目录名仅为保留导入兼容，其中的配置为界面夹具，不包含登录令牌。`docs/screenshots/` 为历史名称下的合成演示图，不作为当前版本的功能验收。
 
-  void openSessionMenu({ id, path, cwd, name, clientX, clientY }).then((changed) => {
-    if (changed) refresh();
-  });
-});
-```
-
-The detail object contains `id`, `path`, `cwd`, optional `name`, pointer
-coordinates, and a `refresh()` callback for actions that change the session
-list. If no listener cancels the extension event, Pi Web preserves the
-browser's native context menu. This hook is browser-side and independent of
-Pi agent extensions.
-
-### Extension Session Liveness
-
-Server-side Pi extensions with detached work can prevent automatic idle
-session eviction through the versioned global registry:
-
-```js
-const liveness = globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")];
-const release = liveness?.version === 1
-  ? liveness.register({
-      name: "my-extension",
-      sessionId,
-      sessionFile: sessionFile || undefined,
-      isActive: () => detachedJobs.size > 0,
-    })
-  : () => {};
-```
-
-Register once per active extension session and call the returned idempotent
-`release` function on session shutdown, replacement, or reload. `isActive`
-must be synchronous, cheap, and scoped to the supplied exact session id or
-file. Provider errors fail safe by preserving that session. This lease only
-affects automatic idle eviction; explicit shutdown and Stop fallback cleanup
-still take precedence.
-
-## Development
+## 开发与检查
 
 ```bash
-npm install
+npm ci
 npm run dev
+# 类型检查
+npx tsc --noEmit
+# 发布前脱敏检查
+python3 scripts/check-publication.py --root .
 ```
 
-The development server runs at [http://127.0.0.1:30141](http://127.0.0.1:30141). Run the common checks with:
+不要在运行同一 checkout 的开发服务时执行 `next build`。执行引擎和数据迁移的检查应使用隔离目录，不要在真实用户会话中创建测试消息。
 
-```bash
-npm test
-node_modules/.bin/tsc --noEmit
-npm run lint
-```
+## 开源与署名
 
-Do not run `next build` or `npm run build` during normal development. It writes to `.next/` and can interfere with the development server; leave builds for release work.
-
-Contributor guides: [Internationalization](./docs/i18n.md) and [Release process](./docs/release.md).
-
-## Repository Layout
-
-```text
-app/             Next.js UI and API routes
-components/      React UI components
-hooks/           Client state and interaction hooks
-lib/             Session, agent, model, file, Git, and security logic
-public/          Static assets and PWA files
-bin/             npm CLI entrypoint and launch option parsing
-docs/            Focused user and contributor guides
-demo/            Static browser demo published to GitHub Pages (see demo/README.md)
-```
-
-See [AGENTS.md](./AGENTS.md) for the architecture notes and detailed file map.
-
-## License
-
-[MIT](./LICENSE)
-
-## 自动复盘与项目经验
-
-当前 main 源码内置可选的任务复盘、项目经验检索及经确认的技能生成；旧的 v1.3.74 发行包不包含，需要源码构建或后续发行包。原生「设置 → 自动复盘」启用，默认关闭，会产生额外模型调用。[功能、成本和隐私说明](docs/automatic-learning.md)。
+本项目基于 [agegr/pi-web](https://github.com/agegr/pi-web) 持续维护，使用 [Pi Coding Agent](https://github.com/earendil-works/pi) 与可选的 [Codex CLI](https://github.com/openai/codex)。保留原作者版权与 MIT 许可证；依赖和连接器来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

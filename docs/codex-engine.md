@@ -1,0 +1,144 @@
+# 可选 Codex 执行引擎
+
+Agent Web Plus 的聊天、图片编辑、草稿、文件浏览和重连界面由原生 Pi 组件负责。默认继续使用 Pi 引擎；在「设置 → 执行引擎」中启用 Codex、填写执行端地址，并按连接器认证模式填写账号后切换默认引擎。
+
+## 通用部署
+
+本功能不绑定任何人的 IP、用户名或工作目录。Agent Web Plus 可运行于 Windows、Linux 或 NAS；Codex 执行端运行于已安装 Codex CLI 的 Linux / WSL 主机。执行端应通过私网、VPN 或加密隧道供 Agent Web Plus 服务端访问，浏览器不直接连接执行端。首次使用前，在执行主机为连接器准备独立的 `CODEX_HOME` 并在该目录登录，然后启动 API。
+
+### 执行主机与连接器
+
+- 执行端需要 Linux / WSL、Python 3.11+、已安装并能在该环境运行的 Codex CLI，以及真实存在的工作区目录。WSL 中应使用 WSL 内的 `codex` 程序和 Linux 路径；连接器本身使用 Python 标准库，不需要额外 pip 包或 Node.js。
+- 使用源码时，在包含 `connectors/codex-bridge/standalone_main.py` 的项目根目录运行下方命令。使用 GitHub Release npm 包时，包内也包含整个 `connectors/codex-bridge` 目录；若 Agent Web Plus 与 Codex 执行端不在同一台主机，将该目录完整复制到执行主机。若 npm 包已全局安装在执行主机，可用 `npm root -g` 找到全局模块目录，入口位于 `@agegr/pi-web/connectors/codex-bridge/standalone_main.py`。不需要在执行主机安装或启动整套 Agent Web Plus。
+- 执行端的 `codex` 绝对路径可用 `command -v codex` 查询，并填入 `executable`。配置中的 `codexHome`、`workspace` 和每个 `workspaces[].path` 都必须是执行主机上已存在的目录；`dataDirectory` 不存在时连接器会创建。配置文件应限制为当前服务用户可读写（例如 `chmod 600`）；不要提交配置、Codex 登录目录或运行数据。
+
+先在执行主机创建独立登录目录与工作区，并让 Codex CLI 使用同一个 `CODEX_HOME` 登录。以下目录名仅为可替换示例：
+
+```bash
+umask 077
+mkdir -p /srv/codex-web/codex-home /srv/projects/my-project
+CODEX_HOME=/srv/codex-web/codex-home codex login
+```
+
+之后将配置中的 `codexHome` 设为 `/srv/codex-web/codex-home`。连接器启动 Codex CLI 时也会将 `CODEX_HOME` 指向该配置值，因此登录目录必须完全一致。登录状态、工作区和连接器都应位于同一个 Linux / WSL 环境。
+
+在执行主机创建独立配置文件，例如：
+
+```json
+{
+  "codexHome": "/srv/codex-web/codex-home",
+  "dataDirectory": "/srv/codex-web/gateway",
+  "workspace": "/srv/projects/my-project",
+  "workspaces": [{"key":"local|project","name":"我的项目","path":"/srv/projects/my-project"}],
+  "executable": "/absolute/path/from-command-v-codex",
+  "port": 19097,
+  "localAccess": true,
+  "origins": ["http://127.0.0.1:19097"],
+  "auth": {"mode":"none"}
+}
+```
+
+`codexHome` 指向已完成登录的独立 Codex 配置目录，且必须预先存在。`workspace` 与所有 `workspaces[].path` 也须预先存在；`dataDirectory` 会由连接器创建。保存文件后限制权限，例如 `chmod 600 /path/to/private-config.json`。示例 `auth: {"mode":"none"}` 不启用连接器账号密码，只适用于连接器保持回环监听、同机访问或受控 SSH 隧道的情况；不要将连接器端口直接暴露到局域网或公网。Agent Web Plus 若供远程浏览器访问，应另行配置 `PI_WEB_PASSWORD` 并使用 HTTPS 或可信 VPN。
+
+```bash
+# 在源码项目根目录运行：
+python3 connectors/codex-bridge/standalone_main.py --config /path/to/private-config.json
+
+# 若 npm Release 包已全局安装在执行主机：
+python3 "$(npm root -g)/@agegr/pi-web/connectors/codex-bridge/standalone_main.py" --config /path/to/private-config.json
+```
+
+连接器固定只监听执行主机的 `127.0.0.1:<port>`。Agent Web Plus 与执行端位于不同主机时，在 Agent Web Plus 服务主机建立本地 SSH 转发，例如 `ssh -N -L 19098:127.0.0.1:19097 <执行主机账号>@<执行主机>`；Agent Web Plus 设置中的服务地址填 `http://127.0.0.1:19098`，并将配置示例中的 `origins` 改为完全相同的源 `http://127.0.0.1:19098`。同机部署时，示例端口 `19097` 可保持不变。`origins` 必须与 Agent Web Plus 服务端实际请求所用地址的协议、主机和端口一致；不要填写浏览器或手机专用地址。常驻时应让 SSH 隧道在 Agent Web Plus 服务主机保持运行，并使用 `ExitOnForwardFailure` / `ServerAliveInterval` 等 SSH 选项；连接器自身可由 systemd 配置 `Restart=on-failure`。
+
+在 Agent Web Plus「设置 → 执行引擎」中启用 Codex，服务地址填写上面的执行端地址。只有 `auth.mode` 为 `password` 时才填写连接器账号和密码；使用本文回环/SSH 隧道示例时可留空。Agent Web Plus 设置保存的连接器密码与执行端 `CODEX_HOME` 中的 Codex 登录状态是两套独立凭据。
+
+## 会话与数据
+
+- 新会话使用所选执行端配置的工作区，目录和附件始终留在执行主机。执行权限沿用该 Codex CLI 的配置及已保存会话策略，连接器不会把其他用户的权限自动提升为完全访问。
+- 可配置 `historyHome` 读取已有 Codex 历史；只有工作区允许范围内的会话会出现在列表。读取历史不会开始新任务；明确发送消息才恢复可续写的原会话，设置 `historySocket` 后，原历史会话通过本机 Unix WebSocket 连接原有 WSL app-server，电脑端保持打开且空闲时可直接续写同一会话，运行中沿用明确的排队/补充。不会启动第二个历史写入者或复制会话。未配置共享 socket 时，保留原独立历史运行方式，其写入权冲突会明确提示并保留草稿。
+- Pi 与 Codex 会话 ID 和缓存相互隔离。切换默认引擎不会迁移会话，也不会停止后台任务。
+- 浏览器关闭、选图片、临时断网均不结束 Codex 任务。重新打开时从执行端读取权威状态与已保存历史。
+- 每次消息独立持久化请求标识；发送结果不明时不自动重发。排队由执行端串行判断，不依赖手机上可能过期的状态。
+- 普通文件通过原生文件浏览器上传，插入真实执行端路径引用；不同内容的同名文件拒绝覆盖。图片使用 Pi 原生编辑器及独立附件上传链路。
+
+## 本版能力范围
+
+支持会话列表/历史分页、文本与图片发送、工作区文件上传/读取/下载、模型和思考深度、执行过程、排队/逐条或全部取回/补充/停止，以及基础权限确认和用户问题输入。
+
+会话列表共用 Pi 的拖拽宽度、触摸滑动、长按/右键菜单、标签、置顶、颜色和归档状态。显式搜索共用原生结果组件，最多检查近期 30 条会话、每条近期 50 条消息并限制时间；范围受限时显示部分结果提示，不进行后台全量索引。
+
+Pi 专用分支、工具预设、手动压缩、终端、HTML 导出和会话删除尚未对接，Codex 模式隐藏相应入口；不会用 Pi 本机数据代替远程结果。复杂 MCP 确认暂不支持时会提示停止任务。
+
+连接密码保存在 Pi Agent 数据目录的私有 `execution-engines.json`，设置读取只返回是否已配置密码。发布包不包含个人地址、账号、密码、授权文件和会话数据。默认 Pi 模式不会连接 Codex。
+
+## 来源
+
+连接器复用并适配 Codex Mobile Bridge 的会话、认证、消息及工作区底层协议，保留 MIT 许可，见 `connectors/codex-bridge/LICENSE.codex-mobile-bridge` 与 `SOURCE.md`。本功能需要附带的项目级 API；旧版桌面 Bridge 服务并不保证提供这些接口。
+
+## 共享原 WSL 会话
+
+在连接器私有配置中同时设置 `historyHome` 与 `historySocket`（管理员指定的本机 app-server Unix 控制 socket 绝对路径）。Socket 必须属于当前服务用户；支持其私有路径下的标准符号链接。该传输使用原生 WebSocket HTTP Upgrade，完全使用 Python 标准库，不需要安装额外依赖。
+
+共享连接仅接续允许工作区内的原会话，沿用原线程当前模型与权限；新建网页会话继续使用独立 `codexHome`。关闭连接器只断开自有连接，不停止原服务。原服务不可达时不会切换到另一个写入进程或自动重发结果不明的消息。原服务的启动和升级生命周期由其原管理者负责。
+
+## 连接器兼容检测
+
+「检测已保存配置」同时核对项目级接口、协议与所需能力，再读取模型目录；左上角快速切换不会等待模型目录加载。随包连接器在已有项目列表响应内声明协议，正常路径不增加接口请求。协议版本与 Agent Web Plus 的产品版本是两回事：只要协议主版本及所需能力兼容，不要求产品版本字符串相同。
+
+- **接口兼容检查通过**：执行端声明了受支持的协议，具备会话历史、消息身份确认、队列和工作区文件接口。
+- **已连接旧版独立连接器**：旧连接器未声明版本；只读核对独立运行入口后保留兼容使用，并提示升级，不能据此宣称所有能力均已确认。
+- **协议不兼容 / 缺少所需能力**：检测明确返回原因。请从同一个 Agent Web Plus Plus 安装包复制整个 `connectors/codex-bridge` 目录并更新执行端；保留原私有配置、`CODEX_HOME`、数据目录及原服务启动方式。更新前确认没有该连接器拥有的运行任务，不覆盖或复制其他进程正在写入的会话。
+
+只读项目/兼容探测不会启动 Codex 执行进程；模型目录检测可能短暂启动 Codex 目录读取进程，但不会发送模型任务。不能用一次检测成功代替实际发送权限、网络长期稳定性或所有 Codex CLI 版本的验证。
+
+## 用量统计
+
+「设置 → 用量统计」提供「全部 / Pi Agent / Codex」执行引擎筛选，与日期、执行角色和模型筛选共用同一账本和面板。Codex 统计来自配置工作区内的原生调用记录，包含已归档会话；按调用发生时间（北京时间）归属日期，缓存输入不会重复相加。没有记录的历史不会用会话累计数伪造每日消耗。
+
+执行端首次读取会在后台建立用量索引，界面显示整理进度；随后只增量处理追加日志，手动刷新也不会重新执行会话。连接器仅保存用量聚合和读取游标，不保存聊天正文。统计缓存与原 Codex 历史分离，位于连接器的数据目录。
+
+Codex 原生记录没有费用时显示「未提供费用」；全部模式仍计入其 Token，费用只包含可核算部分。执行端未连接、旧连接器没有用量接口或记录尚未完整时会明确提示，不把不可用的数据当作零。旧连接器需要从当前包升级 `connectors/codex-bridge`，保留自己的配置及登录目录。
+
+
+## 目标与计划模式
+
+Pi Agent 与 Codex 共用输入框、模式菜单、目标状态和队列界面。Codex 计划模式使用原生 `collaborationMode=plan`；目标模式在用户发送目标内容时使用原生 `thread/goal` API，显式操作携带 `origin=user`。切换下一条输入模式本身不会运行模型、停止当前任务或修改权限。
+
+发送目标时先确认原生目标，再提交同一条原文和图片；切换下一条输入模式不改写已有排队内容。忙碌时的模式语义限制见下文。目标指令与原始正文、图片和投递标识保持关联。不确定的写入结果保留待确认记录，不自动重发。暂停/恢复只调整原生目标状态，不另加一条隐藏的启动消息；恢复状态不会代替用户显式发送下一条消息。
+
+旧连接器未声明模式能力时保持禁用，并提示升级随本包附带的连接器。已存在的原生目标不会因切回普通/计划输入模式而被删除。原生目标处于完成、受限或阻塞状态时如实显示，不伪装成进行中。对于没有公开在当前 CLI 协议中的旧 `item/plan/requestImplementation` 请求，继续明确提示不支持，不猜测回复格式。
+
+## 网页与 Codex 原生共享队列
+
+配置 `historyHome` 与同机原 app-server 的 `historySocket` 后，新会话也由这个原生运行时创建；网页与桌面使用同一会话、同一原生队列。未配置共享 socket 的独立部署仍使用连接器自己的运行时。已在 CLI 0.162.1 上验证 `thread/queue/*`；旧版本不支持时不会假装共享成功。
+
+普通后续消息通过 `thread/queue/add` 进入原生持久队列，由 Codex 自动执行。网页在交接前保存原文和附件，用原始请求标识核对入队回执；断开 HTTP 或事件流不会撤销服务端交接。队列显示、撤回、删除和排序都操作原生条目，不创建第二个执行队列。原生接口不按客户端标识去重，因此不确定是否写入的 RPC 只做身份查询，不盲目再次入队；明确证明尚未发送的失败才允许后台重试。进程在写入边界崩溃仍可能留下无法自动判定的交接，原文持续保存在后台，不能宣称绝对恰好执行一次。
+
+原生队列尚不能为每条消息保存计划、目标模式。忙碌时发送此类消息会明确拒绝入队，并由共用输入框恢复原文和图片，提示空闲后发送；空闲发送保留相应模式语义，不将模式伪装成普通消息。
+
+用量统计的父会话可展开自动子任务明细，查看名称、北京时间日期和 Token。明细沿用引擎、日期、角色、模型筛选，并已计入父会话总量，不重复累加；Codex 未提供费用时明确显示不可得，不估造账单。
+
+目标摘要固定显示在共用输入框正上方，手机窄屏保留目标文字，不依赖当前输入模式。完成、暂停和受限状态按原生状态显示；仅明确清除才移除。读取失败保留最后确认状态，事件与快照共用递增版本以防乱序覆盖。
+
+队列“引导”先将原生条目的完整输入和身份写入后台投递日志，仅在原生接口明确确认删除该条后，才向当前轮 `turn/steer`。若当前轮恰好结束或明确拒绝引导，完整输入退回同一原生队列；响应丢失时只核对原身份，不盲目再发。CLI 0.162.1 没有原子队列转引导接口，删除回执丢失与进程崩溃可能形成无法立即判定的窗口；日志不删除原文，也不以文字相同作为送达证明。
+
+
+## CLI 稳定入口、安装版本与运行版本
+
+连接器的 `executable` 应配置为 CLI 安装器维护的稳定入口，例如 `/home/demo/.local/bin/codex`，不要固定到 `releases/0.x.y/...`。`historyHome`、标准 `historySocket` 继续指向原生共享运行时。
+
+欢迎页的“CLI 已安装”来自稳定入口的 `--version`；“运行中”来自该原生 App Server 的 `daemon version`。安装新版不代表已有进程已升级。旧连接器无法提供运行版本时，界面显示状态暂不可用，不拿安装版本填充。
+
+管理员显式启用以下配置后，网关每 15 秒通过原生 API 检查已加载任务、排队消息及活动目标。全部空闲并稳定 30 秒后，在共享文件锁下再次核对 socket 对应的进程身份，执行 `daemon update --from-cli --yes`，核对新进程版本。该命令固定到已经安装的 CLI，不另行下载。状态不明、仍忙碌或版本倒退时不会切换。
+
+```json
+"runtimeUpdates": {
+  "enabled": true,
+  "quietSeconds": 30,
+  "stateDirectory": "/home/demo/.local/state/codex-cli-upgrade/runtime-activation"
+}
+```
+
+原生标准控制路径有时链接到用户拥有的 `/tmp` socket，连接器会同时校验 socket 用户和进程身份。旧桌面创建的非 daemon 进程在空闲后温和退出，并使用稳定 CLI 入口、原启动参数、工作目录和仅在内存中保存的环境恢复；不使用强制终止。旧进程未退出或启动未确认时保持明确的待确认状态。原生接口没有原子的 drain 操作，因此在切换前会再次检查活动状态，不将版本读取视为切换权限。
+
+现有安装器可调用同一个 `runtime_control.py --config <配置路径> --reconcile` 确认待切换状态，实际切换仅由网关后台执行，避免安装器所属服务拥有原生进程；只读状态使用无操作参数，任务检查使用 `--activity`。后台使用文件锁防止重复切换，安装器不各自重启进程。手动及计划升级服务均需设置 `CODEX_RUNTIME_CONTROL` 和 `PI_WEB_CODEX_CONFIG` 指向同一个入口和配置。默认未启用自动切换时，连接器只报告状态。启用切换的 systemd 网关应使用 `KillMode=process`，使非 systemd 原生 daemon 在网关重启后继续运行；调用原生共享 socket 的服务不能隔离该 socket 所在的 `/tmp`。
