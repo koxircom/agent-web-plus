@@ -84,7 +84,7 @@ async function loadCodexCatalog(identity: string, signal?: AbortSignal, maxAgeMs
       rows.push(...page);
       if (page.length < 100) break;
     }
-    if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409);
+    if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
     if (flightSignal.aborted || catalogFlights.get(identity) !== flight) {
       throw flightSignal.reason ?? new DOMException("The operation was aborted", "AbortError");
     }
@@ -132,7 +132,7 @@ const statusRevision = (statusGlobals[statusRevisionKey] ||= new CodexStatusRevi
 async function buildCodexRunningStatus(identity: string, signal: AbortSignal) {
   const catalog = await loadCodexCatalog(identity, signal, CODEX_STATUS_CATALOG_TTL_MS);
   const activity = await codexActivity(catalog.rows, identity, signal);
-  if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409);
+  if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
   const stamp = statusRevision.update(identity, activity);
   return { sessionListVersion: catalog.version,
     runningSessionIds: activity.filter(r => r.status === "active").map(r => publicCodexId(r.id)),
@@ -153,7 +153,7 @@ export async function listCodexSessions(signal?: AbortSignal) {
   const catalog = await loadCodexCatalog(identity, signal);
   // Query runtime metadata only. Listing never creates or resumes a Codex thread.
   const activity = await codexActivity(catalog.rows, identity, signal);
-  if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409);
+  if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
   return { sessions: catalog.rows.map(projectCodexSession), sessionListVersion: catalog.version,
     runningSessionIds: activity.filter(r => r.status === "active").map(r => publicCodexId(r.id)), completionNotificationSuppressedSessionIds: [] };
 }
@@ -422,7 +422,7 @@ export class CodexRuntime {
             method: "input", title: [question.question, options?.join("\n")].filter(Boolean).join("\n") } });
         }
       } else {
-        next.set(base, { native: request, event: { type: "extension_ui_request", id: base, method: "notify", notifyType: "warning",
+        next.set(base, { native: request, event: { type: "extension_ui_request", id: base, method: "notify", notifyType: "warning", recovery: "codex-client",
           message: "Codex 有一项操作需要你处理，当前网页暂不支持。请回到发起任务的 Codex 客户端，打开同一会话查看并处理；无需因此停止任务。" } });
       }
     }
@@ -636,7 +636,7 @@ export class CodexRuntime {
         if (receipt.confirmed !== true) throw new Error("Codex 目标操作结果待确认，不会自动重发");
         const view = await this.json(base + "?metadata=1") as CodexMeta;
         const expectedStatus = command.action === "pause" ? "paused" : "active";
-        if (view.composerState?.goalStatus !== expectedStatus) throw new Error("Codex 目标操作尚未确认，请刷新状态");
+        if (view.composerState?.goalStatus !== expectedStatus) throw new CodexBridgeError("Codex 目标操作尚未确认，请刷新状态。", 409, "codex_session_refresh", false, false);
         this.adoptMeta(view, queueGeneration);
         this.publishComposer();
         return { extensionStatuses: codexComposerStatuses(this.meta) };
@@ -705,7 +705,7 @@ export class CodexRuntime {
       case "get_last_assistant_text": return { text: [...this.rows.values()].filter(r => r.role === "assistant").at(-1)?.text || "" };
       case "extension_ui_response": {
         const id = String(command.id), item = this.requests.get(id);
-        if (!item) throw new Error("该确认已处理或已失效，请刷新会话");
+        if (!item) throw new CodexBridgeError("该确认已处理或已失效，请刷新会话状态。", 409, "codex_session_refresh", false, false);
         if (item.questionId) {
           if (command.cancelled) {
             if (item.native.method === "bridge/requestUserInputAsync") return {};
@@ -733,7 +733,7 @@ export class CodexRuntime {
         if (!decision) throw new Error("请选择允许、拒绝或取消");
         return this.json(base + "/respond", { requestId: item.native.id, response: { decision } });
       }
-      default: throw new Error("Codex 引擎尚未提供此操作：" + String(command.type));
+      default: throw new CodexBridgeError("当前网页暂不支持这项 Codex 操作，请查看处理方式。", 501, "codex_operation_unsupported", false, false);
     }
   }
 }

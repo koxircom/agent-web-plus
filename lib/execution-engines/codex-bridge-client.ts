@@ -27,9 +27,9 @@ export class CodexBridgeError extends Error {
 export async function codexBridgeRequest(path: string, body?: unknown, options?: { bytes?: Uint8Array; contentType?: string; timeout?: number; signal?: AbortSignal; connectionIdentity?: string }) {
   if (!path.startsWith("/api/") || path.includes("\\")) throw new Error("无效 Codex 服务路径");
   const config = (await readExecutionEngineSettings()).codex;
-  if (!config.enabled || !config.url) throw new CodexBridgeError("Codex 引擎尚未启用或配置", 409);
+  if (!config.enabled || !config.url) throw new CodexBridgeError("Codex 引擎尚未启用或配置", 409, "codex_connection_required");
   const signature = createHash("sha256").update(JSON.stringify(config)).digest("hex");
-  if (options?.connectionIdentity && options.connectionIdentity !== signature) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409);
+  if (options?.connectionIdentity && options.connectionIdentity !== signature) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
   let connection = globals[key];
   if (!connection || connection.signature !== signature) globals[key] = connection = { signature, cookie: "", csrf: "", generation: 0 };
   const endpoint = config.url;
@@ -57,7 +57,7 @@ export async function codexBridgeRequest(path: string, body?: unknown, options?:
     } catch (error) {
       if (requestSignal?.aborted) throw requestSignal.reason ?? error;
       if (error instanceof Error && error.name === "AbortError") throw error;
-      throw new CodexBridgeError("Codex 执行端暂时不可达；Pi 引擎可继续使用", 502, undefined, undefined, true);
+      throw new CodexBridgeError("Codex 执行端暂时不可达；Pi 引擎可继续使用", 502, "codex_connection_required", undefined, true);
     }
   };
   const authenticate = async () => {
@@ -65,13 +65,13 @@ export async function codexBridgeRequest(path: string, body?: unknown, options?:
     if (!target.flight) target.flight = (async () => {
       {
         const response = await request("/api/login", { username: config.username, password: config.password }, undefined, null, 10000);
-        if (!response.ok) throw new CodexBridgeError("Codex 服务登录失败，请检查连接配置", response.status);
+        if (!response.ok) throw new CodexBridgeError("Codex 服务登录失败，请检查连接配置", response.status, "codex_connection_required");
         target.cookie = response.headers.getSetCookie().map(v => v.split(";", 1)[0]).join("; ");
       }
       const response = await request("/api/auth", undefined, undefined, null, 10000);
-      if (!response.ok) throw new CodexBridgeError("无法核对 Codex 服务认证", response.status);
+      if (!response.ok) throw new CodexBridgeError("无法核对 Codex 服务认证", response.status, "codex_connection_required");
       const auth = await response.json();
-      if (auth.authenticated === false) throw new CodexBridgeError("Codex 服务需要有效认证", 401);
+      if (auth.authenticated === false) throw new CodexBridgeError("Codex 服务需要有效认证", 401, "codex_connection_required");
       target.csrf = auth.csrf || "anonymous";
       target.generation++;
     })().finally(() => { target.flight = undefined; });

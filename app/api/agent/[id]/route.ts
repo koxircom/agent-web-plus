@@ -1,3 +1,4 @@
+import { noticeRecoveryFromError } from "@/lib/notice-recovery";
 import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
@@ -59,6 +60,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const uncertain = receipt && !["unknown", "rejected"].includes(receipt.status);
     const conflict = error instanceof Error && "code" in error && error.code === "codex_active_writer";
     return NextResponse.json({ error: message,
+      recovery: noticeRecoveryFromError(error),
       ...(conflict ? { reason: "codex_active_writer", dispatched: false } : {}),
       ...(commandType === "prompt" ? { code: uncertain ? "prompt_uncertain" : "prompt_rejected", accepted: Boolean(uncertain) } : {}),
     }, { status: conflict ? 409 : message === "Session not found" ? 404 : 500 });

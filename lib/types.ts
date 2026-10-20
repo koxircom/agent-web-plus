@@ -1,3 +1,5 @@
+import type { NoticeRecovery } from "./notice-recovery";
+
 // Types mirrored from pi-mono coding-agent session-manager
 
 export interface SessionHeader {
@@ -192,6 +194,7 @@ export type ExtensionUiRequest =
       method: "notify";
       message: string;
       notifyType?: "info" | "warning" | "error";
+      recovery?: NoticeRecovery;
     }
   | {
       type: "extension_ui_request";

@@ -1,4 +1,5 @@
 "use client";
+import { noticeRecoveryFromError, readNoticeRecovery, type NoticeRecovery } from "@/lib/notice-recovery";
 import { resolveExecutionEngine } from "@/lib/execution-engine-context";
 
 import type {SessionUsageSnapshot} from "@/lib/session-usage";
@@ -162,6 +163,7 @@ export type NoticeItem = {
   id: string;
   message: string;
   type: NoticeType;
+  recovery?: NoticeRecovery;
   exiting?: boolean;
 };
 
@@ -263,6 +265,7 @@ const SESSION_LEASE_RENEW_INTERVAL_MS = 30_000;
 const MODELS_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
+const ACTION_NOTICE_VISIBLE_MS = 30000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
 function createNoticeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -1270,6 +1273,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
   }, [closeEvents, maintainEventsConnected, session?.id]);
 
+  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType; recovery?: NoticeRecovery; error?: unknown }) => {
+    const message = notice.message.trim();
+    if (!message) return;
+    const item = { id: notice.id ?? createNoticeId(), message, type: notice.type ?? "info", recovery: noticeRecoveryFromError(notice.error) ?? readNoticeRecovery(notice.recovery) };
+    if (!admitNativeNotification(item)) return;
+    dispatchNotice({ type: "add", notice: item });
+  }, []);
+
+
+  const dismissNotice = useCallback((id: string) => dispatchNotice({ type: "remove", id }), []);
+
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
@@ -1285,8 +1299,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
     } catch (e) {
       console.error("Failed to send extension UI response:", e);
+      addNotice({ type: "error", message: "回答未能确认提交，请刷新会话状态后继续处理。", recovery: "session", error: e });
     }
-  }, []);
+  }, [addNotice]);
 
   const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string | string[]) => {
     const sid = sessionIdRef.current;
@@ -1302,14 +1317,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to send extension custom UI input:", e);
       return false;
     }
-  }, []);
-
-  const addNotice = useCallback((notice: { id?: string; message: string; type?: NoticeType }) => {
-    const message = notice.message.trim();
-    if (!message) return;
-    const item = { id: notice.id ?? createNoticeId(), message, type: notice.type ?? "info" };
-    if (!admitNativeNotification(item)) return;
-    dispatchNotice({ type: "add", notice: item });
   }, []);
 
   useEffect(() => {
@@ -1333,6 +1340,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           id: request.id,
           message: request.message,
           type: request.notifyType ?? "info",
+          recovery: request.recovery,
         });
         break;
       }
@@ -1834,12 +1842,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         break;
       case "prompt_error":
-        addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "Command failed" });
+        addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "操作未完成，请查看处理方式。" });
         break;
       case "extension_error":
         addNotice({
           type: "error",
-          message: (event.error as string | undefined) ?? "Extension command failed",
+          message: (event.error as string | undefined) ?? "扩展操作未完成，请查看处理方式。",
         });
         break;
       case "message_start":
@@ -2062,6 +2070,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
       case "extension_ui_closed":
+        dispatchNotice({ type: "remove", id: event.id as string });
         setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
     }
@@ -2221,7 +2230,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           ? prev
           : [...prev.slice(0, optimisticIndex), ...prev.slice(optimisticIndex + 1)];
       });
-      if (!cancelledBeforeDispatch) addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      if (!cancelledBeforeDispatch) addNotice({ type: "error", message: e instanceof Error ? e.message : String(e), error: e });
       restoreSubmission(message, images, composerDraftKey);
       optimisticUserMessageRef.current = null;
       // Rejection only describes this submission. Another tab or an event we
@@ -2266,7 +2275,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       if (!preparation.signal.aborted) {
         console.error("Failed to execute shell command:", e);
-        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e), error: e });
       }
       restoreSubmission(inputText, undefined, composerDraftKey);
     } finally {
@@ -2318,7 +2327,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Fork failed:", e);
-      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e), error: e });
     } finally {
       setForkingEntryId(null);
     }
@@ -2406,6 +2415,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({
         type: "error",
         message: `切换模型失败：${e instanceof Error ? e.message : String(e)}`,
+        error: e,
       });
       // A failed response can still follow a server-side write (for example, a
       // dropped connection), so let the session file settle the displayed model.
@@ -2514,7 +2524,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         addNotice({ type: "error", message: result.error });
       } else if (!result.action) {
         // A command that opens a panel says nothing: the panel is the answer.
-        addNotice({ type: "success", message: result.message ?? "Command completed" });
+        addNotice({ type: "success", message: result.message ?? "操作已完成" });
       }
       return result;
     };
@@ -2801,7 +2811,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       clearQueuedMessagesUi: () => setQueuedMessages({ steering: [], followUp: [] }),
       onError: (message, e) => {
         console.error("Failed to recall queued messages:", e);
-        addNotice({ type: "error", message });
+        addNotice({ type: "error", message, error: e });
       },
     });
   }, [addNotice, composerDraftKey, restoreSubmission]);
@@ -3233,7 +3243,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Oldest visible notice changed; restart the countdown
     if (noticeOldestIdRef.current !== oldest.id) {
       noticeOldestIdRef.current = oldest.id;
-      noticeRemainingMsRef.current = NOTICE_VISIBLE_MS;
+      noticeRemainingMsRef.current = oldest.type === "error" || oldest.type === "warning" || oldest.recovery ? ACTION_NOTICE_VISIBLE_MS : NOTICE_VISIBLE_MS;
     }
     if (noticeState.visible.some((notice) => notice.id === pausedNoticeId)) return;
     noticeTimerStartedAtRef.current = Date.now();
@@ -3299,7 +3309,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    setNoticePaused: setPausedNoticeId,
+    setNoticePaused: setPausedNoticeId, dismissNotice,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
     scrollToBottom, scrollUserMsgToTop, scrollToMessage,
     retryLoadSession,

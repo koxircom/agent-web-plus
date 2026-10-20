@@ -1,3 +1,4 @@
+import { readNoticeRecovery, type NoticeRecovery } from "./notice-recovery";
 // Client-side helper for POST /api/agent/[id].
 //
 // Every /api/agent/[id] route returns one of:
@@ -22,6 +23,7 @@ export class AgentCommandError extends Error {
     public readonly status: number,
     public readonly code?: string,
     public readonly accepted?: boolean,
+    public readonly recovery?: NoticeRecovery,
   ) {
     super(message);
     this.name = "AgentCommandError";
@@ -78,6 +80,7 @@ export async function sendAgentCommand<T = unknown>(
     error?: string;
     code?: string;
     accepted?: boolean;
+    recovery?: unknown;
     receipt?: { status: string; inFlight?: boolean };
   };
   if (!res.ok || body.error) {
@@ -86,6 +89,7 @@ export async function sendAgentCommand<T = unknown>(
       res.status,
       body.code,
       body.accepted,
+      readNoticeRecovery(body.recovery),
     );
   }
   if (requestId && body.success !== true) throw new Error("发送响应未确认");
