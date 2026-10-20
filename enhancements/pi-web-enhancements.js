@@ -19571,7 +19571,6 @@
     "mp4", "m4v", "mov", "webm", "mkv", "avi", "flv", "wmv", "3gp", "ogv", "mpeg", "mpg", "m2ts", "mts"
   ]);
 
-  const COMPOSER_TEXT_SIZE_LIMIT = 64 * 1024; // 64KB 文本限制，优先内存暂存零磁盘占用
   const SESSION_UPLOADS_KEY = "pi-enh-session-uploads";
 
   let pendingComposerAttachments = [];
@@ -19953,7 +19952,7 @@
   }
   window.__PI_ENH_BIND_COMPOSER_DRAFT_FILES__ = bindComposerDraftFiles;
 
-  async function uploadComposerFile(file, cwd, safeUploadName) {
+  async function uploadComposerFile(file, cwd, safeUploadName, sessionId) {
     if (!cwd) throw new Error("未检测到当前有效的工作区目录");
     const encodedPath = encodePathForApi(cwd);
     const formData = new FormData();
@@ -19965,7 +19964,9 @@
     }
     formData.append("files", uploadItem, safeUploadName || file.name || "upload.bin");
 
-    let res = await fetch(`/api/files/${encodedPath}?type=upload&conflict=overwrite`, {
+    const params = new URLSearchParams({ type: "upload", conflict: "overwrite" });
+    if (sessionId) params.set("sessionId", sessionId);
+    const res = await fetch(`/api/files/${encodedPath}?${params}`, {
       method: "POST",
       body: formData,
     });
@@ -19981,7 +19982,12 @@
       }
       throw new Error(errMsg);
     }
-    return await res.json();
+    const result = await res.json();
+    const name = safeUploadName || file.name || "upload.bin";
+    if (result.errors?.length || !Array.isArray(result.uploaded) || !result.uploaded.includes(name)) {
+      throw new Error(result.errors?.[0]?.error || "文件未确认上传成功，请重新添加；原文件内容未发送");
+    }
+    return result;
   }
 
   const INLINE_VIDEO_EXTENSIONS = new Set(["mp4", "m4v", "webm", "mov", "ogv"]);
@@ -20047,7 +20053,10 @@
       fullPath = String(cwd).replace(/[\\/]+$/, "") + sep + relPath.replace(/^\/+/, "");
     }
     const encoded = encodePathForApi(fullPath);
-    return `/api/files/${encoded}?type=${type}`;
+    const params = new URLSearchParams({ type });
+    const sessionId = att.sessionId && !att.sessionId.startsWith("draft-") ? att.sessionId : getCurrentSessionId();
+    if (sessionId) params.set("sessionId", sessionId);
+    return `/api/files/${encoded}?${params}`;
   }
 
   let activeVideoPreviewBackdrop = null;
@@ -20881,108 +20890,70 @@
 
     for (const file of files) {
       if (!isCurrent()) return;
-      const isText = isTextFile(file) && (typeof file.size !== "number" || file.size <= COMPOSER_TEXT_SIZE_LIMIT);
+      // 所有上传文件（含 TXT、日志和代码）使用同一文件通道。预览与发送均不将全文展开进正文。
+      showToast(`正在上传附件: ${file.name}...`, null, 2400);
+      try {
+        const cwd = await getEffectiveComposerCwd();
+        if (!isCurrent()) return;
+        const activeSessionId = getCurrentSessionId();
+        const sessionId = activeSessionId || ("draft-" + Math.random().toString(36).slice(2, 10));
+        const prepared = await prepareComposerUploadDirectory(cwd, sessionId);
+        if (!isCurrent()) return;
+        const originalName = String(file.name || "upload.bin").replace(/[\\/\0]/g, "_");
+        const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        const safeUploadName = `.pi-upload-${uniqueId}-${originalName}`;
 
-      if (isText) {
-        // 纯文本/代码文件：保存在内存附件卡片中，零磁盘残留！
+        let uploadTargetDir = prepared.uploadDir;
+        const sep = String(cwd).includes("\\") ? "\\" : "/";
+        let serverRelativePath = `${prepared.relativeDir}/${safeUploadName}`;
+        let serverAbsPath = String(prepared.uploadDir).replace(/[\\/]+$/, "") + sep + safeUploadName;
+
         try {
-          let textContent = "";
-          if (typeof file.text === "function") {
-            textContent = await file.text();
-          } else if (typeof FileReader !== "undefined") {
-            textContent = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(String(reader.result || ""));
-              reader.onerror = reject;
-              reader.readAsText(file);
-            });
+          await uploadComposerFile(file, uploadTargetDir, safeUploadName, activeSessionId);
+        } catch (uploadErr) {
+          if (String(uploadErr.message || "").includes("Upload directory not found") || String(uploadErr.message || "").includes("404")) {
+            uploadTargetDir = cwd;
+            serverRelativePath = safeUploadName;
+            serverAbsPath = String(cwd).replace(/[\\/]+$/, "") + sep + safeUploadName;
+            await uploadComposerFile(file, uploadTargetDir, safeUploadName, activeSessionId);
+          } else {
+            throw uploadErr;
           }
-          if (!isCurrent()) return;
-
-          const attId = "att-" + Math.random().toString(36).slice(2, 9);
-          pendingComposerAttachments.push({
-            id: attId,
-            name: file.name, // 原始未转义文件名！
-            size: file.size,
-            type: file.type,
-            isText: true,
-            textContent: textContent,
-            uploaded: false,
-          });
-
-          notifyComposerSubmissionStateChange();
-          syncComposerAttachmentBar(textarea);
-          showToast(`已添加附件: ${file.name}`, null, 2400);
-        } catch (err) {
-          if (!isCurrent()) return;
-          console.error("[Composer File Paste] 读取文本失败:", err);
-          showToast(`读取文件失败: ${file.name}`, null, 4000);
         }
-      } else {
-        // 二进制/文档/大文件：先创建会话隔离目录，再经 Agent Web Plus 原生上传接口写入。
-        showToast(`正在上传附件: ${file.name}...`, null, 2400);
-        try {
-          const cwd = await getEffectiveComposerCwd();
-          if (!isCurrent()) return;
-          const sessionId = getCurrentSessionId() || ("draft-" + Math.random().toString(36).slice(2, 10));
-          const prepared = await prepareComposerUploadDirectory(cwd, sessionId);
-          if (!isCurrent()) return;
-          const originalName = String(file.name || "upload.bin").replace(/[\\/\0]/g, "_");
-          const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-          const safeUploadName = `.pi-upload-${uniqueId}-${originalName}`;
 
-          let uploadTargetDir = prepared.uploadDir;
-          const sep = String(cwd).includes("\\") ? "\\" : "/";
-          let serverRelativePath = `${prepared.relativeDir}/${safeUploadName}`;
-          let serverAbsPath = String(prepared.uploadDir).replace(/[\\/]+$/, "") + sep + safeUploadName;
-
-          try {
-            await uploadComposerFile(file, uploadTargetDir, safeUploadName);
-          } catch (uploadErr) {
-            if (String(uploadErr.message || "").includes("Upload directory not found") || String(uploadErr.message || "").includes("404")) {
-              uploadTargetDir = cwd;
-              serverRelativePath = safeUploadName;
-              serverAbsPath = String(cwd).replace(/[\\/]+$/, "") + sep + safeUploadName;
-              await uploadComposerFile(file, uploadTargetDir, safeUploadName);
-            } else {
-              throw uploadErr;
-            }
-          }
-
-          if (!isCurrent()) {
-            await deleteLocalTempFiles([serverAbsPath]);
-            return;
-          }
-          recordSessionUploadedFile(sessionId, serverAbsPath);
-
-          let previewUrl = "";
-          if (isVideoFile(file.name, file.type) && typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && typeof Blob !== "undefined" && file instanceof Blob) {
-            try { previewUrl = URL.createObjectURL(file); } catch (e) {}
-          }
-
-          const attId = "att-" + Math.random().toString(36).slice(2, 9);
-          pendingComposerAttachments.push({
-            id: attId,
-            name: file.name, // 原始真实未转义文件名
-            size: file.size,
-            type: file.type || getMimeTypeFromExt(file.name),
-            isText: false,
-            isVideo: isVideoFile(file.name, file.type),
-            previewUrl,
-            sessionId,
-            serverRelativePath,
-            serverAbsPath,
-            uploaded: true,
-          });
-
-          notifyComposerSubmissionStateChange();
-          syncComposerAttachmentBar(textarea);
-          showToast(`已添加附件: ${file.name}`, null, 3000);
-        } catch (err) {
-          if (!isCurrent()) return;
-          console.error("[Composer File Paste] 上传失败:", err);
-          showToast(`上传失败: ${err.message || file.name}`, null, 4500);
+        if (!isCurrent()) {
+          await deleteLocalTempFiles([serverAbsPath]);
+          return;
         }
+        recordSessionUploadedFile(sessionId, serverAbsPath);
+
+        let previewUrl = "";
+        if (isVideoFile(file.name, file.type) && typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && typeof Blob !== "undefined" && file instanceof Blob) {
+          try { previewUrl = URL.createObjectURL(file); } catch (e) {}
+        }
+
+        const attId = "att-" + Math.random().toString(36).slice(2, 9);
+        pendingComposerAttachments.push({
+          id: attId,
+          name: file.name, // 原始真实未转义文件名
+          size: file.size,
+          type: file.type || getMimeTypeFromExt(file.name),
+          isText: false,
+          isVideo: isVideoFile(file.name, file.type),
+          previewUrl,
+          sessionId,
+          serverRelativePath,
+          serverAbsPath,
+          uploaded: true,
+        });
+
+        notifyComposerSubmissionStateChange();
+        syncComposerAttachmentBar(textarea);
+        showToast(`已添加附件: ${file.name}`, null, 3000);
+      } catch (err) {
+        if (!isCurrent()) return;
+        console.error("[Composer File Paste] 上传失败:", err);
+        showToast(`上传失败: ${err.message || file.name}`, null, 4500);
       }
     }
   }
