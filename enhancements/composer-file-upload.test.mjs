@@ -8,21 +8,23 @@ const source = readFileSync(new URL('./modules/05-composer-and-input-workflow.js
 const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 const workflow = extract('  async function uploadComposerFile', '  const INLINE_VIDEO_EXTENSIONS')
   + extract('  function encodePathForApi', '  function getEffectiveComposerCwdSyncOrEmpty')
+  + extract('  async function prepareComposerUploadDirectory', '  async function cleanupSessionUploadedFiles')
   + extract('  let composerFileProcessingGeneration', '  activeComposerPasteTextarea = null;')
   + extract('  function appendComposerAttachmentsToSubmission', '  // Decode the existing submission')
   + extract('  function resolveAttachmentApiUrl', '  let activeVideoPreviewBackdrop')
   + extract('  function openAttachmentPreview', '  function downloadAttachmentFile');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-function harness(sessionId, response = {}) {
+function harness(sessionId, response = {}, engine = sessionId?.startsWith('codex:') ? 'codex' : 'pi') {
   const uploads = [], notices = [], files = [], cleaned = [], previews = [];
   const context = vm.createContext({
     window: { open: url => previews.push(url) },
     Blob, FormData, URLSearchParams, console: { error() {} },
     activeComposerPasteTextarea: null, pendingComposerAttachments: [],
     isPluginEnabled: () => true, getCurrentSessionId: () => sessionId,
+    getComposerExecutionEngineHint: () => engine,
     getEffectiveComposerCwd: async () => '/workspace',
-    prepareComposerUploadDirectory: async (_cwd, sid) => ({ uploadDir: '/workspace/.pi-uploads/' + sid, relativeDir: '.pi-uploads/' + sid }),
     fetch: async (url, request) => {
+      if(url.startsWith('http://127.0.0.1:30149/'))return {ok:false,status:503};
       const file = request.body.get('files');
       uploads.push({ url: new URL(url, 'http://localhost'), file, bytes: Buffer.from(await file.arrayBuffer()) });
       return { ok: true, status: response.status ?? 200, json: async () => response.body ?? { uploaded: [file.name], errors: [] } };
@@ -93,4 +95,27 @@ test('a new draft omits the fake draft id from engine routing and a disabled fea
   h.context.isPluginEnabled = () => false;
   await h.context.processComposerFiles([new File(['原始文件'], 'disabled.txt')], {});
   assert.equal(h.uploads.length, 1);
+});
+
+test('Codex uses its existing workspace upload root without raw session IDs or a browser-local bridge', async () => {
+  const h=harness('codex:01901234-5678-7000-8000-000000000001');
+  const prepared=await h.context.prepareComposerUploadDirectory('/workspace','codex:01901234-5678-7000-8000-000000000001');
+  assert.equal(prepared.uploadDir,'/workspace');
+  assert.equal(prepared.relativeDir,'');
+  await h.context.processComposerFiles([new File(['原始附件'.repeat(6000)],'文档.txt')],{});
+  const url=h.uploads[0].url;
+  assert.equal(url.pathname,'/api/files/workspace');
+  assert.equal(url.searchParams.get('sessionId'),'codex:01901234-5678-7000-8000-000000000001');
+  const att=h.context.pendingComposerAttachments[0];
+  assert.match(att.serverRelativePath,/^\.pi-upload-/);
+  assert.equal(att.serverAbsPath,'/workspace/'+att.serverRelativePath);
+  assert.equal(att.isText,false);
+});
+
+test('a new Codex composer uses its engine hint before a session exists', async () => {
+  const h=harness(null,{},'codex');
+  await h.context.processComposerFiles([new File(['原始文件'],'new.txt')],{});
+  assert.equal(h.uploads[0].url.pathname,'/api/files/workspace');
+  assert.equal(h.uploads[0].url.searchParams.has('sessionId'),false);
+  assert.match(h.context.pendingComposerAttachments[0].serverRelativePath,/^\.pi-upload-/);
 });

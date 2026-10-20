@@ -19889,9 +19889,12 @@
     } catch (e) {}
   }
 
-  async function prepareComposerUploadDirectory(cwd, sessionId) {
+  async function prepareComposerUploadDirectory(cwd, sessionId, executionEngine) {
     if (!cwd) throw new Error("未检测到当前有效的工作区目录");
     if (!sessionId) throw new Error("请先创建会话，再添加文档或压缩包附件");
+    // Codex 的文件通道写入已存在的项目目录；唯一文件名由上传流程生成。
+    // 会话 ID 是路由身份，不能把 codex: 前缀当成文件夹名，也不依赖浏览器本机桥接建目录。
+    if (executionEngine === "codex" || sessionId.startsWith("codex:")) return { uploadDir: cwd, relativeDir: "" };
     try {
       const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
         method: "POST",
@@ -20897,7 +20900,7 @@
         if (!isCurrent()) return;
         const activeSessionId = getCurrentSessionId();
         const sessionId = activeSessionId || ("draft-" + Math.random().toString(36).slice(2, 10));
-        const prepared = await prepareComposerUploadDirectory(cwd, sessionId);
+        const prepared = await prepareComposerUploadDirectory(cwd, sessionId, getComposerExecutionEngineHint(activeSessionId));
         if (!isCurrent()) return;
         const originalName = String(file.name || "upload.bin").replace(/[\\/\0]/g, "_");
         const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -20905,7 +20908,7 @@
 
         let uploadTargetDir = prepared.uploadDir;
         const sep = String(cwd).includes("\\") ? "\\" : "/";
-        let serverRelativePath = `${prepared.relativeDir}/${safeUploadName}`;
+        let serverRelativePath = prepared.relativeDir ? `${prepared.relativeDir}/${safeUploadName}` : safeUploadName;
         let serverAbsPath = String(prepared.uploadDir).replace(/[\\/]+$/, "") + sep + safeUploadName;
 
         try {
