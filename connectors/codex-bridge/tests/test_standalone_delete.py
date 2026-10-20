@@ -111,6 +111,39 @@ class DeleteTests(unittest.TestCase):
             self.assertEqual(b.message_action(ID, {'action': 'delete'}), {'ok': True})
             self.assertEqual(backend.calls[-1], ('thread/delete', {'threadId': ID}))
 
+    def test_delete_does_not_hold_bridge_lock_while_waiting_for_a_sender(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, _ = self.fixture(root)
+            actions, waiting = threading.RLock(), threading.Event()
+            class Actions:
+                def __enter__(self):
+                    waiting.set()
+                    actions.acquire()
+                def __exit__(self, *_):
+                    actions.release()
+            b.live[ID] = SimpleNamespace(actions=Actions(), condition=threading.Condition(),
+                state={}, submissions={}, closed=False, queue_event=threading.Event())
+            failures = []
+            def run():
+                try:
+                    b.delete_thread(ID)
+                except Exception as error:
+                    failures.append(error)
+            actions.acquire()
+            worker = threading.Thread(target=run, daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(waiting.wait(2))
+                acquired = b.lock.acquire(timeout=.1)
+                if acquired:
+                    b.lock.release()
+                self.assertTrue(acquired, 'sender must be able to finish its native queue read')
+            finally:
+                actions.release()
+                worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(failures, [])
+
     def test_native_unknown_receipt_and_unsupported_keep_all_records_without_retry(self):
         with tempfile.TemporaryDirectory() as root:
             for error in (TimeoutError('lost receipt'), SideChatError('unsupported')):
