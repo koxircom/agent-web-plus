@@ -10,11 +10,13 @@ Agent Web Plus 原名 **Pi Web Plus**。现在它支持两种执行引擎：Pi A
 
 ## 视频介绍
 
-[![Agent Web Plus 双引擎升级介绍](docs/media/agent-web-plus-introduction.jpg)](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.2/Agent-Web-Plus-Introduction-1080p.mp4)
+点击下方播放器，即可在当前页面观看完整介绍，无需下载。
 
-**[下载介绍视频（MP4 · 1080p · 2分03秒 · 约8.8MB）](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.2/Agent-Web-Plus-Introduction-1080p.mp4)**
+https://github.com/user-attachments/assets/e9a60ee1-a29c-447c-8a8f-9ac49dc8a0ca
 
-介绍 Pi Web Plus 更名、Pi Agent / Codex Agent 切换、电脑与手机接续会话，以及 Codex 的连接配置。点击封面或链接下载观看，包含中文解说、中文字幕和真实界面演示。
+介绍 Pi Web Plus 更名、Pi Agent / Codex Agent 切换、电脑与手机接续会话，以及 Codex 的连接配置。包含中文解说、中文字幕和真实界面演示，时长 2分03秒。
+
+[可选：保存 MP4 到手机（1080p · 约8.8MB）](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.2/Agent-Web-Plus-Introduction-1080p.mp4)
 
 ## 在 Pi Agent 与 Codex Agent 之间切换
 

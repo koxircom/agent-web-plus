@@ -6,6 +6,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -332,6 +333,73 @@ class MediaPublisherTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, '脱敏扫描未通过'):
                 self.invoke(fake)
             self.assertEqual(fake.commands, [])
+
+
+class ReadmeVideoPublisherTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        root = self.base / 'source'; root.mkdir()
+        (root / 'README.md').write_text('视频介绍')
+        self.video = self.base / 'introduction.mp4'
+        self.video.write_bytes(b'\x00\x00\x00\x18ftypisom' + b'\x00' * 20)
+        self.args = SimpleNamespace(root=root, asset=[self.video], target='a'*40,
+            tag=None, notes_file=None, append_media_to=None, finalize_draft=None, apply=True)
+        self.uploads = []
+        self.url = 'https://github.com/user-attachments/assets/00000000-0000-4000-8000-000000000001'
+        def api(endpoint):
+            return {'id':123} if endpoint == 'repos/'+publisher.REPO else {'object':{'sha':self.args.target}}
+        def upload(*args):
+            if 'markdown' in args:
+                return '<video src="https://private-user-images.githubusercontent.com/1/00000000-0000-4000-8000-000000000001.mp4?jwt=example"></video>'
+            self.uploads.append(args)
+            self.assertIn('https://uploads.github.com/user-attachments/assets?', args[5])
+            return json.dumps({'url':self.url})
+        def download(command, **kwargs):
+            Path(command[command.index('--output')+1]).write_bytes(self.video.read_bytes())
+            return SimpleNamespace(returncode=0)
+        for patcher in (patch.object(publisher,'authentication',return_value={'account':'koxircom'}),
+                        patch.object(publisher,'api',side_effect=api), patch.object(publisher,'gh',side_effect=upload),
+                        patch.object(publisher.subprocess,'run',side_effect=download),
+                        patch.object(publisher.Path,'home',return_value=self.base/'home')):
+            patcher.start();self.addCleanup(patcher.stop)
+
+    def test_preflight_has_no_upload(self):
+        self.args.apply=False;receipt={}
+        publisher.publish_readme_video(self.args,receipt)
+        self.assertEqual(receipt['status'],'readme-video-preflight-passed')
+        self.assertEqual(self.uploads,[])
+
+    def test_verified_upload_reuses_receipt_without_creating_issue_or_release(self):
+        for expected in (False,True):
+            receipt={};publisher.publish_readme_video(self.args,receipt)
+            self.assertEqual(receipt['url'],self.url)
+            self.assertEqual(receipt['reused'],expected)
+        self.assertEqual(len(self.uploads),1)
+
+    def test_sensitive_video_is_rejected_before_upload(self):
+        self.video.write_bytes(self.video.read_bytes()+('sk-'+'Z'*30).encode())
+        with self.assertRaisesRegex(ValueError,'脱敏扫描失败'):
+            publisher.publish_readme_video(self.args,{})
+        self.assertEqual(self.uploads,[])
+
+    def test_uploaded_receipt_resumes_rendered_media_verification_without_reupload(self):
+        directory=self.base/'home/.local/state/agent-web-publisher/readme-videos'
+        directory.mkdir(parents=True)
+        (directory/(publisher.digest(self.video)+'.json')).write_text(json.dumps({'status':'uploaded-awaiting-verification','url':self.url}))
+        receipt={};publisher.publish_readme_video(self.args,receipt)
+        self.assertEqual(receipt['status'],'readme-video-verified')
+        self.assertTrue(receipt['reused'])
+        self.assertEqual(self.uploads,[])
+
+    def test_uncertain_upload_is_not_repeated(self):
+        with patch.object(publisher,'gh',side_effect=ValueError('unknown')) as transport:
+            with self.assertRaisesRegex(ValueError,'unknown'):
+                publisher.publish_readme_video(self.args,{})
+            with self.assertRaisesRegex(ValueError,'禁止重复上传'):
+                publisher.publish_readme_video(self.args,{})
+            self.assertEqual(transport.call_count,1)
 
 
 if __name__ == '__main__':

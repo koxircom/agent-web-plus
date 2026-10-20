@@ -78,6 +78,22 @@ python3 scripts/publish-release.py \
 
 发布本身不会升级运行实例。实例升级仍须明确目标及授权，保留原会话、置顶、设置、用量账本和实例配置，并按维护流程切换。不得把 GitHub 发布成功当作运行实例升级完成。
 
+## README 中直接播放介绍视频
+
+Release 的 MP4 附件用于可选下载。README 的播放器使用 GitHub 视频附件地址，独立放在一个段落中；不要把封面链接到 Release 下载地址充当在线播放。
+
+通过同一容器发布入口执行：
+
+```bash
+python3 scripts/publish-release.py --readme-video \
+  --root /workspace/source --target "$MAIN_COMMIT_SHA" \
+  --asset /workspace/artifacts/introduction.mp4
+```
+
+先预检，再增加 `--apply`。此模式要求当前 main 的完整提交、一个不超过 10 MB 的 MP4，复用容器已有认证；扫描源码和实际视频后上传，不创建 issue、PR 或 Release。回读 GitHub 渲染的播放资源并核对 SHA256，只公开永久附件地址，不保存临时播放凭据。
+
+回执保存在发布容器用户的 `.local/state/agent-web-publisher/readme-videos/`。已得到附件地址但核验未完成时，同一文件再次执行只恢复读取核验；上传结果不明时禁止重新上传。将返回地址提交到 README 后，使用未登录的手机尺寸浏览器确认播放器可播放、进度前进且不触发下载。
+
 旧五步流程保存在 [历史发布清单](archive/release-checklist-before-container-gate.md)，只供追溯。
 
 

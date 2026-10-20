@@ -9,6 +9,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import fcntl
+from urllib.parse import urlencode, urlsplit
+from html.parser import HTMLParser
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location('publication', Path(__file__).with_name('check-publication.py'))
@@ -79,6 +82,87 @@ def release_for_tag(tag):
         if len(rows) < 100:
             return None
     raise ValueError('Release 查询超过范围，已停止；请核查指定标签')
+
+
+def publish_readme_video(args, receipt):
+    """Upload a scanned native GitHub video, without creating an issue or Release."""
+    if (args.tag or args.notes_file or args.append_media_to or args.finalize_draft
+            or len(args.asset) != 1 or not re.fullmatch(r'[0-9a-f]{40}', args.target or '')):
+        raise ValueError('README 视频需指定一个 MP4 和当前 main 完整提交，不接受 Release 参数')
+    source = args.asset[0]
+    if source.is_symlink() or not source.is_file() or source.suffix.lower() != '.mp4' or not 0 < source.stat().st_size <= 10_000_000:
+        raise ValueError('README 视频必须为不超过 10 MB 的普通 MP4 文件')
+    with tempfile.TemporaryDirectory(prefix='agent-web-readme-video-') as temporary:
+        stage = Path(temporary)
+        video = stage / 'introduction.mp4'
+        shutil.copyfile(source, video)
+        receipt['scans'] = [SCANNER.inspect(args.root.resolve()), SCANNER.inspect_artifact(video)]
+        if any(scan['status'] != 'passed' for scan in receipt['scans']):
+            raise ValueError('源码或视频脱敏扫描失败，禁止上传')
+        receipt.update(authentication())
+        repo = api('repos/' + REPO)
+        head = api(f'repos/{REPO}/git/ref/heads/main')['object']['sha']
+        if head != args.target:
+            raise ValueError('远程 main 已变化，请重新核对介绍页')
+        fingerprint = digest(video)
+        receipt.update(videoSha256=fingerprint, target=head)
+        if not args.apply:
+            receipt['status'] = 'readme-video-preflight-passed'
+            return
+        # One durable operation per reviewed file. Unknown uploads are not replayed.
+        directory = Path.home() / '.local/state/agent-web-publisher/readme-videos'
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with (directory / 'upload.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            ledger = directory / (fingerprint + '.json')
+            prior = None
+            if ledger.exists():
+                prior = json.loads(ledger.read_text())
+                if prior.get('status') not in ('verified', 'uploaded-awaiting-verification'):
+                    raise ValueError('已有视频上传结果待核对，禁止重复上传')
+                if prior['status'] == 'verified':
+                    receipt.update(status='readme-video-verified', url=prior['url'], reused=True)
+                    return
+            def save(value):
+                temporary = ledger.with_suffix('.tmp')
+                temporary.write_text(json.dumps(value))
+                temporary.chmod(0o600)
+                temporary.replace(ledger)
+            if prior:
+                url = prior['url']
+            else:
+                save({'status': 'uploading', 'sha256': fingerprint})
+                # Same endpoint and wire format as github/cli internal/attachments.
+                query = urlencode({'name': source.name, 'content_type': 'video/mp4', 'repository_id': repo['id']})
+                result = json.loads(gh('api', '--hostname', 'github.com', '--method', 'POST',
+                    'https://uploads.github.com/user-attachments/assets?' + query,
+                    '-H', 'Content-Type: application/octet-stream', '--input', str(video)))
+                url = result.get('url', '')
+            if not re.fullmatch(r'https://github\.com/user-attachments/assets/[0-9a-f-]{36}', url):
+                raise ValueError('视频上传返回了非预期地址，请核查上传记录')
+            save({'status': 'uploaded-awaiting-verification', 'url': url, 'sha256': fingerprint})
+            # GitHub's renderer issues a short-lived playback URL. An attachment
+            # not yet referenced in a README can return 404 at its canonical URL.
+            # Do not persist or print the scoped URL; publish only the canonical one.
+            class VideoSource(HTMLParser):
+                src = None
+                def handle_starttag(self, tag, attrs):
+                    if tag == 'video':
+                        self.src = dict(attrs).get('src')
+            parser = VideoSource()
+            parser.feed(gh('api', '--hostname', 'github.com', 'markdown', '-f', 'mode=gfm',
+                           '-f', 'context=' + REPO, '-f', 'text=' + url))
+            media = urlsplit(parser.src or '')
+            if (media.scheme != 'https' or media.hostname not in ('private-user-images.githubusercontent.com', 'user-images.githubusercontent.com')
+                    or url.rsplit('/', 1)[1] not in media.path or not media.path.endswith('.mp4')):
+                raise ValueError('GitHub 未生成预期的视频播放器，已保留上传记录')
+            downloaded = stage / 'downloaded.mp4'
+            download = subprocess.run(['curl', '--fail', '--location', '--silent', '--show-error',
+                '--max-time', '180', '--output', str(downloaded), parser.src], capture_output=True, timeout=190)
+            if download.returncode or digest(downloaded) != fingerprint:
+                raise ValueError('视频回读校验失败，已保留上传地址，禁止重新上传')
+            save({'status': 'verified', 'url': url, 'sha256': fingerprint})
+            receipt.update(status='readme-video-verified', url=url, reused=bool(prior))
 
 
 def append_media(args, receipt, stage, existing):
@@ -247,6 +331,7 @@ def main():
     parser.add_argument('--finalize-draft', type=int, metavar='RELEASE_ID', help='显式核验指定自有草稿并公开；不创建草稿或上传附件')
     parser.add_argument('--append-media-to', type=int, metavar='RELEASE_ID', help='向指定自有公开 Release 追加一个扫描通过的 MP4；不覆盖已有附件')
     parser.add_argument('--check-auth', action='store_true')
+    parser.add_argument('--readme-video', action='store_true', help='上传扫描通过的 GitHub README 原生播放器视频；不创建 issue 或 Release')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
     receipt = {'repository': REPO, 'tag': args.tag, 'apply': args.apply, 'status': 'failed', 'draftCreated': False}
@@ -255,6 +340,8 @@ def main():
             if args.apply:
                 raise ValueError('认证预检不能同时指定 --apply')
             receipt.update(authentication(), status='authentication-verified')
+        elif args.readme_video:
+            publish_readme_video(args, receipt)
         else:
             publish(args, receipt)
     except json.JSONDecodeError:
