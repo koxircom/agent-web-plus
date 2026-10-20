@@ -14,7 +14,7 @@ from pathlib import Path
 SPEC = importlib.util.spec_from_file_location('publication', Path(__file__).with_name('check-publication.py'))
 SCANNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SCANNER)
-REPO = 'koxircom/pi-web-plus'
+REPO = 'koxircom/agent-web-plus'
 
 
 def gh(*args, allow_missing=False):

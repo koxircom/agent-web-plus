@@ -14,7 +14,7 @@ export const BRAND_NAME = "Agent Web Plus";
 export const BRAND_SHORT_NAME = "Agent Web Plus";
 export const BRANDING_PREFERENCE_KEY = "pi-web-plus-branding";
 export const BRANDING_PREFERENCE_CHANGE_EVENT = "pi-web-plus-branding-change";
-export const BRAND_GITHUB_URL = "https://github.com/koxircom/pi-web-plus";
+export const BRAND_GITHUB_URL = "https://github.com/koxircom/agent-web-plus";
 export const CODEX_BRAND_SYMBOL_PATH = "M51 66 79 94 51 122M96 122h37";
 export const CODEX_CLI_GITHUB_URL = "https://github.com/openai/codex";
 

@@ -15,13 +15,13 @@
   "piWebEdition": "koxir-standalone",
   "standalone": true,
   "description": "Agent Web Plus — Pi Agent 与 Codex 共用的浏览器工作台",
-  "homepage": "https://github.com/koxircom/pi-web-plus#readme",
+  "homepage": "https://github.com/koxircom/agent-web-plus#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/koxircom/pi-web-plus.git"
+    "url": "git+https://github.com/koxircom/agent-web-plus.git"
   },
   "bugs": {
-    "url": "https://github.com/koxircom/pi-web-plus/issues"
+    "url": "https://github.com/koxircom/agent-web-plus/issues"
   },
   "license": "MIT",
   "engines": {

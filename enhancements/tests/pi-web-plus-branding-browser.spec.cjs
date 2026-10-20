@@ -114,9 +114,9 @@ test("public SVG brand assets and repository metadata satisfy Pi Web Plus contra
   assert.equal(pkg.version, "1.1.0");
   assert.equal(pkg.piWebEdition, "koxir-standalone");
   assert.equal(pkg.standalone, true);
-  assert.equal(pkg.homepage, "https://github.com/koxircom/pi-web-plus#readme");
-  assert.equal(pkg.repository?.url, "git+https://github.com/koxircom/pi-web-plus.git");
-  assert.equal(pkg.bugs?.url, "https://github.com/koxircom/pi-web-plus/issues");
+  assert.equal(pkg.homepage, "https://github.com/koxircom/agent-web-plus#readme");
+  assert.equal(pkg.repository?.url, "git+https://github.com/koxircom/agent-web-plus.git");
+  assert.equal(pkg.bugs?.url, "https://github.com/koxircom/agent-web-plus/issues");
 });
 
 async function verifyBundleInBrowser(chromium, bundleCode, label) {

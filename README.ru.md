@@ -6,7 +6,7 @@
 
 Автономный локальный браузерный интерфейс для [pi coding agent](https://github.com/earendil-works/pi) (`@earendil-works/pi-coding-agent`). Agent Web Plus использует те же локальные настройки и файлы сессий, что и pi, поэтому в браузере можно находить и продолжать диалоги, запускать агента, настраивать модели и ресурсы, а также просматривать файлы проекта.
 
-> **Примечание**: внешние статические демо-версии upstream отражают старую базовую ветку, а не **Agent Web Plus** (включающую встроенный пакет расширений и распространяемую через [`koxircom/pi-web-plus`](https://github.com/koxircom/pi-web-plus)).
+> **Примечание**: внешние статические демо-версии upstream отражают старую базовую ветку, а не **Agent Web Plus** (включающую встроенный пакет расширений и распространяемую через [`koxircom/agent-web-plus`](https://github.com/koxircom/agent-web-plus)).
 
 ![Pi Web показывает сессию pi со структурированным Markdown, вызовами инструментов и навигацией по проекту](docs/screenshot2.png)
 
@@ -21,23 +21,23 @@
 
 ## Быстрый старт
 
-Для работы Agent Web Plus требуется Node.js 22.19.0 или новее (`node >=22.19`). Проверьте версию командой `node --version`, затем установите официальный пакет `.tgz` из [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) и запустите `pi-web`:
+Для работы Agent Web Plus требуется Node.js 22.19.0 или новее (`node >=22.19`). Проверьте версию командой `node --version`, затем установите официальный пакет `.tgz` из [`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) и запустите `pi-web`:
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 pi-web
 ```
 
-> **Важно**: для сохранения совместимости имя пакета в `package.json` остаётся `@agegr/pi-web`, однако Agent Web Plus распространяется исключительно через `.tgz`-архивы в [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases). **Не загружайте и не устанавливайте `@agegr/pi-web` из публичного реестра npm**, чтобы случайно не установить внешний устаревший upstream-пакет.
+> **Важно**: для сохранения совместимости имя пакета в `package.json` остаётся `@agegr/pi-web`, однако Agent Web Plus распространяется исключительно через `.tgz`-архивы в [`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases). **Не загружайте и не устанавливайте `@agegr/pi-web` из публичного реестра npm**, чтобы случайно не установить внешний устаревший upstream-пакет.
 
 Когда сервер будет готов, CLI попытается открыть браузер автоматически. Если этого не произошло, откройте [http://127.0.0.1:30141](http://127.0.0.1:30141). По умолчанию Pi Web прослушивает только `127.0.0.1`.
 
 Если Provider модели ещё не настроен, откройте панель **Models**, войдите в учётную запись или добавьте API Key.
 
-В примере выше указан опубликованный архив релиза `v1.3.38` (`pi-web-plus-1.3.38.tgz`). Для установки нужной версии или обновления остановите запущенный процесс с помощью `Ctrl+C`, замените `v1.3.38` и `1.3.38` в ссылке на целевую версию `<version>` из [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) и повторите команду установки:
+В примере выше указан опубликованный архив релиза `v1.3.38` (`pi-web-plus-1.3.38.tgz`). Для установки нужной версии или обновления остановите запущенный процесс с помощью `Ctrl+C`, замените `v1.3.38` и `1.3.38` в ссылке на целевую версию `<version>` из [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) и повторите команду установки:
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v<version>/pi-web-plus-<version>.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v<version>/pi-web-plus-<version>.tgz
 ```
 
 Для удаления выполните `npm uninstall -g @agegr/pi-web`.
@@ -76,10 +76,10 @@ PI_WEB_PASSWORD='длинный-случайный-пароль' pi-web --hostna
 
 Для серверных запросов к моделям и API используются стандартные переменные окружения `HTTP_PROXY`, `HTTPS_PROXY` и `NO_PROXY`.
 
-В macOS и Linux (установка из [`.tgz`-релиза на GitHub](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz) и запуск):
+В macOS и Linux (установка из [`.tgz`-релиза на GitHub](https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz) и запуск):
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -89,7 +89,7 @@ pi-web
 В Windows PowerShell:
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

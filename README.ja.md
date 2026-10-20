@@ -6,7 +6,7 @@
 
 [pi コーディングエージェント](https://github.com/earendil-works/pi)（`@earendil-works/pi-coding-agent`）向けのスタンドアロン版ローカルブラウザー UI です。Agent Web Plus は pi と同じローカル設定とセッションファイルを使用し、ブラウザーから会話の検索と再開、エージェントの実行、モデルやリソースの設定、プロジェクトファイルの確認を行えます。
 
-> **注記**：外部アップストリームの静的デモは旧アップストリーム版の画面であり、組み込み拡張機能を備えた **Agent Web Plus**（[`koxircom/pi-web-plus`](https://github.com/koxircom/pi-web-plus) より配布）とは異なります。
+> **注記**：外部アップストリームの静的デモは旧アップストリーム版の画面であり、組み込み拡張機能を備えた **Agent Web Plus**（[`koxircom/agent-web-plus`](https://github.com/koxircom/agent-web-plus) より配布）とは異なります。
 
 ![構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに pi セッションを表示する Pi Web](docs/screenshot2.png)
 
@@ -21,23 +21,23 @@
 
 ## クイックスタート
 
-Agent Web Plus には Node.js 22.19.0 以降（`node >=22.19`）が必要です。`node --version` でバージョンを確認してから、[`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) の公式 `.tgz` パッケージをグローバルにインストールして `pi-web` を起動します：
+Agent Web Plus には Node.js 22.19.0 以降（`node >=22.19`）が必要です。`node --version` でバージョンを確認してから、[`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の公式 `.tgz` パッケージをグローバルにインストールして `pi-web` を起動します：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 pi-web
 ```
 
-> **重要**：互換性維持のため `package.json` 内のパッケージ名は `@agegr/pi-web` のままですが、Agent Web Plus は [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) の `.tgz` アセットからのみ配布されます。外部の旧アップストリーム版が誤ってインストールされるのを防ぐため、**公開 npm レジストリからは `@agegr/pi-web` を取得・インストールしないでください**。
+> **重要**：互換性維持のため `package.json` 内のパッケージ名は `@agegr/pi-web` のままですが、Agent Web Plus は [`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の `.tgz` アセットからのみ配布されます。外部の旧アップストリーム版が誤ってインストールされるのを防ぐため、**公開 npm レジストリからは `@agegr/pi-web` を取得・インストールしないでください**。
 
 サーバーの準備が整うと、CLI はブラウザーを自動的に開こうとします。開かない場合は [http://127.0.0.1:30141](http://127.0.0.1:30141) にアクセスしてください。Pi Web はデフォルトで `127.0.0.1` のみをリッスンします。
 
 モデル Provider が未設定の場合は、**Models** パネルを開いてログインするか API Key を追加してください。
 
-上記のコマンドは公開バージョン `v1.3.38` のアセット（`pi-web-plus-1.3.38.tgz`）を例にしています。特定バージョンのインストールやアップグレードを行う場合は、実行中のプロセスを `Ctrl+C` で停止し、URL 内の `v1.3.38` と `1.3.38` を [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases) 上の対象バージョン `<version>` に置き換えて再実行してください：
+上記のコマンドは公開バージョン `v1.3.38` のアセット（`pi-web-plus-1.3.38.tgz`）を例にしています。特定バージョンのインストールやアップグレードを行う場合は、実行中のプロセスを `Ctrl+C` で停止し、URL 内の `v1.3.38` と `1.3.38` を [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) 上の対象バージョン `<version>` に置き換えて再実行してください：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v<version>/pi-web-plus-<version>.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v<version>/pi-web-plus-<version>.tgz
 ```
 
 アンインストールするには `npm uninstall -g @agegr/pi-web` を実行します。
@@ -76,10 +76,10 @@ PI_WEB_PASSWORD='十分に長いランダムなパスワード' pi-web --hostnam
 
 サーバー側のモデルリクエストと API リクエストは、標準の `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 環境変数を使用します。
 
-macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz)からインストールして起動）：
+macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz)からインストールして起動）：
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -89,7 +89,7 @@ pi-web
 Windows PowerShell：
 
 ```powershell
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

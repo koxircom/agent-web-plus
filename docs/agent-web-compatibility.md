@@ -4,7 +4,7 @@
 
 ## 命令
 
-`agent-web` 与原 `pi-web` 使用同一个启动实现，支持相同的端口、监听地址及 `--no-open` 选项。旧的服务脚本、快捷方式和 `pi-web` 命令继续可用。本次发布保留两个命令，仓库地址暂沿用原地址。
+`agent-web` 与原 `pi-web` 使用同一个启动实现，支持相同的端口、监听地址及 `--no-open` 选项。旧的服务脚本、快捷方式和 `pi-web` 命令继续可用。本次发布保留两个命令。GitHub 仓库已改名为 `koxircom/agent-web-plus`，已有克隆请执行 `git remote set-url origin https://github.com/koxircom/agent-web-plus.git`。旧仓库链接继续通过 GitHub 重定向；不要重新创建同名的 `pi-web-plus` 仓库，以免中断旧链接兼容。
 
 ## 数据目录：原位接续
 

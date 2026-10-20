@@ -6,7 +6,7 @@ Agent Web Plus 原名 **Pi Web Plus**。现在它支持两种执行引擎：Pi A
 
 手机是同一后台的访问入口。将 Web 服务部署在自己的电脑、WSL 或服务器后，可以在另一台设备上继续查看同一会话、跟踪执行过程、发送后续消息。
 
-[下载安装包](https://github.com/koxircom/pi-web-plus/releases/latest) · [Codex 配置](docs/codex-engine.md) · [旧用户升级](docs/agent-web-compatibility.md) · [反馈问题](https://github.com/koxircom/pi-web-plus/issues)
+[下载安装包](https://github.com/koxircom/agent-web-plus/releases/latest) · [Codex 配置](docs/codex-engine.md) · [旧用户升级](docs/agent-web-compatibility.md) · [反馈问题](https://github.com/koxircom/agent-web-plus/issues)
 
 ## 在 Pi Agent 与 Codex Agent 之间切换
 
@@ -67,19 +67,19 @@ Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端、HTML
 
 ## 安装与启动
 
-项目显示名为 Agent Web Plus，仓库地址继续沿用 `koxircom/pi-web-plus`。本文介绍面向 **1.4.0**（Pi SDK **1.3.0**）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
+项目显示名为 Agent Web Plus，GitHub 仓库名已同步为 `koxircom/agent-web-plus`。本文介绍面向 **1.4.0**（Pi SDK **1.3.0**）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
 
 > 本页介绍 **1.4.0 双引擎功能**，旧版 Pi Web Plus 不包含全部 Codex 能力。请从本仓库正式 Releases 下载对应版本，并保留原数据目录；实际可用安装包以 Releases 页面为准。
 
 ```bash
-npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.4.0/pi-web-plus-1.4.0.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.0/pi-web-plus-1.4.0.tgz
 agent-web --no-open
 ```
 
 也可下载源码 ZIP 后解压构建，或使用 Git：
 
 ```bash
-git clone https://github.com/koxircom/pi-web-plus.git agent-web-plus
+git clone https://github.com/koxircom/agent-web-plus.git agent-web-plus
 cd agent-web-plus
 npm ci
 npm run build
@@ -88,7 +88,7 @@ node bin/agent-web.js
 
 服务默认只监听 `127.0.0.1:30141`。浏览器没有自动打开时，访问 [本机工作台](http://127.0.0.1:30141)。运行源码无需全局安装其他 Pi Web 包。
 
-正式构建包与 SHA256 校验文件在 [GitHub Releases](https://github.com/koxircom/pi-web-plus/releases/latest)。仅从本仓库正式发布的构建包安装；不要把 npm 上的上游 `@agegr/pi-web` 当作本项目的新版本。
+正式构建包与 SHA256 校验文件在 [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases/latest)。仅从本仓库正式发布的构建包安装；不要把 npm 上的上游 `@agegr/pi-web` 当作本项目的新版本。
 
 ### 仅使用 Pi Agent
 

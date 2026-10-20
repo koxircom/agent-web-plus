@@ -1,6 +1,6 @@
 # Agent Web Plus 发布流程
 
-发布仓库保持 [`koxircom/pi-web-plus`](https://github.com/koxircom/pi-web-plus/releases)。内部包名继续使用 `@agegr/pi-web`，保留 `pi-web`、`agent-web` 命令和旧数据目录；不发布到公共 npm 注册表。
+发布仓库为 [`koxircom/agent-web-plus`](https://github.com/koxircom/agent-web-plus/releases)。内部包名继续使用 `@agegr/pi-web`，保留 `pi-web`、`agent-web` 命令和旧数据目录；不发布到公共 npm 注册表。
 
 ## 唯一认证入口
 
@@ -41,7 +41,7 @@ git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push or
 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "v${VERSION}"
 ```
 
-`origin` 必须为 `https://github.com/koxircom/pi-web-plus.git`。不要使用 `--tags` 推送无关标签；不要强推或重写历史。只有源码已完成审查、脱敏及本次必要验收，才推送；上传入口会再次核对远程标签指向的完整提交 SHA。
+`origin` 必须为 `https://github.com/koxircom/agent-web-plus.git`。不要使用 `--tags` 推送无关标签；不要强推或重写历史。只有源码已完成审查、脱敏及本次必要验收，才推送；上传入口会再次核对远程标签指向的完整提交 SHA。
 
 ## 3. 先预检，再显式发布
 
