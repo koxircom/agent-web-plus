@@ -791,7 +791,7 @@
     // 所有删除入口只可标 pending，网络前严禁提前清理或清除 metadata。
     // markSessionAsDeleted 通过 React sidebar bridge 复制本地数组，首帧即可重算过滤与虚拟坐标。
     markSessionAsDeleted(sessionId);
-    showToast("已移除会话，正在后台删除…", sessionDeleteIcon);
+    showToast("正在删除会话…", sessionDeleteIcon);
 
     (async () => {
       try {
@@ -882,7 +882,6 @@
       document.documentElement.classList.remove("pi-enh-scroll-restoring");
     }
     const pinned = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
-    const canDelete = !sessionId.startsWith("codex:");
     const unread = isSessionUnread(sessionId);
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu pi-enh-session-menu";
@@ -893,7 +892,7 @@
       <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>从磁盘重载 (Alt+R)</span></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-session-action="archive">${sessionArchiveIcon}<span>归档会话</span></div>
-      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" aria-disabled="${!canDelete}" data-stage="init" title="${canDelete ? "点击一次进入确认，再次点击彻底删除" : "Codex 原始记录由执行端管理，可使用归档隐藏会话"}" style="${canDelete ? "" : "opacity:.45"}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
+      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" data-stage="init" title="点击一次进入确认，再次点击彻底删除，无法撤销"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
     `;
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -932,14 +931,14 @@
       }
       deleteMenuItem.setAttribute("data-stage", "init");
       deleteMenuItem.classList.remove("pi-enh-menu-item-confirming");
-      deleteMenuItem.title = "点击一次进入确认，再次点击彻底删除";
+      deleteMenuItem.title = "点击一次进入确认，再次点击彻底删除，无法撤销";
       deleteMenuItem.innerHTML = `${sessionDeleteIcon}<span>删除会话</span>`;
     };
     const armDeleteMenuItem = () => {
       if (!deleteMenuItem) return;
       deleteMenuItem.setAttribute("data-stage", "confirm");
       deleteMenuItem.classList.add("pi-enh-menu-item-confirming");
-      deleteMenuItem.title = "再次点击彻底删除此会话";
+      deleteMenuItem.title = "再次点击彻底删除此会话，无法撤销";
       deleteMenuItem.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg><span>确认删除</span>`;
       if (deleteMenuItem._confirmTimer) clearManagedTimeout(deleteMenuItem._confirmTimer);
       deleteMenuItem._confirmTimer = addManagedTimeout(resetDeleteMenuItem, 4000);
@@ -951,7 +950,6 @@
       if (!action) return;
       event.stopPropagation();
       if (action === "delete") {
-        if (!canDelete) { showToast("Codex 原始记录由执行端管理，可使用归档隐藏会话"); return; }
         if ((item.getAttribute("data-stage") || "init") !== "confirm") {
           armDeleteMenuItem();
           return;

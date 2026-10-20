@@ -287,7 +287,16 @@ export async function PATCH(
 // DELETE /api/sessions/[id] uses the same guarded deletion owner as batch requests.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (isCodexSessionId(id)) return NextResponse.json({ error: "请在 Codex 执行端管理会话删除" }, { status: 409 });
+  if (isCodexSessionId(id)) {
+    try {
+      const { deleteCodexSession } = await import("@/lib/execution-engines/codex-engine");
+      await deleteCodexSession(id);
+      return NextResponse.json({ ok: true });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "删除会话失败，请稍后重试" },
+        { status: (error as { status?: number }).status || 502 });
+    }
+  }
   try {
     const { results, auditWarning } = await deleteSessions([id], { origin: "api-single" });
     const result = results[0];

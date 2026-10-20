@@ -279,6 +279,20 @@ const runtimeKey = Symbol.for("pi-web.codex-session-runtimes");
 const runtimes = (globals[runtimeKey] ||= new Map()) as Map<string, CodexRuntime>;
 const flightsKey = Symbol.for("pi-web.codex-session-flights");
 const flights = (globals[flightsKey] ||= new Map()) as Map<string, Promise<CodexRuntime>>;
+export async function deleteCodexSession(id: string) {
+  const threadId = codexThreadId(id), identity = await codexConnectionIdentity();
+  const result = await codexBridgeJson(`/api/sessions/${threadId}/message-action`, { action: "delete" },
+    { connectionIdentity: identity, timeout: 30000 });
+  if (result?.ok !== true) throw new CodexBridgeError("执行端未确认删除，会话已保留", 502);
+  if (catalogGlobals[catalogKey]?.identity === identity) catalogGlobals[catalogKey] = undefined;
+  for (const pending of [catalogFlights, statusFlights]) {
+    pending.get(identity)?.controller.abort();
+    pending.delete(identity);
+  }
+  // Existing viewers receive the native 404 through their normal read loop.
+  runtimes.delete(identity + ":" + id);
+  flights.delete(identity + ":" + id);
+}
 export async function getCodexRuntime(id: string) {
   codexThreadId(id);
   const identity = await codexConnectionIdentity(), key = identity + ":" + id;
@@ -287,6 +301,7 @@ export async function getCodexRuntime(id: string) {
   let flight = flights.get(key);
   if (!flight) {
     flight = codexSessionPage(id, { identity }).then(page => {
+      if (flights.get(key) !== flight) throw new CodexBridgeError("会话已删除，请返回会话列表", 404);
       if (!runtimes.has(key) && runtimes.size >= 32) {
         const idle = [...runtimes].find(([, runtime]) => !runtime.hasViewers());
         if (!idle) throw new Error("打开的 Codex 会话过多，请关闭不再使用的页面");
@@ -295,7 +310,7 @@ export async function getCodexRuntime(id: string) {
       // Reuse an in-flight projection only while it has viewers; otherwise take
       // a fresh authoritative snapshot after browser suspension or navigation.
       const runtime = new CodexRuntime(id, identity, page); runtimes.set(key, runtime); return runtime;
-    }).finally(() => { flights.delete(key); });
+    }).finally(() => { if (flights.get(key) === flight) flights.delete(key); });
     flights.set(key, flight);
   }
   return flight;

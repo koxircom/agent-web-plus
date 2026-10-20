@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 from bridge.features.sessions.model import async_requests, merge_turn_items, question_replies
 
@@ -1032,6 +1033,8 @@ class StandaloneBridge(Bridge):
             if prior:
                 if prior['title'] != title:
                     raise ValueError('同一创建请求不能用于不同内容')
+                if prior.get('deleted'):
+                    raise ValueError('此创建请求对应的会话已删除，请重新新建聊天')
                 if not prior.get('id'):
                     raise ValueError('上次创建结果未确认，请检查后台记录，避免重复创建')
                 return {'id': prior['id'], 'host': 'local', 'opened': True}
@@ -1688,6 +1691,8 @@ class StandaloneBridge(Bridge):
         raise ValueError('此入口沿用 WSL 配置，权限变更请由后台服务管理员处理')
 
     def message_action(self, thread_id, body):
+        if body.get('action') == 'delete':
+            return self.delete_thread(thread_id)
         self._adopt_record(thread_id)
         if body.get('action') in ('archive', 'unarchive'):
             with self.registry_lock:
@@ -1695,6 +1700,73 @@ class StandaloneBridge(Bridge):
                 self.save()
             return {'ok': True}
         raise ValueError('独立入口暂不支持改写已有轮次；请新建聊天')
+
+    def delete_thread(self, thread_id):
+        """Only the native owner deletes history; never unlink a rollout here."""
+        with self.lock:
+            entry = self._scoped_record(thread_id)
+            chat = self.live.get(thread_id)
+            with chat.actions if chat else nullcontext():
+                submissions = chat.submissions if chat else entry.get('submissions', {})
+                if any(row.get('status') in ('queued', 'unknown') for row in submissions.values()):
+                    raise ValueError('会话还有待发送或待确认的消息，请处理队列后再删除')
+                if chat and (chat.state.get('requests') or async_requests(chat.state)):
+                    raise ValueError('会话正在等待回复，请处理当前问题后再删除')
+                backend = self._history_backend() if entry.get('runtime') == 'history' else self.runtime
+                if entry.get('runtime') != 'history':
+                    backend.start()
+                try:
+                    # Resume metadata only: unloaded history has no reliable status
+                    # from thread/read. This never starts a model turn.
+                    thread = backend.request('thread/resume', {'threadId': thread_id, 'excludeTurns': True})['thread']
+                    if thread.get('status', {}).get('type') != 'idle':
+                        raise ValueError('会话正在执行任务或等待回复，请结束当前任务后再删除')
+                    queued = backend.request('thread/queue/list', {'threadId': thread_id}, timeout=5)
+                    if not isinstance(queued.get('data'), list):
+                        raise ValueError('无法核对待发送消息，尚未删除会话，请稍后重试')
+                    if queued['data'] or queued.get('nextCursor') is not None:
+                        raise ValueError('会话还有待发送消息，请处理队列后再删除')
+                    backend.request('thread/delete', {'threadId': thread_id}, timeout=15)
+                except Exception as error:
+                    if goal_rpc_unsupported(error):
+                        raise ValueError('当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留') from error
+                    # A lost delete receipt may leave only a registry row. Reconcile
+                    # only an exact native "no rollout" plus fresh store absence.
+                    rpc = getattr(error, 'rpc_error', {}) or {}
+                    history = self.history if entry.get('runtime') == 'history' else self.web_history
+                    absent = False
+                    if rpc.get('code') == -32600 and str(rpc.get('message', '')).endswith('no rollout found for thread id ' + thread_id) and history:
+                        try:
+                            history.get(thread_id)
+                        except KeyError:
+                            absent = True
+                    if not absent:
+                        if isinstance(error, SideChatError) or not isinstance(error, ValueError):
+                            raise ValueError('执行端未确认删除结果，请刷新会话列表后重试；不会自动重复删除') from error
+                        raise
+                with self.registry_lock:
+                    before = copy.deepcopy(self.records)
+                    self.records['threads'].pop(thread_id, None)
+                    self.records['titleOverrides'].pop(thread_id, None)
+                    for creation in self.records['creations'].values():
+                        if creation.get('id') == thread_id:
+                            creation['deleted'] = True
+                    try:
+                        self.save()
+                    except Exception:
+                        self.records = before
+                        raise
+                if chat:
+                    with chat.condition:
+                        chat.closed = True
+                        chat.queue_event.set()
+                        chat.condition.notify_all()
+                    self.live.pop(thread_id, None)
+                for history in (self.history, self.web_history):
+                    if history:
+                        with history.lock:
+                            history.sessions.pop(thread_id, None)
+                return {'ok': True}
 
     def subagents(self, thread_id, agent_id=None):
         if thread_id not in self.records['threads'] and self.history:
