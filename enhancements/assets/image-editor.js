@@ -815,6 +815,7 @@
       }
 
       function selectTool(nextTool, persist = false) {
+        abandonActiveDraft();
         tool = nextTool;
         if (persist) {
           saveTool(tool);
@@ -931,17 +932,17 @@
         ctx.restore?.();
       }
 
-      function redraw() {
+      function redraw(includePreview = true) {
         if (!ctx || !canvas.width || !canvas.height) return;
         ctx.clearRect?.(0, 0, canvas.width, canvas.height);
         ctx.drawImage?.(sourceImage, 0, 0, canvas.width, canvas.height);
         for (const action of actions) {
           if (action.type !== "crop") drawAction(action);
         }
-        if (draftAction && draftAction.type !== "crop") drawAction(draftAction);
+        if (includePreview && draftAction && draftAction.type !== "crop") drawAction(draftAction);
 
         // 裁剪辅助选区与半透明遮罩
-        const activeCrop = cropBox || (draftAction?.type === "crop" ? normalizeRect(draftAction.start, draftAction.end) : null);
+        const activeCrop = includePreview ? (cropBox || (draftAction?.type === "crop" ? normalizeRect(draftAction.start, draftAction.end) : null)) : null;
         if (activeCrop && activeCrop.w > 2 && activeCrop.h > 2) {
           ctx.save?.();
           // 外围半透明暗色遮罩
@@ -1047,6 +1048,11 @@
 
       const onPointerMove = (event) => {
         if (!drawing || !draftAction || !isActivePointer(event)) return;
+        // A missed release must not turn hover motion into a saved annotation.
+        if (event.buttons === 0) {
+          abandonActiveDraft(event);
+          return;
+        }
         event.preventDefault?.();
         const point = pointFromEvent(event);
         if (draftAction.type === "crop" || draftAction.type === "rect") {
@@ -1095,11 +1101,14 @@
       };
 
       const onPointerCancel = (event) => abandonActiveDraft(event);
+      const onEditorBlur = () => abandonActiveDraft();
 
       canvas.addEventListener("pointerdown", onPointerDown);
       canvas.addEventListener("pointermove", onPointerMove);
       canvas.addEventListener("pointerup", onPointerUp);
       canvas.addEventListener("pointercancel", onPointerCancel);
+      canvas.addEventListener("lostpointercapture", onPointerCancel);
+      window.addEventListener("blur", onEditorBlur);
       editor.addEventListener("click", (event) => event.stopPropagation?.());
 
       penBtn.addEventListener("click", () => selectTool("pen", true));
@@ -1172,6 +1181,7 @@
       }
 
       const undo = () => {
+        abandonActiveDraft();
         if (!actions.length) return;
         const last = actions.pop();
         if (last && last.type === "crop") {
@@ -1197,6 +1207,7 @@
 
       undoBtn.addEventListener("click", undo);
       clearBtn.addEventListener("click", () => {
+        abandonActiveDraft();
         actions = [];
         activeAction = null;
         redraw();
@@ -1217,6 +1228,7 @@
 
       async function doSaveAndClose() {
         if (saving) return;
+        abandonActiveDraft();
         hideConfirmPrompt();
         if (!actions.length) {
           cleanup();
@@ -1226,7 +1238,8 @@
         saveBtn.disabled = true;
         status.textContent = "正在保存…";
         try {
-          redraw();
+          // Draft shapes and crop guides belong to the preview, never the PNG.
+          redraw(false);
           const dataUrl = canvas.toDataURL("image/png");
           const data = dataUrl.split(",")[1] || "";
           const byteLength = Math.floor(data.length * 3 / 4);
@@ -1469,6 +1482,8 @@
         canvas.removeEventListener("pointermove", onPointerMove);
         canvas.removeEventListener("pointerup", onPointerUp);
         canvas.removeEventListener("pointercancel", onPointerCancel);
+        canvas.removeEventListener("lostpointercapture", onPointerCancel);
+        window.removeEventListener("blur", onEditorBlur);
         stage.removeEventListener("wheel", onEditorWheel);
         stage.removeEventListener("touchstart", onThicknessTouchStart);
         stage.removeEventListener("touchmove", onThicknessTouchMove);

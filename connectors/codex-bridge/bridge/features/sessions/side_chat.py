@@ -15,7 +15,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from bridge.features.sessions.model import normalize_state, normalize_request, merge_turn_items
+from bridge.features.sessions.model import normalize_state, normalize_request, merge_turn_items, user_display_text
 from bridge.features.workspace.uploads import Uploads
 
 
@@ -308,7 +308,9 @@ class SideChat:
                     if user is None:
                         user = {'id': 'side-user-' + key, 'role': 'user', 'kind': 'userMessage', 'deliveryConfirmed': False}
                         turn['messages'].insert(0, user)
-                    user.update(text=submission['text'], attachments=submission.get('attachments', []), requestId=key)
+                    # The ledger keeps wire envelopes; acknowledgements must
+                    # project them just like native history items.
+                    user.update(text=user_display_text(submission['text']), attachments=submission.get('attachments', []), requestId=key)
                 for key, submission in submissions:
                     if submission.get('mode') != 'steer' or submission['status'] != 'accepted':
                         continue
@@ -317,7 +319,7 @@ class SideChat:
                     if user is None:
                         user = {'id': key, 'role': 'user', 'kind': 'steeringUserMessage', 'deliveryConfirmed': False}
                         turn['messages'].append(user)
-                    user.update(text=submission['text'], attachments=submission.get('attachments', []), requestId=key)
+                    user.update(text=user_display_text(submission['text']), attachments=submission.get('attachments', []), requestId=key)
             # Never direct an unsupported sidecar request to an unrelated desktop tab.
             for request in result['requests']:
                 if not request['supported'] or request['method'] in ('item/plan/requestImplementation', 'bridge/requestUserInputAsync'):
@@ -372,9 +374,9 @@ class SideChat:
             raise ValueError('Skill 不可用，请刷新列表')
         return rows
 
-    def send(self, text, submission, attachments=None, *, mode='send', work_mode='default', skills=None, catalog_reader=None, client_request_id=None):
+    def send(self, text, submission, attachments=None, *, mode='send', work_mode='default', skills=None, catalog_reader=None, client_request_id=None, _text_limit=20000):
         uuid.UUID(str(submission))
-        if not isinstance(text, str) or (not text.strip() and not attachments) or len(text) > 20000:
+        if not isinstance(text, str) or (not text.strip() and not attachments) or len(text) > _text_limit:
             raise ValueError('请输入 1–20000 字的消息')
         supported_work_modes = ('default', 'plan', 'goal') if self.supports_goal_mode else ('default', 'plan')
         if mode not in ('send', 'queue', 'steer') or (work_mode not in supported_work_modes if mode != 'steer' else work_mode is not None):

@@ -107,16 +107,19 @@ def request_id(item):
 
 
 def user_display_text(text):
-    """Hide desktop attachment plumbing from the phone-visible request."""
-    if not isinstance(text, str) or "# Files mentioned by the user:" not in text:
+    """Project native user envelopes for display; never change the send ledger."""
+    if not isinstance(text, str):
         return text
-    marker = "\n## My request:\n"
-    header = text.find("# Files mentioned by the user:")
-    boundary = text.rfind(marker)
-    if header < 0 or boundary <= header:
-        return text
-    request = text[boundary + len(marker):].strip("\r\n")
-    return request or text
+    if "# Files mentioned by the user:" in text:
+        marker = "\n## My request:\n"
+        header = text.find("# Files mentioned by the user:")
+        boundary = text.rfind(marker)
+        if boundary > header:
+            text = text[boundary + len(marker):].strip("\r\n") or text
+    replies = question_replies(text)
+    if replies and all(isinstance(r.get("question"), str) and isinstance(r.get("answer"), str) for r in replies):
+        return "\n\n".join("问题：" + r["question"] + "\n回答：" + r["answer"] for r in replies)
+    return text
 
 
 def normalize_item(item):
@@ -129,9 +132,6 @@ def normalize_item(item):
         if submission_request_id:
             row["requestId"] = str(submission_request_id)
         text = user_display_text(text_content(item.get("content", [])))
-        replies = question_replies(text)
-        if replies:
-            text = "\n\n".join(str(r.get("question", "")) + "\n" + str(r.get("answer", "")) for r in replies)
         row.update(role="user", text=text)
     elif kind in ("agentMessage", "assistantMessage"):
         row.update(role="assistant", text=item.get("text", ""), phase=item.get("phase"))

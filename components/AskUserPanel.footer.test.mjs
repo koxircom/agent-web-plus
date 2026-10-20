@@ -15,7 +15,7 @@ test("removes redundant header and tools from JSX and ask-user.css", () => {
   assert.doesNotMatch(panelSource, /AskQuestionHeader/, "AskQuestionHeader component should be eliminated");
   assert.doesNotMatch(panelSource, /pi-native-ask-footer-tools/, "Footer tools container should be removed from JSX");
   assert.doesNotMatch(panelSource, /notesOpen|collapsed/, "Old notes toggles and inaccessible collapsed state must be removed");
-  assert.equal((panelSource.match(/<span className="pi-native-ask-button-label">取消<\/span>/g) || []).length, 2, "Both question surfaces explicitly label cancellation with button label span");
+  assert.match(panelSource, /request.method === "custom" \? "取消" : "稍后回答"/, "Async questions defer without cancelling the native task");
   assert.doesNotMatch(panelSource, />\s*直接回答\s*<\/button>/, "Direct answer button should be removed");
   assert.doesNotMatch(panelSource, /补充回答/, "Add notes button should be removed");
 });
@@ -38,11 +38,11 @@ test("footer consolidates custom input and actions on the same row with exact bu
   assert.match(askPanelSlice, /className="pi-native-ask-cancel"/, "Cancel button present");
   assert.match(askPanelSlice, /className="pi-native-ask-submit"/, "Submit button present");
 
-  // Single control height variable on card (desktop 25.6px)
+  // Single control height variable on card (desktop 40px)
   assert.match(
     cssSource,
-    /\.pi-native-ask-card\s*\{[^}]*--pi-native-ask-control-height:\s*25\.6px;/,
-    "Desktop card declares single source of truth --pi-native-ask-control-height: 25.6px"
+    /\.pi-native-ask-card\s*\{[^}]*--pi-native-ask-control-height:\s*40px;/,
+    "Desktop card declares single source of truth --pi-native-ask-control-height: 40px"
   );
 
   // Shared sizing rules across input, cancel, and submit
@@ -64,7 +64,7 @@ test("restrains button border radius from 999px pill to compact small rounded co
   assert.match(cssSource, /\.pi-native-ask-cancel,\s*\.pi-native-ask-submit\s*\{[^}]*border-radius:\s*8px;/, "Cancel and submit buttons use restrained 8px border radius");
 });
 
-test("maintains 44px touch height for options while reducing buttons to 35.2px on touch devices", () => {
+test("maintains 44px touch height for options and buttons at 44px on touch devices", () => {
   assert.match(
     cssSource,
     /@media\s*\(\s*max-width:\s*768px\s*\)\s*,\s*\(\s*pointer:\s*coarse\s*\)\s*\{[\s\S]*?\.pi-native-ask-option\s*\{[^}]*min-height:\s*44px;/,
@@ -72,8 +72,8 @@ test("maintains 44px touch height for options while reducing buttons to 35.2px o
   );
   assert.match(
     cssSource,
-    /@media\s*\(\s*max-width:\s*768px\s*\)\s*,\s*\(\s*pointer:\s*coarse\s*\)\s*\{[\s\S]*?\.pi-native-ask-card\s*\{[^}]*--pi-native-ask-control-height:\s*35\.2px;/,
-    "Touch devices update --pi-native-ask-control-height to 35.2px (80% of 44px)"
+    /@media\s*\(\s*max-width:\s*768px\s*\)\s*,\s*\(\s*pointer:\s*coarse\s*\)\s*\{[\s\S]*?\.pi-native-ask-card\s*\{[^}]*--pi-native-ask-control-height:\s*44px;/,
+    "Touch devices update --pi-native-ask-control-height to 44px for reliable touch targets"
   );
 
   const mobileBlockMatch = cssSource.match(/@media\s*\(\s*max-width:\s*768px\s*\)\s*,\s*\(\s*pointer:\s*coarse\s*\)\s*\{([\s\S]*?)\n\}/);
@@ -82,7 +82,7 @@ test("maintains 44px touch height for options while reducing buttons to 35.2px o
 
   assert.doesNotMatch(
     mobileCss,
-    /(?:\.pi-native-ask-cancel|\.pi-native-ask-submit|\.pi-native-ask-input)\s*\{[^}]*(?:min-|max-)?height:\s*35\.2px;/,
+    /(?:\.pi-native-ask-cancel|\.pi-native-ask-submit|\.pi-native-ask-input)\s*\{[^}]*(?:min-|max-)?height:\s*44px;/,
     "Touch devices eliminate duplicate height, min-height, and max-height overrides on controls"
   );
 
@@ -90,7 +90,7 @@ test("maintains 44px touch height for options while reducing buttons to 35.2px o
   assert.ok(footerPaddingMatch, "Mobile footer padding must be explicitly defined");
   const topPad = Number(footerPaddingMatch[1]);
   const bottomPad = Number(footerPaddingMatch[3]);
-  const buttonHeight = 35.2;
+  const buttonHeight = 44;
   const normalFooterHeight = buttonHeight + topPad + bottomPad;
 
   assert.ok(normalFooterHeight <= 56, `Normal touch footer height (${normalFooterHeight}px) must be <= 56px`);

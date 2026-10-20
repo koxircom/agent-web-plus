@@ -801,6 +801,7 @@ class Bridge:
                 last = next((t for t in reversed(turns) if t.get('turnId')), {})
                 rows.append({'id': session.id, 'host': self.host, 'recency': recencies.get(session.id, 0), 'connected': session.connected,
                              'status': state.get('threadRuntimeStatus', {}).get('type') if session.connected else 'unknown',
+                             'hasPendingRequests': bool(pending_requests(state) or async_requests(state)),
                              'turnId': last.get('turnId'), 'turnStatus': last.get('status')})
         return rows
 

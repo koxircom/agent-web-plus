@@ -1295,6 +1295,9 @@
 
   // 客户端失败关闭保护，不是服务端删除事务：绕过浏览器或检查后并发写入仍需后端原子协议。
   async function ensureSessionIngestedBeforeDelete(sessionId) {
+    // Native Codex owns its task/queue and deletion checks. Pi leaf/usage
+    // fingerprints cannot certify another engine's history.
+    if (/^codex:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) return true;
     if (!sessionId) throw new Error("缺少会话 ID，已阻止删除");
     // 关键环境隔离：30142 同事端容器不属于 30141 全局用量账本扫描域，跳过封存门禁直接放行真实删除
     if (typeof window !== "undefined" && window.location && window.location.port === "30142") {

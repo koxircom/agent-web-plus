@@ -276,7 +276,7 @@ test("shows queue waiting counts in collapsed and expanded headers and hides zer
       `${component.name.text} shows the count while expanded`);
   }
 
-  const textPanelFunction = functionDeclaration(askUserPanel, "AskUserTextPanel");
+  const textPanelFunction = functionDeclaration(askUserPanel, "AskUserPlainTextPanel");
   const nativePanelFunction = functionDeclaration(askUserPanel, "AskUserPanel");
   for (const component of [textPanelFunction, nativePanelFunction]) {
     const questionRow = jsxNodes(component, (node) => tagName(node) === "div" &&

@@ -44,7 +44,7 @@ function createHarness() {
       .filter(action => action.type === 'rect');
   };
   vm.createContext(context);
-  vm.runInContext(`${pointerHandlers}\nglobalThis.handlers = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel };`, context);
+  vm.runInContext(`${pointerHandlers}\nglobalThis.handlers = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onEditorBlur };`, context);
   return context;
 }
 
@@ -101,4 +101,31 @@ test('rectangle drag threshold is measured in CSS pixels', () => {
   largeEnough.handlers.onPointerMove(pointer(1, 140, 140)); // 4 CSS px at the configured canvas scale
   largeEnough.handlers.onPointerUp(pointer(1, 140, 140));
   assert.equal(largeEnough.actions.length, 1);
+});
+
+test('window blur and a released pointer discard drafts without removing completed annotations', () => {
+  for (const interrupt of ['blur', 'released']) {
+    const h = createHarness();
+    h.handlers.onPointerDown(pointer(1,100,100));
+    h.handlers.onPointerMove(pointer(1,500,500));
+    h.handlers.onPointerUp(pointer(1,500,500));
+    h.handlers.onPointerDown(pointer(1,600,600));
+    h.handlers.onPointerMove(pointer(1,900,900));
+    if (interrupt === 'blur') h.handlers.onEditorBlur();
+    else h.handlers.onPointerMove({...pointer(1,950,950), buttons:0});
+    assert.equal(h.actions.length,1);
+    assert.equal(h.draftAction,null);
+    assert.equal(h.drawing,false);
+    assert.equal(h.visibleRects.length,1);
+  }
+});
+
+test('capture loss from another pointer does not cancel the active drawing', () => {
+  const h = createHarness();
+  h.handlers.onPointerDown(pointer(1,100,100));
+  h.handlers.onPointerMove(pointer(1,500,500));
+  h.handlers.onPointerCancel(pointer(2,500,500,false));
+  assert.equal(h.drawing,true);
+  h.handlers.onPointerUp(pointer(1,500,500));
+  assert.equal(h.actions.length,1);
 });

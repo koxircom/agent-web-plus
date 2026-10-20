@@ -6696,7 +6696,8 @@
       });
       if (!resp || (!resp.ok && resp.status !== 404)) {
         restoreSessionDeleteState(sessionId);
-        throw new Error(`HTTP ${resp ? resp.status : "Failed"}`);
+        const detail = resp ? await resp.json().catch(() => ({})) : {};
+        throw new Error(typeof detail.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
       }
 
       markSessionDeleteConfirmed(sessionId);

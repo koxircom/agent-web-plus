@@ -157,6 +157,26 @@ export async function listCodexSessions(signal?: AbortSignal) {
   return { sessions: catalog.rows.map(projectCodexSession), sessionListVersion: catalog.version,
     runningSessionIds: activity.filter(r => r.status === "active").map(r => publicCodexId(r.id)), completionNotificationSuppressedSessionIds: [] };
 }
+/** Metadata-only live attention reads for the server notification owner. */
+export async function readCodexAttentionSnapshot(signal: AbortSignal) {
+  const identity = await codexConnectionIdentity();
+  const catalog = await loadCodexCatalog(identity, signal, CODEX_STATUS_CATALOG_TTL_MS);
+  const activity = await codexActivity(catalog.rows, identity, signal);
+  // Async questions can remain pending after their turn has completed.
+  const active = activity.filter(row => row.status === "active" || row.hasPendingRequests);
+  const sessions: Array<{ sessionId: string; title: string; requests: CodexRequest[] }> = [];
+  for (let offset = 0; offset < active.length; offset += 4) {
+    const batch = await Promise.all(active.slice(offset, offset + 4).map(async row => {
+      const meta: CodexMeta = await codexBridgeJson(`/api/sessions/${row.id}?metadata=1`, undefined,
+        { connectionIdentity: identity, signal });
+      return { sessionId: publicCodexId(row.id), title: meta.title || "未命名会话", requests: meta.requests || [] };
+    }));
+    sessions.push(...batch);
+  }
+  if (await codexConnectionIdentity() !== identity) throw new Error("执行端配置已改变");
+  return sessions;
+}
+
 export async function rowText(id: string, epoch: string, row: CodexRow, identity?: string, signal?: AbortSignal) {
   if (!row.truncated) return row.text;
   let text = "", offset = 0;
@@ -259,6 +279,20 @@ const runtimeKey = Symbol.for("pi-web.codex-session-runtimes");
 const runtimes = (globals[runtimeKey] ||= new Map()) as Map<string, CodexRuntime>;
 const flightsKey = Symbol.for("pi-web.codex-session-flights");
 const flights = (globals[flightsKey] ||= new Map()) as Map<string, Promise<CodexRuntime>>;
+export async function deleteCodexSession(id: string) {
+  const threadId = codexThreadId(id), identity = await codexConnectionIdentity();
+  const result = await codexBridgeJson(`/api/sessions/${threadId}/message-action`, { action: "delete" },
+    { connectionIdentity: identity, timeout: 30000 });
+  if (result?.ok !== true) throw new CodexBridgeError("执行端未确认删除，会话已保留", 502);
+  if (catalogGlobals[catalogKey]?.identity === identity) catalogGlobals[catalogKey] = undefined;
+  for (const pending of [catalogFlights, statusFlights]) {
+    pending.get(identity)?.controller.abort();
+    pending.delete(identity);
+  }
+  // Existing viewers receive the native 404 through their normal read loop.
+  runtimes.delete(identity + ":" + id);
+  flights.delete(identity + ":" + id);
+}
 export async function getCodexRuntime(id: string) {
   codexThreadId(id);
   const identity = await codexConnectionIdentity(), key = identity + ":" + id;
@@ -267,6 +301,7 @@ export async function getCodexRuntime(id: string) {
   let flight = flights.get(key);
   if (!flight) {
     flight = codexSessionPage(id, { identity }).then(page => {
+      if (flights.get(key) !== flight) throw new CodexBridgeError("会话已删除，请返回会话列表", 404);
       if (!runtimes.has(key) && runtimes.size >= 32) {
         const idle = [...runtimes].find(([, runtime]) => !runtime.hasViewers());
         if (!idle) throw new Error("打开的 Codex 会话过多，请关闭不再使用的页面");
@@ -275,7 +310,7 @@ export async function getCodexRuntime(id: string) {
       // Reuse an in-flight projection only while it has viewers; otherwise take
       // a fresh authoritative snapshot after browser suspension or navigation.
       const runtime = new CodexRuntime(id, identity, page); runtimes.set(key, runtime); return runtime;
-    }).finally(() => { flights.delete(key); });
+    }).finally(() => { if (flights.get(key) === flight) flights.delete(key); });
     flights.set(key, flight);
   }
   return flight;
@@ -417,9 +452,11 @@ export class CodexRuntime {
         const answered = this.answers.get(String(request.id)) || {};
         for (const question of request.params.questions || []) if (!answered[question.id]) {
           const id = base + ":" + question.id;
-          const options = question.options?.map((o: { label: string; description?: string }) => o.label + (o.description ? " — " + o.description : ""));
+          const options = (question.options || []).map((option: { label: string; description?: string }) => ({ title: option.label, description: option.description }));
           next.set(id, { native: request, questionId: question.id, event: { type: "extension_ui_request", id,
-            method: "input", title: [question.question, options?.join("\n")].filter(Boolean).join("\n") } });
+            method: "input", title: question.question, allowDefer: request.method === "bridge/requestUserInputAsync",
+            askUser: { toolCallId: String(request.id), question: question.question,
+              options, allowMultiple: false, allowFreeform: true, allowComment: false } } });
         }
       } else {
         next.set(base, { native: request, event: { type: "extension_ui_request", id: base, method: "notify", notifyType: "warning", recovery: "codex-client",
@@ -712,21 +749,20 @@ export class CodexRuntime {
             throw new Error("回答尚未提交，请重新打开此会话继续回答");
           }
           if (typeof command.value !== "string" || !command.value.trim()) throw new Error("请输入回答");
-          const answers = this.answers.get(String(item.native.id)) || {};
-          answers[item.questionId] = [command.value]; this.answers.set(String(item.native.id), answers);
-          this.updateRequests();
-          if ((item.native.params.questions || []).some((q: { id: string }) => !answers[q.id])) return {};
-          try {
-            const result = await this.json(base + "/respond", { requestId: item.native.id, response: { answers } });
-            // Async replies can be admitted before their durable user echo is
-            // visible. Keep answered identities until the native request leaves.
-            if (item.native.method !== "bridge/requestUserInputAsync") this.answers.delete(String(item.native.id));
-            return result;
-          } catch (error) {
-            delete answers[item.questionId];
+          const answers = { ...this.answers.get(String(item.native.id)), [item.questionId]: [command.value] };
+          if ((item.native.params.questions || []).some((q: { id: string }) => !answers[q.id])) {
+            this.answers.set(String(item.native.id), answers);
             this.updateRequests();
-            throw error;
+            return {};
           }
+          // Keep the current card mounted, including its draft, until the write
+          // is acknowledged. Polling must not close it while the POST is pending.
+          const result = await this.json(base + "/respond", { requestId: item.native.id, response: { answers } });
+          this.answers.set(String(item.native.id), answers);
+          // Admission can precede the native echo. Drop these identities only
+          // when a later native snapshot removes the request.
+          this.updateRequests();
+          return result;
         }
         const labels: Record<string, string> = { "允许本次": "accept", "拒绝": "decline", "取消本次任务": "cancel" };
         const decision = command.cancelled ? (item.native.method.includes("permissions") ? "decline" : "cancel") : labels[String(command.value)];

@@ -16,3 +16,8 @@ test('deletion guard loads the panel only when sealing is needed and rechecks th
 test('component failure, active execution, and concurrent leaf changes all block deletion',async()=>{
  for(const options of [{failLoad:true},{running:true},{changed:true}]){const f=fixture(options);await assert.rejects(f.context.guard('owned'),/删除已取消/);assert.equal(f.map.size,0);assert(!f.events.some(x=>/DELETE/.test(x)));if(options.running)assert(!f.events.includes('usage-panel'));}
 });
+test('native Codex deletion is checked by its owner and never enters the Pi usage seal',async()=>{
+ const f=fixture();assert.equal(await f.context.guard('codex:01901234-5678-7000-8000-000000000001'),true);
+ assert.deepEqual(f.events,[]);assert.equal(f.map.size,0);
+ await assert.rejects(f.context.guard('codex:invalid'),/删除已取消/);
+});

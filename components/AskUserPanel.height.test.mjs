@@ -64,9 +64,9 @@ test("height budget calculation satisfies verification viewports", () => {
   // Viewport 4: Keyboard 390x480 (reduced viewport)
   const v4 = computeBudget(390, 480, true);
   assert.equal(v4, 336, "390x480 budget should be 336px");
-  const estimatedFixedHeadersAndFooters = Math.round(Math.min(88, 480 * 0.12)) + 46; // question + compact footer, no redundant header
+  const estimatedFixedHeadersAndFooters = Math.round(Math.min(320, 480 * 0.36)) + 54; // readable question + touch footer
   const remainingBody = v4 - estimatedFixedHeadersAndFooters;
-  assert.ok(remainingBody > 180, "390x480 keyboard viewport preserves substantial body space");
+  assert.ok(remainingBody > 100, "390x480 keyboard viewport preserves scrollable option space");
 
   // Viewport 5: Desktop 1920x1080 (fine pointer)
   const v5 = computeBudget(1920, 1080, false);
@@ -79,4 +79,10 @@ test("preserves single React ownership without timers or observers", () => {
   assert.doesNotMatch(panelSource, /ResizeObserver|MutationObserver/, "No DOM observers should be added");
   assert.doesNotMatch(askPanelCode, /setInterval/, "No timer loops should be added to AskUserPanel");
   assert.doesNotMatch(panelSource, /collapsed|AskQuestionHeader/, "Removed header must not leave an inaccessible collapsed state");
+});
+
+
+test("long prompts have their own readable budget instead of an 88px slot", () => {
+  assert.match(cssSource, /\.pi-native-ask-question-row\s*\{[^}]*max-height:\s*min\(320px,\s*36dvh\)/);
+  assert.doesNotMatch(cssSource, /min\(88px,\s*12dvh\)/);
 });
