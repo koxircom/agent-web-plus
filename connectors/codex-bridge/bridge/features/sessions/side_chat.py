@@ -15,7 +15,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from bridge.features.sessions.model import normalize_state, normalize_request, merge_turn_items
+from bridge.features.sessions.model import normalize_state, normalize_request, merge_turn_items, user_display_text
 from bridge.features.workspace.uploads import Uploads
 
 
@@ -308,7 +308,9 @@ class SideChat:
                     if user is None:
                         user = {'id': 'side-user-' + key, 'role': 'user', 'kind': 'userMessage', 'deliveryConfirmed': False}
                         turn['messages'].insert(0, user)
-                    user.update(text=submission['text'], attachments=submission.get('attachments', []), requestId=key)
+                    # The ledger keeps wire envelopes; acknowledgements must
+                    # project them just like native history items.
+                    user.update(text=user_display_text(submission['text']), attachments=submission.get('attachments', []), requestId=key)
                 for key, submission in submissions:
                     if submission.get('mode') != 'steer' or submission['status'] != 'accepted':
                         continue
@@ -317,7 +319,7 @@ class SideChat:
                     if user is None:
                         user = {'id': key, 'role': 'user', 'kind': 'steeringUserMessage', 'deliveryConfirmed': False}
                         turn['messages'].append(user)
-                    user.update(text=submission['text'], attachments=submission.get('attachments', []), requestId=key)
+                    user.update(text=user_display_text(submission['text']), attachments=submission.get('attachments', []), requestId=key)
             # Never direct an unsupported sidecar request to an unrelated desktop tab.
             for request in result['requests']:
                 if not request['supported'] or request['method'] in ('item/plan/requestImplementation', 'bridge/requestUserInputAsync'):

@@ -58,4 +58,43 @@ test('real shared card: mobile choices, failed answer retention, reload restore,
  assert.deepEqual(errors,[]);
  if(evidence)await writeFile(resolve(evidence,'BROWSER_ACCEPTANCE.json'),JSON.stringify({status:'passed',environment:'isolated local protocol fixture',viewport:{width:390,height:844},nativeRequestId:'async:turn:item',checks:['options','freeform','failure-retains-draft','reload-restores-request','exact-question-id','Pi-custom-transport','no-horizontal-overflow'],errors},null,2));
 });
+test('long question stays readable with reachable 44px actions in narrow, wide-touch and keyboard viewports',async()=>{
+ if(!browser)browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH});
+ const question='手机可原位二次确认后真正删除 Codex 会话，队列保护、失败恢复、Pi 删除及安装包脱敏检查均通过。此次是否上线，并在执行端空闲后切换对应服务？';
+ const metrics=[];
+ for(const viewport of [{width:390,height:844},{width:980,height:720},{width:390,height:480}]){
+  const context=await browser.newContext({viewport,hasTouch:true,isMobile:viewport.width<768,locale:'zh-CN'});
+  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+  for(const kind of ['codex','plain','pi']){
+   const title=question.repeat(8);
+   const nativeMeta=structuredClone(meta);nativeMeta.requests[0].params.questions[0].question=title;
+   current=new CodexRuntime('codex:'+meta.id,'fixture',{epoch:'fixture',sequence:1,rows:[],meta:nativeMeta});
+   await page.goto(url+'/?'+(kind==='pi'?'pi&':'')+(kind==='plain'?'plain&':'')+'long='+encodeURIComponent(title));
+   await page.getByRole('dialog').waitFor();
+   // The user's phone uses a desktop-width layout with a visible sidebar.
+   if(viewport.width>768)await page.locator('main').evaluate(el=>{el.style.width='520px';el.style.marginLeft='440px';});
+   const measure=await page.getByRole('dialog').evaluate(card=>{
+    const row=card.querySelector('.pi-native-ask-question-row');
+    const footer=card.querySelector('.pi-native-ask-footer');
+    const rect=card.getBoundingClientRect();
+    return {headerHeight:row.getBoundingClientRect().height,headerScroll:row.scrollHeight>row.clientHeight,
+     cardHeight:rect.height,cardWidth:rect.width,footerBottom:footer.getBoundingClientRect().bottom,
+     controls:[...card.querySelectorAll('.pi-native-ask-footer button,.pi-native-ask-footer input')].map(el=>el.getBoundingClientRect().height),
+     coarse:matchMedia('(pointer:coarse)').matches,overflow:document.documentElement.scrollWidth>innerWidth};
+   });
+   assert(measure.headerHeight>=150,JSON.stringify({kind,viewport,measure}));
+   assert(measure.headerScroll,'Long prompts remain scrollable');
+   assert(measure.controls.every(h=>h>=44));assert.equal(measure.coarse,true);assert.equal(measure.overflow,false);
+   assert(measure.footerBottom<=viewport.height,'Send remains inside the reduced viewport');
+   await page.locator('.pi-native-ask-question-row').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+   if(kind==='plain')await page.getByRole('textbox',{name:'回答',exact:true}).fill('确认，空闲后切换');
+   else await page.getByRole('textbox',{name:'自定义回答'}).fill('确认，空闲后切换');
+   if(evidence){await mkdir(evidence,{recursive:true});await page.screenshot({path:resolve(evidence,`long-${kind}-${viewport.width}x${viewport.height}.png`),fullPage:true});}
+   metrics.push({kind,viewport,...measure});
+  }
+  await context.close();
+ }
+ assert.deepEqual(errors,[]);
+ if(evidence)await writeFile(resolve(evidence,'LONG_QUESTION_LAYOUT.json'),JSON.stringify({status:'passed',metrics,errors},null,2));
+});
 test.after(async()=>{await browser?.close();await new Promise(resolve=>server.close(resolve));});

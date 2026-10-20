@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bridge.clients.codex.standalone import Chat, StandaloneBridge, async_reply_text, async_submission_id
 from bridge.features.sessions.side_chat import SideChatError
+from bridge.features.sessions.model import normalize_item, user_display_text
 
 
 THREAD = '01901234-5678-7000-8000-000000000001'
@@ -51,7 +52,7 @@ class Backend:
             if self.fail_unknown:
                 self.fail_unknown = False
                 raise SideChatError('模拟传输结果未确认')
-            return {'turn': {'id': 'reply-turn', 'status': 'inProgress'}}
+            return {'turn': {'id': params.get('expectedTurnId', 'reply-turn'), 'status': 'inProgress'}}
         raise AssertionError('unexpected request: ' + method)
 
     def write(self, value):
@@ -123,6 +124,54 @@ class StandaloneQuestionsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '不同答案'):
             bridge.respond(THREAD, REQUEST, {'answers': {QUESTION_ID: ['乙']}})
         self.assertEqual(len([call for call in backend.calls if call[0] == 'turn/steer']), 1)
+
+    def test_reply_display_is_readable_in_live_history_handoff_and_reload(self):
+        for status in ('idle', 'active'):
+            with self.subTest(status=status):
+                bridge, records, chat, backend = self.fixture(status=status)
+                result = bridge.respond(THREAD, REQUEST, {'answers': {QUESTION_ID: ['是，空闲后切换']}})
+                identifier = result['id']
+                raw = chat.submissions[identifier]['text']
+                expected = '问题：选一个\n回答：是，空闲后切换'
+                # Immediate handoff / steering acknowledgement must use the same
+                # display projection as a later native echo and disk replay.
+                def assert_view(view):
+                    users = [m for t in view['turns'] for m in t['messages']
+                             if m.get('requestId') == identifier]
+                    self.assertEqual(len(users), 1)
+                    self.assertEqual(users[0]['text'], expected)
+                    self.assertEqual(users[0]['requestId'], identifier)
+                assert_view(chat.view())
+                native = {'id': identifier, 'clientUserMessageId': identifier,
+                          'type': 'steeringUserMessage' if status == 'active' else 'userMessage'}
+                native['input' if status == 'active' else 'content'] = [{'type': 'text', 'text': raw}]
+                self.assertEqual(normalize_item(native)['text'], expected)
+                restored = thread_result()
+                turn_id = chat.submissions[identifier]['turnId']
+                existing = next((t for t in restored['thread']['turns'] if t['id'] == turn_id), None)
+                if existing:
+                    existing['items'].append(native)
+                else:
+                    restored['thread']['turns'].append({'id': turn_id, 'turnId': turn_id,
+                        'status': 'completed', 'items': [native]})
+                refreshed = Chat(bridge=chat.bridge, identifier=THREAD, result=restored,
+                    backend=backend, entry=copy.deepcopy(records.records['threads'][THREAD]))
+                assert_view(refreshed.view())
+                # Display cleanup cannot change wire data, stored text or native identity.
+                self.assertEqual(chat.submissions[identifier]['text'], raw)
+                self.assertEqual(refreshed.submissions[identifier]['text'], raw)
+                sent = next(params for method, params in backend.calls if method in ('turn/start', 'turn/steer'))
+                self.assertEqual(sent['input'][0]['text'], raw)
+                self.assertEqual(sent['clientUserMessageId'], identifier)
+
+    def test_reply_display_preserves_invalid_and_ordinary_user_content(self):
+        for text in ('普通回答 <标签>', '<send_user_message_question_reply>无效 JSON</send_user_message_question_reply>',
+                     '<send_user_message_question_reply>[{"question":"有问题但无答案"}]</send_user_message_question_reply>',
+                     '说明：<send_user_message_question_reply>[]</send_user_message_question_reply>'):
+            self.assertEqual(user_display_text(text), text)
+        raw = async_reply_text([{'id': QUESTION_ID, 'question': '问题一'}, {'id': 'two', 'question': '问题二'}],
+                               {'answers': {QUESTION_ID: ['答案一'], 'two': ['答案二']}})
+        self.assertEqual(user_display_text(raw), '问题：问题一\n回答：答案一\n\n问题：问题二\n回答：答案二')
 
     def test_unknown_reply_is_masked_and_never_resent_after_refresh(self):
         entry = {'title': '问题测试', 'cwd': '/tmp', 'runtime': 'web', 'model': 'model',
