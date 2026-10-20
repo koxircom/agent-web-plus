@@ -413,7 +413,7 @@ export class CodexRuntime {
         const options = decisions.filter((d: string) => d in labels).map((d: string) => labels[d]);
         next.set(base, { native: request, event: { type: "extension_ui_request", id: base, method: "select",
           title: "Codex 需要确认：" + (request.params.command || request.params.reason || "修改工作区权限"), options } });
-      } else if (request.supported && ["item/tool/requestUserInput", "tool/requestUserInput"].includes(request.method)) {
+      } else if (request.supported && ["item/tool/requestUserInput", "tool/requestUserInput", "bridge/requestUserInputAsync"].includes(request.method)) {
         const answered = this.answers.get(String(request.id)) || {};
         for (const question of request.params.questions || []) if (!answered[question.id]) {
           const id = base + ":" + question.id;
@@ -423,7 +423,7 @@ export class CodexRuntime {
         }
       } else {
         next.set(base, { native: request, event: { type: "extension_ui_request", id: base, method: "notify", notifyType: "warning",
-          message: "Codex 正在等待此界面尚不支持的确认，请停止本次任务：" + request.method } });
+          message: "Codex 有一项操作需要你处理，当前网页暂不支持。请回到发起任务的 Codex 客户端，打开同一会话查看并处理；无需因此停止任务。" } });
       }
     }
     // A native response/interrupt may resolve a request in another client.
@@ -707,14 +707,26 @@ export class CodexRuntime {
         const id = String(command.id), item = this.requests.get(id);
         if (!item) throw new Error("该确认已处理或已失效，请刷新会话");
         if (item.questionId) {
-          if (command.cancelled) throw new Error("此问题不能跳过，可停止当前任务");
+          if (command.cancelled) {
+            if (item.native.method === "bridge/requestUserInputAsync") return {};
+            throw new Error("回答尚未提交，请重新打开此会话继续回答");
+          }
           if (typeof command.value !== "string" || !command.value.trim()) throw new Error("请输入回答");
           const answers = this.answers.get(String(item.native.id)) || {};
           answers[item.questionId] = [command.value]; this.answers.set(String(item.native.id), answers);
           this.updateRequests();
           if ((item.native.params.questions || []).some((q: { id: string }) => !answers[q.id])) return {};
-          const result = await this.json(base + "/respond", { requestId: item.native.id, response: { answers } });
-          this.answers.delete(String(item.native.id)); return result;
+          try {
+            const result = await this.json(base + "/respond", { requestId: item.native.id, response: { answers } });
+            // Async replies can be admitted before their durable user echo is
+            // visible. Keep answered identities until the native request leaves.
+            if (item.native.method !== "bridge/requestUserInputAsync") this.answers.delete(String(item.native.id));
+            return result;
+          } catch (error) {
+            delete answers[item.questionId];
+            this.updateRequests();
+            throw error;
+          }
         }
         const labels: Record<string, string> = { "允许本次": "accept", "拒绝": "decline", "取消本次任务": "cancel" };
         const decision = command.cancelled ? (item.native.method.includes("permissions") ? "decline" : "cancel") : labels[String(command.value)];
