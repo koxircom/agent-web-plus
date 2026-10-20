@@ -147,6 +147,12 @@ def inspect_artifact(path):
                         raise ValueError('encrypted-archive')
                     mode = (entry.external_attr >> 16) & 0o170000
                     member(entry.filename, entry.file_size, lambda e=entry: archive.read(e), mode in {0, 0o100000}, entry.is_dir())
+        elif path.suffix.lower() == '.mp4':
+            with path.open('rb') as stream:
+                header = stream.read(12)
+            if len(header) < 12 or header[4:8] != b'ftyp':
+                raise ValueError('invalid-mp4-header')
+            member(path.name, path.stat().st_size, path.read_bytes)
         elif path.suffix.lower() in {'.md', '.txt', '.json', '.sha256'} or path.name == 'SHA256SUMS':
             member(path.name, path.stat().st_size, path.read_bytes)
         else:

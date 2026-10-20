@@ -66,7 +66,7 @@ python3 scripts/publish-release.py \
 4. `--apply` 创建草稿，上传已扫描副本；不覆盖或追加已有 Release。
 5. 下载附件并比对 SHA256，一致后公开。稳定版设为 Latest，预发布版保留 prerelease 标记，不设为 Latest。
 
-支持 `.tgz`、`.tar.gz`、`.tar`、`.zip` 及文本校验附件。损坏、加密、嵌套压缩包、链接、路径穿越、空包和超出扫描上限均阻止上传。扫描识别凭据格式、非空敏感配置、私钥、个人目录和私有网络地址；不执行自动替换，也不能代替泄露密钥的吊销。
+支持 `.tgz`、`.tar.gz`、`.tar`、`.zip`、MP4 视频及文本校验附件。MP4 会校验文件头并对实际文件字节执行相同敏感内容扫描；画面与音轨还须在制作环节人工核查，字节扫描不能证明画面已经脱敏。损坏、加密、嵌套压缩包、链接、路径穿越、空包和超出扫描上限均阻止上传。扫描识别凭据格式、非空敏感配置、私钥、个人目录和私有网络地址；不执行自动替换，也不能代替泄露密钥的吊销。
 
 ## 4. 回执与失败处理
 
@@ -79,3 +79,21 @@ python3 scripts/publish-release.py \
 发布本身不会升级运行实例。实例升级仍须明确目标及授权，保留原会话、置顶、设置、用量账本和实例配置，并按维护流程切换。不得把 GitHub 发布成功当作运行实例升级完成。
 
 旧五步流程保存在 [历史发布清单](archive/release-checklist-before-container-gate.md)，只供追溯。
+
+
+## 向已有 Release 追加介绍视频
+
+已公开的软件版本不因补充视频重新打包或移动标签。通过统一容器启动器传入原版本、标签对应的完整提交 SHA、公开 Release 数字 ID，以及一个已检查的 MP4：
+
+```bash
+python3 scripts/publish-release.py \
+  --root /workspace/source \
+  --tag "v${VERSION}" --target "$COMMIT_SHA" \
+  --asset /workspace/artifacts/Agent-Web-Plus-Introduction-1080p.mp4 \
+  --notes-file /workspace/artifacts/video-notes.md \
+  --append-media-to "$RELEASE_ID"
+```
+
+默认只预检；明确发布后添加 `--apply`。此入口仍检查源码、说明、实际视频副本、容器认证与标签，且只接受当前账号拥有的公开 Release 和一个新名称的 MP4。发布说明文件作为新增视频段落追加，保留原文。
+
+上传前后核对原有软件包的附件 ID、名称、大小和 GitHub 摘要；视频下载回读 SHA256 一致后才追加说明。不会覆盖同名附件、移动标签、改变 Latest 或重新上传软件包。视频追加不能在原 Release 中建立独立草稿，因此上传后立即可见；若回读或并发检查失败，停止并保留附件供核查，不自动覆盖或重传。

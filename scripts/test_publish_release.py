@@ -251,5 +251,88 @@ class PublisherTest(unittest.TestCase):
                 publisher.authentication()
 
 
+class FakeMediaGitHub(FakeGitHub):
+    def __init__(self, tag, target, corrupt=False):
+        super().__init__(tag, target, corrupt)
+        self.draft = False
+        self.assets = {'installer.tgz': b'existing-installer', 'SHA256SUMS': b'existing-checksum'}
+        self.body = '原有软件发布说明。'
+
+    def api(self, endpoint, **kwargs):
+        result = super().api(endpoint, **kwargs)
+        if isinstance(result, dict) and 'assets' in result:
+            result['body'] = self.body
+            result['assets'] = [{'name': name, 'id': index + 1, 'size': len(data),
+                'digest': 'sha256:' + __import__('hashlib').sha256(data).hexdigest(),
+                'browser_download_url': 'https://example.invalid/' + name}
+                for index, (name, data) in enumerate(self.assets.items())]
+        return result
+
+    def gh(self, *args):
+        if args[0] == 'api':
+            self.commands.append(args)
+            self.body = json.loads(Path(args[args.index('--input') + 1]).read_text())['body']
+            return ''
+        return super().gh(*args)
+
+
+class MediaPublisherTest(unittest.TestCase):
+    invoke = PublisherTest.invoke
+    def setUp(self):
+        PublisherTest.setUp(self)
+        self.asset = self.base / 'introduction.mp4'
+        self.asset.write_bytes(b'\x00\x00\x00\x18ftypisom' + b'\x00' * 20)
+        self.args.asset = [self.asset]
+        self.args.append_media_to = 123
+        self.notes.write_text('## 视频介绍\n新视频的公开下载链接。')
+
+    # Reuse the existing fake transport helper, not the parent's test cases.
+    def test_media_append_preserves_software_and_verifies_before_notes(self):
+        fake = FakeMediaGitHub(self.args.tag, self.args.target)
+        original = dict(fake.assets)
+        receipt = self.invoke(fake)
+        self.assertEqual(receipt['status'], 'media-published-and-verified')
+        self.assertEqual([c[1] if c[0] == 'release' else c[0] for c in fake.commands], ['upload', 'download', 'api'])
+        self.assertTrue(fake.body.startswith('原有软件发布说明。'))
+        self.assertIn('视频介绍', fake.body)
+        for name, data in original.items(): self.assertEqual(fake.assets[name], data)
+        self.assertEqual(receipt['preservedAssets'], sorted(original))
+
+    def test_media_preflight_never_uploads_or_edits(self):
+        self.args.apply = False
+        fake = FakeMediaGitHub(self.args.tag, self.args.target)
+        self.assertEqual(self.invoke(fake)['status'], 'media-preflight-passed')
+        self.assertEqual(fake.commands, [])
+
+    def test_media_existing_name_never_clobbers(self):
+        fake = FakeMediaGitHub(self.args.tag, self.args.target)
+        fake.assets[self.asset.name] = b'already-published'
+        with self.assertRaisesRegex(ValueError, '同名附件已存在'):
+            self.invoke(fake)
+        self.assertEqual(fake.commands, [])
+
+    def test_media_wrong_release_or_owner_is_rejected(self):
+        fake = FakeMediaGitHub(self.args.tag, self.args.target)
+        self.args.append_media_to = 456
+        with self.assertRaisesRegex(ValueError, '身份或所有者不符'):
+            self.invoke(fake)
+        self.assertEqual(fake.commands, [])
+
+    def test_media_corrupt_readback_does_not_edit_notes_or_retry(self):
+        fake = FakeMediaGitHub(self.args.tag, self.args.target, corrupt=True)
+        with self.assertRaisesRegex(ValueError, '视频下载回读指纹不一致'):
+            self.invoke(fake)
+        self.assertEqual([c[1] for c in fake.commands], ['upload', 'download'])
+        self.assertEqual(fake.body, '原有软件发布说明。')
+
+    def test_media_rejects_fake_mp4_and_sensitive_bytes_before_github(self):
+        for content in (b'not-a-video', b'\x00\x00\x00\x18ftypisom\x00' + ('sk-' + 'Z' * 32).encode()):
+            self.asset.write_bytes(content)
+            fake = FakeMediaGitHub(self.args.tag, self.args.target)
+            with self.assertRaisesRegex(ValueError, '脱敏扫描未通过'):
+                self.invoke(fake)
+            self.assertEqual(fake.commands, [])
+
+
 if __name__ == '__main__':
     unittest.main()

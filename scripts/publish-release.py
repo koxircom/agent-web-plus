@@ -81,6 +81,69 @@ def release_for_tag(tag):
     raise ValueError('Release 查询超过范围，已停止；请核查指定标签')
 
 
+def append_media(args, receipt, stage, existing):
+    """Explicitly add one reviewed video; never replace software assets or tags."""
+    if (not existing or existing['id'] != args.append_media_to or existing['draft']
+            or existing.get('author', {}).get('login') != receipt['account']):
+        raise ValueError('指定公开 Release 身份或所有者不符，禁止追加媒体')
+    if (getattr(args, 'finalize_draft', None) is not None
+            or len(args.asset) != 1 or args.asset[0].suffix.lower() != '.mp4'):
+        raise ValueError('追加媒体入口只接受一个 MP4，不接受草稿或软件包')
+    def snapshot(release):
+        return {a['name']: (a['id'], a['size'], a.get('digest')) for a in release['assets']}
+    before = snapshot(existing)
+    name = args.asset[0].name
+    if name.casefold() in {n.casefold() for n in before}:
+        raise ValueError('同名附件已存在，禁止覆盖或自动重传')
+    video = stage / name
+    receipt.update(appendMediaReleaseId=existing['id'],
+                   assets=[{'name': name, 'size': video.stat().st_size, 'sha256': digest(video)}])
+    old_body = existing.get('body') or ''
+    addition = (stage / args.notes_file.name).read_text().strip()
+    new_body = old_body.rstrip() + '\n\n' + addition + '\n'
+    notes = stage / 'combined-release-notes.md'
+    notes.write_text(new_body)
+    scan = SCANNER.inspect_artifact(notes)
+    receipt['scans'].append({'kind': 'combined-release-notes', **scan})
+    if scan['status'] != 'passed':
+        raise ValueError('原有说明与新增视频说明的合并扫描未通过')
+    if not args.apply:
+        receipt['status'] = 'media-preflight-passed'
+        return
+    current = release_for_tag(args.tag)
+    if (not current or current['id'] != existing['id'] or current['draft']
+            or snapshot(current) != before or (current.get('body') or '') != old_body):
+        raise ValueError('Release 在预检后发生变化，已停止追加')
+    receipt['phase'] = 'upload-media'
+    gh('release', 'upload', args.tag, str(video), '--repo', 'https://github.com/' + REPO)
+    receipt['phase'] = 'verify-media'
+    updated = release_for_tag(args.tag)
+    if (not updated or updated['id'] != existing['id'] or updated['draft']
+            or (updated.get('body') or '') != old_body):
+        raise ValueError('Release 在上传中发生变化，已停止修改说明')
+    after = snapshot(updated)
+    if set(after) != set(before) | {name} or any(after[n] != value for n, value in before.items()):
+        raise ValueError('原有附件或新增附件集合发生变化，已停止')
+    downloads = stage / 'downloaded'
+    downloads.mkdir()
+    gh('release', 'download', args.tag, '--repo', 'https://github.com/' + REPO,
+       '--pattern', name, '--dir', str(downloads))
+    if digest(downloads / name) != receipt['assets'][0]['sha256']:
+        raise ValueError('视频下载回读指纹不一致，已停止；不会自动重传')
+    receipt['phase'] = 'append-media-notes'
+    payload = stage / 'release-update.json'
+    payload.write_text(json.dumps({'body': new_body}))
+    gh('api', '--hostname', 'github.com', '--method', 'PATCH',
+       f'repos/{REPO}/releases/{existing["id"]}', '--input', str(payload))
+    published = release_for_tag(args.tag)
+    if (not published or published['id'] != existing['id'] or published['draft']
+            or published.get('body') != new_body or snapshot(published) != after):
+        raise ValueError('视频发布回读不一致，需要核查；不会自动重传')
+    receipt.update(status='media-published-and-verified', url=published['html_url'],
+                   videoUrl=next(a['browser_download_url'] for a in published['assets'] if a['name'] == name),
+                   preservedAssets=sorted(before))
+
+
 def publish(args, receipt):
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', args.tag or ''):
         raise ValueError('必须指定合法版本标签')
@@ -115,6 +178,9 @@ def publish(args, receipt):
         if tag_commit(args.tag) != args.target:
             raise ValueError('远程标签与指定提交不一致')
         existing = release_for_tag(args.tag)
+        if getattr(args, 'append_media_to', None) is not None:
+            append_media(args, receipt, stage, existing)
+            return
         finalize_id = getattr(args, 'finalize_draft', None)
         if finalize_id is not None:
             if (not existing or existing['id'] != finalize_id or not existing['draft']
@@ -179,6 +245,7 @@ def main():
     parser.add_argument('--notes-file', type=Path)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--finalize-draft', type=int, metavar='RELEASE_ID', help='显式核验指定自有草稿并公开；不创建草稿或上传附件')
+    parser.add_argument('--append-media-to', type=int, metavar='RELEASE_ID', help='向指定自有公开 Release 追加一个扫描通过的 MP4；不覆盖已有附件')
     parser.add_argument('--check-auth', action='store_true')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()
