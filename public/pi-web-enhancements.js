@@ -544,7 +544,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 /* Optional resources share one request and publish no UI ownership. */
 (function (root) {
   "use strict";
-  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-f4a6b4b140d01297.js","integrity":"sha256-9Ka0sUDQEpfzhWcQFqe/BEXyO7kHkgsTsP9rGo/kt6I=","bytes":72995},"image-editor":{"path":"/pi-web-assets/image-editor-42f6645a70f43e69.js","integrity":"sha256-QvZkWnD0PmlNxebzPKvYNLKW//UgBpYPtG+DxJYS9ps=","bytes":54018}};
+  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-f4a6b4b140d01297.js","integrity":"sha256-9Ka0sUDQEpfzhWcQFqe/BEXyO7kHkgsTsP9rGo/kt6I=","bytes":72995},"image-editor":{"path":"/pi-web-assets/image-editor-d639e1103e1c3401.js","integrity":"sha256-1jnhED4cNAE9/iHWC+lG0Ye0Fjtb5jHV3w5TJbkiFOE=","bytes":54470}};
   const pending = new Map();
   // Hot reloads may change an optional asset while keeping the same window.
   // Reuse only an export stamped with this exact content-addressed path.

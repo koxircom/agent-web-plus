@@ -1289,17 +1289,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => {
     const sid = sessionIdRef.current;
-    setExtensionDialogs((queue) => removeExtensionUiRequest(queue, request.id));
-    if (!sid) return;
+    if (!sid) return false;
     try {
       await sendAgentCommand(sid, {
         type: "extension_ui_response",
         id: request.id,
         ...response,
       });
+      if (sessionIdRef.current === sid) setExtensionDialogs((queue) => removeExtensionUiRequest(queue, request.id));
+      return true;
     } catch (e) {
       console.error("Failed to send extension UI response:", e);
-      addNotice({ type: "error", message: "回答未能确认提交，请刷新会话状态后继续处理。", recovery: "session", error: e });
+      addNotice({ type: "error", message: "回答未能确认提交，请检查连接后重试；原回答仍保留在问题卡片中。", recovery: "session", error: e });
+      return false;
     }
   }, [addNotice]);
 

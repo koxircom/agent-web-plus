@@ -42,10 +42,19 @@ export function AskUserSurface({ request, onInput, fallback, waitingCount = 0 }:
 
 // The same question surface handles plain input/editor requests, without a terminal overlay.
 type TextRequest = Extract<ExtensionUiRequest, { method: "input" | "editor" }>;
-export function AskUserTextPanel({ request, onRespond, waitingCount = 0 }: { request: TextRequest; onRespond: (request: TextRequest, response: { value: string } | { cancelled: true }) => void; waitingCount?: number }) {
+type TextResponse = { value: string } | { cancelled: true };
+type TextResponder = (request: TextRequest, response: TextResponse) => void | Promise<boolean>;
+export function AskUserTextPanel(props: { request: TextRequest; onRespond: TextResponder; waitingCount?: number }) {
+  return props.request.method === "input" && props.request.askUser
+    ? <AskUserPanel request={props.request} question={props.request.askUser} waitingCount={props.waitingCount} onReply={props.onRespond} />
+    : <AskUserPlainTextPanel {...props} />;
+}
+function AskUserPlainTextPanel({ request, onRespond, waitingCount = 0 }: { request: TextRequest; onRespond: TextResponder; waitingCount?: number }) {
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
   const [now, setNow] = useState(() => Date.now());
   const sending = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
     if (request.expiresAt === undefined) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -56,11 +65,16 @@ export function AskUserTextPanel({ request, onRespond, waitingCount = 0 }: { req
   const title = contextMarker < 0 ? request.title : request.title.slice(0, contextMarker);
   const context = contextMarker < 0 ? "" : request.title.slice(contextMarker + "\n\nContext:\n".length);
   const canSend = request.method === "editor" || Boolean(value.trim());
-  const expiresHint = request.expiresAt === undefined ? "" : `${Math.max(0, Math.ceil((request.expiresAt - now) / 1000))} 秒后到期`;
-  const respond = (skip = false) => {
+  const expiresHint = error || (busy ? "正在提交，等待确认…" : request.expiresAt === undefined ? "" : `${Math.max(0, Math.ceil((request.expiresAt - now) / 1000))} 秒后到期`);
+  const respond = async (skip = false) => {
     if (sending.current || (!skip && !canSend)) return;
-    sending.current = true;
-    onRespond(request, skip ? { cancelled: true } : { value });
+    sending.current = true; setBusy(true); setError("");
+    try {
+      if ((await onRespond(request, skip ? { cancelled: true } : { value })) === false) throw new Error("回答未确认送达，请检查连接后重试。");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "回答发送失败");
+      sending.current = false; setBusy(false);
+    }
   };
   return <div className="pi-native-extension-host pi-native-ask-host">
     <section className="pi-native-ask-card" role="dialog" aria-label={title} onKeyDown={event => {
@@ -100,10 +114,10 @@ export function AskUserTextPanel({ request, onRespond, waitingCount = 0 }: { req
             />
           )}
           <div className="pi-native-ask-footer-main">
-            <button type="button" className="pi-native-ask-cancel" onClick={() => respond(true)}>
+            <button type="button" className="pi-native-ask-cancel" disabled={busy} onClick={() => respond(true)}>
               <span className="pi-native-ask-button-label">取消</span>
             </button>
-            <button type="button" className="pi-native-ask-submit" disabled={!canSend} onClick={() => respond()}>
+            <button type="button" className="pi-native-ask-submit" disabled={!canSend || busy} onClick={() => respond()}>
               <span className="pi-native-ask-button-label">发送</span>
             </button>
           </div>
@@ -113,17 +127,18 @@ export function AskUserTextPanel({ request, onRespond, waitingCount = 0 }: { req
   </div>;
 }
 
-export function AskUserPanel({ request, question, onInput, waitingCount = 0 }: { request: Request; question: AskUserQuestion; onInput: Input; waitingCount?: number }) {
+export function AskUserPanel({ request, question, onInput, onReply, waitingCount = 0 }: { request: Request | TextRequest; question: AskUserQuestion; onInput?: Input; onReply?: TextResponder; waitingCount?: number }) {
+  const lines = request.method === "custom" ? request.lines : [];
   const [selected, setSelected] = useState<number[]>(() => {
-    const checked = readAskTerminal(request.lines).options.flatMap((option, index) => option.checked ? [index] : []);
-    return readAskTerminal(request.lines).mode === "freeform" ? [] : checked.length ? checked : question.options.length ? [0] : [];
+    const checked = readAskTerminal(lines).options.flatMap((option, index) => option.checked ? [index] : []);
+    return readAskTerminal(lines).mode === "freeform" ? [] : checked.length ? checked : question.options.length ? [0] : [];
   });
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const sending = useRef(false);
   const firstOption = useRef<HTMLButtonElement>(null);
-  const terminalMode = readAskTerminal(request.lines).mode;
+  const terminalMode = readAskTerminal(lines).mode;
   const hint = error || (busy ? "正在提交，等待确认…" : "");
 
   const hasNotes = Boolean(notes.trim());
@@ -136,11 +151,11 @@ export function AskUserPanel({ request, question, onInput, waitingCount = 0 }: {
     if (allowsAutomaticEditableFocus()) firstOption.current?.focus({ preventScroll: true });
   }, []);
 
-  async function send(data: string[]) {
+  async function send(deliver: () => boolean | undefined | void | Promise<boolean | undefined | void>) {
     if (sending.current) return;
     sending.current = true; setBusy(true); setError("");
     try {
-      if (!await onInput(request, data)) throw new Error("回答未确认送达，请检查连接后重试。");
+      if ((await deliver()) === false) throw new Error("回答未确认送达，请检查连接后重试。");
       // Closure belongs to the server's request id, never a local timer.
       // If the terminal opens an editor instead, allow continuing it in place.
     } catch (cause) {
@@ -160,7 +175,16 @@ export function AskUserPanel({ request, question, onInput, waitingCount = 0 }: {
 
   function submit() {
     if (sending.current || busy) return;
-    try { void send(buildAskAnswerInputs(question, request.lines, selected, notes, freeform)); }
+    try {
+      if (request.method !== "custom" && onReply) {
+        const value = freeform ? notes.trim() : selected.map(index => question.options[index].title).join("、");
+        if (!value) return;
+        void send(() => onReply(request, { value }));
+      } else if (request.method === "custom" && onInput) {
+        const data = buildAskAnswerInputs(question, lines, selected, notes, freeform);
+        void send(() => onInput(request, data));
+      }
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : (freeform ? "请输入自定义回答" : "请选择答案")); }
   }
 
@@ -232,9 +256,14 @@ export function AskUserPanel({ request, question, onInput, waitingCount = 0 }: {
             />
           )}
           <div className="pi-native-ask-footer-main">
-            <button type="button" className="pi-native-ask-cancel" disabled={busy} onClick={() => void send(["\x03"])}>
-              <span className="pi-native-ask-button-label">取消</span>
-            </button>
+            {(request.method === "custom" || (request.method === "input" && request.allowDefer)) && (
+              <button type="button" className="pi-native-ask-cancel" disabled={busy} onClick={() => {
+                if (request.method === "custom" && onInput) void send(() => onInput(request, ["\x03"]));
+                else if (request.method !== "custom" && onReply) void send(() => onReply(request, { cancelled: true }));
+              }}>
+                <span className="pi-native-ask-button-label">{request.method === "custom" ? "取消" : "稍后回答"}</span>
+              </button>
+            )}
             <button type="button" className="pi-native-ask-submit" disabled={!canSubmit} onClick={submit}>
               <span className="pi-native-ask-button-label">{busy ? "发送中…" : "发送"}</span>
             </button>

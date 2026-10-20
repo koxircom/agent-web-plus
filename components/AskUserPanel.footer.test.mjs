@@ -15,7 +15,7 @@ test("removes redundant header and tools from JSX and ask-user.css", () => {
   assert.doesNotMatch(panelSource, /AskQuestionHeader/, "AskQuestionHeader component should be eliminated");
   assert.doesNotMatch(panelSource, /pi-native-ask-footer-tools/, "Footer tools container should be removed from JSX");
   assert.doesNotMatch(panelSource, /notesOpen|collapsed/, "Old notes toggles and inaccessible collapsed state must be removed");
-  assert.equal((panelSource.match(/<span className="pi-native-ask-button-label">取消<\/span>/g) || []).length, 2, "Both question surfaces explicitly label cancellation with button label span");
+  assert.match(panelSource, /request.method === "custom" \? "取消" : "稍后回答"/, "Async questions defer without cancelling the native task");
   assert.doesNotMatch(panelSource, />\s*直接回答\s*<\/button>/, "Direct answer button should be removed");
   assert.doesNotMatch(panelSource, /补充回答/, "Add notes button should be removed");
 });

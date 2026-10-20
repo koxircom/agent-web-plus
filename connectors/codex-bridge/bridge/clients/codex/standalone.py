@@ -16,7 +16,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from bridge.features.sessions.model import merge_turn_items
+from bridge.features.sessions.model import async_requests, merge_turn_items, question_replies
 
 from bridge.app.service import Bridge
 from bridge.clients.codex.catalog import Catalog
@@ -59,6 +59,39 @@ def pending_submissions(submissions):
              'attachments': [a['name'] for a in row.get('attachments', [])],
              **({'error': row['error']} if row.get('error') else {})}
             for key, row in submissions.items() if row['status'] in ('unknown', 'queued', 'failed') and (row.get('queueOwner') != 'native' or row.get('nativePromotion', {}).get('stage') not in (None, 'done'))]
+
+
+def async_submission_id(thread_id, request_id):
+    """Keep one durable user-message identity for each native question request."""
+    return str(uuid.uuid5(uuid.UUID(str(thread_id)), 'async-question:' + str(request_id)))
+
+
+def async_reply_text(questions, response):
+    if not isinstance(response, dict) or set(response) != {'answers'}:
+        raise ValueError('请回答所有问题')
+    answers = response['answers']
+    if not isinstance(answers, dict):
+        raise ValueError('请回答所有问题')
+    identifiers = [question.get('id') for question in questions]
+    if (not identifiers or any(not isinstance(identifier, str) or not identifier for identifier in identifiers)
+            or len(set(identifiers)) != len(identifiers) or set(answers) != set(identifiers)
+            or any(not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], str)
+                   or not value[0].strip() or len(value[0]) > 20000 for value in answers.values())):
+        raise ValueError('请回答所有问题')
+    replies = [{'questionItemId': question['id'], 'question': question['question'],
+                'answer': answers[question['id']][0]} for question in questions]
+    return ('<send_user_message_question_reply>\n'
+            + json.dumps(replies, ensure_ascii=False, separators=(',', ':'))
+            + '\n</send_user_message_question_reply>')
+
+
+def prior_async_questions(row):
+    replies = question_replies(row.get('text', '')) if isinstance(row, dict) else []
+    if not replies or any(not isinstance(reply.get('questionItemId'), str)
+                          or not isinstance(reply.get('question'), str)
+                          for reply in replies):
+        return []
+    return [{'id': reply['questionItemId'], 'question': reply['question']} for reply in replies]
 
 
 class Runtime(SideRuntime):
@@ -619,7 +652,17 @@ class Chat(SideChat):
 
     def view(self, *, include_turns=True):
         # Use native parsing, including attachments overlaid from the ledger.
-        result = super().view(include_turns=include_turns)
+        with self.lock:
+            result = super().view(include_turns=include_turns)
+            async_pending = async_requests(self.state)
+            restored_async = []
+            for request in async_pending:
+                submission = self.submissions.get(async_submission_id(self.id, request['id']))
+                if submission and submission.get('status') in ('queued', 'unknown', 'accepted'):
+                    continue
+                restored_async.append(request)
+            result['requests'] = [request for request in result.get('requests', [])
+                                  if request.get('method') != 'bridge/requestUserInputAsync'] + restored_async
         result = {**result, 'connected': self.connected, 'sequence': self.sequence,
                   'submissions': pending_submissions(self.submissions),
                   'connectionError': None if self.connected else ('原 WSL 服务连接已断开，请重连；待确认消息不会自动重发' if self.shared else 'WSL 运行时已停止，后台服务正在恢复'),
@@ -1327,9 +1370,11 @@ class StandaloneBridge(Bridge):
                 continue
             entry = self._record(identifier)
             chat = self.live.get(identifier)
+            view = chat.view(include_turns=False) if chat else {}
             rows.append({'id': identifier, 'host': 'local', 'recency': entry['updatedAt'] * 1000,
                          'connected': True if not chat else chat.connected,
-                         'status': chat.view(include_turns=False)['status'] if chat else 'idle'})
+                         'status': view.get('status', 'idle'),
+                         'hasPendingRequests': bool(view.get('requests'))})
         return rows
 
     def navigation_index(self, thread_id):
@@ -1434,7 +1479,7 @@ class StandaloneBridge(Bridge):
                     result.setdefault('meta', {})['composerState'] = state
             return result
 
-    def send(self, thread_id, text, submission_id, mode='send', skills=None, *, work_mode=None, attachments=None, ui_locale=None, client_request_id=None):
+    def send(self, thread_id, text, submission_id, mode='send', skills=None, *, work_mode=None, attachments=None, ui_locale=None, client_request_id=None, _text_limit=20000):
         if client_request_id is not None and (not isinstance(client_request_id, str) or not __import__("re").fullmatch(r"[a-zA-Z0-9-]{16,80}", client_request_id)):
             raise ValueError("消息客户端标识无效")
         self._adopt_record(thread_id)
@@ -1454,7 +1499,7 @@ class StandaloneBridge(Bridge):
                     mode = 'send'
             result = chat.send(text, submission_id, attachments, mode=mode,
                 work_mode=work_mode, skills=skills,
-                catalog_reader=self.catalog_reader, client_request_id=client_request_id)
+                catalog_reader=self.catalog_reader, client_request_id=client_request_id, _text_limit=_text_limit)
             if work_mode == 'goal' and result.get('status') == 'accepted':
                 with self.registry_lock:
                     entry = self.records['threads'][thread_id]
@@ -1478,7 +1523,51 @@ class StandaloneBridge(Bridge):
 
     def respond(self, thread_id, request_id, response):
         self._adopt_record(thread_id)
-        return self.session(thread_id).respond(request_id, response)
+        chat = self.session(thread_id)
+        if not isinstance(chat, Chat):
+            return chat.respond(request_id, response)
+        with chat.actions:
+            submission_id = async_submission_id(thread_id, request_id)
+            with chat.condition:
+                pending = next((row for row in async_requests(chat.state) if row['id'] == request_id), None)
+                prior = copy.deepcopy(chat.submissions.get(submission_id))
+                active = chat.state.get('threadRuntimeStatus', {}).get('type') == 'active'
+            if prior:
+                questions = ((pending or {}).get('params') or {}).get('questions') or prior_async_questions(prior)
+                text = async_reply_text(questions, response)
+                if prior.get('status') == 'failed':
+                    if not pending:
+                        raise ValueError('该问题已结束，请刷新会话查看最新内容')
+                    # An explicit retry is safe only after a confirmed rejection.
+                    # Keep the same native message ID; uncertain deliveries below
+                    # remain receipts and must never be dispatched a second time.
+                    chat.refresh_shared_state()
+                    with chat.condition:
+                        mode = 'steer' if chat.state.get('threadRuntimeStatus', {}).get('type') == 'active' else 'send'
+                        work_mode = None if mode == 'steer' else 'default'
+                        row = chat.submissions[submission_id]
+                        row.update(text=text, mode=mode, workMode=work_mode, status='queued',
+                                   digest=hashlib.sha256(json.dumps([text, [], mode, work_mode, []], ensure_ascii=False).encode()).hexdigest())
+                        row.pop('error', None)
+                        row.pop('turnId', None)
+                    try:
+                        result = chat._dispatch(submission_id, row)
+                    except Exception as error:
+                        with chat.condition:
+                            if row['status'] == 'queued':
+                                row.update(status='failed', error=str(error))
+                        chat.persist()
+                        raise
+                    return {**result, 'composerState': chat.composer_state()}
+                if prior.get('text') != text:
+                    raise ValueError('此问题已提交不同答案，请查看会话结果')
+                return {'id': submission_id, 'status': prior.get('status', 'unknown'),
+                        'composerState': chat.composer_state()}
+            if pending:
+                text = async_reply_text(pending['params'].get('questions', []), response)
+                return self.send(thread_id, text, submission_id,
+                                 'steer' if active else 'send', skills=[], work_mode='default', _text_limit=100000)
+            return chat.respond(request_id, response)
 
     def submission_receipt(self, thread_id, submission_id):
         uuid.UUID(str(thread_id)); uuid.UUID(str(submission_id))

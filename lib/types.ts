@@ -175,6 +175,9 @@ export type ExtensionUiRequest =
       id: string;
       method: "input";
       title: string;
+      /** Structured questions reuse the shared Ask User choice surface. */
+      askUser?: AskUserQuestion;
+      allowDefer?: boolean;
       placeholder?: string;
       timeout?: number;
       expiresAt?: number;

@@ -372,9 +372,9 @@ class SideChat:
             raise ValueError('Skill 不可用，请刷新列表')
         return rows
 
-    def send(self, text, submission, attachments=None, *, mode='send', work_mode='default', skills=None, catalog_reader=None, client_request_id=None):
+    def send(self, text, submission, attachments=None, *, mode='send', work_mode='default', skills=None, catalog_reader=None, client_request_id=None, _text_limit=20000):
         uuid.UUID(str(submission))
-        if not isinstance(text, str) or (not text.strip() and not attachments) or len(text) > 20000:
+        if not isinstance(text, str) or (not text.strip() and not attachments) or len(text) > _text_limit:
             raise ValueError('请输入 1–20000 字的消息')
         supported_work_modes = ('default', 'plan', 'goal') if self.supports_goal_mode else ('default', 'plan')
         if mode not in ('send', 'queue', 'steer') or (work_mode not in supported_work_modes if mode != 'steer' else work_mode is not None):
