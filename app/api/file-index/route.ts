@@ -1,3 +1,4 @@
+import { codexConnectionIdentity } from "@/lib/execution-engine-settings";
 import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -10,6 +11,12 @@ import {
   isWindowsAbsolutePath,
 } from "@/lib/file-access";
 import { buildEntriesFromFiles, filterFileEntries, type FileIndexEntry } from "@/lib/file-fuzzy";
+import {
+  codexWorkspaceJson,
+  resolveCodexWorkspaceTarget,
+  shouldUseCodexWorkspace,
+  type CodexWorkspaceTarget,
+} from "@/lib/execution-engines/codex-files";
 
 const execFileAsync = promisify(execFile);
 
@@ -107,6 +114,59 @@ function listWithWalk(cwd: string): FileListing {
   return { files, hardTruncated: false };
 }
 
+async function listWithCodex(target: CodexWorkspaceTarget): Promise<FileListing> {
+  const files: string[] = [];
+  const ignoredNames = IGNORED_NAMES;
+  const base = target.relativePath ? target.relativePath + "/" : "";
+  const queue: Array<{ workspacePath: string; relativePath: string; depth: number }> = [
+    { workspacePath: target.relativePath, relativePath: "", depth: 0 },
+  ];
+  let visitedDirectories = 0;
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    visitedDirectories++;
+    if (visitedDirectories > WALK_HARD_CAP) return { files, hardTruncated: true };
+    let offset = 0;
+    let pageCount = 0;
+    while (true) {
+      if (++pageCount > Math.ceil(WALK_HARD_CAP / 200) + 1) return { files, hardTruncated: true };
+      const page = await codexWorkspaceJson(target, "list", current.workspacePath, {
+        hidden: "true",
+        offset: String(offset),
+      }) as {
+        entries?: Array<{ name?: unknown; path?: unknown; kind?: unknown }>;
+        nextOffset?: unknown;
+      };
+      for (const entry of page.entries ?? []) {
+        if (typeof entry.name !== "string" || ignoredNames.has(entry.name) || IGNORED_SUFFIXES.some((suffix) => String(entry.name).endsWith(suffix))) continue;
+        const workspaceEntryPath = typeof entry.path === "string"
+          ? entry.path
+          : current.workspacePath ? `${current.workspacePath}/${entry.name}` : entry.name;
+        if (entry.kind === "directory") {
+          if (current.depth + 1 <= MAX_WALK_DEPTH) {
+            queue.push({
+              workspacePath: workspaceEntryPath,
+              relativePath: current.relativePath ? `${current.relativePath}/${entry.name}` : entry.name,
+              depth: current.depth + 1,
+            });
+          }
+          continue;
+        }
+        if (entry.kind !== "file") continue;
+        if (files.length >= WALK_HARD_CAP) return { files, hardTruncated: true };
+        const relativeToProject = workspaceEntryPath.startsWith(base)
+          ? workspaceEntryPath.slice(base.length)
+          : null;
+        if (relativeToProject !== null && relativeToProject) files.push(relativeToProject);
+      }
+      if (typeof page.nextOffset !== "number" || !Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset) break;
+      offset = page.nextOffset;
+    }
+  }
+  return { files, hardTruncated: false };
+}
+
 // GET /api/file-index?cwd=/abs/path[&q=query]
 // Without q: { files: string[] (relative to cwd, capped at MAX_FILES),
 // truncated: boolean } — the client-side index for local filtering.
@@ -121,6 +181,30 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }
     const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
+
+    if (await shouldUseCodexWorkspace(req.nextUrl.searchParams.get("sessionId"))) {
+      const target = await resolveCodexWorkspaceTarget(cwd);
+      const cacheKey = `codex:${await codexConnectionIdentity()}:${target.project.key}:${target.fullPath}`;
+      const cache = getIndexCache();
+      const now = Date.now();
+      let cached = cache.get(cacheKey);
+      if (!cached || cached.expiresAt <= now) {
+        const listing = await listWithCodex(target);
+        for (const [key, entry] of cache) {
+          if (entry.expiresAt <= now) cache.delete(key);
+        }
+        if (cache.size >= CACHE_MAX_ENTRIES) cache.clear();
+        cached = { listing, expiresAt: now + CACHE_TTL_MS };
+        cache.set(cacheKey, cached);
+      }
+
+      if (query) {
+        cached.entries ??= buildEntriesFromFiles(cached.listing.files);
+        return NextResponse.json({ matches: filterFileEntries(cached.entries, query) });
+      }
+      const { files, hardTruncated } = cached.listing;
+      return NextResponse.json({ files: files.slice(0, MAX_FILES), truncated: hardTruncated || files.length > MAX_FILES });
+    }
 
     const allowedRoots = await getAllowedFileRoots();
     if (!isFilePathAllowed(cwd, allowedRoots)) {
@@ -164,6 +248,9 @@ export async function GET(req: NextRequest) {
       truncated: hardTruncated || files.length > MAX_FILES,
     });
   } catch (error) {
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    const status = error && typeof error === "object" && "status" in error && typeof error.status === "number"
+      ? error.status
+      : 500;
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status });
   }
 }

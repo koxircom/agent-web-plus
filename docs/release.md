@@ -1,131 +1,79 @@
-# Release Checklist
+# Agent Web Plus 发布流程
 
-PI Web Plus releases are distributed exclusively through [`koxircom/pi-web-plus` GitHub Releases](https://github.com/koxircom/pi-web-plus/releases):
+发布仓库保持 [`koxircom/pi-web-plus`](https://github.com/koxircom/pi-web-plus/releases)。内部包名继续使用 `@agegr/pi-web`，保留 `pi-web`、`agent-web` 命令和旧数据目录；不发布到公共 npm 注册表。
 
-- GitHub Release tag: `v<version>` in `koxircom/pi-web-plus` (for example, `v1.3.8`)
-- Release tarball asset: `pi-web-plus-<version>.tgz` (for example, `pi-web-plus-1.3.8.tgz`)
-- Official install command (replace `<version>` when targeting another release):
-  ```bash
-  npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.3.8/pi-web-plus-1.3.8.tgz
-  ```
+## 唯一认证入口
 
-> **Release Invariants**:
-> - `package.json` keeps `"name": "@agegr/pi-web"` (alongside `"piWebEdition": "koxir-standalone"` and `"standalone": true`) for internal runtime compatibility, but **never publish to or pull from the public npm registry**.
-> - **Web SDK `1.0.2` vs. Global Pi Agent CLI**: PI Web Plus `v1.3.8` unifies `@earendil-works/pi-*` Web dependencies at `1.0.2`; installing Pi Web does **not** automatically upgrade the global `pi` Agent CLI on the host.
-> - **Tarball excludes `node_modules/`**: `pi-web-plus-1.3.8.tgz` ships prebuilt `.next/`, `bin/`, and `public/` assets without `node_modules/`, requiring standard dependency installation (or verified offline `node_modules/` reuse).
-> - **Protect custom manifests, sessions, and ledgers**: Staging and instance upgrades must preserve instance-specific `public/pi-*-manifest.json`, session files (`~/.pi/agent/sessions/`), and usage ledgers (`pi-usage-ledger.json` / `~/.pi/agent/state/`).
-> - **Pushing `main` alone is not a release**: every release must complete all 5 steps below — preflight & version preparation, offline build + `npm pack` + tarball verification, clean install verification, GitHub Release asset upload + `Latest` verification, and running-instance synchronization.
+维护者统一在已登记的发布容器内使用现有 GitHub CLI 登录。SSH 别名、容器名和运维启动器放在私有部署目录；公开源码不保存设备地址、密码或令牌。发布脚本拒绝环境变量令牌覆盖，不导出认证，不回退到调用电脑的 `gh` 登录。
 
-Use this 5-step checklist from a clean `main` checkout with Node.js `>=22.19.0`.
-
-## 1. Preflight & Version Preparation
-
-Verify Node.js (`node >=22.19`), repository state, GitHub CLI authentication, package metadata, and quality checks:
+容器内预检：
 
 ```bash
-node --version
-git status --short --branch
-git log --oneline --decorate -5
-gh auth status
-node -e "const p=require('./package.json'); console.log(p.name, p.version, p.piWebEdition, p.standalone)"
-npm test
-node_modules/.bin/tsc --noEmit
-npm run lint
+python3 scripts/publish-release.py --check-auth
 ```
 
-Expected:
+维护环境的统一启动器通过 SSH 调用上述脚本，所有 `--root`、`--asset`、`--notes-file` 参数都是容器内路径。日常发布使用该启动器，不分别在各电脑登录 GitHub。更换发布容器属于维护操作，需要重新核查账号和仓库权限。
 
-- Node.js is `22.19.0` or newer (`>=22.19.0`).
-- `git status` is clean, or only contains the intentional version bump (`package.json` and `package-lock.json`, e.g. `1.3.8`).
-- `package.json` retains `"name": "@agegr/pi-web"`, `"piWebEdition": "koxir-standalone"`, and `"standalone": true`.
-- GitHub CLI is authenticated with write/release access to `koxircom/pi-web-plus`.
+## 认证权限与可选 CI
 
-## 2. Offline Build, `npm pack`, and Tarball Verification
+常规源码推送与 Release 发布使用容器已有的仓库权限。上传前的源码、发布说明、最终附件扫描由本项目发布脚本强制执行，不依赖 GitHub Actions；日常发布不要求增加账号权限。
 
-Run the production build and pack the PI Web Plus tarball locally. Do not run `next build` during normal development; release packaging is the exception.
+可选的 GitHub Actions 脱敏检查模板保存在 [`docs/ci/publication-check.yml.example`](ci/publication-check.yml.example)。维护者需要自动检查每次推送或拉取请求时，可另行启用：将模板复制到 `.github/workflows/publication-check.yml`，并由具备 `workflow` 权限的认证提交。该可选流程不作为容器发布的前置条件；模板中的检查与发布脚本门禁均予保留。
+
+## 1. 准备源码和构建产物
+
+使用 Node.js >=22.19、Python >=3.11，从已审查的源码构建。生产构建只能在独立发布目录运行，不能占用开发或运行中实例的 `.next`。源码和依赖的真实路径必须使用不含个人账号的构建目录；不要将依赖符号链接回个人 HOME。TypeScript 增量缓存不属于发布内容。
 
 ```bash
-VERSION=$(node -p "require('./package.json').version")
+npm run check:publication
 npm run build
-PACK_FILE=$(npm pack)
-mv "$PACK_FILE" "pi-web-plus-${VERSION}.tgz"
-ls -lh "pi-web-plus-${VERSION}.tgz"
+npm pack
 ```
 
-Inspect the archive to verify that required runtime files are included and development/cache artifacts are excluded:
+`prepack` 也执行源码脱敏扫描及已有质量关卡。最终附件另放在源码目录外，命名为 `pi-web-plus-<版本>.tgz`；保持安装地址兼容。检查压缩包结构、在隔离前缀安装，并验证 `pi-web --help` 和 `agent-web --help`。这些验收沿用当前变更的有效证据，不重复无关全量回归。
+
+## 2. 提交并核对远程标签
+
+审查并提交当前变更，标签格式为 `v<版本>`，必须与 `package.json.version` 一致。在同一已登记容器内推送源码及本次标签：
 
 ```bash
-tar -ztvf "pi-web-plus-${VERSION}.tgz" | head -n 40
-tar -ztf "pi-web-plus-${VERSION}.tgz" | rg "^package/(bin/pi-web\.js|package\.json|\.next/BUILD_ID|public/)"
-! tar -ztf "pi-web-plus-${VERSION}.tgz" | rg "^package/\.next/(cache|dev)/|\.js\.map$"
+git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin main
+git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "v${VERSION}"
 ```
 
-## 3. Clean Install Verification
+`origin` 必须为 `https://github.com/koxircom/pi-web-plus.git`。不要使用 `--tags` 推送无关标签；不要强推或重写历史。只有源码已完成审查、脱敏及本次必要验收，才推送；上传入口会再次核对远程标签指向的完整提交 SHA。
 
-Before tagging or uploading the release asset, verify that `pi-web-plus-${VERSION}.tgz` installs cleanly into an isolated prefix and that the `pi-web` CLI entrypoint works:
+## 3. 先预检，再显式发布
+
+在容器内运行（维护者可通过统一 SSH 启动器执行同样参数）：
 
 ```bash
-TMP_PREFIX=$(mktemp -d)
-npm install -g --prefix "$TMP_PREFIX" "./pi-web-plus-${VERSION}.tgz"
-"$TMP_PREFIX/bin/pi-web" --help
-rm -rf "$TMP_PREFIX"
+python3 scripts/publish-release.py \
+  --root /workspace/source \
+  --tag "v${VERSION}" \
+  --target "$COMMIT_SHA" \
+  --asset "/workspace/artifacts/pi-web-plus-${VERSION}.tgz" \
+  --notes-file /workspace/artifacts/release-notes.md
 ```
 
-## 4. Commit, Tag, Upload GitHub Release Asset, and Verify `Latest`
+默认只预检，不创建 Release、不上传附件。需要正式发布时，在同一命令后添加 `--apply`。可重复传 `--asset` 上传校验文件；重复附件名会被拒绝。
 
-Commit the version bump (if not already committed), create the annotated `v<version>` tag, and push `main` and tags to `koxircom/pi-web-plus`:
+关卡顺序：
 
-```bash
-git diff -- package.json package-lock.json
-git add package.json package-lock.json
-git commit -m "Release v${VERSION}"
-git tag -a "v${VERSION}" -m "v${VERSION}"
-git push origin main --tags
-```
+1. 将附件和发布说明复制到独立临时目录。
+2. 扫描源码及临时副本中的实际内容，包括压缩包内 `.next`、测试目录、JSON 配置及发布说明。报告只包含路径、行号与类别，不输出命中值。
+3. 核对容器已保存的认证、账号、仓库权限、版本与远程标签。任何失败立即停止。
+4. `--apply` 创建草稿，上传已扫描副本；不覆盖或追加已有 Release。
+5. 下载附件并比对 SHA256，一致后公开。稳定版设为 Latest，预发布版保留 prerelease 标记，不设为 Latest。
 
-Prepare bilingual (Chinese and English) release notes from the commit range `v<previous>..v${VERSION}`:
+支持 `.tgz`、`.tar.gz`、`.tar`、`.zip` 及文本校验附件。损坏、加密、嵌套压缩包、链接、路径穿越、空包和超出扫描上限均阻止上传。扫描识别凭据格式、非空敏感配置、私钥、个人目录和私有网络地址；不执行自动替换，也不能代替泄露密钥的吊销。
 
-```bash
-git log --oneline --decorate "v<previous>..v${VERSION}"
-git diff --stat "v<previous>..v${VERSION}"
-```
+## 4. 回执与失败处理
 
-Create the GitHub Release on `koxircom/pi-web-plus`, attach `pi-web-plus-${VERSION}.tgz`, and mark it as `Latest` (required because `/api/app-update` checks `releases/latest`):
+统一启动器在私有运维目录保存最近回执，包括扫描结果、账号、仓库、标签、附件 SHA256 和终态。也可直接给容器脚本传 `--report`，报告放在源码之外。
 
-```bash
-gh release create "v${VERSION}" \
-  "./pi-web-plus-${VERSION}.tgz#pi-web-plus-${VERSION}.tgz" \
-  --repo koxircom/pi-web-plus \
-  --verify-tag \
-  --latest \
-  --title "v${VERSION}" \
-  --notes-file release-notes.md
-```
+扫描失败时修复报告指出的源文件，再重新构建；不能跳过关卡。上传或回读失败时停止，已创建的 Release 保持草稿，先核对草稿附件再决定下一步，不自动覆盖或重传。
 
-Verify the published release metadata, asset URL, and `isLatest: true` status:
+发布本身不会升级运行实例。实例升级仍须明确目标及授权，保留原会话、置顶、设置、用量账本和实例配置，并按维护流程切换。不得把 GitHub 发布成功当作运行实例升级完成。
 
-```bash
-gh release view "v${VERSION}" \
-  --repo koxircom/pi-web-plus \
-  --json tagName,isDraft,assets,url
-gh api repos/koxircom/pi-web-plus/releases/latest --jq '.tag_name'
-```
-
-Expected:
-
-- `isDraft` is `false`, and the `/releases/latest` API returns `v${VERSION}`.
-- `assets` contains `pi-web-plus-${VERSION}.tgz` with download URL `https://github.com/koxircom/pi-web-plus/releases/download/v${VERSION}/pi-web-plus-${VERSION}.tgz`.
-
-## 5. Synchronize Running Instances
-
-Pushing `main` or publishing a GitHub Release does **not** automatically update running Pi Web environments. After verifying the release asset and `Latest` status, upgrade target running instances from the official GitHub Release tarball (for example, `v1.3.8`):
-
-```bash
-npm install -g "https://github.com/koxircom/pi-web-plus/releases/download/v${VERSION}/pi-web-plus-${VERSION}.tgz"
-```
-
-After installation:
-
-- Verify the installed `package.json` reports `"version": "${VERSION}"`, `"piWebEdition": "koxir-standalone"`, and `"standalone": true`.
-- Restart or reload the target service following the environment's maintenance protocol and confirm `/login` (HTTP 200) and version status.
-- Remove the local temporary `pi-web-plus-${VERSION}.tgz` artifact from the working tree so `git status` remains clean.
+旧五步流程保存在 [历史发布清单](archive/release-checklist-before-container-gate.md)，只供追溯。

@@ -199,7 +199,7 @@
 
   // Per-assistant-step throughput. This intentionally uses provider-reported
   // `usage.output`, not rendered thinking text: Gemini may stream encrypted or
-  // empty thinking blocks, which made Pi Web's native CJK estimate stay at 0.
+  // empty thinking blocks, which made Agent Web Plus's native CJK estimate stay at 0.
   const knownStepSpeeds = new Map();
   const liveStepSpeeds = new Map();
   const MAX_KNOWN_STEP_SPEEDS = 500;
@@ -2695,7 +2695,7 @@
     let data = typeof nativeReader === "function" ? nativeReader(sessionId) : null;
     // A registered native owner will notify when its first read settles.
     // Starting another read here would race and duplicate that request.
-    if (typeof nativeReader === "function" && !data) return null;
+    if ((typeof nativeReader === "function" || sessionId.startsWith("codex:")) && !data) return null;
     const nativeInput = data ? { sessionId, messages: data.context?.messages,
       entryIds: data.context?.entryIds, tree: data.tree } : null;
     if (nativeInput && lastNativeMetricsInput?.sessionId === sessionId
@@ -2726,6 +2726,7 @@
 
     // 当会话超过 1000 条且尚未获取到当前回合完整起点时，向前安全分页追溯（最多 10 页，每页 1000 条）
     while (
+      !sessionId.startsWith("codex:") &&
       context?.hasMore &&
       (!hasCompleteTurnStart(context.messages)
         // A user at the page edge may be steering within an older turn.
@@ -3721,7 +3722,7 @@
     }
     syncOperationErrors.set(fnName, { signature: errSig, error: errorObj, lastLoggedAt: now });
 
-    console.error(`[Pi Web Enhancements] Sync operation "${fnName}" failed:`, errorObj);
+    console.error(`[Agent Web Plus Enhancements] Sync operation "${fnName}" failed:`, errorObj);
   }
 
   function recordSyncStepSuccess(fnName) {
@@ -4058,7 +4059,7 @@
   window.__PI_ENH_CHECK_AGENT_UPDATE__ = checkPiAgentUpdate;
 
   function syncPiAgentUpdateBadge(el, officialPiVer) {
-    if (!el) return;
+    if (!el || el.closest?.("[data-pi-native-version-header]")) return;
     ensurePiAgentUpdateStyle();
     const enabled = isPluginEnabled("pi-agent-update-notice");
     const state = getPiAgentUpdateState();
@@ -4117,6 +4118,7 @@
       const officialPiVer = (typeof window !== "undefined" && window.__PI_OFFICIAL_AGENT_VERSION__) || "0.99.1";
       for (let i = 0; i < spans.length; i++) {
         const el = spans[i];
+        if (el.closest?.("[data-pi-native-version-header]")) continue;
         if (el.childNodes && el.childNodes.length === 2 && el.childNodes[0].nodeType === 3) {
           const prefix = el.childNodes[0].nodeValue || "";
           const inner = el.querySelector("span");
@@ -4727,7 +4729,7 @@
   function enhanceDirectoryPickerModal() {
     if (!isPluginEnabled("workspace-picker-hover")) return;
     const picker = document.querySelector(".directory-picker-panel");
-    if (!picker) return;
+    if (!picker || picker.hasAttribute("data-pi-native-directory-picker")) return;
 
     // 1. 移除顶栏可能残留的重复新建按钮，让输入框自然充满并紧挨“转到”按钮
     const oldTopBtn = picker.querySelector(".directory-picker-top-new-folder-btn");
@@ -5776,7 +5778,7 @@
     const tabTitle = activeTab?.querySelector("span[title]")?.getAttribute("title") || "";
     if (!tabTitle) return;
 
-    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian") || tabTitle.includes("10.0.0.2")) {
+    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian")) {
       if (accessDeniedDiv.__piRecoverAttempted) return;
       accessDeniedDiv.__piRecoverAttempted = true;
 

@@ -1,3 +1,5 @@
+import { projectCodexDirectories } from "@/lib/execution-engines/codex-projection";
+import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { NextRequest, NextResponse } from "next/server";
 import { stat } from "fs/promises";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
@@ -13,6 +15,12 @@ import {
 
 // GET /api/cwd/browse?path=...：列出文件系统中的可读子目录。
 export async function GET(request: NextRequest) {
+  const requested = new URL(request.url).searchParams.get("engine");
+  const engine = requested === "pi" || requested === "codex" ? requested : (await readExecutionEngineSettings()).defaultEngine;
+  if (engine === "codex") {
+    const projects = await (await import("@/lib/execution-engines/codex-engine")).codexProjects();
+    return Response.json(projectCodexDirectories(projects, request.nextUrl.searchParams.get("path")));
+  }
   try {
     const requested = request.nextUrl.searchParams.get("path")?.trim();
 
@@ -54,6 +62,11 @@ export async function GET(request: NextRequest) {
 // POST /api/cwd/browse  body: { path: string, name: string }
 // Creates one direct child of the currently browsed directory.
 export async function POST(request: Request) {
+  const requested = new URL(request.url).searchParams.get("engine");
+  const engine = requested === "pi" || requested === "codex" ? requested : (await readExecutionEngineSettings()).defaultEngine;
+  if (engine === "codex") {
+    return Response.json({ error: "远程工作区由 Codex 服务管理，请先在执行端配置目录" }, { status: 409 });
+  }
   if (!isApiRequestAllowed(request)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }

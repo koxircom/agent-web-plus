@@ -27,7 +27,7 @@
 
     const desc = document.createElement("div");
     desc.className = "settings-general-description";
-    desc.textContent = "遇到手机端显示旧版本、界面未更新或 Service Worker 缓存异常时可清理缓存；如需重启 Pi Web 服务，可在此手动一键重启。";
+    desc.textContent = "遇到手机端显示旧版本、界面未更新或 Service Worker 缓存异常时可清理缓存；如需重启 Agent Web Plus 服务，可在此手动一键重启。";
 
     const actionsRow = document.createElement("div");
     actionsRow.className = "pi-enh-service-actions-row";
@@ -45,11 +45,11 @@
     `;
     btnReload.addEventListener("click", forceHardReloadApp);
 
-    // 按钮 2：一键重启 Pi Web
+    // 按钮 2：一键重启 Agent Web Plus
     const btnRestart = document.createElement("button");
     btnRestart.type = "button";
     btnRestart.className = "pi-enh-btn-sm pi-enh-restart-service-btn";
-    btnRestart.title = "手动重启 Pi Web 后台服务并在恢复后自动重新连接";
+    btnRestart.title = "手动重启 Agent Web Plus 后台服务并在恢复后自动重新连接";
     btnRestart.innerHTML = `
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
@@ -57,7 +57,7 @@
         <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
         <path d="M3 21v-5h5"/>
       </svg>
-      <span>⚡ 一键重启 Pi Web</span>
+      <span>⚡ 一键重启 Agent Web Plus</span>
     `;
     btnRestart.addEventListener("click", triggerManualRestartPiWebModal);
 
@@ -100,7 +100,7 @@
     card.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; line-height: 1.5;">
         <span style="color: var(--text-muted);">Web 前端发行版</span>
-        <span style="font-family: var(--font-mono, monospace); font-weight: 600;">v${suiteVer} (Koxir Standalone)</span>
+        <span style="font-family: var(--font-mono, monospace); font-weight: 600;">v${suiteVer} (Agent Web Plus Standalone)</span>
       </div>
       <div style="display: flex; justify-content: space-between; align-items: center; line-height: 1.5;">
         <span style="color: var(--text-muted);">Pi Agent 本地核心</span>
@@ -175,7 +175,7 @@
     enhancements: { id: "enhancements", label: "增强插件" },
     notifications: { id: "notifications", label: "通知管理" },
     archived: { id: "archived", label: "已归档" },
-    usage: { id: "usage", label: "Usage" },
+    usage: { id: "usage", label: "用量统计" },
     tags: { id: "tags", label: "会话标签" },
   };
 
@@ -308,7 +308,7 @@
   const DEFAULT_SHORTCUTS = [
     { id: "enhancements", label: "增强插件" },
     { id: "archived", label: "已归档" },
-    { id: "usage", label: "Usage" },
+    { id: "usage", label: "用量统计" },
     { id: "settings", label: "设置" },
   ];
 
@@ -1028,129 +1028,28 @@
   window.__PI_ENH_FORCE_HARD_RELOAD__ = forceHardReloadApp;
 
   function resolveCurrentPiInstanceInfo() {
-    const loc = typeof window !== "undefined" ? window.location : null;
-    const hostname = String(loc?.hostname || "").toLowerCase();
-    const port = String(loc?.port || "30141");
-    const platform = String(typeof navigator !== "undefined" ? (navigator.platform || navigator.userAgent || "") : "").toLowerCase();
-
-    // 1. 同事端容器 (30142)：无论访问来自内网 IP、域名或手机，端口为 30142 即确定为群晖同事端容器
-    if (port === "30142") {
-      const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.0.0.2";
-      return {
-        id: "synology-30142",
-        type: "container",
-        isSynology: true,
-        displayName: "群晖同事端 Pi Web (30142)",
-        containerName: "pi-agent-colleague",
-        targetParam: "30142",
-        port: 30142,
-        bridgeCandidateUrls: [
-          `http://${bridgeHost}:30149`,
-          "http://10.0.0.2:30149"
-        ],
-        restartApi: "/restart-container",
-        statusApi: "/container-status?target=30142",
-        probePath: "/login",
-        manualScriptPath: "/volume1/docker/pi-agent-colleague/restart-container-30142.sh",
-        manualCommand: 'ssh root@10.0.0.2 -p 2222 "/volume1/docker/pi-agent-colleague/restart-container-30142.sh"',
-      };
-    }
-
-    // 2. Windows 本地端：主机名为 10.0.0.89，或在 Windows 系统下的 localhost / 127.0.0.1
-    const isWindowsHost = hostname === "10.0.0.89";
-    const isWindowsLocal = (hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("win");
-    if (isWindowsHost || isWindowsLocal) {
-      const host = isWindowsHost ? "10.0.0.89" : "127.0.0.1";
-      return {
-        id: "windows-30141",
-        type: "process",
-        isSynology: false,
-        displayName: "Windows 本地 Pi Web (30141)",
-        containerName: null,
-        targetParam: "windows",
-        port: 30141,
-        bridgeCandidateUrls: [
-          `http://${host}:30149`,
-          "http://127.0.0.1:30149",
-          "http://localhost:30149",
-          "http://10.0.0.89:30149"
-        ],
-        restartApi: "/restart-pi-web",
-        statusApi: "/pi-web-status",
-        probePath: "/login",
-        manualScriptPath: "C:\\Users\\KOXIR\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
-        manualCommand: "node C:\\Users\\KOXIR\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
-      };
-    }
-
-    // 3. MacBook 本地端：主机名为 10.7.7.2，或在 Mac 下的 localhost / 127.0.0.1
-    if (hostname === "10.7.7.2" || ((hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("mac"))) {
-      return {
-        id: "mac-30141",
-        type: "process",
-        isSynology: false,
-        displayName: "MacBook 本地 Pi Web (30141)",
-        containerName: null,
-        targetParam: "mac",
-        port: 30141,
-        bridgeCandidateUrls: [
-          "http://127.0.0.1:30149",
-          "http://localhost:30149",
-          "http://10.7.7.2:30149"
-        ],
-        restartApi: "/restart-pi-web",
-        statusApi: "/pi-web-status",
-        probePath: "/login",
-        manualScriptPath: "/Users/palhan/.pi/agent/scripts/restart-pi-web.sh",
-        manualCommand: "bash /Users/palhan/.pi/agent/scripts/restart-pi-web.sh",
-      };
-    }
-
-    // 4. 群晖主开发端容器 (30141 / pi-agent)：默认全覆盖（10.0.0.2、手机/平板客户端访问、OpenVPN 192.168.255.6、外网域名）
-    const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.0.0.2";
     return {
-      id: "synology-30141",
-      type: "container",
-      isSynology: true,
-      displayName: "群晖 NAS Pi Web (30141)",
-      containerName: "pi-agent",
-      targetParam: "30141",
-      port: 30141,
-      bridgeCandidateUrls: [
-        `http://${bridgeHost}:30149`,
-        "http://10.0.0.2:30149"
-      ],
-      restartApi: "/restart-container",
-      statusApi: "/container-status?target=30141",
-      probePath: "/login",
-      manualScriptPath: "/volume1/docker/pi-agent/restart-container-30141.sh",
-      manualCommand: 'ssh root@10.0.0.2 -p 2222 "/volume1/docker/pi-agent/restart-container-30141.sh"',
+      id: "current-origin",
+      type: "process",
+      displayName: "Agent Web Plus 当前实例",
+      bridgeCandidateUrls: [],
+      manualCommand: "agent-web",
     };
   }
 
   async function resolveTargetPiBridge(instanceInfo) {
-    const candidates = instanceInfo?.bridgeCandidateUrls || [];
-    for (const cand of candidates) {
+    const candidates = Array.isArray(instanceInfo?.bridgeCandidateUrls) ? instanceInfo.bridgeCandidateUrls : [];
+    for (const candidate of candidates) {
       try {
-        const response = await fetch(`${cand}/ping?_t=${Date.now()}`, {
+        const response = await fetch(`${candidate}/ping?_t=${Date.now()}`, {
           cache: "no-store",
           signal: AbortSignal.timeout(1500),
         });
         const identity = await response.json().catch(() => null);
-        if (response.ok && identity?.ok === true) {
-          if (instanceInfo.isSynology) {
-            if (identity.service === "syno-enhancement-sync" || identity.isSynology === true) {
-              return cand;
-            }
-          } else {
-            if (identity.service === "pi-local-bridge" || identity.service === "syno-enhancement-sync") {
-              return cand;
-            }
-          }
-        }
-      } catch (e) {}
+        if (response.ok && identity?.ok === true) return candidate;
+      } catch (error) {}
     }
-    throw new Error(`未连接到 ${instanceInfo?.displayName || "目标实例"} 对应的管理桥接服务 (${candidates[0] || "30149"})`);
+    throw new Error("当前实例未配置重启接口，请在运行服务的主机上重启。");
   }
 
   function triggerManualRestartPiWebModal() {
@@ -1160,336 +1059,27 @@
 
     const backdrop = document.createElement("div");
     backdrop.className = "pi-enh-restart-backdrop";
-
     const modal = document.createElement("div");
     modal.className = "pi-enh-restart-modal";
     modal.innerHTML = `
       <div class="pi-enh-restart-modal-header">
-        <div class="pi-enh-restart-modal-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-        </div>
-        <h3 class="pi-enh-restart-modal-title">确认重启 ${instanceInfo.displayName}？</h3>
+        <div class="pi-enh-restart-modal-icon" aria-hidden="true">!</div>
+        <h3 class="pi-enh-restart-modal-title">Agent Web Plus 当前实例</h3>
       </div>
       <div class="pi-enh-restart-modal-body">
-        您即将手动重启 <strong>${instanceInfo.displayName}</strong>${instanceInfo.containerName ? ` (容器: <code>${instanceInfo.containerName}</code>)` : ""}。
-        <div class="pi-enh-restart-modal-tips">
-          • 重启由您手动发起，当前进行中的会话连接将短暂中断约 3~8 秒；<br>
-          • ${instanceInfo.type === "container" ? `宿主机管理服务将安全重启容器 <code>${instanceInfo.containerName}</code> 并拉起服务；` : "后台服务重新拉起后，页面将自动进行健康探活并无缝重新加载；"}<br>
-          • 服务恢复就绪后，页面将自动无缝刷新，无需手动干预。
-        </div>
+        <p>当前实例未配置重启接口，请在运行服务的主机上重启。</p>
+        <p>请使用启动此服务时的 <code>${instanceInfo.manualCommand}</code> 命令，或通过该服务对应的进程管理器重启。重启会中断当前连接；服务恢复后请刷新页面。</p>
       </div>
       <div class="pi-enh-restart-modal-actions">
-        <button type="button" class="pi-enh-restart-btn-cancel">取消</button>
-        <button type="button" class="pi-enh-restart-btn-confirm">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
-            <path d="M21 3v5h-5"/>
-            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-            <path d="M3 21v-5h5"/>
-          </svg>
-          <span>立即重启</span>
-        </button>
+        <button type="button" class="pi-enh-restart-btn-cancel">关闭</button>
       </div>
     `;
-
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
-
-    const btnCancel = modal.querySelector(".pi-enh-restart-btn-cancel");
-    const btnConfirm = modal.querySelector(".pi-enh-restart-btn-confirm");
-
-    btnCancel.addEventListener("click", () => backdrop.remove());
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) backdrop.remove();
+    modal.querySelector(".pi-enh-restart-btn-cancel")?.addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) backdrop.remove();
     });
-
-    btnConfirm.addEventListener("click", () => {
-      executePiWebRestartWithProbe(backdrop, modal);
-    });
-  }
-
-  async function executePiWebRestartWithProbe(backdrop, modal) {
-    const instanceInfo = resolveCurrentPiInstanceInfo();
-    modal.className = "pi-enh-restart-modal pi-enh-probe-card";
-    modal.innerHTML = `
-      <div class="pi-enh-probe-spinner"></div>
-      <h3 class="pi-enh-probe-title">${instanceInfo.displayName} 重启中…</h3>
-      <p class="pi-enh-probe-desc">${instanceInfo.type === "container"
-        ? `正在通过群晖宿主机管理服务重启容器 ${instanceInfo.containerName}。确认容器服务恢复后才会更新状态。`
-        : `正在通过此电脑的本地桥接服务重启 Windows Pi Web。确认本机服务恢复后才会更新状态。`}</p>
-      <div class="pi-enh-probe-status">📡 正在向管理桥接服务发送重启信号…</div>
-      <div class="pi-enh-probe-actions" style="margin-top: 10px; display: flex; gap: 8px;">
-        <button type="button" class="pi-enh-restart-btn-cancel pi-enh-probe-close-btn" style="font-size: 11px; padding: 5px 12px;">关闭遮罩</button>
-        <button type="button" class="pi-enh-restart-btn-cancel pi-enh-probe-reload-btn" style="font-size: 11px; padding: 5px 12px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">立即手动刷新</button>
-      </div>
-    `;
-
-    const statusEl = modal.querySelector(".pi-enh-probe-status");
-    const titleEl = modal.querySelector(".pi-enh-probe-title");
-    let probeInterval = null;
-    let probeStopped = false;
-    modal.querySelector(".pi-enh-probe-close-btn")?.addEventListener("click", () => {
-      probeStopped = true;
-      if (probeInterval) clearInterval(probeInterval);
-      backdrop.remove();
-    });
-    modal.querySelector(".pi-enh-probe-reload-btn")?.addEventListener("click", () => {
-      probeStopped = true;
-      if (probeInterval) clearInterval(probeInterval);
-      window.location.reload();
-    });
-
-    function copyTextToClipboard(text) {
-      if (!text) return;
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).catch(() => {
-          fallbackExecCopy(text);
-        });
-      } else {
-        fallbackExecCopy(text);
-      }
-      function fallbackExecCopy(str) {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = str;
-          ta.style.position = "fixed";
-          ta.style.left = "-9999px";
-          ta.style.top = "-9999px";
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch (_) {}
-      }
-    }
-
-    function addManualRestartFallback() {
-      if (modal.querySelector(".pi-enh-probe-fallback")) return;
-      const fallbackBox = document.createElement("div");
-      fallbackBox.className = "pi-enh-probe-fallback";
-      fallbackBox.innerHTML = `
-        <div class="pi-enh-probe-fallback-title">提示：如需在终端手动执行匹配脚本</div>
-        <div style="font-family: monospace; font-size: 11px; background: rgba(0,0,0,0.35); padding: 6px 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; margin-bottom: 6px;">
-          ${instanceInfo.manualCommand}
-        </div>
-        <button type="button" class="pi-enh-btn-sm pi-enh-probe-copy-btn">
-          📋 复制重启命令
-        </button>
-      `;
-      fallbackBox.querySelector("button")?.addEventListener("click", (event) => {
-        const button = event.currentTarget;
-        try {
-          copyTextToClipboard(instanceInfo.manualCommand);
-        } catch (e) {}
-        button.textContent = "已复制 √";
-        setTimeout(() => { if (button.isConnected) button.textContent = "📋 复制重启命令"; }, 2000);
-      });
-      modal.insertBefore(fallbackBox, modal.querySelector(".pi-enh-probe-actions"));
-    }
-
-    let bridgeUrl = null;
-    let initialPiWebRunning = false;
-    let bridgeSuccess = false;
-
-    if (instanceInfo.isSynology) {
-      try {
-        bridgeUrl = await resolveTargetPiBridge(instanceInfo);
-        if (probeStopped) return;
-        const beforeResponse = await fetch(`${bridgeUrl}${instanceInfo.statusApi}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(2000),
-        });
-        const beforeStatus = await beforeResponse.json().catch(() => null);
-        initialPiWebRunning = beforeStatus?.running === true;
-
-        const res = await fetch(`${bridgeUrl}${instanceInfo.restartApi}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target: instanceInfo.targetParam }),
-          signal: AbortSignal.timeout(3500),
-        });
-        const result = await res.json().catch(() => null);
-        if (!res.ok || result?.ok !== true) {
-          throw new Error(result?.error || result?.message || `重启请求失败 (HTTP ${res.status})`);
-        }
-        bridgeSuccess = true;
-        if (statusEl) statusEl.textContent = `⚡ 宿主机重启指令已送达，正在等待容器 ${instanceInfo.containerName} 重启…`;
-      } catch (err) {
-        console.warn("[Pi Enh] Synology Pi Web restart bridge failed:", err);
-        if (titleEl) titleEl.textContent = "重启未执行";
-        if (statusEl) {
-          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-          statusEl.style.background = "rgba(239, 68, 68, 0.1)";
-          statusEl.style.borderColor = "rgba(239, 68, 68, 0.3)";
-          statusEl.textContent = `⚠️ 未连接到宿主机管理服务；本次没有执行重启。${err?.message ? ` (${err.message})` : ""}`;
-        }
-      }
-    } else {
-      try {
-        bridgeUrl = await resolveWindowsPiBridgeUrl();
-        if (probeStopped) return;
-        const beforeResponse = await fetch(`${bridgeUrl}/pi-web-status`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(1500),
-        });
-        const beforeStatus = await beforeResponse.json();
-        if (!beforeResponse.ok || beforeStatus?.service !== "pi-local-bridge" || typeof beforeStatus.running !== "boolean") {
-          throw new Error("Windows 桥接服务未返回有效的 Pi Web 状态");
-        }
-        initialPiWebRunning = beforeStatus.running;
-
-        const res = await fetch(`${bridgeUrl}/restart-pi-web`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(3000),
-        });
-        const result = await res.json().catch(() => null);
-        if (!res.ok || result?.ok !== true) {
-          throw new Error(result?.error || `重启请求失败 (HTTP ${res.status})`);
-        }
-        bridgeSuccess = true;
-        if (statusEl) statusEl.textContent = "⚡ Windows 重启指令已送达，正在检查本机 30141…";
-      } catch (err) {
-        console.warn("[Pi Enh] Windows Pi Web restart bridge failed:", err);
-        if (titleEl) titleEl.textContent = "重启未执行";
-        if (statusEl) {
-          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-          statusEl.textContent = `❌ 未连接到 Windows 本地桥接；本次没有执行重启。${err?.message ? ` (${err.message})` : ""}`;
-        }
-      }
-    }
-
-    if (!bridgeSuccess) {
-      addManualRestartFallback();
-      return;
-    }
-
-    let attempts = 0;
-    const maxAttempts = 60;
-    let sawServerDown = !initialPiWebRunning;
-    let probeInFlight = false;
-    probeInterval = setInterval(async () => {
-      if (probeStopped || probeInFlight) return;
-      probeInFlight = true;
-      attempts++;
-
-      try {
-        if (instanceInfo.isSynology) {
-          // 双重探活：优先向宿主机桥接查容器真实状态，同时直探当前页面 /login
-          let containerRunning = false;
-          let webResponding = false;
-          try {
-            const checkRes = await fetch(`${bridgeUrl}${instanceInfo.statusApi}&_t=${Date.now()}`, {
-              cache: "no-store",
-              signal: AbortSignal.timeout(1200),
-            });
-            const checkData = await checkRes.json().catch(() => null);
-            if (checkRes.ok && checkData?.running === true) {
-              containerRunning = true;
-            }
-          } catch (_) {}
-
-          try {
-            const webRes = await fetch(`${instanceInfo.probePath}?_t=${Date.now()}`, {
-              cache: "no-store",
-              signal: AbortSignal.timeout(1200),
-            });
-            if (webRes.status === 200 || webRes.status === 302 || webRes.status === 307 || webRes.status === 308) {
-              webResponding = true;
-            }
-          } catch (_) {}
-
-          if (!containerRunning && !webResponding) {
-            sawServerDown = true;
-            if (statusEl) statusEl.textContent = `📡 容器 ${instanceInfo.containerName} 已停止，等待重新拉起 (${attempts}/${maxAttempts})…`;
-          } else if (webResponding && (sawServerDown || attempts >= 3)) {
-            probeStopped = true;
-            clearInterval(probeInterval);
-            if (titleEl) titleEl.textContent = `${instanceInfo.displayName} 已恢复`;
-            if (statusEl) {
-              statusEl.style.color = "var(--pi-enh-probe-success-color, #15803d)";
-              statusEl.style.borderColor = "rgba(74, 222, 128, 0.3)";
-              statusEl.style.background = "rgba(74, 222, 128, 0.1)";
-              statusEl.textContent = `🎉 ${instanceInfo.displayName} 已恢复！正在重新加载…`;
-            }
-            const spinner = modal.querySelector(".pi-enh-probe-spinner");
-            if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
-            setTimeout(() => {
-              window.location.reload();
-            }, 800);
-            return;
-          } else if (statusEl) {
-            statusEl.textContent = `⏳ 重启指令已送达，正在探活 ${instanceInfo.displayName} (${attempts}/${maxAttempts})…`;
-          }
-        } else {
-          // Windows 探测分支
-          const checkRes = await fetch(`${bridgeUrl}/pi-web-status?_t=${Date.now()}`, {
-            cache: "no-store",
-            signal: AbortSignal.timeout(1000),
-          });
-          const checkStatus = await checkRes.json();
-          if (!checkRes.ok || checkStatus?.service !== "pi-local-bridge" || typeof checkStatus.running !== "boolean") {
-            throw new Error("Windows 本机服务状态响应无效");
-          }
-
-          if (!checkStatus.running) {
-            sawServerDown = true;
-            if (statusEl) statusEl.textContent = `📡 Windows Pi Web 已停止，等待重新启动 (${attempts}/${maxAttempts})…`;
-          } else if (sawServerDown) {
-            probeStopped = true;
-            clearInterval(probeInterval);
-            if (titleEl) titleEl.textContent = "Windows Pi Web 已恢复";
-            if (statusEl) {
-              statusEl.style.color = "var(--pi-enh-probe-success-color, #15803d)";
-              statusEl.style.borderColor = "rgba(74, 222, 128, 0.3)";
-              statusEl.style.background = "rgba(74, 222, 128, 0.1)";
-              statusEl.textContent = "🎉 Windows Pi Web 已恢复！正在打开本机服务…";
-            }
-            const spinner = modal.querySelector(".pi-enh-probe-spinner");
-            if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
-            const currentHost = String(window.location.hostname || "").toLowerCase();
-            const alreadyOnWindowsPiWeb = ["127.0.0.1", "localhost", "10.0.0.89"].includes(currentHost);
-            setTimeout(() => {
-              if (alreadyOnWindowsPiWeb) window.location.reload();
-              else window.location.assign("http://127.0.0.1:30141/");
-            }, 800);
-            return;
-          } else if (attempts >= 20) {
-            probeStopped = true;
-            clearInterval(probeInterval);
-            if (titleEl) titleEl.textContent = "重启未能确认";
-            if (statusEl) {
-              statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-              statusEl.textContent = "❌ 已收到重启请求，但 Windows 30141 服务始终未中断；未能确认重启，请检查 Windows 端日志。";
-            }
-            addManualRestartFallback();
-            return;
-          } else if (statusEl) {
-            statusEl.textContent = `⏳ 重启指令已送达，等待 Windows 30141 停止 (${attempts}/20)…`;
-          }
-        }
-      } catch (err) {
-        if (statusEl) statusEl.textContent = `📡 正在探测 ${instanceInfo.displayName} 运行状态 (${attempts}/${maxAttempts})…`;
-      } finally {
-        probeInFlight = false;
-      }
-
-      if (attempts >= maxAttempts) {
-        probeStopped = true;
-        clearInterval(probeInterval);
-        if (titleEl) titleEl.textContent = "等待服务恢复超时";
-        if (statusEl) {
-          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-          statusEl.textContent = `⚠️ 等待 ${instanceInfo.displayName} 恢复超时；请检查重启脚本与日志。`;
-        }
-        addManualRestartFallback();
-      }
-    }, 500);
   }
 
   window.__PI_ENH_MANUAL_RESTART_PI_WEB__ = triggerManualRestartPiWebModal;
@@ -3302,7 +2892,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
     } catch (error) {
       if (!control.isConnected || control.__piEnhSubagentModelState !== state) return;
-      console.warn(`[Pi Web Enhancements] 保存子 Agent ${profileName} 配置失败:`, error);
+      console.warn(`[Agent Web Plus Enhancements] 保存子 Agent ${profileName} 配置失败:`, error);
       state.savingProfiles.delete(profKey);
       // Rollback
       if (prevModel) modelSelect.value = prevModel;
@@ -3438,7 +3028,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       ? `微内核沙箱：0 异常 · ${modeLabel}`
       : `微内核沙箱：已隔离 ${totalIsolated} 项异常 · ${modeLabel}`;
     const bootTimeStr = kh?.bootedAt ? new Date(kh.bootedAt).toLocaleTimeString() : "即时";
-    const editionStr = kh?.edition || "koxir-standalone-1.0.0";
+    const editionStr = kh?.edition || "agent-web-standalone-1.0.0";
     const detailLines = [
       `发行版内核：${editionStr} (v${ENHANCEMENT_SUITE_VERSION})`,
       `加载模式：${isInline ? "layout chunk 编译期静态内联 (0 网络请求 / 0ms 延迟)" : "动态热重载模式"}`,
@@ -3538,666 +3128,45 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
   }
 
-  async function resolveWindowsPiBridgeUrl() {
-    const candidates = [
-      "http://127.0.0.1:30149",
-      "http://localhost:30149",
-      "http://10.0.0.89:30149",
-    ];
-    for (const candidate of candidates) {
-      try {
-        const response = await fetch(`${candidate}/ping?_t=${Date.now()}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(1200),
-        });
-        const identity = await response.json();
-        if (response.ok && identity?.ok === true && identity?.service === "pi-local-bridge") {
-          return candidate;
-        }
-      } catch (e) {}
-    }
-    throw new Error("Windows 本地桥接未运行（127.0.0.1:30149）");
-  }
-
-  bridgeBaseSyncUrl = null;
-  async function resolveBridgeSyncUrl() {
-    if (bridgeBaseSyncUrl) return bridgeBaseSyncUrl;
-    const hostname = (typeof window !== "undefined" && window.location?.hostname) || "10.0.0.2";
-    // On non-Windows localhost there is no desktop bridge; go directly to the NAS.
-    const candidates = /^(127\.0\.0\.1|localhost)$/.test(hostname) && !/Win/i.test(navigator.platform || "")
-      ? ["http://10.0.0.2:30149"]
-      : [`http://${hostname}:30149`, "http://10.0.0.2:30149", "http://127.0.0.1:30149"];
-    for (const cand of candidates) {
-      try {
-        const res = await fetch(`${cand}/ping`, { signal: AbortSignal.timeout(1500) });
-        if (res.ok) { bridgeBaseSyncUrl = cand; return cand; }
-      } catch (e) {}
-    }
-    bridgeBaseSyncUrl = `http://${hostname}:30149`;
-    return bridgeBaseSyncUrl;
-  }
-
-  async function updateSyncCardView(card, data) {
+  function updateSyncCardView(card, data) {
     if (!card) return;
     const badge = card.querySelector("[data-sync-badge]");
     const sourceDetail = card.querySelector("[data-sync-source-detail]");
     const targetDetail = card.querySelector("[data-sync-target-detail]");
     const windowsDetail = card.querySelector("[data-sync-windows-detail]");
     const macDetail = card.querySelector("[data-sync-mac-detail]");
-    const arrow = card.querySelector("[data-sync-arrow]");
     const syncBtn = card.querySelector('[data-sync-action="sync"]');
     const rollbackBtn = card.querySelector('[data-sync-action="rollback"]');
-    const isColleagueInstance = typeof window !== "undefined" && String(window.location?.port) === "30142";
+    const targetToggles = card.querySelectorAll("[data-sync-target-toggle]");
+    const notice = card.querySelector("[data-sync-notice]");
+    const message = data?.message || "跨实例同步后端未配置";
 
-    const colleagueCheckbox = card.querySelector('[data-sync-target-toggle="colleague"]');
-    const windowsCheckbox = card.querySelector('[data-sync-target-toggle="windows"]');
-    const macCheckbox = card.querySelector('[data-sync-target-toggle="mac"]');
-
-    if (data?.preferences) {
-      if (colleagueCheckbox) colleagueCheckbox.checked = data.preferences.colleague !== false;
-      if (windowsCheckbox) windowsCheckbox.checked = data.preferences.windows !== false;
-      if (macCheckbox) macCheckbox.checked = data.preferences.mac !== false;
-    }
-
-    if (!data || !data.ok) {
-      if (badge) {
-        badge.setAttribute("data-state", "DISCONNECTED");
-        badge.textContent = data?.message || "同步守护未响应";
-      }
-      if (sourceDetail) sourceDetail.textContent = "守护未连接";
-      if (targetDetail) targetDetail.textContent = "守护未连接";
-      if (windowsDetail) windowsDetail.textContent = "守护未连接";
-      if (macDetail) macDetail.textContent = "守护未连接";
-      if (syncBtn) syncBtn.disabled = true;
-      if (rollbackBtn) rollbackBtn.disabled = true;
-      return;
-    }
-
-    const srcVer = data.sourceVersion ? `v${data.sourceVersion}` : `v${ENHANCEMENT_SUITE_VERSION}`;
-    const srcTime = data.sourceMtime ? new Date(data.sourceMtime).toLocaleTimeString() : "";
-
-    const colleagueInfo = data.colleague || {
-      version: data.targetVersion,
-      targetMtime: data.targetMtime,
-      isSynced: data.isColleagueSynced !== false,
-      backups: data.backups || [],
-    };
-    const dstVer = colleagueInfo.version ? `v${colleagueInfo.version}` : `v${ENHANCEMENT_SUITE_VERSION}`;
-    const dstTime = colleagueInfo.targetMtime ? new Date(colleagueInfo.targetMtime).toLocaleTimeString() : "";
-
-    const windowsInfo = data.windows;
-    const macInfo = data.mac;
-
-    if (sourceDetail) {
-      sourceDetail.textContent = `${srcVer}${srcTime ? ` · ${srcTime}` : ""} · 日常开发源`;
-    }
-    if (targetDetail) {
-      if (data.preferences && !data.preferences.colleague) {
-        targetDetail.textContent = `${dstVer}${dstTime ? ` · ${dstTime}` : ""} · 同步已暂停 (未勾选)`;
-      } else {
-        const synDesc = colleagueInfo.isSynced ? (isColleagueInstance ? "本机已热生效" : "自动热生效就绪") : "待同步最新改动";
-        targetDetail.textContent = `${dstVer}${dstTime ? ` · ${dstTime}` : ""} · ${synDesc}`;
-      }
-    }
-    if (windowsDetail) {
-      if (data.preferences && !data.preferences.windows) {
-        windowsDetail.textContent = `同步已暂停 (未勾选)${windowsInfo?.online ? "" : " · 设备离线"}`;
-      } else if (!windowsInfo || !windowsInfo.online) {
-        windowsDetail.textContent = windowsInfo?.error ? `离线待机 (${windowsInfo.error}) · 开机自动补齐` : "离线待机 · 开机后自动同步";
-      } else {
-        const winVer = windowsInfo.version ? `v${windowsInfo.version}` : "v未知";
-        const winTime = windowsInfo.targetMtime ? new Date(windowsInfo.targetMtime).toLocaleTimeString() : "";
-        const winDesc = windowsInfo.isSynced ? "自动热生效就绪" : "待同步最新改动";
-        windowsDetail.textContent = `${winVer}${winTime ? ` · ${winTime}` : ""} · ${winDesc}`;
-      }
-    }
-    if (macDetail) {
-      if (data.preferences && !data.preferences.mac) {
-        macDetail.textContent = `同步已暂停 (未勾选)${macInfo?.online ? "" : " · 设备离线"}`;
-      } else if (!macInfo || !macInfo.online) {
-        macDetail.textContent = macInfo?.error ? `离线待机 (${macInfo.error}) · 开机自动补齐` : "离线待机 · 开机后自动同步";
-      } else {
-        const macVer = macInfo.version ? `v${macInfo.version}` : "v未知";
-        const macTime = macInfo.targetMtime ? new Date(macInfo.targetMtime).toLocaleTimeString() : "";
-        const macDesc = macInfo.isSynced ? "自动热生效就绪" : "待同步最新改动";
-        macDetail.textContent = `${macVer}${macTime ? ` · ${macTime}` : ""} · ${macDesc}`;
-      }
-    }
-
-    const allSynced = data.isFullySynced;
     if (badge) {
-      if (allSynced) {
-        badge.setAttribute("data-state", "SYNCED");
-        const disabledCount = (data.preferences ? [!data.preferences.colleague, !data.preferences.windows, !data.preferences.mac].filter(Boolean).length : 0);
-        if (isColleagueInstance) {
-          badge.textContent = `已同步 30141 最新插件 (${dstVer}) · 自动守护中`;
-        } else if (disabledCount > 0) {
-          badge.textContent = `已启用端已对齐 (${srcVer}) · ${disabledCount} 端同步已暂停`;
-        } else {
-          const winOnline = Boolean(windowsInfo?.online);
-          const macOnline = Boolean(macInfo?.online);
-          if (winOnline && macOnline) {
-            badge.textContent = `四端已完全对齐 (${srcVer}) · 自动守护运行中`;
-          } else {
-            const offlineList = [];
-            if (!winOnline) offlineList.push("Win");
-            if (!macOnline) offlineList.push("Mac");
-            badge.textContent = `已在线端已对齐 (${srcVer}) · ${offlineList.join("/")} 待机`;
-          }
-        }
-      } else {
-        badge.setAttribute("data-state", "PENDING");
-        badge.textContent = `30141 有新改动待同步至各端`;
-      }
+      badge.setAttribute("data-state", "DISCONNECTED");
+      badge.textContent = message;
     }
-
-    if (arrow) {
-      arrow.textContent = "➔";
-      arrow.title = "单向流转：群晖 30141 开发源 ➔ 群晖 30142 同事端 & Windows 本地端 & MacBook 本地端";
-    }
-
-    if (syncBtn) {
-      if (isColleagueInstance) {
-        syncBtn.disabled = false;
-        syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>检查 30141 最新更新';
-        syncBtn.title = "从 30141 获取最新增强插件并热生效";
-      } else {
-        syncBtn.disabled = allSynced;
-        if (allSynced) {
-          syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>各已启用端已对齐';
-        } else {
-          syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>立即同步至各端';
-        }
-      }
-    }
-
-    if (rollbackBtn) {
-      const hasBackups30142 = (data.backups?.length > 0) || (colleagueInfo.backups?.length > 0);
-      const hasBackupsWin = (windowsInfo?.backups?.length > 0);
-      const hasBackupsMac = (macInfo?.backups?.length > 0);
-      rollbackBtn.disabled = !hasBackups30142 && !hasBackupsWin && !hasBackupsMac;
-      rollbackBtn.title = "一键回滚 30142、Windows 或 MacBook 至最近历史快照";
-    }
+    if (notice) notice.textContent = "不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。";
+    if (sourceDetail) sourceDetail.textContent = "Agent Web Plus 当前实例";
+    if (targetDetail) targetDetail.textContent = "目标实例 1 · 未配置";
+    if (windowsDetail) windowsDetail.textContent = "目标实例 2 · 未配置";
+    if (macDetail) macDetail.textContent = "目标实例 3 · 未配置";
+    for (const toggle of targetToggles) toggle.disabled = true;
+    if (syncBtn) syncBtn.disabled = true;
+    if (rollbackBtn) rollbackBtn.disabled = true;
   }
 
-  async function fetchSyncStatus(card, force = false) {
-    try {
-      const bridgeUrl = await resolveBridgeSyncUrl();
-      const query = force ? "?refresh=1" : "";
-      const res = await fetch(bridgeUrl + "/sync/status" + query, { signal: AbortSignal.timeout(8000) });
-      const data = await res.json();
-      updateSyncCardView(card, data);
-      return data;
-    } catch (e) {
-      updateSyncCardView(card, { ok: false, message: "同步服务不可达" });
-      return null;
-    }
+  async function fetchSyncStatus(card) {
+    updateSyncCardView(card, { ok: false, message: "跨实例同步后端未配置" });
+    return null;
   }
 
   function initCrossDeviceSyncController(card) {
-    fetchSyncStatus(card);
-
-    // 绑定目标独立复选框（失败恢复 UI）
-    card.querySelectorAll("[data-sync-target-toggle]").forEach((toggle) => {
-      toggle.addEventListener("change", async () => {
-        const target = toggle.getAttribute("data-sync-target-toggle");
-        const enabled = toggle.checked;
-        const prev = !enabled;
-        const targetNames = { colleague: "30142 同事端", windows: "Windows 本地端", mac: "MacBook 本地端" };
-        const label = targetNames[target] || target;
-        toggle.disabled = true;
-
-        try {
-          const bridgeUrl = await resolveBridgeSyncUrl();
-          const res = await fetch(`${bridgeUrl}/sync/preferences`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target, enabled }),
-            signal: AbortSignal.timeout(10000),
-          });
-          const result = await res.json();
-          if (!res.ok || !result.ok) {
-            toggle.checked = prev;
-            showToast(`设置保存失败: ${result?.error || "请求未成功"}`, null, 4000);
-          } else {
-            showToast(`${label} 自动同步已${enabled ? "开启（正在补齐最新改动）" : "暂停"}`);
-            await fetchSyncStatus(card, true);
-          }
-        } catch (err) {
-          toggle.checked = prev;
-          showToast(`更新设置异常: ${err.message}`, null, 4000);
-        } finally {
-          toggle.disabled = false;
-        }
-      });
-    });
-
+    if (!card) return;
+    updateSyncCardView(card, { ok: false, message: "跨实例同步后端未配置" });
     card.querySelector('[data-sync-action="refresh"]')?.addEventListener("click", () => {
-      fetchSyncStatus(card, true);
-      showToast("已刷新 30141、30142、Windows 与 Mac 对齐状态");
+      fetchSyncStatus(card);
+      showToast("跨实例同步后端未配置");
     });
-
-    card.querySelector('[data-sync-action="sync"]')?.addEventListener("click", async () => {
-      const syncBtn = card.querySelector('[data-sync-action="sync"]');
-      if (syncBtn) syncBtn.disabled = true;
-      showToast("正在将 30141 最新插件同步至各启用端并热生效…", null, 4000);
-      try {
-        const bridgeUrl = await resolveBridgeSyncUrl();
-        const res = await fetch(bridgeUrl + "/sync/execute", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target: "all" }),
-          signal: AbortSignal.timeout(25000),
-        });
-        const result = await res.json();
-        if (result.ok) {
-          showToast(result.message || "已成功同步至目标端！", null, 3500);
-          await fetchSyncStatus(card, true);
-          if (typeof window.__PI_ENH_RELOAD__ === "function") {
-            window.__PI_ENH_RELOAD__();
-          }
-        } else {
-          showToast("同步失败: " + (result.message || result.error || "未知错误"), null, 5000);
-        }
-      } catch (e) {
-        showToast("同步异常: " + e.message, null, 5000);
-      } finally {
-        if (syncBtn) syncBtn.disabled = false;
-      }
-    });
-
-    card.querySelector('[data-sync-action="rollback"]')?.addEventListener("click", async () => {
-      const targetChoice = prompt("请选择要回滚的目标端：\\n输入 1: 回滚 30142 同事端\\n输入 2: 回滚 Windows 本地端\\n输入 3: 回滚 MacBook 本地端 (10.7.7.2)", "1");
-      if (!targetChoice) return;
-      let target = "30142";
-      let targetName = "30142 同事端";
-      if (targetChoice.trim() === "2") {
-        target = "windows";
-        targetName = "Windows 本地端";
-      } else if (targetChoice.trim() === "3") {
-        target = "mac";
-        targetName = "MacBook 本地端";
-      }
-      showToast(`正在执行 ${targetName} 版本回滚…`, null, 4000);
-      try {
-        const bridgeUrl = await resolveBridgeSyncUrl();
-        const res = await fetch(bridgeUrl + "/sync/rollback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target }),
-          signal: AbortSignal.timeout(20000),
-        });
-        const result = await res.json();
-        if (result.ok) {
-          showToast(result.message || `回滚成功！${targetName} 已恢复上一版本快照`, null, 3500);
-          await fetchSyncStatus(card, true);
-          if (typeof window.__PI_ENH_RELOAD__ === "function") {
-            window.__PI_ENH_RELOAD__();
-          }
-        } else {
-          showToast("回滚失败: " + (result.message || result.error || "未知错误"), null, 5000);
-        }
-      } catch (e) {
-        showToast("回滚异常: " + e.message, null, 5000);
-      }
-    });
-  }
-
-  function renderEnhancementModulesPanel(panel, nav) {
-    const enabledCount = ENHANCEMENT_MODULES.filter((module) => getModuleState(module.id).active > 0).length;
-    const categories = [...new Set(ENHANCEMENT_MODULES.map((module) => module.category))];
-    panel.innerHTML = `
-      <div class="settings-general-container pi-enh-plugins-shell">
-        <section class="pi-enh-plugins-toolbar" aria-label="增强模块管理工具栏">
-          <div class="pi-enh-plugins-heading-row">
-            <div class="pi-enh-plugins-title-wrap">
-              <h2 class="settings-general-title pi-enh-plugins-title">
-                <span>网页增强模块</span>
-                <span class="pi-enh-module-version">独立版 v${ENHANCEMENT_SUITE_VERSION}</span>
-                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_MODULES.length} 个模块已启用</span>
-              </h2>
-            </div>
-            <div class="pi-enh-plugins-actions" aria-label="批量操作">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-action="hot-reload" title="无感重新加载最新前端补丁，无需刷新或重启后台">↻ 重新热载</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="force-hard-reload" title="穿透 HTTP 强缓存更新前端静态资源并强制刷新">⚡ 强制刷新</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各模块，保留原有子功能选择">全部恢复</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">全部关闭</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="reset-defaults">恢复默认</button>
-            </div>
-          </div>
-          <p class="pi-enh-plugins-description">
-            <span>总开关：开启 / 部分开启 / 关闭。关闭保留子项选择，再次开启恢复；参数即时生效。</span>
-            ${renderKernelHealthBadgeHtml()}
-          </p>
-          <div class="pi-enh-plugins-filter-row" role="search">
-            <label class="pi-enh-plugin-search-wrap">
-              <svg class="pi-enh-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
-              <input class="pi-enh-plugin-search" type="search" data-plugin-search aria-label="搜索增强模块" placeholder="搜索模块或子功能…" autocomplete="off">
-            </label>
-            <div class="pi-enh-category-filters" role="group" aria-label="按类别筛选">
-              <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
-              ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
-            </div>
-            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_MODULES.length} 个模块</span>
-          </div>
-        </section>
-
-        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
-          <div class="pi-enh-sync-header">
-            <div class="pi-enh-sync-title-wrap">
-              <span class="pi-enh-sync-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>跨端自动同步 (群晖 30141 开发源 ➔ 30142 同事端 &amp; Windows &amp; Mac 本地)</span>
-              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="LOADING">正在检测各端对齐状态…</span>
-            </div>
-            <div class="pi-enh-sync-actions">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="立即将 30141 最新增强插件同步并热生效至各目标端">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>立即同步至各端
-              </button>
-              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="一键回滚目标端至最近一次历史快照">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>回滚快照
-              </button>
-              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="重新获取 30141、30142、Windows 与 Mac 的版本及对齐状态">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>刷新
-              </button>
-            </div>
-          </div>
-          <div class="pi-enh-sync-body" data-sync-body>
-            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source">
-              <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>群晖 30141 (日常开发源)</span>
-              <span class="pi-enh-sync-node-detail" data-sync-source-detail>检测中…</span>
-            </div>
-            <div class="pi-enh-sync-arrow" data-sync-arrow>➔</div>
-            <div class="pi-enh-sync-targets-col">
-              <div class="pi-enh-sync-node" data-sync-node="target-colleague">
-                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 30142 同事端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>群晖 30142 (同事使用端)</span>
-                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="开启/暂停 30142 同事端自动同步" checked>
-                </label>
-                <span class="pi-enh-sync-node-detail" data-sync-target-detail>检测中…</span>
-              </div>
-              <div class="pi-enh-sync-node" data-sync-node="target-windows">
-                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 Windows 本地端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>Windows 本地端 (10.0.0.89)</span>
-                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="开启/暂停 Windows 本地端自动同步" checked>
-                </label>
-                <span class="pi-enh-sync-node-detail" data-sync-windows-detail>检测中…</span>
-              </div>
-              <div class="pi-enh-sync-node" data-sync-node="target-mac">
-                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 MacBook 本地端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>MacBook 本地端 (10.7.7.2)</span>
-                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="开启/暂停 MacBook 本地端自动同步" checked>
-                </label>
-                <span class="pi-enh-sync-node-detail" data-sync-mac-detail>检测中…</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="pi-enh-pwa-card" data-pi-enh-pwa-card>
-          <div class="pi-enh-pwa-header">
-            <div class="pi-enh-pwa-title-wrap">
-              <span class="pi-enh-pwa-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>移动端与 PWA 独立应用模式</span>
-              <span class="pi-enh-pwa-badge" data-pwa-status-badge data-standalone="${isPwaStandaloneMode() ? 'true' : 'false'}">${isPwaStandaloneMode() ? "● 原生 PWA 独立运行中" : "○ 浏览器标签页模式"}</span>
-            </div>
-            <div class="pi-enh-pwa-actions">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-pwa-action="copy-flag-origin" title="一键复制局域网安全源地址用于 Chrome Flags 信任">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>复制局域网安全源地址
-              </button>
-            </div>
-          </div>
-          <div class="pi-enh-pwa-body">
-            <p class="pi-enh-pwa-desc">
-              ${isPwaStandaloneMode()
-                ? "当前已处于原生 PWA 独立窗口运行状态，已自动激活全面屏防误触安全区域与系统返回键防误退保护。"
-                : "在手机端 Chrome 打开时，如需像原生 App 一样全屏无地址栏运行：在手机 Chrome 访问 <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>，将当前地址填入并启用，即可在右上角菜单一键【安装应用】。"}
-            </p>
-          </div>
-        </div>
-
-        <div class="pi-enh-plugins-list pi-enh-modules-list">
-          ${ENHANCEMENT_MODULES.map((module) => {
-            const enabled = isModuleEnabled(module.id);
-            const disabled = !enabled;
-            const state = getModuleState(module.id);
-            const features = module.features.map((featureId) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === featureId)).filter(Boolean);
-            const isSubagent = module.id === SUBAGENT_DISPATCH_MODULE_ID;
-            const ariaChecked = isSubagent ? String(enabled) : (state.state === "partial" ? "mixed" : String(state.state === "on"));
-            const dataState = isSubagent ? (enabled ? "on" : "off") : state.state;
-            const statusText = isSubagent ? moduleStateLabel(state, enabled) : moduleStateLabel(state);
-            return `<article class="pi-enh-plugin-item pi-enh-module-item" data-module-row="${module.id}" data-plugin-category-name="${module.category}" data-enabled="${enabled ? "true" : "false"}">
-              <div class="pi-enh-module-header">
-                <div class="pi-enh-plugin-copy">
-                  <div class="pi-enh-plugin-name-row">
-                    <span class="pi-enh-plugin-name">${module.name}</span>
-                    <span class="pi-enh-plugin-category">${module.category}</span>
-                    <span class="pi-enh-module-version">v${module.version}</span>
-                  </div>
-                  <div class="pi-enh-plugin-desc">${module.desc}</div>
-                </div>
-                <div class="pi-enh-module-master">
-                  <span class="pi-enh-module-status" id="pi-enh-status-${module.id}" data-module-status data-state="${dataState}" aria-live="polite">${statusText}</span>
-                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
-                    <span class="config-switch-knob" aria-hidden="true"></span>
-                  </button>
-                </div>
-              </div>
-                <details class="pi-enh-module-settings" data-module-settings="${module.id}" ${disabled ? "data-module-disabled=true" : ""}>
-                  <summary data-module-expand="${module.id}">配置 ${features.length} 项子功能${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
-                  <div class="pi-enh-module-settings-body" ${disabled ? "aria-disabled=true" : ""}>
-                    <div class="pi-enh-module-features">${features.map((plugin) => renderFeatureToggle(plugin, disabled)).join("")}</div>
-                    ${module.id === "composer-workflow" ? renderQuickActionsEditor(disabled || !isPluginEnabled("quick-action-buttons")) : ""}
-                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, disabled || (setting.featureId && !isPluginEnabled(setting.featureId)))).join("")}</div>` : ""}
-                  </div>
-                </details>
-            </article>`;
-          }).join("")}
-        </div>
-        <div class="pi-enh-plugin-empty" data-plugin-empty role="status" hidden>没有匹配的模块，请调整搜索词或分类。</div>
-      </div>`;
-
-    bindQuickActionsEditor(panel);
-    if (!window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__) void loadQuickActionsConfig().then(() => refreshQuickActionsEditorDom(panel));
-
-    const searchInput = panel.querySelector("[data-plugin-search]");
-    if (searchInput) {
-      searchInput.value = enhancementPanelFilter.query;
-      searchInput.addEventListener("input", () => {
-        enhancementPanelFilter.query = searchInput.value || "";
-        applyEnhancementPanelFilter(panel);
-      });
-    }
-    for (const categoryButton of panel.querySelectorAll("[data-plugin-category]")) {
-      categoryButton.addEventListener("click", () => {
-        enhancementPanelFilter.category = categoryButton.getAttribute("data-plugin-category") || "all";
-        applyEnhancementPanelFilter(panel);
-      });
-    }
-    panel.querySelector('[data-action="hot-reload"]')?.addEventListener("click", () => {
-      if (typeof window.__PI_ENH_RELOAD__ === "function") {
-        if (typeof window.__PI_WEB_ENHANCEMENTS_CLEANUP__ === "function") {
-          try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
-        }
-        window.__PI_ENH_PENDING_TOAST__ = { message: "已成功热载最新补丁，会话零中断" };
-        window.__PI_ENH_RELOAD__();
-      } else showToast("已处于最新热载状态");
-    });
-    panel.querySelector('[data-action="force-hard-reload"]')?.addEventListener("click", forceHardReloadApp);
-    let isSubagentDispatchBusy = false;
-    function setSubagentDispatchBusyState(busy) {
-      isSubagentDispatchBusy = busy;
-      const masterToggle = panel.querySelector(`[data-module-toggle="${SUBAGENT_DISPATCH_MODULE_ID}"]`);
-      if (masterToggle) {
-        masterToggle.disabled = busy;
-        if (busy) masterToggle.setAttribute("aria-busy", "true");
-        else masterToggle.removeAttribute("aria-busy");
-      }
-      const batchBtns = panel.querySelectorAll('[data-action="enable-all"], [data-action="disable-all"], [data-action="reset-defaults"]');
-      for (const btn of batchBtns) {
-        btn.disabled = busy;
-      }
-    }
-
-    panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", async () => {
-      if (isSubagentDispatchBusy) return;
-      setSubagentDispatchBusyState(true);
-      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-      try {
-        await enqueueSubagentDispatchCommit(true);
-        for (const module of ENHANCEMENT_MODULES) {
-          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, true);
-        }
-        const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
-        const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
-        if (st && st.selected === 0 && mod) {
-          for (const fId of mod.features) {
-            const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
-            if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
-          }
-        }
-        showToast("已恢复全部模块；保留原有子功能选择");
-      } catch (err) {
-        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
-        showToast(`恢复全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
-      } finally {
-        setSubagentDispatchBusyState(false);
-        syncEnhancementPanelControls();
-      }
-    });
-
-    panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", async () => {
-      if (isSubagentDispatchBusy) return;
-      setSubagentDispatchBusyState(true);
-      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-      try {
-        await enqueueSubagentDispatchCommit(false);
-        for (const module of ENHANCEMENT_MODULES) {
-          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, false);
-        }
-        showToast("已关闭所有增强模块；子功能偏好已保留");
-      } catch (err) {
-        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
-        showToast(`关闭全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
-      } finally {
-        setSubagentDispatchBusyState(false);
-        syncEnhancementPanelControls();
-      }
-    });
-
-    panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", async () => {
-      if (isSubagentDispatchBusy) return;
-      setSubagentDispatchBusyState(true);
-      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-      try {
-        await enqueueSubagentDispatchCommit(true);
-        resetEnhancementSettings();
-        showToast("已恢复默认增强设置");
-      } catch (err) {
-        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
-        showToast(`恢复默认设置时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
-      } finally {
-        setSubagentDispatchBusyState(false);
-        syncEnhancementPanelControls();
-      }
-    });
-
-    panel.querySelector('[data-pwa-action="copy-flag-origin"]')?.addEventListener("click", () => {
-      const origin = (typeof window !== "undefined" && window.location ? window.location.origin : "http://10.0.0.2:30141");
-      copyText(origin, "已复制局域网安全源地址: " + origin);
-      showToast("已复制地址！在手机 Chrome 访问 chrome://flags/#unsafely-treat-insecure-origin-as-secure 粘贴并启用即可一键安装 PWA", null, 6000);
-    });
-
-    for (const toggle of panel.querySelectorAll("[data-module-toggle]")) {
-      toggle.addEventListener("click", async () => {
-        const id = toggle.getAttribute("data-module-toggle");
-        if (id === SUBAGENT_DISPATCH_MODULE_ID) {
-          if (isSubagentDispatchBusy) return;
-          const nextEnabled = !isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-          setSubagentDispatchBusyState(true);
-          try {
-            await enqueueSubagentDispatchCommit(nextEnabled);
-            const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
-            const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
-            if (nextEnabled && st && st.selected === 0 && mod) {
-              for (const fId of mod.features) {
-                const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
-                if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
-              }
-            }
-            showToast(`子 Agent 调度已${nextEnabled ? "开启" : "关闭"}`);
-          } catch (err) {
-            showToast(`保存子 Agent 调度服务端总开关失败: ${err.message || "请求异常"}`, null, 5000);
-          } finally {
-            setSubagentDispatchBusyState(false);
-            syncEnhancementPanelControls();
-          }
-          return;
-        }
-        toggleModuleFromPanel(id);
-      });
-    }
-    for (const toggle of panel.querySelectorAll("[data-plugin-toggle]")) {
-      toggle.addEventListener("click", () => {
-        const id = toggle.getAttribute("data-plugin-toggle");
-        if (!toggle.disabled) setPluginEnabled(id, !isPluginSelected(id));
-      });
-    }
-    for (const range of panel.querySelectorAll("[data-plugin-setting-range]")) {
-      const identity = range.getAttribute("data-plugin-setting-range");
-      const [featureId, key] = identity.split(":");
-      const counterpartInput = panel.querySelector(`input[data-plugin-setting="${identity}"]`);
-      range.addEventListener("input", () => {
-        if (counterpartInput) counterpartInput.value = range.value;
-      });
-      range.addEventListener("change", () => {
-        const val = setPluginSetting(featureId, key, range.value);
-        range.value = String(val);
-        if (counterpartInput) counterpartInput.value = String(val);
-        showToast(`已设置 ${range.getAttribute("aria-label")?.replace("滑块", "") || "参数"}: ${val}`);
-      });
-    }
-    for (const input of panel.querySelectorAll("[data-plugin-setting]")) {
-      input.addEventListener("change", () => {
-        const identity = String(input.getAttribute("data-plugin-setting") || "");
-        const [featureId, key] = identity.split(":");
-        const value = setPluginSetting(featureId, key, input.value);
-        input.value = String(value);
-        const counterpartRange = panel.querySelector(`[data-plugin-setting-range="${identity}"]`);
-        if (counterpartRange) counterpartRange.value = String(value);
-        if (featureId === "session-pin-archive" && isPluginEnabled(featureId)) void purgeExpiredArchives();
-        showToast(`已更新 ${input.getAttribute("aria-label") || "参数"}: ${value}`);
-      });
-    }
-    for (const action of panel.querySelectorAll("[data-plugin-action]")) {
-      action.addEventListener("click", async () => {
-        const type = action.getAttribute("data-plugin-action");
-        if (type === "clear-session-cache") {
-          await clearSessionCaches();
-          showToast("已清空会话缓存");
-        } else if (type === "download-crash-diagnostics") {
-          window.__PI_ENH_CRASH_DIAGNOSTICS__?.download();
-        } else if (type === "request-desktop-notification") {
-          await requestDesktopAttentionPermission();
-        } else if (type === "sync-pinned-manifest") {
-          showToast("正在读取统一置顶配置...", sessionPinIcon, 2000);
-          await syncManifestPinnedEntries(true);
-          showToast("已同步统一置顶配置，正在刷新页面...", sessionPinIcon, 1500);
-          setTimeout(() => {
-            if (typeof window !== "undefined" && window.location && typeof window.location.reload === "function") {
-              window.location.reload();
-            }
-          }, 350);
-        }
-      });
-    }
-    bindSubagentModelControls(panel);
-    syncEnhancementPanelControls();
-    void syncSubagentDispatchRemoteState().then(() => {
-      syncEnhancementPanelControls();
-    });
-    const syncCard = panel.querySelector("[data-pi-enh-sync-card]");
-    if (syncCard) {
-      initCrossDeviceSyncController(syncCard);
-    }
-    applyEnhancementPanelFilter(panel);
   }
 
   function applyEnhancementPanelFilter(panel) {
@@ -4275,6 +3244,30 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           </div>
         </section>
 
+        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
+          <div class="pi-enh-sync-header">
+            <div class="pi-enh-sync-title-wrap">
+              <span class="pi-enh-sync-title">跨实例增强插件分发</span>
+              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="DISCONNECTED">跨实例同步后端未配置</span>
+            </div>
+            <div class="pi-enh-sync-actions">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="跨实例同步后端未配置" disabled>跨实例分发未配置</button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="跨实例同步后端未配置" disabled>跨实例回滚未配置</button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="显示跨实例同步配置状态">刷新</button>
+            </div>
+          </div>
+          <p data-sync-notice style="margin: 0 0 10px; color: var(--text-muted); font-size: 12px; line-height: 1.5;">不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。</p>
+          <div class="pi-enh-sync-body" data-sync-body>
+            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source"><span class="pi-enh-sync-node-name">Agent Web Plus 当前实例（源）</span><span class="pi-enh-sync-node-detail" data-sync-source-detail>当前实例</span></div>
+            <div class="pi-enh-sync-arrow" data-sync-arrow aria-hidden="true">➔</div>
+            <div class="pi-enh-sync-targets-col">
+              <div class="pi-enh-sync-node" data-sync-node="target-colleague"><label class="pi-enh-sync-target-check-wrap" title="目标实例 1 尚未配置"><span class="pi-enh-sync-node-name">目标实例 1</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="目标实例 1 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-target-detail>未配置</span></div>
+              <div class="pi-enh-sync-node" data-sync-node="target-windows"><label class="pi-enh-sync-target-check-wrap" title="目标实例 2 尚未配置"><span class="pi-enh-sync-node-name">目标实例 2</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="目标实例 2 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-windows-detail>未配置</span></div>
+              <div class="pi-enh-sync-node" data-sync-node="target-mac"><label class="pi-enh-sync-target-check-wrap" title="目标实例 3 尚未配置"><span class="pi-enh-sync-node-name">目标实例 3</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="目标实例 3 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-mac-detail>未配置</span></div>
+            </div>
+          </div>
+        </div>
+
         <div class="pi-enh-plugins-list">
           ${ENHANCEMENT_PLUGINS.map((plugin) => {
             const enabled = isPluginEnabled(plugin.id);
@@ -4347,6 +3340,8 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       </div>
     `;
 
+    initCrossDeviceSyncController(panel.querySelector("[data-pi-enh-sync-card]"));
+
     const searchInput = panel.querySelector("[data-plugin-search]");
     if (searchInput) {
       searchInput.value = enhancementPanelFilter.query;
@@ -4380,16 +3375,20 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
     panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, true);
+      scheduleUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已开启所有增强插件");
     });
     panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, false);
+      cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已关闭所有增强插件");
     });
     panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, p.defaultEnabled);
+      if (isPluginEnabled("usage-cost-dashboard")) scheduleUsageLedgerPrefetch();
+      else cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已恢复默认增强设置");
     });
@@ -4470,6 +3469,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         const current = toggle.getAttribute("aria-checked") === "true";
         const next = !current;
         setPluginEnabled(id, next);
+        if (id === "usage-cost-dashboard") {
+          if (next && isPluginEnabled(id)) scheduleUsageLedgerPrefetch();
+          else cancelUsageLedgerPrefetch();
+        }
         toggle.setAttribute("aria-checked", next ? "true" : "false");
         toggle.setAttribute("title", next ? "点击禁用" : "点击启用");
         const row = toggle.closest("[data-plugin-row]");
@@ -4504,6 +3507,106 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     return true;
   }
 
+  let usageLedgerPrefetchCancel = null;
+  let usageLedgerPrefetchStarted = false;
+
+  function cancelUsageLedgerPrefetch() {
+    if (usageLedgerPrefetchCancel) {
+      usageLedgerPrefetchCancel();
+      usageLedgerPrefetchCancel = null;
+    }
+  }
+
+  function scheduleUsageLedgerPrefetch() {
+    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchStarted || usageLedgerPrefetchCancel) return;
+
+    let cancelled = false;
+    let idleId = null;
+    let timerId = null;
+    let loadListener = null;
+    let visibilityListener = null;
+    let prefetchAbortController = null;
+
+    const removeVisibilityListener = () => {
+      if (visibilityListener) document.removeEventListener("visibilitychange", visibilityListener);
+      visibilityListener = null;
+    };
+    const cancel = () => {
+      cancelled = true;
+      if (prefetchAbortController) {
+        prefetchAbortController.abort();
+        prefetchAbortController = null;
+      }
+      if (loadListener) window.removeEventListener("load", loadListener);
+      loadListener = null;
+      removeVisibilityListener();
+      if (idleId !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idleId);
+      idleId = null;
+      if (timerId !== null) clearTimeout(timerId);
+      timerId = null;
+    };
+
+    const waitUntilVisible = () => {
+      if (cancelled || visibilityListener) return;
+      visibilityListener = () => {
+        if (document.visibilityState === "hidden") return;
+        removeVisibilityListener();
+        scheduleIdle();
+      };
+      document.addEventListener("visibilitychange", visibilityListener);
+    };
+
+    const run = async () => {
+      idleId = null;
+      timerId = null;
+      if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
+      if (document.visibilityState === "hidden") {
+        waitUntilVisible();
+        return;
+      }
+      const loadOptional = window.__PI_ENH_LOAD_OPTIONAL__;
+      if (typeof loadOptional !== "function") return;
+      try {
+        const usagePanel = await loadOptional("usage-panel");
+        if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
+        if (document.visibilityState === "hidden") {
+          waitUntilVisible();
+          return;
+        }
+        if (typeof usagePanel?.prefetch !== "function") return;
+        usageLedgerPrefetchStarted = true;
+        prefetchAbortController = typeof AbortController === "function" ? new AbortController() : null;
+        void usagePanel.prefetch(prefetchAbortController?.signal).catch(() => {});
+      } catch (_) {
+        // Keep startup quiet; opening Usage remains the visible retry path.
+      }
+    };
+
+    const scheduleIdle = () => {
+      if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
+      if (document.visibilityState === "hidden") {
+        waitUntilVisible();
+        return;
+      }
+      if (typeof window.requestIdleCallback === "function") {
+        idleId = window.requestIdleCallback(run, { timeout: 5000 });
+      } else {
+        timerId = setTimeout(run, 1200);
+      }
+    };
+
+    const afterLoad = () => {
+      loadListener = null;
+      scheduleIdle();
+    };
+    usageLedgerPrefetchCancel = cancel;
+    if (document.readyState === "complete") afterLoad();
+    else {
+      loadListener = afterLoad;
+      window.addEventListener("load", loadListener, { once: true });
+    }
+  }
+
   async function checkScriptUpdate() {
     if (isLoginPage()) return;
     try {
@@ -4523,7 +3626,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
             try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
           }
           // 静默无感热载，控制台记录即可，绝不弹窗打扰用户
-          console.log("[Pi Web Enhancements] Silently reloading latest patch...");
+          console.log("[Agent Web Plus Enhancements] Silently reloading latest patch...");
           window.__PI_ENH_RELOAD__();
         }
       }
@@ -4572,6 +3675,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_WEB_ENHANCEMENTS_CLEANUP__ = function () {
     if (isDisposed) return;
     isDisposed = true;
+    cancelUsageLedgerPrefetch();
 
     try {
       // 0. Disconnect and restore document title observer and descriptor (only restore if still owned)
@@ -4767,7 +3871,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       delete window.__PI_ENH_GET_DURABLE_STATE_BASE_URL__;
       delete window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__;
     } catch (e) {
-      console.warn("[Pi Web Enhancements] cleanup warning:", e);
+      console.warn("[Agent Web Plus Enhancements] cleanup warning:", e);
     }
   };
 
@@ -4807,13 +3911,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
 
   const kernelHealth = window.__PI_ENH_KERNEL_HEALTH__ || {
-    edition: `koxir-standalone-${ENHANCEMENT_SUITE_VERSION}`,
+    edition: `agent-web-standalone-${ENHANCEMENT_SUITE_VERSION}`,
     version: ENHANCEMENT_SUITE_VERSION,
     bootedAt: Date.now(),
     initialSyncCompleted: false,
     isolatedErrors: [],
   };
-  kernelHealth.edition = `koxir-standalone-${ENHANCEMENT_SUITE_VERSION}`;
+  kernelHealth.edition = `agent-web-standalone-${ENHANCEMENT_SUITE_VERSION}`;
   kernelHealth.version = ENHANCEMENT_SUITE_VERSION;
   window.__PI_ENH_KERNEL_HEALTH__ = kernelHealth;
   window.__PI_WEB_STANDALONE_VERSION__ = ENHANCEMENT_SUITE_VERSION;
@@ -4826,7 +3930,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         error: String(err && err.message ? err.message : err),
         at: Date.now(),
       });
-      console.warn(`[Pi Web Kernel Sandbox] Isolated error in ${stepName}:`, err);
+      console.warn(`[Agent Web Plus Kernel Sandbox] Isolated error in ${stepName}:`, err);
     }
   }
   window.__PI_ENH_RUN_ISOLATED_STEP__ = runIsolatedKernelStep;
@@ -4861,10 +3965,16 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   if (typeof setTimeout === "function") {
     setTimeout(() => {
       try {
-        if (!isDisposed && !isLoginPage() && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
+        if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi" && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
           window.__PI_ENH_PRELOAD_MODELS_CACHE__();
         }
       } catch (e) {}
+    }, 1200);
+  }
+
+  if (typeof setTimeout === "function") {
+    setTimeout(() => {
+      if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi") scheduleUsageLedgerPrefetch();
     }, 1200);
   }
 
@@ -4879,5 +3989,5 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }, 1500);
   }
 
-  console.log(`[Pi Web Enhancements] v${ENHANCEMENT_SUITE_VERSION} Loaded: Module Settings Manager active.`);
+  console.log(`[Agent Web Plus Enhancements] v${ENHANCEMENT_SUITE_VERSION} Loaded: Module Settings Manager active.`);
 })();

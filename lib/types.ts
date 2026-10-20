@@ -72,6 +72,8 @@ export interface AgentUsage {
 export interface AssistantMessage {
   /** Client-only indexes retained when one saved message is split into display runs. */
   displayBlockIndices?: number[];
+  /** Client-only marker for a failed provider attempt superseded by auto-retry. */
+  retryAttempt?: boolean;
   role: "assistant";
   content: AssistantContentBlock[];
   model: string;
@@ -320,9 +322,10 @@ export interface SessionInfoEntry extends SessionEntryBase {
 }
 
 /**
- * Append-only edit of an earlier entry's model context. Raw history, usage
- * and the UI are unaffected: `replacement: null` omits the target from future
- * provider requests, a value replaces only its content.
+ * Append-only edit of an earlier entry's model context. Raw history and usage
+ * are unaffected: `replacement: null` omits the target from future provider
+ * requests, a value replaces only its content. The UI may annotate an omitted
+ * assistant error as an auto-retried attempt.
  */
 export interface ContextEditEntry extends SessionEntryBase {
   type: "context_edit";

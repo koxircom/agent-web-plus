@@ -1,3 +1,4 @@
+import { subscribePromptDeliveries } from "./prompt-delivery";
 import {
   isEventIncludedInSnapshot,
   toClientAgentEvent,
@@ -12,7 +13,7 @@ export interface AgentEventStreamSession {
   onEvent(listener: (event: AgentEventLike) => void): () => void;
 }
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
  * Backpressure for one SSE connection. The client is often a phone: when it
@@ -132,6 +133,7 @@ export function createAgentEventStream(
       let closed = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let unsubscribe: (() => void) | null = null;
+      let unsubscribeInbox: (() => void) | null = null;
       let abortHandler: (() => void) | null = null;
       // Latest `tool_execution_update` per tool call id, waiting for the flush.
       const pendingToolUpdates = new Map<unknown, AgentEventLike>();
@@ -152,6 +154,8 @@ export function createAgentEventStream(
         if (heartbeat !== null) clearInterval(heartbeat);
         if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
         pendingToolUpdates.clear();
+        unsubscribeInbox?.();
+        unsubscribeInbox = null;
         unsubscribe?.();
         unsubscribe = null;
         if (abortHandler) req.signal.removeEventListener("abort", abortHandler);
@@ -225,6 +229,12 @@ export function createAgentEventStream(
         if (clientEvent) sendClientEvent(clientEvent);
       };
 
+      // Inbox admission is independent of native runtime readiness. Every web
+      // client gets the same durable state, including during a slow history read.
+      unsubscribeInbox = subscribePromptDeliveries(sessionId, (requestId, receipt) => {
+        sendClientEvent({ type: "prompt_delivery", requestId, receipt });
+        sendClientEvent({ type: "prompt_inbox_changed" });
+      });
       const publishSession = async () => {
         try {
           const session = await sessionPromise;
@@ -278,9 +288,11 @@ export function createAgentEventStream(
           snapshotPublished = true;
         } catch (error) {
           if (closed) return;
+          const retryable = Boolean(error && typeof error === "object" && "retryable" in error && error.retryable === true);
           encode({
             type: "startup_error",
             errorMessage: `Failed to start agent: ${errorMessage(error)}`,
+            ...(retryable ? { retryable: true } : {}),
           });
           cleanup(true);
         }
@@ -297,7 +309,7 @@ export function createAgentEventStream(
       }
       req.signal.addEventListener("abort", abortHandler, { once: true });
 
-      heartbeat = setInterval(() => enqueueText(":\n\n"), HEARTBEAT_INTERVAL_MS);
+      heartbeat = setInterval(() => encode({ type: "heartbeat" }), HEARTBEAT_INTERVAL_MS);
 
       // Force the response headers through without claiming that the agent is
       // ready. The client waits for the later `connected` data event.

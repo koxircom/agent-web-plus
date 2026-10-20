@@ -28,7 +28,7 @@ export function getSidebarMaxWidth(options: {
   rightPanelWidth: number;
 }): number {
   const { viewportWidth, rightPanelOpen, rightPanelWidth } = options;
-  if (viewportWidth <= MOBILE_MAX_WIDTH) return SIDEBAR_MAX_WIDTH;
+  if (viewportWidth <= MOBILE_MAX_WIDTH) return Math.min(SIDEBAR_MAX_WIDTH, viewportWidth * .85);
 
   const compact = viewportWidth < SPLIT_PANEL_MIN_WIDTH;
   const chatWidth = compact ? COMPACT_CHAT_MIN_WIDTH : DESKTOP_CHAT_MIN_WIDTH;

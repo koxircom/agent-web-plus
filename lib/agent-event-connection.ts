@@ -13,8 +13,8 @@ export class AgentEventConnectionError extends Error {
   constructor(public readonly status: AgentEventConnectionStatus, message?: string) {
     super(message ?? (
       status === "ready_timeout"
-        ? "Timed out starting the agent session. Please try again."
-        : "Failed to connect to the agent event stream. Please try again."
+        ? "连接会话超时，正在恢复连接。"
+        : "会话连接已断开，正在恢复连接。"
     ));
     this.name = "AgentEventConnectionError";
   }
@@ -39,6 +39,7 @@ export interface AgentEventConnectionOptions {
   shouldMaintain(sessionId: string): boolean;
   readinessTimeoutMs: number;
   reconnectDelayMs: number;
+  heartbeatTimeoutMs?: number;
   onUnexpectedError?(error: unknown): void;
 }
 
@@ -49,6 +50,8 @@ export class AgentEventConnection {
   private current: Connection | null = null;
   private retry: { sessionId: string; timer: ReturnType<typeof setTimeout> } | null = null;
   private retryGeneration = 0;
+  private retryAttempts = 0;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: AgentEventConnectionOptions) {}
 
@@ -145,14 +148,20 @@ export class AgentEventConnection {
       } catch {
         return;
       }
+      if (!event || typeof event.type !== "string") return;
+      // Data heartbeats are observable by EventSource; comment-only keepalives
+      // cannot detect a half-open mobile connection from the browser.
+      if (attempt.ready) this.watchHeartbeat(connection);
+      if (event.type === "heartbeat") return;
 
       if (event.type === "connected") {
         attempt.ready = true;
         attempt.succeed();
         this.stopRetrying();
+        this.watchHeartbeat(connection);
       } else if (event.type === "startup_error") {
         const message = typeof event.errorMessage === "string" ? event.errorMessage : undefined;
-        this.fail(connection, new AgentEventConnectionError("startup_error", message));
+        this.fail(connection, new AgentEventConnectionError(event.retryable === true ? "closed" : "startup_error", message));
         return;
       }
       this.options.onEvent(event);
@@ -174,7 +183,20 @@ export class AgentEventConnection {
   private discard(connection: Connection, error: AgentEventConnectionError): void {
     connection.attempt.fail(error);
     connection.source.close();
-    if (this.current === connection) this.current = null;
+    if (this.current === connection) {
+      this.current = null;
+      if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private watchHeartbeat(connection: Connection): void {
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
+    if (!this.options.heartbeatTimeoutMs) return;
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null;
+      this.fail(connection, new AgentEventConnectionError("closed"));
+    }, this.options.heartbeatTimeoutMs);
   }
 
   private scheduleRetry(sessionId: string): void {
@@ -182,16 +204,18 @@ export class AgentEventConnection {
     if (this.retry?.sessionId === sessionId) return;
     this.clearRetry();
 
+    const delay = Math.min(this.options.reconnectDelayMs * 2 ** Math.min(this.retryAttempts++, 10), 10_000);
     const timer = setTimeout(() => {
       if (this.retry?.timer !== timer) return;
       this.retry = null;
       this.maintain(sessionId);
-    }, this.options.reconnectDelayMs);
+    }, delay);
     this.retry = { sessionId, timer };
   }
 
   private stopRetrying(): void {
     this.retryGeneration += 1;
+    this.retryAttempts = 0;
     this.clearRetry();
   }
 

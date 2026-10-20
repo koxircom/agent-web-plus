@@ -73,7 +73,7 @@ function SettingsSectionLoading({ section, error, retry }: {
   retry?: () => void;
 }) {
   const { t } = useI18n();
-  const labels = { models: t("common.models"), skills: t("common.skills"), agents: t("common.agents"), plugins: t("common.plugins"), mcp: t("settings.mcp"), learning: "自动复盘" };
+  const labels = { models: t("common.models"), skills: t("common.skills"), agents: t("common.agents"), plugins: t("common.plugins"), mcp: t("settings.mcp"), "execution-engine": "执行引擎", learning: "自动复盘" };
   return (
     <div className="settings-section-loading" role={error ? "alert" : "status"} aria-busy={!error}>
       <h2>{labels[section as keyof typeof labels]}</h2>
@@ -94,13 +94,15 @@ const loadPluginsConfig = () => import("./PluginsConfig").then((module) => modul
 const loadMcpConfig = () => import("./McpConfig").then((module) => module.McpConfig);
 const loadLearningSettings = () => import("./LearningSettings").then((module) => module.LearningSettings);
 const LearningSettings = dynamic(loadLearningSettings, { loading: (props) => <SettingsSectionLoading section="learning" {...props} /> });
+const loadExecutionEngineSettings = () => import("./ExecutionEngineSettings").then((module) => module.ExecutionEngineSettings);
 const ModelsConfig = dynamic(loadModelsConfig, { loading: (props) => <SettingsSectionLoading section="models" {...props} /> });
 const SkillsConfig = dynamic(loadSkillsConfig, { loading: (props) => <SettingsSectionLoading section="skills" {...props} /> });
 const AgentsConfig = dynamic(loadAgentsConfig, { loading: (props) => <SettingsSectionLoading section="agents" {...props} /> });
 const PluginsConfig = dynamic(loadPluginsConfig, { loading: (props) => <SettingsSectionLoading section="plugins" {...props} /> });
 const McpConfig = dynamic(loadMcpConfig, { loading: (props) => <SettingsSectionLoading section="mcp" {...props} /> });
+const ExecutionEngineSettings = dynamic(loadExecutionEngineSettings, { loading: (props) => <SettingsSectionLoading section="execution-engine" {...props} /> });
 
-const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig, learning: loadLearningSettings };
+const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig, learning: loadLearningSettings, "execution-engine": loadExecutionEngineSettings };
 export function preloadSettingsSection(section: SettingsSection) {
   const loader = sectionLoaders[section as keyof typeof sectionLoaders];
   // Warm only the hovered/focused code chunk; no component/data request is mounted.
@@ -144,6 +146,7 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   if (section === "agents") return <svg {...common} className="settings-section-icon is-agent"><rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" /></svg>;
   if (section === "plugins") return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
   if (section === "mcp") return <svg {...common}><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" /></svg>;
+  if (section === "execution-engine") return <svg {...common}><rect x="3" y="4" width="7" height="6" rx="1.5" /><rect x="14" y="14" width="7" height="6" rx="1.5" /><path d="M10 7h3a2 2 0 0 1 2 2v5M14 17h-3a2 2 0 0 1-2-2v-5" /></svg>;
   if (section === "enhancements") return <svg {...common}><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.5-6.5 2.5-2.5m-15 15 2.5-2.5m0-10-2.5-2.5m15 15-2.5-2.5" /><circle cx="12" cy="12" r="4" /></svg>;
   if (section === "notifications") return <svg {...common}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>;
   if (section === "archived") return <svg {...common}><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>;
@@ -167,7 +170,7 @@ const SETTINGS_NAV_GROUPS: readonly NavGroupDef[] = [
   {
     id: "agent",
     titleKey: "settings.groupAgents",
-    sectionIds: ["models", "skills", "agents", "plugins", "mcp", "learning", "enhancements"],
+    sectionIds: ["models", "skills", "agents", "plugins", "mcp", "execution-engine", "learning", "enhancements"],
   },
   {
     id: "data",
@@ -653,6 +656,7 @@ export function SettingsPanel({
     startX: number;
     startY: number;
     initialSidebarWidth: number;
+    dragStartSidebarWidth: number;
     initialDialogSize: SettingsDialogSize;
   } | null>(null);
 
@@ -678,6 +682,7 @@ export function SettingsPanel({
       { id: "agents", label: t("common.agents"), requiresProject: true },
       { id: "plugins", label: t("common.plugins"), requiresProject: true },
       { id: "mcp", label: t("settings.mcp"), requiresProject: false },
+      { id: "execution-engine", label: "执行引擎", requiresProject: false },
       { id: "learning", label: "自动复盘", requiresProject: false },
     ],
     [t],
@@ -795,16 +800,18 @@ export function SettingsPanel({
 
   // 8. 拖动 Pointer Capture 处理
   const handleSidebarPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || layout.isCollapsed) return;
+    if (e.button !== 0 || !e.isPrimary || layout.isCollapsed) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {}
+    const renderedSidebarWidth = e.currentTarget.previousElementSibling?.getBoundingClientRect().width;
     setIsResizing(true);
     resizingStateRef.current = {
       kind: "sidebar",
       startX: e.clientX,
       startY: e.clientY,
       initialSidebarWidth: layout.sidebarWidth,
+      dragStartSidebarWidth: renderedSidebarWidth && renderedSidebarWidth > 0 ? renderedSidebarWidth : layout.sidebarWidth,
       initialDialogSize: { ...layout.dialogSize },
     };
   };
@@ -857,6 +864,7 @@ export function SettingsPanel({
       startX: e.clientX,
       startY: e.clientY,
       initialSidebarWidth: layout.sidebarWidth,
+      dragStartSidebarWidth: layout.sidebarWidth,
       initialDialogSize: { ...layout.dialogSize },
     };
   };
@@ -875,7 +883,7 @@ export function SettingsPanel({
     if (!state) return;
     if (state.kind === "sidebar") {
       const deltaX = e.clientX - state.startX;
-      const nextWidth = clampSidebarWidth(state.initialSidebarWidth + deltaX);
+      const nextWidth = clampSidebarWidth(state.dragStartSidebarWidth + deltaX);
       setLayout((prev) => ({ ...prev, sidebarWidth: nextWidth }));
     } else {
       const deltaX = e.clientX - state.startX;
@@ -1024,7 +1032,7 @@ export function SettingsPanel({
       className="settings-dialog-backdrop"
     >
       <div className={surfaceClassName} style={dialogStyle}>
-        {/* 侧边栏（包含标题行与折叠按钮、竖向导航栏；在 mobile <= 640px 时作为顶部 header） */}
+        {/* 所有尺寸复用左侧竖向导航，内容区按自身宽度排版 */}
         <header className="settings-dialog-header">
           <div className="settings-dialog-title">
             <span className="settings-dialog-title-text">{t("settings.title")}</span>
@@ -1052,23 +1060,6 @@ export function SettingsPanel({
               </svg>
             </button>
           </div>
-
-          <select
-            aria-label={t("settings.title")}
-            value={section}
-            onChange={(event) => activateSection(event.target.value as SettingsSection)}
-            className="settings-mobile-section-picker"
-          >
-            {groupedSections.map((group) => (
-              <optgroup key={group.id} label={group.label}>
-                {group.items.map((item) => (
-                  <option key={item.id} value={item.id} disabled={item.requiresProject && !cwd}>
-                    {item.label}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
 
           <nav aria-label={t("settings.title")} className="settings-section-tabs">
             {groupedSections.map((group) => (
@@ -1110,7 +1101,7 @@ export function SettingsPanel({
 
         {/* 侧边栏拖拽手柄（带 pointer capture 和键盘控制） */}
         <div
-          className="settings-sidebar-resizer"
+          className={`settings-sidebar-resizer${isResizing && resizingStateRef.current?.kind === "sidebar" ? " is-dragging" : ""}`}
           onPointerDown={handleSidebarPointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
@@ -1120,7 +1111,7 @@ export function SettingsPanel({
           onKeyDown={handleSidebarKeyDown}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize sidebar"
+          aria-label="调整设置导航宽度"
           aria-valuenow={layout.sidebarWidth}
           aria-valuemin={SETTINGS_SIDEBAR_WIDTH_MIN}
           aria-valuemax={SETTINGS_SIDEBAR_WIDTH_MAX}
@@ -1174,8 +1165,8 @@ export function SettingsPanel({
               <PluginsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
             )}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
-
           {sectionHost("learning", <LearningSettings cwd={cwd} />)}
+          {sectionHost("execution-engine", <ExecutionEngineSettings />)}
 
           {/* 5 个 legacy extension section host */}
           {enabledExtensions.map((ext) =>
@@ -1208,7 +1199,7 @@ export function SettingsPanel({
           onKeyDown={(e) => handleDialogResizerKeyDown("east", e)}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize settings dialog width"
+          aria-label="调整设置窗口宽度"
           tabIndex={0}
         />
         <div
@@ -1222,7 +1213,7 @@ export function SettingsPanel({
           onKeyDown={(e) => handleDialogResizerKeyDown("south", e)}
           role="separator"
           aria-orientation="horizontal"
-          aria-label="Resize settings dialog height"
+          aria-label="调整设置窗口高度"
           tabIndex={0}
         />
         <div

@@ -2,6 +2,7 @@ import type { TabOpen } from "./tab-session";
 
 export interface InitialNavigation {
   requestedCwd: string | null;
+  engine?: "pi" | "codex";
   sessionId: string | null;
   sidebarCollapsed: boolean;
 }
@@ -11,9 +12,15 @@ export function getInitialNavigation(
 ): InitialNavigation {
   const requestedCwd = searchParams.get("cwd")?.trim() || null;
 
+  const sessionId = requestedCwd ? null : (searchParams.get("session") || null);
+  const hint = searchParams.get("engine");
+  const engine = hint === "pi" || hint === "codex"
+    ? (sessionId ? (sessionId.startsWith("codex:") ? "codex" : "pi") : hint) : undefined;
+
   return {
+    ...(engine ? { engine } : {}),
     requestedCwd,
-    sessionId: requestedCwd ? null : (searchParams.get("session") || null),
+    sessionId,
     sidebarCollapsed: searchParams.get("sidebar") === "collapsed",
   };
 }
@@ -35,11 +42,26 @@ export function withTabOpen(
   navigation: InitialNavigation,
   tabOpen: TabOpen | null,
 ): InitialNavigation {
-  if (navigation.requestedCwd || navigation.sessionId || !tabOpen) {
+  // Old cwd-only links can use this tab's exact composer context. Never borrow
+  // another directory's engine, or override an explicit link/session identity.
+  if (navigation.requestedCwd && !navigation.engine && tabOpen?.kind === "new"
+    && tabOpen.cwd === navigation.requestedCwd && tabOpen.engine) {
+    return { ...navigation, engine: tabOpen.engine };
+  }
+  if (navigation.requestedCwd || navigation.sessionId || !tabOpen
+    || (navigation.engine && (tabOpen.kind === "session"
+      ? (tabOpen.sessionId.startsWith("codex:") ? "codex" : "pi") : tabOpen.engine) !== navigation.engine)) {
     return navigation;
   }
   if (tabOpen.kind === "session") {
     return { ...navigation, sessionId: tabOpen.sessionId };
   }
-  return { ...navigation, requestedCwd: tabOpen.cwd };
+  return { ...navigation, requestedCwd: tabOpen.cwd, ...(tabOpen.engine ? { engine: tabOpen.engine } : {}) };
+}
+
+/** A route/tab selection outranks the shared default for new tabs. */
+export function navigationEngine(navigation: InitialNavigation): "pi" | "codex" | undefined {
+  return navigation.sessionId
+    ? (navigation.sessionId.startsWith("codex:") ? "codex" : "pi")
+    : navigation.engine;
 }

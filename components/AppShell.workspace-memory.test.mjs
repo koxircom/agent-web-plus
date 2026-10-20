@@ -1,8 +1,10 @@
+import { resolveExecutionEngine } from "../lib/execution-engine-context.ts";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
+import { newSessionUrl } from "../lib/session-navigation.ts";
 import { createJiti } from "jiti";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
@@ -33,10 +35,10 @@ test("explicit context changes invalidate a pending workspace restore", () => {
 });
 
 test("all active-session transitions share one persistence effect", () => {
-  assert.match(
-    source,
-    /useEffect\(\(\) => \{\s+if \(selectedSession\) \{[\s\S]*?setLastOpenSession\(projectKey, selectedSession\.id\);\s+setTabOpenSession\(selectedSession\.id\);\s+return;\s+\}\s+if \(newSessionCwd\) setTabOpenNewSession\(newSessionCwd\);\s+\}, \[newSessionCwd, selectedSession\]\);/,
-  );
+  assert.match(source, /setLastOpenSession\(projectKey, selectedSession\.id\)/);
+  assert.match(source, /setTabOpenSession\(selectedSession\.id\)/);
+  assert.match(source, /setTabOpenNewSession\(newSessionCwd, undefined, executionEngine\)/);
+  assert.match(source, /if \(newSessionCwd && executionEngineReady\)/);
 });
 
 test("keeps chat scroll positions in page memory by session id", () => {
@@ -78,11 +80,17 @@ test("New restores the draft after session navigation and workspace auto-restore
         URLSearchParams,
         window: { location: { pathname: "/", search: "" } },
         replaceSessionUrl() {},
+        newSessionUrl,
+        resolveExecutionEngine,
+        selectedSessionIdRef: { current: null },
+        executionEngineRef: { current: "pi" },
         fetch: () => response.promise,
         getLastOpenSession: (key) => key === cwd ? session.id : null,
         clearLastOpen() {},
         workspaceKeyOf: (value) => value.projectKey ?? value.cwd,
         useCallback: (callback) => callback,
+        useEffect() {},
+        useLayoutEffect() {},
         useGlobalKeyboardShortcuts() {},
         activeNewSessionDraftKeyRef: { current: `new:initial:${cwd}` },
         activeProjectKeyRef: { current: cwd },
@@ -96,6 +104,7 @@ test("New restores the draft after session navigation and workspace auto-restore
         cancelEventStreamGrace() {},
         closeEvents() {},
         isMobile: false,
+        isMobileRef: { current: false },
         activeCwd: cwd,
         activeFileTabId: null,
         newSessionCwd: cwd,

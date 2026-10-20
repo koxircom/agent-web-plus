@@ -184,7 +184,7 @@
         chatObserver.observe(observedTarget, { childList: true, subtree: true });
       }
     } catch (e) {
-      console.warn("[Pi Web Enhancements] chatObserver init warning:", e);
+      console.warn("[Agent Web Plus Enhancements] chatObserver init warning:", e);
     }
   }
 

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pi Web Native Composer Layout (Pure Static CSS - Single Source of Truth)
+   Agent Web Plus Native Composer Layout (Pure Static CSS - Single Source of Truth)
    ========================================================================== */
 
 /* 根卡片 (Native Composer Card) */
@@ -86,6 +86,15 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   resize: none;
 }
 
+/* Suggestions are placeholders until explicitly accepted; the draft stays empty. */
+textarea.chat-input-textarea[data-pi-inline-suggestion] {
+  touch-action: manipulation;
+}
+textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
 /* 用户自定义高度生效规则（精确受控变量，无多余 min-height 抬高） */
 .chat-composer-card.chat-composer-custom-height textarea.chat-input-textarea,
 .chat-composer-card.chat-composer-custom-height .pi-enh-formatted-composer {
@@ -138,7 +147,7 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   background: var(--bg-hover);
 }
 .chat-composer-card .chat-composer-add-btn:focus-visible,
-.chat-composer-card .chat-composer-goal-action:focus-visible {
+.chat-composer-goal-action:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -167,7 +176,18 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   flex-shrink: 0;
 }
 
-/* 3. Native mode and goal status (Col 3) */
+/* Confirmed goals belong above the composer, independently of input mode. */
+.chat-composer-goal-host:empty { display: none; }
+.chat-composer-goal-host:not(:empty) {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+.chat-composer-goal-host svg { flex: 0 0 16px; color: var(--accent); }
+
+/* 3. Native input mode control (Col 3) */
 .chat-composer-card .chat-composer-mode-status {
   grid-column: 3;
   grid-row: 3;
@@ -226,35 +246,39 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
 }
 .chat-composer-mode-chip:focus-visible .chat-composer-mode-symbol { opacity: 0; }
 .chat-composer-mode-chip:focus-visible .chat-composer-mode-dismiss { opacity: 1; }
-.chat-composer-card .chat-composer-goal-summary {
-  display: inline-flex;
+.chat-composer-goal-summary {
+  display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
-  max-width: min(100%, 260px);
+  width: 100%;
+  max-width: 100%;
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.2;
 }
-.chat-composer-card .chat-composer-goal-status {
+.chat-composer-goal-status {
   flex: 0 0 auto;
   white-space: nowrap;
 }
-.chat-composer-card .chat-composer-goal-text {
+.chat-composer-goal-text {
   flex: 1 1 auto;
   min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
   color: var(--text);
 }
-.chat-composer-card .chat-composer-goal-timer {
+.chat-composer-goal-timer {
   flex: 0 0 auto;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.chat-composer-card .chat-composer-goal-action {
+.chat-composer-goal-action {
   flex: 0 0 auto;
   padding: 3px 6px;
   color: var(--text-muted);
@@ -265,7 +289,7 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   white-space: nowrap;
   cursor: pointer;
 }
-.chat-composer-card .chat-composer-goal-action:hover {
+.chat-composer-goal-action:hover {
   color: var(--text);
   background: var(--bg-hover);
 }
@@ -338,11 +362,7 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
 /* Narrow chat panes can occur on a wide touch viewport with the sidebar open. */
 @container native-composer (max-width: 500px) {
   .chat-composer-card .chat-composer-mode-status { max-width: 25vw; gap: 4px; }
-  .chat-composer-card .chat-composer-goal-summary { max-width: 100%; }
-  .chat-composer-card .chat-composer-goal-status { display: none; }
-  .chat-composer-card .chat-composer-goal-text { display: none; }
-  .chat-composer-card .chat-composer-goal-timer { display: none; }
-  .chat-composer-card .chat-composer-goal-action { padding: 3px 5px; }
+
 
 }
 

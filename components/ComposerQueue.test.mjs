@@ -46,3 +46,31 @@ test("composer adapters follow the semantic native host after refresh", () => {
   assert.match(source,/data-pi-native-composer-host/);
  }
 });
+
+test("Codex reuses the native queue action structure and service",()=>{
+ const html=renderToStaticMarkup(React.createElement(ComposerQueue,{sessionId:"codex:fixture",executionEngine:"codex",queuedMessages:{steering:[],followUp:["one","two"]}}));
+ for(const name of ["pi-enh-queue-sort","pi-enh-queue-promote","pi-enh-queue-more","pi-enh-queue-delete"])assert.ok(html.includes(name),name);
+ const source=readFileSync(new URL("../enhancements/modules/05-composer-and-input-workflow.js",import.meta.url),"utf8");
+ const s=source.slice(source.indexOf("async function loadComposerQueueTokens"),source.indexOf("// Foundation composer layout"));
+ assert.doesNotMatch(s,/startsWith\("codex:"\)/);
+});
+
+
+test("shared queue density compresses whitespace while preserving text and controls",()=>{
+ const css=readFileSync(new URL("./ComposerQueue.css",import.meta.url),"utf8");
+ const row=css.match(/\.pi-enh-queue-row \{[^}]*min-height:[^}]*\}/)?.[0];
+ assert.match(row,/min-height: 35px/);assert.match(row,/padding: 2px 8px/);
+ assert.match(css,/padding: 1px 6px 7px; margin-bottom: -7px/);
+ assert.match(css,/width: 28px; height: 28px/);assert.match(css,/font-size: 13px/);
+ assert.match(css,/\.pi-enh-queue-row \{ gap: 4px; padding: 2px 6px; \}/);
+ assert.doesNotMatch(css,/\[data-[^\]]*(?:codex|engine)|\.codex[^}]*queue/);
+ const render=engine=>renderToStaticMarkup(React.createElement(ComposerQueue,{sessionId:"same-fixture",executionEngine:engine,queuedMessages:{steering:[],followUp:["相同任务","相同后续任务"]}}));
+ assert.equal(render("pi"),render("codex"));
+});
+
+test('weak-network accepted backups remain visible across empty snapshots and deduplicate by identity only',()=>{
+ const retained=[{requestId:'one',sessionId:'codex:fixture',message:'相同原文',streamingBehavior:'followUp',status:'accepted',createdAt:1,images:[{data:'eA==',mimeType:'image/png'}]},{requestId:'two',sessionId:'codex:fixture',message:'相同原文',streamingBehavior:'followUp',status:'uncertain',createdAt:2}];
+ const render=queue=>renderToStaticMarkup(React.createElement(ComposerQueue,{sessionId:'codex:fixture',executionEngine:'codex',queuedMessages:queue,retainedSubmissions:retained}));
+ const empty=render({steering:[],followUp:[]});assert.match(empty,/data-retained-request-id="one"/);assert.match(empty,/data-retained-request-id="two"/);assert.match(empty,/data:image\/png;base64,eA==/);
+ const matched=render({steering:[],followUp:['相同原文'],requestIds:{steering:[],followUp:['one']}});assert.doesNotMatch(matched,/data-retained-request-id="one"/);assert.match(matched,/data-retained-request-id="two"/);assert.equal((matched.match(/相同原文/g)||[]).length>=2,true);
+});

@@ -134,7 +134,7 @@ async function setupPageRoutes(context, htmlContent, blockedExternalUrls = []) {
     }
 
     // 生产环境安全红线防污染保护：生产 URL 认证前硬性拒绝执行
-    if (url.hostname.includes("koxir.com") || (url.hostname !== "settings-migration.local" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1")) {
+    if ((url.hostname !== "settings-migration.local" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1")) {
       blockedExternalUrls.push(route.request().url());
       await route.abort("accessdenied");
       return;

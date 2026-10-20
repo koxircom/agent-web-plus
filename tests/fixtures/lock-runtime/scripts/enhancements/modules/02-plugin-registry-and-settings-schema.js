@@ -2254,7 +2254,7 @@
       if (!loc) return false;
       const hostname = loc.hostname;
       const port = String(loc.port || "");
-      const allowedHosts = ["10.0.0.2", "127.0.0.1", "localhost"];
+      const allowedHosts = ["10.10.0.10", "127.0.0.1", "localhost"];
       if (!allowedHosts.includes(hostname)) return false;
       if (port !== "30141" && port !== "30142") return false;
       return true;

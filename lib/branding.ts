@@ -1,6 +1,6 @@
 /**
  * @file lib/branding.ts
- * Pi Web Plus 自有独立版核心品牌规范与矢量事实源。
+ * Agent Web Plus 自有独立版核心品牌规范与矢量事实源。
  * 纯常数与纯函数，无 React hooks 与 window 依赖，可安全用于 Next Server Components 与 SSR metadata。
  */
 
@@ -10,15 +10,17 @@ import {
   type StorageGetter,
 } from "./enhancement-settings.generated.ts";
 
-export const BRAND_NAME = "Pi Web Plus";
-export const BRAND_SHORT_NAME = "Pi Web Plus";
+export const BRAND_NAME = "Agent Web Plus";
+export const BRAND_SHORT_NAME = "Agent Web Plus";
 export const BRANDING_PREFERENCE_KEY = "pi-web-plus-branding";
 export const BRANDING_PREFERENCE_CHANGE_EVENT = "pi-web-plus-branding-change";
 export const BRAND_GITHUB_URL = "https://github.com/koxircom/pi-web-plus";
+export const CODEX_BRAND_SYMBOL_PATH = "M51 66 79 94 51 122M96 122h37";
+export const CODEX_CLI_GITHUB_URL = "https://github.com/openai/codex";
 
 /**
  * 矢量图标与字标几何常量（唯一事实源）
- * exact 816x186 viewBox (标称 215x49，比例约 4.387)：平面蓝紫双圆 + 白色 π+ 符号 + 渐变 Plus
+ * exact 816x186 viewBox：引擎符号与 Agent Web Plus 字标共用同一几何。
  */
 export const BRAND_SVG_CONSTANTS = {
   viewBox: "0 0 816 186",
@@ -34,12 +36,12 @@ export const BRAND_SVG_CONSTANTS = {
   wordmark: {
     piX: 230,
     webX: 346,
-    plusX: 591,
+    plusX: 620,
     y: 138,
     text: BRAND_NAME,
-    fontSize: 94,
+    fontSize: 64,
     fontWeight: 700,
-    letterSpacing: "-1.5",
+    letterSpacing: "normal",
   },
 } as const;
 
@@ -56,7 +58,7 @@ export const BRAND_ICON_SVG_CONSTANTS = {
 
 /**
  * 读取品牌装饰偏好状态（开/关）
- * 注意：base 名字和 logo 属于自有独立版身份，无论此开关状态为何，基础标识均为 Pi Web Plus。
+ * 注意：base 名字和 logo 属于自有独立版身份，无论此开关状态为何，基础标识均为 Agent Web Plus。
  * 开关仅控制附加紧凑头距、字体和间距等微调装饰。
  * 使用 generated canonical reader factory，无额外私有算法。
  */
@@ -82,5 +84,5 @@ export function isBrandingDecorationsActive(
  */
 export function buildPiWebPlusBrandSvgString(textColor = "currentColor"): string {
   const c = BRAND_SVG_CONSTANTS;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${c.viewBox}" width="${c.width}" height="${c.height}" fill="none" role="img" aria-label="π+ ${c.wordmark.text}"><title>π+ ${c.wordmark.text}</title><defs><linearGradient id="flatBlueViolet" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4F5AE8"/><stop offset="100%" stop-color="#7850E8"/></linearGradient><linearGradient id="plusGradient" gradientUnits="userSpaceOnUse" x1="591" y1="56" x2="785" y2="140"><stop offset="0%" stop-color="#6E67F8"/><stop offset="25%" stop-color="#585BF9"/><stop offset="52%" stop-color="#3B4FFB"/><stop offset="78%" stop-color="#2563EB"/><stop offset="100%" stop-color="#1D4ED8"/></linearGradient></defs><g id="brand-graphic"><circle id="flat-main-disc" cx="91.2" cy="96" r="87.5" fill="url(#flatBlueViolet)"/><path id="symbol-pi" fill="${c.symbolColor}" d="${c.piPath}"/><circle id="flat-plus-disc" cx="167" cy="38" r="34" fill="${c.plusDiscColor}" stroke="${c.symbolColor}" stroke-width="1.6"/><path id="symbol-plus" fill="${c.symbolColor}" d="${c.plusPath}"/></g><g id="brand-typography"><text data-pi-brand-part="wordmark" fill="${textColor}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="${c.wordmark.fontSize}" font-weight="${c.wordmark.fontWeight}" letter-spacing="${c.wordmark.letterSpacing}"><tspan x="${c.wordmark.piX}" y="${c.wordmark.y}" fill="${textColor}">Pi</tspan> <tspan x="${c.wordmark.webX}" y="${c.wordmark.y}" fill="${textColor}">Web</tspan> <tspan x="${c.wordmark.plusX}" y="${c.wordmark.y}" fill="url(#plusGradient)">Plus</tspan></text></g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${c.viewBox}" width="${c.width}" height="${c.height}" fill="none" role="img" aria-label="π+ ${c.wordmark.text}"><title>π+ ${c.wordmark.text}</title><defs><linearGradient id="flatBlueViolet" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4F5AE8"/><stop offset="100%" stop-color="#7850E8"/></linearGradient><linearGradient id="plusGradient" gradientUnits="userSpaceOnUse" x1="${c.wordmark.plusX}" y1="56" x2="${c.wordmark.plusX + 150}" y2="140"><stop offset="0%" stop-color="#6E67F8"/><stop offset="25%" stop-color="#585BF9"/><stop offset="52%" stop-color="#3B4FFB"/><stop offset="78%" stop-color="#2563EB"/><stop offset="100%" stop-color="#1D4ED8"/></linearGradient></defs><g id="brand-graphic"><circle id="flat-main-disc" cx="91.2" cy="96" r="87.5" fill="url(#flatBlueViolet)"/><path id="symbol-pi" fill="${c.symbolColor}" d="${c.piPath}"/><circle id="flat-plus-disc" cx="167" cy="38" r="34" fill="${c.plusDiscColor}" stroke="${c.symbolColor}" stroke-width="1.6"/><path id="symbol-plus" fill="${c.symbolColor}" d="${c.plusPath}"/></g><g id="brand-typography"><text data-pi-brand-part="wordmark" x="${c.wordmark.piX}" y="${c.wordmark.y}" fill="${textColor}" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" font-size="${c.wordmark.fontSize}" font-weight="${c.wordmark.fontWeight}" letter-spacing="${c.wordmark.letterSpacing}"><tspan fill="${textColor}">Agent Web </tspan><tspan fill="url(#plusGradient)">Plus</tspan></text></g></svg>`;
 }

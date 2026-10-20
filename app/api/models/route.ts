@@ -1,3 +1,5 @@
+import { resolveExecutionEngine } from "@/lib/execution-engine-context";
+import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import { createAgentSessionServices, getAgentDir, type SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -107,6 +109,14 @@ const EMPTY_MODELS: ModelsData = {
 };
 
 export async function GET(req: Request) {
+  const query = new URL(req.url).searchParams;
+  const sessionId = query.get("sessionId");
+  let engine;
+  try { engine = resolveExecutionEngine(query.get("engine"), (await readExecutionEngineSettings()).defaultEngine, sessionId); }
+  catch (error) { return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }); }
+  if (engine === "codex") {
+    return Response.json(await (await import("@/lib/execution-engines/codex-engine")).codexModels(query.get("cwd") || undefined));
+  }
   const requestedCwd = new URL(req.url).searchParams.get("cwd") || process.cwd();
   const cwd = resolve(requestedCwd);
 

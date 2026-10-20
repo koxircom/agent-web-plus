@@ -56,8 +56,8 @@ test("provides one template for config layout and controls", () => {
   assert.match(templateSource, /className="config-detail"/);
   assert.match(cssSource, /\.config-sidebar \{[\s\S]*?width: 240px/);
   assert.match(cssSource, /\.config-detail \{[\s\S]*?padding: 20px/);
-  assert.match(cssSource, /@media \(max-width: 640px\)[\s\S]*?\.config-sidebar \{[\s\S]*?width: 100%/);
-  assert.match(cssSource, /@media \(max-width: 640px\)[\s\S]*?\.config-detail \{[\s\S]*?padding: 14px/);
+  assert.match(cssSource, /@container config-panel \(max-width: 720px\)[\s\S]*?\.config-sidebar \{[\s\S]*?width: 100%/);
+  assert.match(cssSource, /@container config-panel \(max-width: 720px\)[\s\S]*?\.config-detail \{[\s\S]*?padding: 14px/);
 });
 
 test("loads settings presentation from its dedicated stylesheet", () => {
@@ -131,7 +131,7 @@ test("skill scope group labels are localized", () => {
 test("all subpanel detail panes share one content hierarchy", () => {
   const sources = Object.fromEntries(configSources);
   assert.match(cssSource, /\.config-detail-stack \{[\s\S]*?gap: 16px[\s\S]*?width: 100%/);
-  assert.doesNotMatch(cssSource, /\.config-detail-stack \{[\s\S]*?max-width: 720px/);
+  assert.doesNotMatch(cssSource, /\.config-detail-stack \{[^}]*max-width: 720px/);
   assert.match(cssSource, /\.config-field-label \{[\s\S]*?font-size: 11px/);
   assert.match(cssSource, /\.config-empty-state \{[\s\S]*?font-size: 12px/);
   for (const source of Object.values(sources)) {

@@ -38,6 +38,9 @@ export interface NavigateTreeResult {
 }
 
 export interface SessionStatsInfo {
+  /** False when the engine has not supplied authoritative cumulative counters. */
+  tokenUsageAvailable?: boolean;
+  messageCountsScope?: "loaded";
   sessionFile?: string;
   sessionId: string;
   sessionName?: string;
@@ -195,8 +198,8 @@ export interface AgentSessionLike {
   getLastAssistantText(): string | undefined;
   setAutoCompactionEnabled(enabled: boolean): void;
   setAutoRetryEnabled(enabled: boolean): void;
-  steer(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<"handled" | "queued">;
-  followUp(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): Promise<"handled" | "queued">;
+  steer(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>, options?: { source?: "interactive" | "rpc" | "extension" }): Promise<"handled" | "queued">;
+  followUp(text: string, images?: Array<{ type: "image"; data: string; mimeType: string }>, options?: { source?: "interactive" | "rpc" | "extension" }): Promise<"handled" | "queued">;
   readonly pendingMessageCount: number;
   getSteeringMessages(): readonly string[];
   getFollowUpMessages(): readonly string[];

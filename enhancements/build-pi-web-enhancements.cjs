@@ -166,7 +166,22 @@ function validateOwnershipGate() {
 }
 
 function buildPublicBundle(bundleBuffer, writeAssets = false) {
+  // One geometry source for React chips, menu icons, and the legacy SVG asset.
+  const modeIcons = require("../lib/composer-mode-icons.json");
+  const iconPaths = (mode) => modeIcons[mode].map(d => `<path d="${d}" />`).join("");
+  const iconGroup = (mode) => `<g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${iconPaths(mode)}</g>`;
+  const modeIconCode = `var COMPOSER_MODE_ICON_MARKUP = ${JSON.stringify(Object.fromEntries(Object.keys(modeIcons).map(mode => [mode, iconGroup(mode)])))};`;
+  const sprite = '<svg xmlns="http://www.w3.org/2000/svg">\n' + Object.keys(modeIcons).map(mode =>
+    `  <symbol id="${mode}" viewBox="0 0 24 24">${iconGroup(mode)}</symbol>`).join('\n') + '\n</svg>\n';
+  const spritePath = path.join(__dirname, "..", "public/icons/composer-mode-icons.svg");
+  if (writeAssets) fs.writeFileSync(spritePath, sprite);
+  else if (fs.readFileSync(spritePath, "utf8") !== sprite) throw new Error("模式图标资源漂移，请正常构建");
   const usageLedger = fs.readFileSync(path.join(__dirname, "usage-ledger-core.js"), "utf8");
+  const serverUsageCore = path.join(__dirname, "..", "bin", "usage-guard", "usage-ledger-core.js");
+  if (writeAssets) fs.writeFileSync(serverUsageCore, usageLedger);
+  else if (fs.readFileSync(serverUsageCore, "utf8") !== usageLedger) {
+    throw new Error("服务端与网页用量聚合代码不同步，请正常构建");
+  }
   const { script: optionalLoader } = require("./build-optional-assets.cjs").buildOptionalAssets(__dirname, { write: writeAssets });
   const { extractEnhancementMetadata, buildFastPluginReaderSnippet, buildNativePluginSettingsModuleCode } = require("./pi-web-settings-prepaint.cjs");
   const metadata = extractEnhancementMetadata(path.join(MODULES_DIR, "02-plugin-registry-and-settings-schema.js"));
@@ -178,7 +193,7 @@ function buildPublicBundle(bundleBuffer, writeAssets = false) {
   }
   const reader = buildFastPluginReaderSnippet(metadata);
   if (bundleBuffer.includes(Buffer.from("PiUsagePanel =")) || bundleBuffer.includes(Buffer.from("make_xlsx_lib"))) throw new Error("低频组件重复内联，已阻止发布");
-  const prefix = Buffer.from(`${usageLedger}\n;\n${optionalLoader}\n;\n${reader}\n;\n`, "utf8");
+  const prefix = Buffer.from(`${modeIconCode}\n;\n${usageLedger}\n;\n${optionalLoader}\n;\n${reader}\n;\n`, "utf8");
   return Buffer.concat([prefix, bundleBuffer]);
 }
 

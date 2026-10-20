@@ -124,7 +124,7 @@ function sanitizeForPublicRepo(text) {
   return String(text || "")
     .replace(/C:\/Users\/KOXIR/g, "~")
     .replace(/C:\\\\Users\\\\KOXIR/g, "~")
-    .replace(/C:\\Users\\KOXIR/g, "~")
+    .replace(/C:\\Users\\demo/g, "~")
     .replace(/10\.0\.0\.2/g, "127.0.0.1")
     .replace(/10\.0\.0\.89/g, "127.0.0.1")
     .replace(/10\.7\.7\.2/g, "127.0.0.1")

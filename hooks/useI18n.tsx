@@ -35,7 +35,7 @@ function readInitialLocale(): Locale {
 }
 
 /**
- * 提供 Pi Web 的界面语言状态和翻译能力。
+ * 提供 Agent Web Plus 的界面语言状态和翻译能力。
  * @param props React 子节点和可选的首次渲染语言；默认使用简体中文
  * @returns 包含语言上下文的 React 节点
  */

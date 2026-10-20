@@ -9,15 +9,24 @@
   }
   const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const tokens = n => n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-  const cost = s => s.costNano > 0
-    ? `$${(s.costNano / 1e9).toFixed(3)}${s.unpricedTokens ? " + 未定价" : ""}`
-    : (s.unpricedTokens ? "未定价" : "$0.000");
+  const cost = (s, selectedEngine = "all") => {
+    const codexTokens = (s.codexTokens || 0) + (s.dispatchedSubagents?.codexTokens || 0);
+    if (s.costNano > 0) {
+      return `$${(s.costNano / 1e9).toFixed(3)}${s.unpricedTokens ? " + 未定价" : ""}${codexTokens ? " + Codex 未提供费用" : ""}`;
+    }
+    if (codexTokens > 0) return "Codex 未提供费用";
+    if (selectedEngine === "codex" && (s.totalTokens || 0) > 0) return "Codex 未提供费用";
+    return s.unpricedTokens ? "未定价" : "$0.000";
+  };
 
   const roleNames = { main: "主会话直接用量", subagent: "子代理独立用量", system: "工具 / 压缩摘要用量" };
   const STORAGE_KEY = "pi-enh-usage-filters";
   const CACHE_KEY = "pi-enh-usage-ledger-cache";
+  const MODE_CACHE_KEY = "pi-enh-usage-ledger-mode";
   const VALID_TIME_RANGES = new Set(["today", "yesterday", "24h", "7d", "30d", "all", "custom"]);
   const VALID_ROLES = new Set(["all", "main", "subagent", "system"]);
+  const VALID_ENGINES = new Set(["all", "pi", "codex"]);
+  const CODEX_LOADING_POLL_MS = 2000;
 
   function readSavedFilters() {
     try {
@@ -31,11 +40,18 @@
     }
   }
 
-  function persistFilters(next) {
+  function persistFilters(next = {}) {
     try {
       const storage = typeof localStorage !== "undefined" ? localStorage : (root && root.localStorage);
       if (storage) {
-        storage.setItem(STORAGE_KEY, JSON.stringify(next));
+        storage.setItem(STORAGE_KEY, JSON.stringify({
+          timeRange: next.timeRange ?? timeRange,
+          role: next.role ?? role,
+          model: next.model ?? model,
+          startDate: next.startDate ?? startDate,
+          endDate: next.endDate ?? endDate,
+          engine,
+        }));
       }
     } catch {}
   }
@@ -43,6 +59,7 @@
   const initial = readSavedFilters();
   let timeRange = VALID_TIME_RANGES.has(initial.timeRange) ? initial.timeRange : "all";
   let role = VALID_ROLES.has(initial.role) ? initial.role : "all";
+  let engine = VALID_ENGINES.has(initial.engine) ? initial.engine : "all";
   let model = typeof initial.model === "string" ? initial.model : "all";
   let startDate = typeof initial.startDate === "string" ? initial.startDate : "";
   let endDate = typeof initial.endDate === "string" ? initial.endDate : "";
@@ -50,19 +67,26 @@
   function updateFilters(next = {}) {
     if (VALID_TIME_RANGES.has(next.timeRange)) timeRange = next.timeRange;
     if (VALID_ROLES.has(next.role)) role = next.role;
-    if (typeof next.model === "string") model = next.model;
+    const engineChanged = VALID_ENGINES.has(next.engine) && engine !== next.engine;
+    if (engineChanged) {
+      engine = next.engine;
+      model = "all";
+    } else if (typeof next.model === "string") {
+      model = next.model;
+    }
     if (typeof next.startDate === "string") startDate = next.startDate;
     if (typeof next.endDate === "string") endDate = next.endDate;
-    persistFilters({ timeRange, role, model, startDate, endDate });
+    persistFilters();
   }
 
   function resetFilters() {
     timeRange = "all";
     role = "all";
+    engine = "all";
     model = "all";
     startDate = "";
     endDate = "";
-    persistFilters({ timeRange: "all", role: "all", model: "all", startDate: "", endDate: "" });
+    persistFilters();
   }
 
   function formatBeijingDateTime(ts) {
@@ -72,78 +96,87 @@
     return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
   }
 
-  function read() {
-    let ledger = root.__PI_ENH_USAGE_LEDGER__;
-    if (!ledger || typeof ledger !== "object" || ledger.version !== 2) {
-      // SWR 秒开增强：尝试从客户端持久缓存（sessionStorage/localStorage）即时恢复上一次已核验快照
-      try {
-        const storage = typeof sessionStorage !== "undefined" ? sessionStorage : (typeof localStorage !== "undefined" ? localStorage : null);
-        const cached = storage ? storage.getItem(CACHE_KEY) : null;
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (parsed && typeof parsed === "object" && parsed.version === 2 && Array.isArray(parsed.buckets)) {
-            root.__PI_ENH_USAGE_LEDGER__ = parsed;
-            ledger = parsed;
-          }
-        }
-      } catch (_) {}
+  function storageCandidates() {
+    const out = [];
+    try { if (typeof sessionStorage !== "undefined" && sessionStorage) out.push(sessionStorage); } catch (_) {}
+    try { if (typeof localStorage !== "undefined" && localStorage && !out.includes(localStorage)) out.push(localStorage); } catch (_) {}
+    return out;
+  }
+
+  function setUsageMode(mode) {
+    if (mode !== "native-local" && mode !== "legacy-central") return;
+    root.__PI_ENH_USAGE_LEDGER_MODE__ = mode;
+    for (const storage of storageCandidates()) {
+      try { storage.setItem(MODE_CACHE_KEY, mode); } catch (_) {}
+      break;
     }
-    if (!ledger || typeof ledger !== "object" || ledger.version !== 2) return null;
+  }
+
+  function validateLedger(ledger) {
+    if (!ledger || typeof ledger !== "object" || ledger.version !== 2 || !Array.isArray(ledger.buckets)) {
+      throw new Error("账本快照格式或版本无效");
+    }
     const core = getCore();
-    if (core && typeof core.validate === "function") {
-      try {
+    if (!core || typeof core.validate !== "function") {
+      throw new Error("核心用量依赖未加载 (PiUsageLedger 缺失或未就绪)");
+    }
+    try {
+      core.validate(ledger);
+    } catch (valErr) {
+      if (valErr && typeof valErr.message === "string" && (valErr.message.includes("Snapshot mismatch: costNano") || valErr.message.includes("Snapshot mismatch: unpricedTokens"))) {
+        console.warn("[pi-usage-panel] 捕获快照派生价格差异，已自动按当前费率基准聚合展示:", valErr.message);
+        const aggregate = typeof core.aggregate === "function" ? core.aggregate(ledger) : null;
+        if (!aggregate || !ledger.totals) throw valErr;
+        ledger.totals.costNano = aggregate.costNano;
+        ledger.totals.unpricedTokens = aggregate.unpricedTokens;
         core.validate(ledger);
-      } catch (valErr) {
-        if (valErr && typeof valErr.message === "string" && (valErr.message.includes("Snapshot mismatch: costNano") || valErr.message.includes("Snapshot mismatch: unpricedTokens"))) {
-          console.warn("[pi-usage-panel] 捕获快照派生价格差异，已自动按当前费率基准聚合展示:", valErr.message);
-          try {
-            if (typeof core.aggregate === "function") {
-              const a = core.aggregate(ledger);
-              if (ledger.totals) {
-                ledger.totals.costNano = a.costNano;
-                ledger.totals.unpricedTokens = a.unpricedTokens;
-              }
-            }
-          } catch (_) {}
-        } else {
-          throw valErr;
-        }
+      } else {
+        throw valErr;
       }
     }
     return ledger;
   }
 
-  function extractJsonObjectFromSource(source, startIndex) {
-    const jsonStart = source.indexOf("{", startIndex);
-    if (jsonStart < 0) throw new Error("无法定位账本快照起始位置");
-    let depth = 0;
-    let inString = false;
-    let escape = false;
-    for (let i = jsonStart; i < source.length; i++) {
-      const ch = source[i];
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escape = true;
-        continue;
-      }
-      if (ch === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (!inString) {
-        if (ch === "{") depth++;
-        else if (ch === "}") {
-          depth--;
-          if (depth === 0) {
-            return source.slice(jsonStart, i + 1);
-          }
-        }
+  function cacheValidatedLedger(ledger) {
+    validateLedger(ledger);
+    const old = root.__PI_ENH_USAGE_LEDGER__;
+    if (!old || !old.generatedAt || !ledger.generatedAt || ledger.generatedAt >= old.generatedAt) {
+      root.__PI_ENH_USAGE_LEDGER__ = ledger;
+      lastAutoRefreshCheckTime = Date.now();
+      for (const storage of storageCandidates()) {
+        try { storage.setItem(CACHE_KEY, JSON.stringify(ledger)); } catch (_) {}
+        break;
       }
     }
-    throw new Error("无法定位完整闭合的账本快照 JSON 对象");
+    return root.__PI_ENH_USAGE_LEDGER__;
+  }
+
+  function read() {
+    const core = getCore();
+    if (!core || typeof core.validate !== "function") return null;
+    const candidates = [];
+    if (root.__PI_ENH_USAGE_LEDGER__) candidates.push({ value: root.__PI_ENH_USAGE_LEDGER__, remove: null });
+    for (const storage of storageCandidates()) {
+      try {
+        const cached = storage.getItem(CACHE_KEY);
+        if (cached) candidates.push({ value: JSON.parse(cached), remove: () => storage.removeItem(CACHE_KEY) });
+        const mode = storage.getItem(MODE_CACHE_KEY);
+        if (mode === "native-local" || mode === "legacy-central") root.__PI_ENH_USAGE_LEDGER_MODE__ = mode;
+      } catch (_) {
+        try { storage.removeItem(CACHE_KEY); } catch (_) {}
+      }
+    }
+    for (const candidate of candidates) {
+      try {
+        validateLedger(candidate.value);
+        root.__PI_ENH_USAGE_LEDGER__ = candidate.value;
+        return candidate.value;
+      } catch (_) {
+        candidate.remove?.();
+        if (candidate.value === root.__PI_ENH_USAGE_LEDGER__) root.__PI_ENH_USAGE_LEDGER__ = null;
+      }
+    }
+    return null;
   }
 
   const DEFAULT_RETRY_DELAYS = [3000, 8000];
@@ -163,6 +196,7 @@
   let lastAutoRefreshCheckTime = 0;
   let activeRescanPromise = null;
   let inflightFetchPromise = null;
+  let forcedFetchPromise = null;
 
   function cancelActiveRetry(reason = "刷新操作已取消") {
     activeRequestId++;
@@ -186,126 +220,62 @@
     }
   }
 
-  async function fetchSnapshotOnce(signal, shouldAccept) {
-    if (!signal && inflightFetchPromise) {
-      return inflightFetchPromise;
-    }
-
-    const execute = async () => {
-      let fresh = null;
-      let lastErr = null;
-
-      try {
-        const jsonRes = await fetch(`/pi-usage-ledger.json?usageSnapshot=${Date.now()}`, { cache: "no-store", signal });
-        if (jsonRes && jsonRes.ok) {
-          const jsonText = (await jsonRes.text()).trimStart();
-          if (signal && signal.aborted) {
-            throw new Error("刷新操作已取消");
-          }
-          if (jsonText.startsWith("{")) {
-            const parsed = JSON.parse(jsonText);
-            if (parsed && typeof parsed === "object" && parsed.version === 2 && Array.isArray(parsed.buckets)) {
-              fresh = parsed;
-            }
-          } else if (jsonText.includes("window.__PI_ENH_USAGE_LEDGER__ = ")) {
-            const marker = "window.__PI_ENH_USAGE_LEDGER__ = ";
-            const start = jsonText.indexOf(marker);
-            const jsonStr = extractJsonObjectFromSource(jsonText, start + marker.length);
-            const parsed = JSON.parse(jsonStr);
-            if (parsed && typeof parsed === "object" && parsed.version === 2 && Array.isArray(parsed.buckets)) {
-              fresh = parsed;
-            }
-          }
-        } else if (jsonRes && !jsonRes.ok && jsonRes.status !== 404) {
-          lastErr = new Error(`HTTP ${jsonRes.status}`);
-        }
-      } catch (jsonErr) {
-        if (signal?.aborted || jsonErr?.name === "AbortError" || jsonErr?.message === "刷新操作已取消") {
-          throw new Error("刷新操作已取消");
-        }
-        // 网络层或连接异常直接抛给外层重试退避，避免在同一次 attempt 内发起并发重复请求
-        throw jsonErr;
-      }
-
-      if (!fresh) {
-        try {
-          const response = await fetch(`/pi-web-enhancements.js?usageSnapshot=${Date.now()}`, { cache: "no-store", signal });
-          if (response && response.ok) {
-            const source = await response.text();
-            if (signal && signal.aborted) throw new Error("刷新操作已取消");
-            const trimmed = source.trimStart();
-            if (trimmed.startsWith("{")) {
-              fresh = JSON.parse(trimmed);
-            } else {
-              const marker = "window.__PI_ENH_USAGE_LEDGER__ = ";
-              const start = source.indexOf(marker);
-              if (start >= 0) {
-                try {
-                  const jsonStr = extractJsonObjectFromSource(source, start + marker.length);
-                  fresh = JSON.parse(jsonStr);
-                } catch (_) {}
-              }
-            }
-          }
-        } catch (fetchErr) {
-          if (signal?.aborted || fetchErr?.name === "AbortError") throw new Error("刷新操作已取消");
-        }
-      }
-
-      if (!fresh) {
-        throw (lastErr || new Error("未能获取到有效的账本快照数据"));
-      }
-
-      if (typeof fresh !== "object" || fresh.version !== 2) throw new Error("账本快照版本不匹配");
-      const core = getCore();
-      if (core && typeof core.validate === "function") {
-        try {
-          core.validate(fresh);
-        } catch (valErr) {
-          if (valErr && typeof valErr.message === "string" && (valErr.message.includes("Snapshot mismatch: costNano") || valErr.message.includes("Snapshot mismatch: unpricedTokens"))) {
-            console.warn("[pi-usage-panel] 远程快照派生价格差异，已自动按当前费率基准聚合展示:", valErr.message);
-            try {
-              if (typeof core.aggregate === "function") {
-                const a = core.aggregate(fresh);
-                if (fresh.totals) {
-                  fresh.totals.costNano = a.costNano;
-                  fresh.totals.unpricedTokens = a.unpricedTokens;
-                }
-              }
-            } catch (_) {}
-          } else {
-            throw valErr;
-          }
-        }
-      }
-      if (signal && signal.aborted) {
-        throw new Error("刷新操作已取消");
-      }
-      if (typeof shouldAccept === "function" && !shouldAccept(fresh)) {
-        return fresh;
-      }
-      const old = root.__PI_ENH_USAGE_LEDGER__;
-      if (!old || old.version !== 2 || !old.generatedAt || !fresh.generatedAt || fresh.generatedAt >= old.generatedAt) {
-        root.__PI_ENH_USAGE_LEDGER__ = fresh;
-        // A successful load also satisfies the panel auto-refresh window.
-        lastAutoRefreshCheckTime = Date.now();
-        try {
-          const storage = typeof sessionStorage !== "undefined" ? sessionStorage : (typeof localStorage !== "undefined" ? localStorage : null);
-          if (storage) {
-            storage.setItem(CACHE_KEY, JSON.stringify(fresh));
-          }
-        } catch (_) {}
-      }
-      return root.__PI_ENH_USAGE_LEDGER__;
+  function requestSnapshot(force = false) {
+    if (force && forcedFetchPromise) return forcedFetchPromise;
+    const start = () => {
+      if (inflightFetchPromise) return inflightFetchPromise;
+      const task = (async () => {
+        const response = await fetch(`/api/usage/ledger?usageSnapshot=${Date.now()}`, { cache: "no-store" });
+        const text = (await response.text()).trimStart();
+        let body = null;
+        try { body = text ? JSON.parse(text) : null; } catch (_) {}
+        if (!response.ok) throw new Error(body?.error || `账本快照请求失败: HTTP ${response.status}`);
+        const fresh = body?.ledger && typeof body.ledger === "object" ? body.ledger : body;
+        const mode = response.headers?.get?.("X-Pi-Usage-Mode") || response.headers?.get?.("x-pi-usage-mode");
+        if (mode === "native-local" || mode === "legacy-central") setUsageMode(mode);
+        return cacheValidatedLedger(fresh);
+      })();
+      const shared = task.finally(() => {
+        if (inflightFetchPromise === shared) inflightFetchPromise = null;
+      });
+      inflightFetchPromise = shared;
+      return shared;
     };
 
-    if (!signal) {
-      inflightFetchPromise = execute().finally(() => {
-        inflightFetchPromise = null;
-      });
-      return inflightFetchPromise;
-    }
-    return execute();
+    if (!force) return start();
+    const previous = inflightFetchPromise;
+    forcedFetchPromise = (previous ? previous.catch(() => {}) : Promise.resolve())
+      .then(start)
+      .finally(() => { forcedFetchPromise = null; });
+    return forcedFetchPromise;
+  }
+
+  function waitForConsumer(shared, signal, shouldAccept) {
+    if (!signal && !shouldAccept) return shared;
+    if (signal?.aborted) return Promise.reject(new Error("刷新操作已取消"));
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn(value);
+      };
+      const onAbort = () => finish(reject, new Error("刷新操作已取消"));
+      signal?.addEventListener?.("abort", onAbort, { once: true });
+      shared.then(value => {
+        if (signal?.aborted || (typeof shouldAccept === "function" && !shouldAccept())) {
+          finish(reject, new Error("刷新操作已取消"));
+        } else {
+          finish(resolve, value);
+        }
+      }, error => finish(reject, error));
+    });
+  }
+
+  function fetchSnapshotOnce(signal, shouldAccept, options = {}) {
+    return waitForConsumer(requestSnapshot(Boolean(options.force)), signal, shouldAccept);
   }
 
   async function refresh(options = {}) {
@@ -344,7 +314,7 @@
           throw new Error("刷新操作已取消");
         }
         try {
-          const result = await fetchSnapshotOnce(abortCtrl ? abortCtrl.signal : undefined, shouldAccept);
+          const result = await fetchSnapshotOnce(abortCtrl ? abortCtrl.signal : undefined, shouldAccept, { force: options.force });
           if (!shouldAccept()) {
             throw new Error("刷新操作已取消");
           }
@@ -435,20 +405,21 @@
   }
 
   function card(label, value, hint) {
-    return `<div class="pi-enh-kpi-pro-card"><div class="kpi-pro-label">${label}</div><div class="kpi-pro-value highlight-cyan">${value}</div><div class="kpi-pro-hint">${hint}</div></div>`;
+    const textStyle = String(value).length > 8 ? ' style="white-space:normal;overflow-wrap:anywhere;font-size:14px"' : "";
+    return `<div class="pi-enh-kpi-pro-card"><div class="kpi-pro-label">${label}</div><div class="kpi-pro-value highlight-cyan"${textStyle}>${value}</div><div class="kpi-pro-hint">${hint}</div></div>`;
   }
 
   function _renderLoading(panel) {
     panel.innerHTML = `<div class="pi-enh-usage-panel-content" style="padding:40px 0;max-width:900px;margin:0 auto;text-align:center;">
       <section class="pi-enh-usage-header-pro" style="text-align:left;">
         <div class="pi-enh-usage-title-row">
-          <h2 style="margin:0;font-size:20px;font-weight:700;color:var(--text, #f4f4f5);">Usage</h2>
+          <h2 style="margin:0;font-size:20px;font-weight:700;color:var(--text, #f4f4f5);">用量统计</h2>
         </div>
       </section>
       <div style="padding:60px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
         <div class="pi-enh-history-spinner" style="width:32px;height:32px;border:3px solid rgba(56,189,248,0.2);border-top-color:#38bdf8;border-radius:50%;animation:pi-spin 0.8s linear infinite;margin:0 auto;"></div>
         <div style="font-size:14px;color:var(--text, #f4f4f5);font-weight:600;">正在同步服务端用量快照数据...</div>
-        <div style="font-size:12px;color:var(--text-muted, #71717a);">首次加载可能需要 1~2 秒，请稍候</div>
+        <div style="font-size:12px;color:var(--text-muted, #71717a);">正在准备本实例用量数据，请稍候</div>
       </div>
       <style>
         @keyframes pi-spin { to { transform: rotate(360deg); } }
@@ -461,7 +432,7 @@
     panel.innerHTML = `<div class="pi-enh-usage-panel-content" style="padding:24px 0;max-width:900px;margin:0 auto;color:#f4f4f5;">
       <section class="pi-enh-usage-header-pro">
         <div class="pi-enh-usage-title-row">
-          <h2 style="margin:0;font-size:20px;font-weight:700;color:#f4f4f5;">Usage 用量统计</h2>
+          <h2 style="margin:0;font-size:20px;font-weight:700;color:#f4f4f5;">用量统计</h2>
         </div>
       </section>
       <div style="background:#27272a;border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:22px;margin-top:16px;box-shadow:0 8px 24px rgba(0,0,0,0.35);">
@@ -516,9 +487,159 @@
   }
 
   const outsideClickDisposers = new WeakMap();
+  const enginePollers = new WeakMap();
+  const enginePollErrors = new WeakMap();
+
+  function engineStatuses(ledger) {
+    const declared = ledger?.engineStatus;
+    if (!declared || typeof declared !== "object") {
+      return {
+        pi: { status: "ready" },
+        codex: { status: "unavailable", message: "旧快照仅包含 Pi Agent；正在获取最新快照" },
+      };
+    }
+    const normalize = (value, allowed) => {
+      const status = value?.status;
+      if (!allowed.includes(status)) return { status: "unavailable", message: value?.message };
+      return { status, message: typeof value.message === "string" ? value.message : "" };
+    };
+    return {
+      pi: normalize(declared.pi, ["ready", "unavailable"]),
+      codex: normalize(declared.codex, ["ready", "partial", "loading", "unavailable", "disabled"]),
+    };
+  }
+
+  function engineSnapshotKey(ledger) {
+    return String(ledger?.snapshotId || ledger?.generatedAt || "local");
+  }
+
+  function engineStatusKey(ledger) {
+    const statuses = engineStatuses(ledger);
+    return JSON.stringify([statuses.pi.status, statuses.pi.message, statuses.codex.status, statuses.codex.message]);
+  }
+
+  function isPanelActive(panel, hooks) {
+    return Boolean(panel?.isConnected && !(hooks && hooks.enabled && !hooks.enabled()));
+  }
+
+  function stopEnginePoll(panel) {
+    const poll = enginePollers.get(panel);
+    if (!poll) return;
+    poll.cancelled = true;
+    if (poll.timer !== null) clearTimeout(poll.timer);
+    poll.timer = null;
+    enginePollers.delete(panel);
+  }
+
+  function scheduleEnginePoll(poll, ledger) {
+    if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
+    poll.timer = setTimeout(async () => {
+      poll.timer = null;
+      if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
+      if (!isPanelActive(poll.panel, poll.hooks)) {
+        stopEnginePoll(poll.panel);
+        return;
+      }
+      try {
+        const fresh = await refresh({
+          auto: true,
+          retryDelays: [],
+          isCancelled: () => !isPanelActive(poll.panel, poll.hooks),
+        });
+        if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
+        if (!isPanelActive(poll.panel, poll.hooks)) {
+          stopEnginePoll(poll.panel);
+          return;
+        }
+        const next = fresh || root.__PI_ENH_USAGE_LEDGER__ || ledger;
+        const nextSnapshotKey = engineSnapshotKey(next);
+        const nextStatusKey = engineStatusKey(next);
+        if (nextSnapshotKey !== poll.snapshotKey || nextStatusKey !== poll.statusKey) {
+          enginePollErrors.delete(poll.panel);
+          stopEnginePoll(poll.panel);
+          render(poll.panel, poll.nav, poll.hooks);
+          return;
+        }
+        if (engineStatuses(next).codex.status !== "loading") {
+          stopEnginePoll(poll.panel);
+          return;
+        }
+        poll.snapshotKey = nextSnapshotKey;
+        poll.statusKey = nextStatusKey;
+        scheduleEnginePoll(poll, next);
+      } catch (error) {
+        if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
+        if (isPanelActive(poll.panel, poll.hooks)) {
+          enginePollErrors.set(poll.panel, {
+            snapshotKey: poll.snapshotKey,
+            statusKey: poll.statusKey,
+            message: error?.message || String(error || "未知异常"),
+          });
+          stopEnginePoll(poll.panel);
+          render(poll.panel, poll.nav, poll.hooks);
+        } else {
+          stopEnginePoll(poll.panel);
+        }
+      }
+    }, CODEX_LOADING_POLL_MS);
+  }
+
+  function ensureEnginePoll(panel, nav, hooks, ledger) {
+    const selected = engineStatuses(ledger).codex.status;
+    if ((engine !== "all" && engine !== "codex") || selected !== "loading") {
+      stopEnginePoll(panel);
+      return;
+    }
+    const snapshotKey = engineSnapshotKey(ledger);
+    const statusKey = engineStatusKey(ledger);
+    const previousError = enginePollErrors.get(panel);
+    if (previousError && previousError.snapshotKey === snapshotKey && previousError.statusKey === statusKey) return;
+    if (previousError) enginePollErrors.delete(panel);
+    const existing = enginePollers.get(panel);
+    if (existing && existing.snapshotKey === snapshotKey && existing.statusKey === statusKey) return;
+    stopEnginePoll(panel);
+    if (!isPanelActive(panel, hooks)) return;
+    const poll = { panel, nav, hooks, snapshotKey, statusKey, timer: null, cancelled: false };
+    enginePollers.set(panel, poll);
+    scheduleEnginePoll(poll, ledger);
+  }
+
+  function engineStatusBanner(panel, ledger) {
+    const selectedEngines = engine === "all" ? ["pi", "codex"] : [engine];
+    const statuses = engineStatuses(ledger);
+    const snapshotKey = engineSnapshotKey(ledger);
+    const statusKey = engineStatusKey(ledger);
+    const pollError = enginePollErrors.get(panel);
+    const currentPollError = pollError && pollError.snapshotKey === snapshotKey && pollError.statusKey === statusKey
+      ? pollError
+      : null;
+    if (pollError && !currentPollError) enginePollErrors.delete(panel);
+    const labels = { pi: "Pi Agent", codex: "Codex" };
+    const defaultMessages = {
+      pi: { unavailable: "用量不可用" },
+      codex: {
+        loading: "用量正在加载",
+        unavailable: "用量不可用",
+        disabled: "用量已禁用",
+      },
+    };
+    const issues = selectedEngines.filter(key => statuses[key].status !== "ready").map(key => {
+      const current = statuses[key];
+      const detail = key === "codex" && currentPollError
+        ? `加载失败：${currentPollError.message}`
+        : (current.message || defaultMessages[key][current.status] || "用量状态不可用");
+      return `${labels[key]}：${detail}`;
+    });
+    if (!issues.length) return "";
+    if (engine === "all") issues.push("当前为已获取部分");
+    const isLoading = selectedEngines.some(key => statuses[key].status === "loading") && !currentPollError;
+    return `<div class="pi-enh-usage-grid-full" data-usage-engine-status role="status" aria-live="polite" style="grid-column:1 / -1;margin:2px 0;padding:8px 12px;background:rgba(${isLoading ? "56,189,248" : "251,191,36"},0.08);border:1px solid rgba(${isLoading ? "56,189,248" : "251,191,36"},0.25);border-radius:6px;font-size:12px;color:${isLoading ? "#7dd3fc" : "#fbbf24"};line-height:1.5;">${esc(issues.join("；"))}。</div>`;
+  }
+
   function dispose(panel) {
     outsideClickDisposers.get(panel)?.();
     outsideClickDisposers.delete(panel);
+    stopEnginePoll(panel);
   }
 
   function render(panel, nav, hooks) {
@@ -563,6 +684,7 @@
     const saved = readSavedFilters();
     if (VALID_TIME_RANGES.has(saved.timeRange)) timeRange = saved.timeRange;
     if (VALID_ROLES.has(saved.role)) role = saved.role;
+    if (VALID_ENGINES.has(saved.engine)) engine = saved.engine;
     if (typeof saved.model === "string") model = saved.model;
     if (typeof saved.startDate === "string") startDate = saved.startDate;
     if (typeof saved.endDate === "string") endDate = saved.endDate;
@@ -587,7 +709,7 @@
       })
         .then(fresh => {
           if (panel.isConnected && (!hooks || !hooks.enabled || hooks.enabled())) {
-            if (fresh && ledger && fresh.snapshotId !== ledger.snapshotId) {
+            if (fresh && ledger && (fresh.snapshotId !== ledger.snapshotId || engineStatusKey(fresh) !== engineStatusKey(ledger))) {
               render(panel, nav, hooks);
               const statusEl = panel.querySelector("[data-usage-refresh-status]");
               if (statusEl) {
@@ -615,8 +737,8 @@
     const beijingHours = (new Date(now + 8 * 3600000)).getUTCHours();
     const isEarlyMorning = beijingHours >= 0 && beijingHours < 6;
 
-    let stats = core.aggregate(ledger, { timeRange, model, role, startDate, endDate });
-    if (!stats) stats = { totalTokens: 0, costNano: 0, messageCount: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, sessionCount: 0, calls: 0, roles: {}, modelBreakdowns: [], allModels: [], topSessions: [] };
+    let stats = core.aggregate(ledger, { engine, timeRange, model, role, startDate, endDate });
+    if (!stats) stats = { totalTokens: 0, costNano: 0, messageCount: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, sessionCount: 0, calls: 0, roles: {}, modelBreakdowns: [], allModels: [], topSessions: [], codexTokens: 0 };
     if (!stats.roles) stats.roles = {};
     if (!Array.isArray(stats.modelBreakdowns)) stats.modelBreakdowns = [];
     if (!Array.isArray(stats.allModels)) stats.allModels = [];
@@ -627,7 +749,7 @@
       persistFilters({ timeRange, model, role, startDate, endDate });
       const dynamicCore = getCore();
       stats = (dynamicCore && typeof dynamicCore.aggregate === "function")
-        ? dynamicCore.aggregate(ledger, { timeRange, model, role, startDate, endDate }) || stats
+        ? dynamicCore.aggregate(ledger, { engine, timeRange, model, role, startDate, endDate }) || stats
         : stats;
     }
     const unknown = Array.isArray(ledger.unverifiedLegacy) ? ledger.unverifiedLegacy : [];
@@ -639,8 +761,13 @@
     panel.dataset.usageTimeRange = timeRange;
     panel.dataset.usageRole = role;
     panel.dataset.usageModel = model;
+    panel.dataset.usageEngine = engine;
 
-    const sourcesEntries = Object.entries(ledger.sources || {});
+    const sourcesEntries = Object.entries(ledger.sources || {}).filter(([key, value]) => {
+      if (engine === "all") return true;
+      const sourceEngine = value?.engine || (key === "codex" ? "codex" : "pi");
+      return sourceEngine === engine;
+    });
     let hasUnaccountedOrPending = false;
     let unaccountedDetails = [];
 
@@ -666,6 +793,7 @@
       : "本地持久账本";
 
     const rangeDesc = getTimeRangeDescription(timeRange, now, startDate, endDate);
+    const engineBanner = engineStatusBanner(panel, ledger);
     const globalDenom = (stats.inputTokens || 0) + (stats.cacheReadTokens || 0);
     const globalHitRate = globalDenom > 0 ? `${(((stats.cacheReadTokens || 0) / globalDenom) * 100).toFixed(1)}%` : "0.0%";
     const globalWriteHint = (stats.cacheWriteTokens || 0) > 0 ? ` · 写 ${tokens(stats.cacheWriteTokens)}` : "";
@@ -685,6 +813,10 @@
     const activeDropdownItem = dropdownRangeKeys.find(([k]) => k === timeRange);
     const dropdownLabel = isDropdownActive ? activeDropdownItem[1] : "更多";
 
+    const costHint = engine === "pi"
+      ? (stats.unpricedTokens ? `未定价用量 ${tokens(stats.unpricedTokens)}` : "按 Pi SDK 模型目录参考价与原生记录核算，非账单")
+      : (stats.unpricedTokens ? `未定价用量 ${tokens(stats.unpricedTokens)}；Codex 未提供费用，不纳入估算` : "Codex 未提供费用，不纳入估算；Pi Agent 费用按 Pi SDK 参考价与原生记录核算，非账单");
+
     panel.innerHTML = `<div class="pi-enh-usage-panel-content">
       <section class="pi-enh-usage-header-pro">
         <div class="pi-enh-usage-controls-grid">
@@ -692,7 +824,7 @@
           <div class="pi-enh-usage-title-row pi-enh-usage-grid-col-left" style="margin-bottom:0;">
             <div>
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <h2 style="margin:0;font-size:20px;font-weight:700;color:#f4f4f5;line-height:1.4;">Usage</h2>
+                <h2 style="margin:0;font-size:20px;font-weight:700;color:#f4f4f5;line-height:1.4;">用量统计</h2>
                 <button type="button" data-pi-usage-sync-btn data-pi-usage-top-sync-btn title="立即触发全量扫描并刷新最新统计" style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;background:rgba(59,130,246,0.15);color:#93c5fd;border:1px solid rgba(59,130,246,0.35);border-radius:14px;font-size:11.5px;font-weight:600;cursor:pointer;transition:all 0.15s;white-space:nowrap;flex-shrink:0;">
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                   <span style="white-space:nowrap;">刷新</span>
@@ -741,7 +873,11 @@
           </div>` : ""}
 
           <!-- 行 2 左：执行角色 -->
-          <div class="pi-enh-usage-grid-col-left" style="justify-self:start;max-width:100%;">
+          <div class="pi-enh-usage-grid-col-left" style="justify-self:start;max-width:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;">
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#a1a1aa;white-space:nowrap;min-width:0;max-width:100%;">
+              <span style="white-space:nowrap;flex-shrink:0;">执行引擎</span>
+              <select class="pi-enh-pro-select" data-usage-engine-select style="color-scheme:dark;background:#18181b;color:#f4f4f5;min-width:0;"><option value="all" ${engine === "all" ? "selected" : ""} style="background:#18181b;color:#f4f4f5;">全部</option><option value="pi" ${engine === "pi" ? "selected" : ""} style="background:#18181b;color:#f4f4f5;">Pi Agent</option><option value="codex" ${engine === "codex" ? "selected" : ""} style="background:#18181b;color:#f4f4f5;">Codex</option></select>
+            </label>
             <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#a1a1aa;white-space:nowrap;min-width:0;max-width:100%;">
               <span style="white-space:nowrap;flex-shrink:0;">执行角色</span>
               <select class="pi-enh-pro-select" data-usage-role-select style="color-scheme:dark;background:#18181b;color:#f4f4f5;min-width:0;"><option value="all" style="background:#18181b;color:#f4f4f5;">全部角色</option>${Object.entries(roleNames).map(([key, label]) => `<option value="${key}" ${role === key ? "selected" : ""} style="background:#18181b;color:#f4f4f5;">${label}</option>`).join("")}</select>
@@ -755,12 +891,16 @@
               <select class="pi-enh-pro-select" data-usage-model-select style="max-width:320px;min-width:0;color-scheme:dark;background:#18181b;color:#f4f4f5;"><option value="all" style="background:#18181b;color:#f4f4f5;">全部合并模型 (${stats.allModels.length})</option>${stats.allModels.map(([key, label]) => `<option value="${esc(key)}" ${model === key ? "selected" : ""} style="background:#18181b;color:#f4f4f5;">${esc(label)}</option>`).join("")}</select>
             </label>
           </div>
+          ${engineBanner}
         </div>
-        <p style="font-size:12px;color:#a1a1aa;line-height:1.7;" data-usage-provenance>
+        <details class="pi-enh-usage-provenance">
+          <summary>统计口径与数据来源</summary>
+          <p data-usage-provenance>
           服务端快照 ${esc(ledger.snapshotId || "local")} · 生成于 ${esc(ledger.generatedAt || "未知时间")}<br>
           来源：${sourcesDesc}<br>
-          按调用发生日期（北京时间）统计。运行中子任务完成回传才入账。
-        </p>
+          按调用发生日期（北京时间）统计。${engine !== "pi" ? "Codex 自动子任务归入父会话，会话数不重复计入子任务；Token 保留每个执行任务的实际消耗。" : "运行中子任务完成回传才入账。"}
+          </p>
+        </details>
         ${hasUnaccountedOrPending ? `
         <div class="pi-enh-incomplete-audit-notice" style="margin:10px 0 8px;padding:10px 14px;background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.35);border-radius:8px;font-size:12px;color:#fef08a;box-sizing:border-box;">
           <div class="pi-enh-incomplete-audit-notice-body" style="display:flex;align-items:flex-start;gap:8px;">
@@ -778,11 +918,11 @@
         ${card("涉及会话", stats.sessionCount || 0, `${stats.messageCount || 0} 条模型回复 · ${stats.calls || 0} 个子任务`)}
         ${card("非缓存输入 Token", tokens(stats.inputTokens || 0), `输出 ${tokens(stats.outputTokens || 0)}`)}
         ${card("总 Token（含缓存）", tokens(stats.totalTokens || 0), `缓存读 ${tokens(stats.cacheReadTokens || 0)} · 命中率 ${globalHitRate}${globalWriteHint}`)}
-        ${card("预估费用 (Cost)", cost(stats), stats.unpricedTokens ? `未定价用量 ${tokens(stats.unpricedTokens)}` : "按 Pi SDK 模型目录参考价与原生记录核算，非账单")}
+        ${card("预估费用 (Cost)", cost(stats, engine), costHint)}
       </div>
 
       <p style="font-size:12px;color:#a1a1aa;line-height:1.7;">
-        💡 费用核算说明：优先采用原生记录的 SDK 上报费用（如 OpenAI 旗舰模型）；对代理网关未上报价格的模型，按 Pi SDK 模型目录参考单价（如 Gemini Flash: 输入$0.10/M、输出$0.40/M、缓存$0.025/M）基准测算，非账单承诺。下方角色与模型卡片均严格对应同一筛选范围。
+        💡 费用核算说明：${engine === "pi" ? "优先采用原生记录的 SDK 上报费用（如 OpenAI 旗舰模型）；对代理网关未上报价格的模型，按 Pi SDK 模型目录参考单价（如 Gemini Flash: 输入$0.10/M、输出$0.40/M、缓存$0.025/M）基准测算，非账单承诺。" : "优先采用 Pi Agent 原生费用与 Pi SDK 参考单价核算，非账单承诺；Codex 未提供费用，不纳入估算。"} 下方角色与模型卡片均严格对应同一筛选范围。
       </p>
 
       <div class="pi-enh-model-cards-grid pi-enh-role-cards-grid" data-usage-roles>
@@ -791,7 +931,7 @@
           return `<div class="pi-enh-model-card pi-enh-role-card" data-usage-role="${key}" data-tokens="${r.totalTokens || 0}" data-cost-nano="${r.costNano || 0}" data-messages="${r.messageCount || 0}">
             <div class="pi-enh-model-card-title">${label}</div>
             <div class="role-token-value" style="font-size:22px;margin:10px 0 6px;font-weight:700;">${tokens(r.totalTokens || 0)} Token</div>
-            <div class="role-cost-value" style="font-size:14px;font-weight:600;color:#7dd3fc;">${cost(r)}</div>
+            <div class="role-cost-value" style="font-size:14px;font-weight:600;color:#7dd3fc;">${cost(r, engine)}</div>
             <p class="role-meta-text" style="font-size:11.5px;color:#a1a1aa;margin-top:6px;line-height:1.45;">${r.messageCount || 0} 条模型回复 · ${r.calls || 0} 个子任务 · ${r.records || 0} 条用量记录</p>
           </div>`;
         }).join("")}
@@ -865,7 +1005,7 @@
               ["缓存读", tokens(crTok)],
               ["缓存命中率", hitRate, cwTok > 0 ? `缓存读取 / (非缓存输入 + 缓存读取) · 缓存写 ${tokens(cwTok)}` : "缓存读取 / (非缓存输入 + 缓存读取)"],
               ["总计消耗", tokens(m.totalTokens || 0)],
-              ["预估费用", cost(m)],
+              ["预估费用", cost(m, engine)],
             ].map(([key, val, hint]) => `<div class="metric-item"${hint ? ` title="${esc(hint)}"` : ""}><span class="lbl">${key}</span><span class="val ${key === '总计消耗' ? 'highlight' : key === '预估费用' ? 'cost' : ''}">${val}</span></div>`).join("")}
           </div>
           ${savingsHtml}
@@ -908,7 +1048,7 @@
               ${dispatchedTokens > 0 ? `<br><span class="pi-enh-dispatch-note">* 调度 Sub agent (${tokens(dispatchedTokens)}) 计入执行模型自身的直接消耗。由本模型牵头的任务总负荷实为 <strong>${tokens(mainTokens + dispatchedTokens)}</strong>。</span>` : ""}
             </div>
           </div>
-          ${(m.key !== "system-summaries" && (m.totalTokens || 0) > 0) ? (() => {
+          ${(m.key !== "system-summaries" && (m.totalTokens || 0) > 0 && !(m.codexTokens > 0)) ? (() => {
             const flashUsd = (((m.inputTokens || 0) * 0.15 + (m.outputTokens || 0) * 0.60 + (m.cacheReadTokens || 0) * 0.003 + (m.cacheWriteTokens || 0) * 0.003) / 1e6);
             const flashCny = (((m.inputTokens || 0) * 1.00 + (m.outputTokens || 0) * 4.00 + (m.cacheReadTokens || 0) * 0.02 + (m.cacheWriteTokens || 0) * 0.02) / 1e6);
 
@@ -942,14 +1082,38 @@
 
       <h3 style="font-size:14px;margin-top:28px;">高消耗会话 Top 10</h3>
       <div class="pi-enh-top-sessions-list">
-        ${stats.topSessions.map((s, i) => `<div class="pi-enh-top-session-row" data-goto-session="${esc(s.id)}">
-          <span class="pi-enh-session-rank-badge">#${i + 1}</span>
-          <span class="session-title">${esc(s.title || s.id)}</span>
-          <span class="session-tokens">${tokens(s.totalTokens || 0)} · ${cost(s)}</span>
-        </div>`).join("")}
+        ${stats.topSessions.map((s, i) => {
+          const subtasks = Array.isArray(s.subtasks) ? s.subtasks : [];
+          return `<div class="pi-enh-top-session-entry">
+            <div class="pi-enh-top-session-row" data-goto-session="${esc(s.id)}">
+              <span class="pi-enh-session-rank-badge">#${i + 1}</span>
+              <span class="session-title">${esc(s.title || s.id)}${s.subagentCount ? `<small class="session-sub" data-usage-subagent-summary>含 ${s.subagentCount} 个自动子任务 · 子任务 ${tokens(s.subagentTokens)} Token</small>` : ""}</span>
+              <span class="session-tokens">${tokens(s.totalTokens || 0)} · ${cost(s, engine)}</span>
+            </div>
+            ${subtasks.length ? `<details data-usage-subtask-details style="margin:0 8px 8px 34px;padding:7px 10px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.07);border-radius:6px;font-size:11px;">
+              <summary style="cursor:pointer;color:#a1a1aa;">展开自动子任务明细 · ${subtasks.length} 行（已计入父会话总量）</summary>
+              <div style="overflow-x:auto;margin-top:7px;">
+                <table style="width:100%;min-width:500px;border-collapse:collapse;text-align:left;">
+                  <thead><tr style="color:#71717a;">
+                    <th style="padding:5px 8px;font-weight:500;">自动子任务</th>
+                    <th style="padding:5px 8px;font-weight:500;white-space:nowrap;">调用日期（北京时间）</th>
+                    <th style="padding:5px 8px;font-weight:500;white-space:nowrap;">Token 消耗</th>
+                    <th style="padding:5px 8px;font-weight:500;white-space:nowrap;">费用</th>
+                  </tr></thead>
+                  <tbody>${subtasks.map(task => `<tr data-usage-subtask-row>
+                    <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);word-break:break-word;">${esc(task.name || task.sessionId || "未命名自动子任务")}</td>
+                    <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;">${esc(task.day && task.day !== "unknown" ? task.day : "日期未知")}</td>
+                    <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;font-variant-numeric:tabular-nums;">${tokens(task.totalTokens || 0)}</td>
+                    <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;color:#a1a1aa;">Codex 未提供费用</td>
+                  </tr>`).join("")}</tbody>
+                </table>
+              </div>
+            </details>` : ""}
+          </div>`;
+        }).join("")}
       </div>
 
-      ${unknown.length ? `<p style="color:#fbbf24;font-size:12px;">另保留 ${unknown.length} 个旧账本会话，但原始记录不可核验，未混入以上合计。</p>` : ""}
+        ${unknown.length && engine !== "codex" ? `<p style="color:#fbbf24;font-size:12px;">另保留 ${unknown.length} 个旧账本会话，但原始记录不可核验，未混入以上合计。</p>` : ""}
       ${stats.missingUsage ? `<p style="color:#fbbf24;">${stats.missingUsage} 条回复缺 usage，未按消息数编造 Token。</p>` : ""}
     </div>`;
 
@@ -1023,6 +1187,16 @@
         rerender();
       };
     }
+    const engineSelect = panel.querySelector("[data-usage-engine-select]");
+    if (engineSelect) {
+      engineSelect.onchange = e => {
+        const nextEngine = e.target.value;
+        if (!VALID_ENGINES.has(nextEngine)) return;
+        updateFilters({ engine: nextEngine });
+        if (nextEngine !== "pi" && !ledger.engineStatus) lastAutoRefreshCheckTime = 0;
+        rerender();
+      };
+    }
     const roleSelect = panel.querySelector("[data-usage-role-select]");
     if (roleSelect) {
       roleSelect.onchange = e => {
@@ -1043,6 +1217,7 @@
       if (statusEl) statusEl.textContent = "⏳ 正在触发服务端全量扫描会话并统计...";
 
       const oldId = ledger.snapshotId;
+      const oldEngineStatusKey = engineStatusKey(ledger);
       const postAbortCtrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timeoutMs = getPostTimeoutMs();
       let timedOut = false;
@@ -1053,73 +1228,31 @@
 
       activeRescanPromise = (async () => {
         try {
-          const currentHost = (typeof window !== "undefined" && window.location.hostname) ? window.location.hostname : "10.0.0.2";
-          let postRes;
-          try {
-            postRes = await fetch(`http://${currentHost}:30149/usage/refresh`, {
-              method: "POST",
-              cache: "no-store",
-              signal: postAbortCtrl ? postAbortCtrl.signal : undefined,
-            });
-          } catch (fetchErr) {
-            if (timedOut || fetchErr?.name === "AbortError") {
-              throw new Error("请求 40 秒超时：未在 40 秒内收到服务端扫描响应，请稍后重试");
-            }
-            if (currentHost !== "10.0.0.2") {
-              try {
-                postRes = await fetch("http://10.0.0.2:30149/usage/refresh", {
-                  method: "POST",
-                  cache: "no-store",
-                  signal: postAbortCtrl ? postAbortCtrl.signal : undefined,
-                });
-              } catch (retryErr) {
-                if (timedOut || retryErr?.name === "AbortError") {
-                  throw new Error("请求 40 秒超时：未在 40 秒内收到服务端扫描响应，请稍后重试");
-                }
-                throw retryErr;
-              }
-            } else {
-              throw fetchErr;
-            }
-          } finally {
-            clearTimeout(postTimer);
-          }
-
-          if (!panel.isConnected || (hooks && hooks.enabled && !hooks.enabled())) return;
-
-          let postBody = null;
-          try {
-            postBody = await postRes.json();
-          } catch (jsonErr) {}
-
-          if (!postRes.ok) {
-            const serverError = (postBody && typeof postBody === "object" && postBody.error)
-              ? String(postBody.error)
-              : null;
-            if (serverError) {
-              throw new Error(serverError);
-            }
-            throw new Error(`服务端刷新失败: HTTP ${postRes.status}`);
-          }
-
-          if (!postBody || typeof postBody !== "object") {
-            throw new Error("服务端刷新响应格式错误");
-          }
-          if (postBody.ok !== true) {
-            throw new Error(postBody.error ? String(postBody.error) : "服务端返回未成功");
-          }
-
-          if (!panel.isConnected || (hooks && hooks.enabled && !hooks.enabled())) return;
-
-          const fresh = await refresh({
-            isCancelled: () => !panel.isConnected || (hooks && hooks.enabled && !hooks.enabled()),
-            onProgress: ({ attempt, totalRetries, delayMs }) => {
-              const curStatusEl = panel.querySelector("[data-usage-refresh-status]");
-              if (panel.isConnected && curStatusEl) {
-                curStatusEl.textContent = `网络短暂波动，${Math.round(delayMs / 1000)}秒后自动重试 (${attempt}/${totalRetries})...`;
-              }
-            },
+          const apiRes = await fetch("/api/usage/ledger", {
+            method: "POST",
+            cache: "no-store",
+            signal: postAbortCtrl ? postAbortCtrl.signal : undefined,
           });
+          let apiBody = null;
+          try { apiBody = await apiRes.json(); } catch (_) {}
+          if (!apiRes.ok) throw new Error(apiBody?.error || `服务端刷新失败: HTTP ${apiRes.status}`);
+          const mode = apiRes.headers?.get?.("X-Pi-Usage-Mode") || apiRes.headers?.get?.("x-pi-usage-mode");
+          setUsageMode(mode);
+
+          if (!panel.isConnected || (hooks && hooks.enabled && !hooks.enabled())) return;
+
+          let fresh;
+          if (mode === "legacy-central") {
+            // Legacy central ledgers are refreshed by their configured server
+            // aggregator. Never guess a separate host or port in the browser.
+            throw new Error("当前服务使用旧版中心账本，请先在账本聚合服务刷新后重试。");
+          } else if (mode === "native-local") {
+            const responseLedger = apiBody?.ledger && typeof apiBody.ledger === "object" ? apiBody.ledger : apiBody;
+            fresh = cacheValidatedLedger(responseLedger);
+            clearTimeout(postTimer);
+          } else {
+            throw new Error("服务端未声明账本来源，已保留现有快照");
+          }
 
           if (!panel.isConnected || (hooks && hooks.enabled && !hooks.enabled())) return;
 
@@ -1129,7 +1262,7 @@
             const d = new Date();
             const pad = n => String(n).padStart(2, "0");
             const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-            nextStatusEl.textContent = fresh.snapshotId === oldId
+            nextStatusEl.textContent = fresh.snapshotId === oldId && engineStatusKey(fresh) === oldEngineStatusKey
               ? `快照未变化，已是对齐最新 (${timeStr})`
               : `✅ 已成功完成全量扫描与统计 (${timeStr})`;
           }
@@ -1188,18 +1321,25 @@
         }
       };
     });
+
+    ensureEnginePoll(panel, nav, hooks, ledger);
   }
 
-  // Fetch snapshots only when the usage panel opens or a deletion needs ingestion proof.
+  // Use the same request/cache for idle preloading and foreground consumers.
+  function prefetch(signal) {
+    return fetchSnapshotOnce(signal);
+  }
+
   root.PiUsagePanel = {
     render,
     dispose,
     refresh,
     fetchSnapshotOnce,
+    prefetch,
     cancelActiveRetry,
     read,
     getActiveRescanPromise: () => activeRescanPromise,
-    getFilters: () => ({ timeRange, model, role, startDate, endDate }),
+    getFilters: () => ({ timeRange, model, role, startDate, endDate, engine }),
     setFilters: (next = {}) => updateFilters(next),
     resetFilters,
     STORAGE_KEY,

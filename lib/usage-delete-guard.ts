@@ -206,7 +206,7 @@ function getNativeCreateRequire(): CreateRequireFn {
   throw new Error("[usage-delete-guard] Native module.createRequire is unavailable");
 }
 
-function loadNativeCommonJs<T>(scriptPath: string): T {
+export function loadNativeCommonJs<T>(scriptPath: string): T {
   const absPath = resolvePath(scriptPath);
   const createReq = getNativeCreateRequire();
   const runtimeRequire = createReq(absPath);

@@ -2,11 +2,12 @@
 
 import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import type { PendingPromptSubmission } from "@/lib/prompt-submissions";
 import type { QueuedMessages } from "@/hooks/useAgentSession";
 
 type Entry = { kind: "steer" | "follow-up"; text: string };
 type Image = { data: string; mimeType: string; alt?: string };
-type Details = { signature: string; enabled: boolean; busy: boolean; reorder?: boolean; images: Image[][] };
+type Details = { signature: string; enabled: boolean; actionsEnabled?: boolean; busy: boolean; reorder?: boolean; images: Image[][]; statuses?: {status: string; error?: string}[] };
 
 export function ComposerQueueIcon({ kind }: { kind: "more" | "delete" | "promote" | "sort" | "edit" }) {
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -23,19 +24,31 @@ const QueueIcon = ComposerQueueIcon;
 /** Queue nodes belong to React from their first paint to consumption. The
  * existing enhancement service provides secure actions and attachment data,
  * through an explicit extension boundary; it never inspects/writes these nodes. */
-export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pending }: {
+export function ComposerQueue({ sessionId, executionEngine = "pi", queuedMessages, onRecallQueue, pending, syncStatus = "ready", retainedSubmissions = [], deliveredRequestIds = [] }: {
+  retainedSubmissions?: PendingPromptSubmission[];
+  deliveredRequestIds?: readonly string[];
+  syncStatus?: "loading" | "ready" | "error";
   pending?: { kind: "steering" | "followUp"; text: string; images: Image[] } | null;
-  sessionId: string; queuedMessages?: QueuedMessages | null; onRecallQueue?: () => void;
+  sessionId: string; executionEngine?: "pi" | "codex"; queuedMessages?: QueuedMessages | null; onRecallQueue?: () => void;
 }) {
   const host = useRef<HTMLElement>(null);
   const entries: Entry[] = [
     ...(queuedMessages?.steering ?? []).map(text => ({ kind: "steer" as const, text })),
     ...(queuedMessages?.followUp ?? []).map(text => ({ kind: "follow-up" as const, text })),
   ];
-  const rows = [...entries.map(entry => ({...entry, pending: false})), ...(pending ? [{ kind: pending.kind === "steering" ? "steer" as const : "follow-up" as const, text: pending.text, pending: true }] : [])];
+  const nativeIds = [...(queuedMessages?.requestIds?.steering ?? []), ...(queuedMessages?.requestIds?.followUp ?? [])];
+  const represented = new Set([...nativeIds, ...deliveredRequestIds]);
+  const backups = retainedSubmissions.filter(row => row.sessionId === sessionId && row.streamingBehavior
+    && row.status !== "recalled" && !represented.has(row.requestId));
+  const rows = [
+    ...entries.map((entry, index) => ({ ...entry, pending: false, backup: undefined as PendingPromptSubmission | undefined, requestId: nativeIds[index] })),
+    ...backups.map(row => ({ kind: row.streamingBehavior === "steer" ? "steer" as const : "follow-up" as const, text: row.message, pending: true, backup: row, requestId: row.requestId })),
+    ...(pending ? [{ kind: pending.kind === "steering" ? "steer" as const : "follow-up" as const, text: pending.text, pending: true, backup: undefined, requestId: null }] : []),
+  ];
+  const actionsEnabled = syncStatus === "ready" && (executionEngine === "pi" || executionEngine === "codex");
   const signature = JSON.stringify([sessionId, entries]);
-  const current = useRef({ sessionId, entries, signature });
-  current.current = { sessionId, entries, signature };
+  const current = useRef({ sessionId, entries, signature, actionsEnabled });
+  current.current = { sessionId, entries, signature, actionsEnabled };
   const [details, setDetails] = useState<Details | null>(null);
   const [confirmation, setConfirmation] = useState<{signature: string; index: number} | null>(null);
   const [hover, setHover] = useState<{src: string; left: number; bottom: number; count: number} | null>(null);
@@ -67,7 +80,7 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
     };
   }, [publish]);
-  useLayoutEffect(() => { publish(); }, [signature, publish]);
+  useLayoutEffect(() => { publish(); }, [signature, actionsEnabled, publish]);
   useLayoutEffect(() => {
     setHover(null); setMenu(null); setDragView(null); drag.current = null;
     if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
@@ -155,6 +168,7 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
   }, [details]);
   const active = details?.signature === signature ? details : null;
   const action = (name: string, index = -1, targetIndex = -1) => {
+    if (!actionsEnabled) return;
     if (!active?.enabled) {
       if (name === "recallAll") onRecallQueue?.();
       return;
@@ -164,6 +178,7 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
     }));
   };
   const remove = (index: number) => {
+    if (!actionsEnabled) return;
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     if (confirmation?.signature === signature && confirmation.index === index) {
       setConfirmation(null);
@@ -173,13 +188,16 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
       confirmTimer.current = setTimeout(() => setConfirmation(null), 3500);
     }
   };
-  return <section ref={host} className="pi-enh-queue-panel" data-pi-native-queue="true" aria-label="排队消息" hidden={!rows.length}>
+  const queueActionsAvailable = executionEngine === "pi" || executionEngine === "codex";
+  return <section ref={host} className="pi-enh-queue-panel" data-pi-native-queue="true" aria-label="排队消息" aria-busy={syncStatus === "loading" || undefined} hidden={!rows.length && syncStatus === "ready"}>
+    {syncStatus !== "ready" && <div role="status" className="px-3 py-1 text-[11px] text-text-muted">{syncStatus === "error" ? (rows.length ? "队列暂未同步，已保留上次显示" : "队列暂未同步") : rows.length ? "正在核对排队消息…" : "正在同步排队消息…"}</div>}
     <div ref={listRef} className="pi-enh-queue-list">{rows.map((entry, index) => {
-      const images = entry.pending ? pending?.images ?? [] : active?.images[index] ?? [];
+      const images: Image[] = entry.backup?.images ?? (entry.pending ? pending?.images ?? [] : active?.images[index] ?? []);
       const src = images[0] ? `data:${images[0].mimeType};base64,${images[0].data}` : "";
       const confirming = confirmation?.signature === signature && confirmation.index === index;
-      const disabled = entry.pending || !active?.enabled || active.busy;
-      const sortable = !disabled && active?.reorder && entries.filter(row => row.kind === entry.kind).length > 1;
+      const delivery = queuedMessages?.deliveryStates?.[index] ?? active?.statuses?.[index];
+      const disabled = entry.pending || delivery?.status === "unknown" || !actionsEnabled || !active?.enabled || active.busy;
+      const sortable = queueActionsAvailable && !disabled && active?.reorder && entries.filter(row => row.kind === entry.kind).length > 1;
       const move = (target: number) => {
         if (sortable && entries[target]?.kind === entry.kind) action("reorder", index, target);
       };
@@ -189,8 +207,8 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
         else if (index > dragView.index && index <= dragView.target) offset = -(rowRefs.current[index]?.offsetTop ?? 0) + (rowRefs.current[index - 1]?.offsetTop ?? 0);
         else if (index < dragView.index && index >= dragView.target) offset = (rowRefs.current[index + 1]?.offsetTop ?? 0) - (rowRefs.current[index]?.offsetTop ?? 0);
       }
-      return <div ref={node => {rowRefs.current[index] = node;}} data-queue-index={index} className={`pi-enh-queue-row${dragView?.target === index ? " pi-enh-queue-row-target" : ""}${dragView?.index === index ? " pi-enh-queue-row-dragging" : ""}`} aria-busy={entry.pending || undefined} style={offset ? {transform: `translateY(${offset}px)`} : undefined} key={`${entry.kind}-${index}`}>
-        <button type="button" className="pi-enh-queue-sort" aria-label={`拖动排序第 ${index + 1} 条排队消息`} title={sortable ? "拖动调整同类消息顺序；也可用上下方向键" : disabled ? "队列更新中" : "至少两条同类消息时可拖动排序"} disabled={!sortable}
+      return <div ref={node => {rowRefs.current[index] = node;}} data-queue-index={index} data-retained-request-id={entry.backup?.requestId} className={`pi-enh-queue-row${dragView?.target === index ? " pi-enh-queue-row-target" : ""}${dragView?.index === index ? " pi-enh-queue-row-dragging" : ""}`} aria-busy={entry.pending || undefined} style={offset ? {transform: `translateY(${offset}px)`} : undefined} key={entry.requestId || `${entry.kind}-${index}`}>
+        {queueActionsAvailable && <button type="button" className="pi-enh-queue-sort" aria-label={`拖动排序第 ${index + 1} 条排队消息`} title={sortable ? "拖动调整同类消息顺序；也可用上下方向键" : disabled ? "队列更新中" : "至少两条同类消息时可拖动排序"} disabled={!sortable}
           onKeyDown={e => {if (e.key === "ArrowUp" || e.key === "ArrowDown") {e.preventDefault(); move(index + (e.key === "ArrowUp" ? -1 : 1));}}}
           onPointerDown={e => {
             if (!sortable || !e.isPrimary || e.button !== 0) return;
@@ -215,23 +233,30 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
             endDrag(!commit);
             if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
             if (commit) move(d!.target);
-          }} onPointerCancel={() => endDrag()} onLostPointerCapture={() => {if (drag.current) endDrag();}}><QueueIcon kind="sort" /></button>
-        {!!images.length && <button type="button" className="pi-enh-queue-image-badge" aria-label="查看排队消息附带图片" disabled={entry.pending} onClick={() => { setHover(null); action("gallery", index); }} onMouseEnter={e => {
+          }} onPointerCancel={() => endDrag()} onLostPointerCapture={() => {if (drag.current) endDrag();}}><QueueIcon kind="sort" /></button>}
+        {queueActionsAvailable && !!images.length && <button type="button" className="pi-enh-queue-image-badge" aria-label="查看排队消息附带图片" disabled={entry.pending} onClick={() => { setHover(null); action("gallery", index); }} onMouseEnter={e => {
             const rect = e.currentTarget.getBoundingClientRect();
             setHover({src, count: images.length, left: Math.max(10, Math.min(window.innerWidth - 250, rect.left)), bottom: window.innerHeight - rect.top + 8});
           }} onMouseLeave={() => setHover(null)}>
           <img className="pi-enh-queue-thumb" src={src} alt={images[0].alt || "图片附件"} data-no-zoom="true" />
           {images.length > 1 && <span className="pi-enh-queue-image-count">{images.length}</span>}
         </button>}
-        <button type="button" className="pi-enh-queue-text" disabled={entry.pending || !active?.enabled || active.busy} title={`点击移回输入框编辑：${entry.text || "图片消息"}`} onClick={() => action("recall", index)}>{entry.text || (images.length ? "" : "图片消息")}</button>
-        <div className="pi-enh-queue-actions">
-          {entry.kind === "follow-up" && <button type="button" className="pi-enh-queue-promote" aria-label={`立即引导第 ${index + 1} 条排队消息`} disabled={entry.pending || !active?.enabled || active.busy} onClick={() => action("promote", index)}><QueueIcon kind="promote" /><span>引导</span></button>}
-          <button type="button" className={`pi-enh-queue-delete${confirming ? " pi-enh-queue-delete-confirming" : ""}`} aria-label={`删除第 ${index + 1} 条排队消息`} title={confirming ? "再次点击确认删除" : "删除此排队消息"} disabled={entry.pending || !active?.enabled || active.busy} onClick={() => remove(index)}><QueueIcon kind="delete" /></button>
+        {queueActionsAvailable ? (
+          <button type="button" className="pi-enh-queue-text" disabled={disabled} title={`点击移回输入框编辑：${entry.text || "图片消息"}`} onClick={() => action("recall", index)}>{entry.text || (images.length ? "" : "图片消息")}</button>
+        ) : (
+          <span className="pi-enh-queue-text" title={entry.text || (images.length ? "图片消息" : undefined)}>{entry.text || (images.length ? "" : "图片消息")}</span>
+        )}
+        {entry.backup && <span role="status">{entry.backup.status === "accepted" ? "正在同步队列" : entry.backup.status === "sending" ? "发送中" : "等待同步"}</span>}
+        {delivery?.status === "unknown" && <span role="status" title="内容已保留；确认结果前不会自动重发">发送待确认</span>}
+        {delivery?.status === "failed" && <span role="status" title={delivery.error || "内容已保留，可移回输入框编辑"}>发送失败，内容已保留</span>}
+        {queueActionsAvailable && <div className="pi-enh-queue-actions">
+          {entry.kind === "follow-up" && <button type="button" className="pi-enh-queue-promote" aria-label={`立即引导第 ${index + 1} 条排队消息`} disabled={disabled} onClick={() => action("promote", index)}><QueueIcon kind="promote" /><span>引导</span></button>}
+          <button type="button" className={`pi-enh-queue-delete${confirming ? " pi-enh-queue-delete-confirming" : ""}`} aria-label={`删除第 ${index + 1} 条排队消息`} title={confirming ? "再次点击确认删除" : "删除此排队消息"} disabled={disabled} onClick={() => remove(index)}><QueueIcon kind="delete" /></button>
           <button type="button" className="pi-enh-queue-more" aria-label={`更多操作：第 ${index + 1} 条排队消息`} aria-expanded={menu === index} aria-haspopup="menu" disabled={disabled} onClick={() => setMenu(menu === index ? null : index)}><QueueIcon kind="more" /></button>
-        </div>
+        </div>}
       </div>;
     })}</div>
-    {menu !== null && createPortal(<div ref={menuRef} className="pi-enh-queue-menu" role="menu" aria-label="排队消息操作" style={menuPosition} onKeyDown={e => {
+    {queueActionsAvailable && menu !== null && createPortal(<div ref={menuRef} className="pi-enh-queue-menu" role="menu" aria-label="排队消息操作" style={menuPosition} onKeyDown={e => {
       const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
       const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
       if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
@@ -246,6 +271,6 @@ export function ComposerQueue({ sessionId, queuedMessages, onRecallQueue, pendin
       <button type="button" role="menuitem" onClick={() => {setMenu(null); action("recall", menu);}}><QueueIcon kind="edit" />编辑消息</button>
       <button type="button" role="menuitem" onClick={() => {setMenu(null); action("delete", menu);}}><QueueIcon kind="sort" />关闭排队</button>
     </div>, document.body)}
-    {hover && createPortal(<div className="pi-enh-queue-hover-preview" style={{left: hover.left, bottom: hover.bottom}}><img src={hover.src} alt="图片附件预览" /><span>{hover.count > 1 ? `共 ${hover.count} 张图片 · 点击放大左右切换` : "图片附件预览 · 点击放大"}</span></div>, document.body)}
+    {queueActionsAvailable && hover && createPortal(<div className="pi-enh-queue-hover-preview" style={{left: hover.left, bottom: hover.bottom}}><img src={hover.src} alt="图片附件预览" /><span>{hover.count > 1 ? `共 ${hover.count} 张图片 · 点击放大左右切换` : "图片附件预览 · 点击放大"}</span></div>, document.body)}
   </section>;
 }

@@ -1,0 +1,5 @@
+{
+  "protocol": "pi-web-codex",
+  "version": 1,
+  "capabilities": ["timeline-v1", "prompt-identity-v1", "queue-v2", "workspace-files-v1"]
+}

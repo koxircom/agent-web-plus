@@ -230,7 +230,7 @@ export function locateProjectMcpConfig(cwd: string, allowedRoots: Set<string>): 
     return { kind: "missing", path };
   }
   if (!isPathWithinRoots(realPath, resolveRealRoots(allowedRoots))) {
-    return { kind: "refused", path, realPath, reason: "link-outside", error: "a symbolic link outside the folders Pi Web may read" };
+    return { kind: "refused", path, realPath, reason: "link-outside", error: "a symbolic link outside the folders Agent Web Plus may read" };
   }
   return { kind: "found", path, realPath };
 }
@@ -260,7 +260,7 @@ export function projectMcpConfigCreatePath(
     }
   }
   if (!isPathWithinRoots(realDir, resolveRealRoots(allowedRoots))) {
-    return { ok: false, reason: "link-outside", error: "a symbolic link outside the folders Pi Web may read" };
+    return { ok: false, reason: "link-outside", error: "a symbolic link outside the folders Agent Web Plus may read" };
   }
   return { ok: true, realPath: join(realDir, "mcp.json") };
 }
@@ -351,7 +351,7 @@ function authStateOf(state: McpAuthState, name: string, url: string): { signedIn
 
 /**
  * The transport a connection uses, decided as the SDK's `createDefaultTransport()`
- * (and Pi Web's factory, and the value walk in `resolvedConfigValues()`)
+ * (and Agent Web Plus's factory, and the value walk in `resolvedConfigValues()`)
  * decide it: by whether the key `url` is present, whatever its value or
  * `type`. The validator decides differently — `{ type: "stdio", command, url }`
  * passes as stdio — but such an entry connects over HTTP, with its headers'
@@ -700,7 +700,7 @@ function mcpAvailability(
     return {
       available: false,
       reason: "internals-unavailable",
-      error: "Pi Web cannot load the SDK's MCP modules",
+      error: "Agent Web Plus cannot load the SDK's MCP modules",
       detail: internals.reason,
     };
   }

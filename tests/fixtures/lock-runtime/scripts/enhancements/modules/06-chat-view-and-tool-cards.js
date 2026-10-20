@@ -9377,7 +9377,7 @@
     const tabTitle = activeTab?.querySelector("span[title]")?.getAttribute("title") || "";
     if (!tabTitle) return;
 
-    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian") || tabTitle.includes("10.0.0.2")) {
+    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian") || tabTitle.includes("10.10.0.10")) {
       if (accessDeniedDiv.__piRecoverAttempted) return;
       accessDeniedDiv.__piRecoverAttempted = true;
 

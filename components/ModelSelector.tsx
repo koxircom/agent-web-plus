@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -10,6 +10,7 @@ export interface ModelSelectorOption {
   provider: string;
   modelId: string;
   name: string;
+  disabled?: boolean;
 }
 
 interface ModelSelectorProps {
@@ -26,7 +27,10 @@ interface ModelSelectorProps {
   ariaLabel?: string;
   title?: string;
   variant?: "toolbar" | "field";
-  placement?: "up" | "auto";
+  placement?: "up" | "down" | "auto";
+  showIcon?: boolean;
+  showChevron?: boolean;
+  renderLabel?: (label: string, id?: string) => ReactNode;
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
@@ -64,6 +68,9 @@ export function ModelSelector({
   title,
   variant = "toolbar",
   placement = "up",
+  showIcon = true,
+  showChevron = variant === "field",
+  renderLabel,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -129,6 +136,16 @@ export function ModelSelector({
     const updateForViewportChange = () => updateAnchorRect(true);
     const updateOnScroll = () => updateAnchorRect();
 
+    // An open menu owns Escape before the document's running-task guard.
+    const handleMenuEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setFilter("");
+      setOpen(false);
+      triggerRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener("keydown", handleMenuEscape, true);
     const viewport = window.visualViewport;
     window.addEventListener("resize", updateForViewportChange);
     window.addEventListener("scroll", updateOnScroll, true);
@@ -136,6 +153,7 @@ export function ModelSelector({
     viewport?.addEventListener("scroll", updateForViewportChange);
 
     return () => {
+      window.removeEventListener("keydown", handleMenuEscape, true);
       window.removeEventListener("resize", updateForViewportChange);
       window.removeEventListener("scroll", updateOnScroll, true);
       viewport?.removeEventListener("resize", updateForViewportChange);
@@ -170,6 +188,7 @@ export function ModelSelector({
         maxWidth: isMobile ? "100%" : 220,
         height: 32,
         padding: isMobile ? "8px 10px" : "8px 12px",
+        paddingInlineStart: `var(--model-selector-padding-start, ${isMobile ? "10px" : "12px"})`,
         overflow: "hidden",
         border: "none",
         borderRadius: 9,
@@ -182,6 +201,7 @@ export function ModelSelector({
       };
 
   const choose = (option: ModelSelectorOption) => {
+    if (option.disabled) return;
     const active = option.modelId === value?.modelId && option.provider === value?.provider;
     setOpen(false);
     setFilter("");
@@ -193,13 +213,6 @@ export function ModelSelector({
       ref={rootRef}
       className={`model-selector is-${variant}${locked ? " is-disabled" : ""}`}
       style={{ position: "relative", width: variant === "field" || isMobile ? "100%" : undefined, minWidth: 0, flex: variant === "toolbar" && isMobile ? "1 1 auto" : undefined }}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || !open) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setFilter("");
-        setOpen(false);
-      }}
     >
       <button
         ref={triggerRef}
@@ -234,7 +247,7 @@ export function ModelSelector({
           event.currentTarget.style.color = variant === "field" ? "var(--text)" : "var(--text-muted)";
         }}
       >
-        {busy ? (
+        {showIcon && (busy ? (
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }} aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
           </svg>
@@ -247,10 +260,10 @@ export function ModelSelector({
             <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
             <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
           </svg>
-        )}
-        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentName}</span>
-        {variant === "field" && (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, color: "var(--text-dim)" }}>
+        ))}
+        <span style={{ flex: "var(--model-selector-label-flex, 1)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{renderLabel?.(currentName, value?.modelId) ?? currentName}</span>
+        {showChevron && (
+          <svg data-menu-chevron="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, color: "var(--text-dim)" }}>
             <polyline points="6 9 12 15 18 9" />
           </svg>
         )}
@@ -261,7 +274,7 @@ export function ModelSelector({
         const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
         const spaceAbove = Math.max(0, anchorRect.top - 8);
         const spaceBelow = Math.max(0, viewportHeight - anchorRect.bottom - 8);
-        const openAbove = placement === "up" || spaceAbove > spaceBelow;
+        const openAbove = placement === "up" || (placement !== "down" && spaceAbove > spaceBelow);
         const availableSpace = openAbove ? spaceAbove : spaceBelow;
         const maxHeight = Math.max(80, Math.min(availableSpace, viewportHeight * 0.6));
         const verticalPosition = openAbove
@@ -341,7 +354,9 @@ export function ModelSelector({
                     <ModelOptionButton
                       key={`${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
+                      disabled={option.disabled}
                       label={option.name}
+                      children={renderLabel?.(option.name, option.modelId)}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -356,21 +371,23 @@ export function ModelSelector({
   );
 }
 
-function ModelOptionButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+function ModelOptionButton({ active, disabled = false, label, children, onClick }: { active: boolean; disabled?: boolean; label: string; children?: ReactNode; onClick: () => void }) {
   return (
     <button
       type="button"
       role="option"
       aria-selected={active}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap" }}
-      onMouseEnter={(event) => { if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
-      onMouseLeave={(event) => { if (!active) event.currentTarget.style.background = "none"; }}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : disabled ? "var(--text-dim)" : "var(--text-muted)", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.55 : 1, fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap" }}
+      onMouseEnter={(event) => { if (!active && !disabled) event.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(event) => { if (!active && !disabled) event.currentTarget.style.background = "none"; }}
     >
       {active
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
         : <span style={{ width: 10, flexShrink: 0 }} />}
-      <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{children ?? label}</span>
     </button>
   );
 }

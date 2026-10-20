@@ -3,7 +3,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type RefObject } from "react";
 import { isMessageGroupAnchor } from "@/lib/message-display";
 import type { AgentMessage, TextContent, UserMessage } from "@/lib/types";
+import { useNavigationIndex, type NavigationIndex } from "@/hooks/useNavigationIndex";
 import { useMinimapBookmarks } from "@/hooks/useMinimapBookmarks";
+import { useMobileHorizontalSwipe } from "@/hooks/useMobileHorizontalSwipe";
 import { stripDimensionNotes } from "./MessageView";
 import styles from "./ChatMinimap.module.css";
 
@@ -27,6 +29,7 @@ const NAVIGATION_ACTIVE_LOCK_MS = Infinity;
 
 export interface TurnInfo {
   userTurnNumber: number;
+  indexed?: boolean;
   userMessage: UserMessage;
   scrollTop: number | null;
   element?: HTMLDivElement | null;
@@ -90,6 +93,17 @@ export function computeUserTurnNumbers(
   }
 }
 
+/** Join lightweight directory rows to actual loaded turns by global ordinal.
+ *  Only actual turns own DOM/scroll positions; repeated text stays distinct. */
+export function mergeNavigationTurns(turns: TurnInfo[], index?: NavigationIndex | null): TurnInfo[] {
+  if (!index) return turns;
+  const oldest = turns[0]?.userTurnNumber ?? index.totalTurns + 1;
+  return [...index.turns.filter(row => row.number < oldest).map(row => ({
+    userTurnNumber: row.number, userMessage: { role: "user" as const, content: row.preview },
+    scrollTop: null, entryId: `navigation:${row.number}`, indexed: true,
+  })), ...turns];
+}
+
 export function createTurnNodes(turns: TurnInfo[]): NodeInfo[] {
   return turns.map((turn, index) => ({
     topRatio: 0,
@@ -145,6 +159,10 @@ export function getMinimapHistorySettings(): { initialTurns: number; stepTurns: 
     } catch {}
   }
   return { initialTurns: 5, stepTurns: 5 };
+}
+
+export function shouldShowMinimap(overlay: boolean, scrollable: number, hasEarlierMessages: boolean): boolean {
+  return overlay || scrollable > 20 || hasEarlierMessages;
 }
 
 export function readMinimapHistoryState(loadedCount: number): {
@@ -212,6 +230,8 @@ export function ChatMinimap({
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [minimapHeight, setMinimapHeight] = useState(600);
   const [minimapHovered, setMinimapHovered] = useState(false);
+  const initialLoadVisibleRef = useRef(overlay || minimapHovered);
+  initialLoadVisibleRef.current = overlay || minimapHovered;
   const [mouseYRatio, setMouseYRatio] = useState<number | null>(null);
   const [targetTurns, setTargetTurns] = useState<number>(() => getMinimapHistorySettings().initialTurns);
   useEffect(() => {
@@ -227,6 +247,11 @@ export function ChatMinimap({
   const [loadError, setLoadError] = useState(false);
 
   const historyState = readMinimapHistoryState(allNodes.length);
+  const navigation = useNavigationIndex(sessionId, overlay || minimapHovered, historyState.totalTurns);
+  const navigationIndexRef = useRef(navigation.value); navigationIndexRef.current = navigation.value;
+  const pendingNavigationOrdinalRef = useRef<number | null>(null);
+  const loadSelectedHistoryRef = useRef<(count: number) => void>(() => {});
+
   if (sessionId !== currentSessionIdRef.current) {
     currentSessionIdRef.current = sessionId;
     sessionGenerationRef.current++;
@@ -245,6 +270,19 @@ export function ChatMinimap({
     fillsHeight: false,
   });
   const previewBoxRef = useRef<HTMLDivElement>(null);
+
+  // 原生实现手机竖屏导航面板右滑关闭，条目按钮支持手势且抑制 ghost click
+  useMobileHorizontalSwipe({
+    containerRef: previewBoxRef,
+    direction: "right",
+    enabled: Boolean(overlay),
+    threshold: 40,
+    dominantRatio: 1.3,
+    allowOnButtons: true,
+    onSwipe: () => {
+      onClose?.();
+    },
+  });
   const previewItemRefs = useRef(new Map<number, HTMLDivElement>());
   const previewHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNodeLockRef = useRef<{ index: number; until: number } | null>(null);
@@ -271,6 +309,7 @@ export function ChatMinimap({
     setTargetTurns(getMinimapHistorySettings().initialTurns);
     setIsLoadingEarlier(false);
     setLoadError(false);
+    pendingNavigationOrdinalRef.current = null;
   }, [sessionId]);
 
   const nodeLayout = useMemo(
@@ -321,7 +360,7 @@ export function ChatMinimap({
     if (!scrollEl) return;
     const scrollable = scrollEl.scrollHeight - scrollEl.clientHeight;
     const currentNodes = allNodesRef.current;
-    setVisible(overlay || scrollable > 20);
+    setVisible(shouldShowMinimap(overlay, scrollable, readMinimapHistoryState(currentNodes.length).hasEarlierMessages));
     syncActiveNode(scrollEl, currentNodes);
   }, [overlay, scrollContainer, syncActiveNode]);
 
@@ -383,13 +422,14 @@ export function ChatMinimap({
         }
       }
 
-      computeUserTurnNumbers(turns);
+      computeUserTurnNumbers(turns, Math.max(navigationIndexRef.current?.totalTurns ?? 0, readMinimapHistoryState(turns.length).totalTurns));
 
-      const nextNodes = createTurnNodes(turns);
+      const nextNodes = createTurnNodes(mergeNavigationTurns(turns, navigationIndexRef.current));
       setMinimapHeight(minimapEl.clientHeight);
       allNodesRef.current = nextNodes;
       setAllNodes(nextNodes);
-      setVisible(overlay || scrollEl.scrollHeight - scrollEl.clientHeight > 20);
+      setVisible(shouldShowMinimap(overlay, scrollEl.scrollHeight - scrollEl.clientHeight,
+        readMinimapHistoryState(turns.length).hasEarlierMessages));
 
       // Stable entry identity or message reference lock to preserve position across prepends
       const now = Date.now();
@@ -417,9 +457,13 @@ export function ChatMinimap({
       }
 
       const pendingNodeIndex = pendingNavigationNodeIndexRef.current;
-      const pendingNode = pendingNodeIndex !== null ? nextNodes[pendingNodeIndex] : null;
+      const pendingOrdinal = pendingNavigationOrdinalRef.current;
+      const pendingNode = pendingOrdinal !== null
+        ? nextNodes.find(node => node.targetTurn.userTurnNumber === pendingOrdinal && !node.targetTurn.indexed)
+        : pendingNodeIndex !== null ? nextNodes[pendingNodeIndex] : null;
       if (pendingNode && pendingNode.targetTurn.scrollTop !== null) {
         pendingNavigationNodeIndexRef.current = null;
+        pendingNavigationOrdinalRef.current = null;
         lockActiveNode(pendingNode.index);
         const targetOffset = scrollEl.clientHeight * 0.3;
         scrollEl.scrollTo({
@@ -480,7 +524,7 @@ export function ChatMinimap({
       updateScroll();
     }, 50);
     return () => clearTimeout(timeout);
-  }, [messages.length, measureNodes, updateScroll]);
+  }, [messages.length, navigation.value, measureNodes, updateScroll]);
 
   const scrollToNode = useCallback((node: NodeInfo, behavior: ScrollBehavior) => {
     const scrollEl = scrollContainer.current;
@@ -496,7 +540,13 @@ export function ChatMinimap({
         : null
       : node.targetTurn.scrollTop;
     if (liveTop === null) {
-      pendingNavigationNodeIndexRef.current = node.index;
+      if (node.targetTurn.indexed) {
+        pendingNavigationOrdinalRef.current = node.targetTurn.userTurnNumber;
+        loadSelectedHistoryRef.current(Math.max(1,
+          (navigationIndexRef.current?.totalTurns ?? 0) - node.targetTurn.userTurnNumber + 1));
+      } else {
+        pendingNavigationNodeIndexRef.current = node.index;
+      }
       onRevealHistory();
       return;
     }
@@ -619,6 +669,7 @@ export function ChatMinimap({
       try {
         while (true) {
           if (sessionGenerationRef.current !== generation) return;
+          if (source === "initial" && !initialLoadVisibleRef.current) return;
 
           const loadedUserCount = allMessagesRef.current.filter((message) => message.role === "user").length;
           const history = readMinimapHistoryState(loadedUserCount);
@@ -636,7 +687,7 @@ export function ChatMinimap({
 
           // Navigation pages are source messages, not turns. A larger bounded
           // page avoids serial requests through a long tool execution.
-          const fetchTail = 100;
+          const fetchTail = history.sessionId?.startsWith("codex:") ? 1000 : 100;
 
           // 记录本轮请求前消息状态与 cursor/entryId
           const messagesBefore = allMessagesRef.current;
@@ -701,7 +752,12 @@ export function ChatMinimap({
     return true;
   }, [preservePreviewScroll]);
 
+  loadSelectedHistoryRef.current = (count) => { runContinuousLoad(count, "selection"); };
+
   const triggerLoadEarlier = useCallback((source = "button") => {
+    if (navigation.error) { navigation.retry(); return true; }
+    if (navigation.value === undefined) return false;
+
     if (isLoadingEarlierRef.current) return false;
     const loadedCount = allNodesRef.current.length;
     const history = readMinimapHistoryState(loadedCount);
@@ -732,7 +788,7 @@ export function ChatMinimap({
     setTargetTurns(nextTarget);
 
     return runContinuousLoad(nextTarget, source);
-  }, [loadError, preservePreviewScroll, runContinuousLoad]);
+  }, [loadError, navigation, preservePreviewScroll, runContinuousLoad]);
 
   const expandAllLoadedTurns = useCallback(() => {
     const loadedCount = allNodesRef.current.length;
@@ -743,6 +799,10 @@ export function ChatMinimap({
   }, [preservePreviewScroll]);
 
   useEffect(() => {
+    if (!overlay && !minimapHovered) return;
+    // An available title directory replaces eager transcript pagination. While
+    // capability discovery is pending/failed, never fall through to body reads.
+    if (navigation.value !== null) return;
     const initial = getMinimapHistorySettings().initialTurns;
     if (targetTurnsRef.current < initial) {
       targetTurnsRef.current = initial;
@@ -751,7 +811,8 @@ export function ChatMinimap({
     const loadedCount = allMessagesRef.current.filter(message => message.role === "user").length;
     const history = readMinimapHistoryState(loadedCount);
     // ChatWindow installs the authoritative bridge before this passive effect.
-    // A closed mobile navigator is unmounted, so it does no background work.
+    // Hidden desktop rails also stay idle; loading historical tool runs is
+    // reserved for an opened navigator or an explicit earlier-history action.
     if (!sessionId || history.sessionId !== sessionId || !history.hasEarlierMessages || loadedCount >= initial) return;
     const attemptKey = `${sessionGenerationRef.current}:${initial}`;
     if (initialLoadAttemptRef.current === attemptKey) return;
@@ -759,7 +820,7 @@ export function ChatMinimap({
       // Network/budget failures require an explicit retry, never an effect loop.
       initialLoadAttemptRef.current = attemptKey;
     }
-  }, [allNodes.length, messages.length, runContinuousLoad, sessionId, targetTurns]);
+  }, [allNodes.length, messages.length, minimapHovered, navigation.value, overlay, runContinuousLoad, sessionId, targetTurns]);
 
   useEffect(() => {
     return () => {
@@ -1345,7 +1406,7 @@ export function ChatMinimap({
       })}
 
       </>}
-      {(overlay || (minimapHovered && allNodes.length > 0)) && (() => {
+      {(overlay || minimapHovered) && (() => {
         const visibleTurnsCount = Math.min(allNodes.length, targetTurns);
         const hiddenCount = Math.max(0, allNodes.length - visibleTurnsCount);
         const totalTurnsCount = historyState.totalTurns || allNodes.length;
@@ -1355,12 +1416,17 @@ export function ChatMinimap({
         let loadEarlierTitle = "向上滚轮或点击加载更早对话";
         let loadEarlierAriaLabel = "加载更早对话";
 
-        if (isLoadingEarlier) {
+        if (navigation.value === undefined && !navigation.error) {
+          loadEarlierLabel = "正在读取轮次...";
+          loadEarlierDisabled = true;
+          loadEarlierTitle = "正在读取会话轮次索引";
+          loadEarlierAriaLabel = "正在读取会话轮次索引";
+        } else if (isLoadingEarlier) {
           loadEarlierLabel = "正在加载...";
           loadEarlierDisabled = true;
           loadEarlierTitle = "正在从服务端拉取更早轮次";
           loadEarlierAriaLabel = "正在加载更早对话";
-        } else if (loadError) {
+        } else if (loadError || navigation.error) {
           loadEarlierLabel = "加载失败，点击重试";
           loadEarlierDisabled = false;
           loadEarlierTitle = "加载历史记录失败，点击重新尝试";
@@ -1370,7 +1436,7 @@ export function ChatMinimap({
           loadEarlierDisabled = false;
           loadEarlierTitle = `展开本地未显示的 ${hiddenCount} 轮对话`;
           loadEarlierAriaLabel = `展开更早 ${hiddenCount} 轮对话`;
-        } else if (!historyState.hasEarlierMessages) {
+        } else if (!historyState.hasEarlierMessages || (navigation.value && allNodes[0]?.targetTurn.userTurnNumber === 1)) {
           loadEarlierLabel = "已显示全部轮次";
           loadEarlierDisabled = true;
           loadEarlierTitle = "当前会话的全部轮次已完全显示";
@@ -1406,10 +1472,11 @@ export function ChatMinimap({
               >
                 <span>会话导航</span>
                 <span className={styles.badge}>
-                  💬 共 {totalTurnsCount} 轮 · 已显示 {visibleTurnsCount} 轮{focusLabel}
+                  {!navigation.value && historyState.hasEarlierMessages && totalTurnsCount <= allNodes.length
+                    ? `💬 已加载 ${allNodes.length} 轮 · 更早对话待加载`
+                    : `💬 共 ${totalTurnsCount} 轮 · 已显示 ${visibleTurnsCount} 轮`}{focusLabel}
                 </span>
               </div>
-              {overlay && <button type="button" className={styles.closeOverlay} aria-label="关闭会话导航" onClick={onClose}>×</button>}
               <button
                 type="button"
                 className={`${styles.loadEarlier} ${isLoadingEarlier ? styles.loading : ""}`}

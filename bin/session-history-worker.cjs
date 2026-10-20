@@ -280,10 +280,19 @@ function buildSessionContext(entries, leafId, options = {}) {
     byId
   );
   const hasMore = Boolean(tail && tail > 0 && sliced[0]?.parentId);
+  const omittedTargets = /* @__PURE__ */ new Set();
+  for (const entry of sliced) {
+    if (entry.type !== "context_edit") continue;
+    if (entry.replacement === null) omittedTargets.add(entry.targetId);
+    else omittedTargets.delete(entry.targetId);
+  }
   const messages = [];
   const entryIds = [];
   for (const entry of sliced) {
-    const m = entryToUiMessage(entry, options);
+    let m = entryToUiMessage(entry, options);
+    if (m?.role === "assistant" && m.stopReason === "error" && omittedTargets.has(entry.id)) {
+      m = { ...m, retryAttempt: true };
+    }
     if (m) {
       messages.push(m);
       entryIds.push(entry.id);
@@ -772,6 +781,7 @@ function buildSessionDetailSnapshot(sessionManager, options) {
     entryCount: entries.length,
     latestEntryId: typeof latestEntry?.id === "string" ? latestEntry.id : null,
     leafId: leafId ?? null,
+    unstable: options.unstable,
     ...options.fingerprint ? { fingerprint: options.fingerprint } : {}
   });
   const firstUserEntry = entries.find((entry) => entry.type === "message" && entry.message.role === "user");

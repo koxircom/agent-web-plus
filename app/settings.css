@@ -21,6 +21,7 @@
 }
 
 .config-panel-surface {
+  container: config-panel / inline-size;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -563,6 +564,7 @@
 }
 
 .config-detail {
+  container: config-detail / inline-size;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -1383,8 +1385,10 @@
 .settings-dialog-surface {
   position: relative;
   display: grid;
-  grid-template-columns: var(--settings-sidebar-width, 200px) minmax(0, 1fr);
-  grid-template-rows: 44px minmax(0, 1fr);
+  container: settings-dialog / inline-size;
+  --settings-sidebar-track: min(var(--settings-sidebar-width, 200px), max(160px, calc(100% - 160px)));
+  grid-template-columns: var(--settings-sidebar-track) minmax(0, 1fr);
+  grid-template-rows: 50px minmax(0, 1fr);
   width: var(--settings-dialog-width, 1220px);
   max-width: calc(100vw - 32px);
   height: var(--settings-dialog-height, 860px);
@@ -1429,9 +1433,9 @@
   align-items: stretch;
   justify-content: flex-start;
   flex-shrink: 0;
-  width: var(--settings-sidebar-width, 200px);
-  min-width: var(--settings-sidebar-width, 200px);
-  max-width: var(--settings-sidebar-width, 200px);
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   height: 100%;
   min-height: 100%;
   padding: 16px 8px 16px 10px;
@@ -1514,10 +1518,6 @@
 
 .settings-dialog-surface.is-collapsed .settings-sidebar-collapse-btn {
   margin: 0 auto;
-}
-
-.settings-mobile-section-picker {
-  display: none;
 }
 
 .settings-section-tabs {
@@ -1741,7 +1741,7 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--settings-sidebar-width, 200px) - 7px);
+  left: calc(var(--settings-sidebar-track) - 7px);
   width: 14px;
   cursor: col-resize;
   z-index: 35;
@@ -2218,6 +2218,11 @@
 }
 
 @container settings-main (max-width: 580px) {
+  .settings-general { padding: 12px 12px 24px; }
+  .settings-general-title { margin-bottom: 12px; }
+  .settings-row.is-switch-row { gap: 10px; padding: 12px; }
+  .settings-card-header { padding-inline: 12px; }
+  .settings-general-description { overflow-wrap: anywhere; }
   .settings-row:not(.is-switch-row) {
     flex-direction: column;
     align-items: stretch;
@@ -2251,23 +2256,30 @@
   }
 }
 
-@media (max-width: 640px) {
-  .config-add-source-example.has-label {
+@container config-detail (max-width: 420px) {
+  .config-detail-grid {
     grid-template-columns: minmax(0, 1fr);
+    gap: 5px;
   }
+  .config-detail-grid-label:not(:first-child) { margin-top: 8px; }
+}
 
-  .config-panel-root.is-modal > .config-panel-surface {
-    width: calc(100vw - 16px);
-    height: calc(100dvh - 16px);
-  }
-
-  .config-split-view {
-    flex-direction: column;
-  }
+@container config-panel (max-width: 720px) {
+  .config-split-view { flex-direction: column; }
+  .enabled-models-banner { flex-wrap: wrap; gap: 6px; }
+  .enabled-models-banner-text { flex-basis: 100%; flex-wrap: wrap; }
+  .config-footer { flex-wrap: wrap; gap: 8px; padding: 10px 12px; }
+  .config-footer-actions { flex-wrap: wrap; max-width: 100%; }
+  .config-detail-actions { justify-content: flex-start; margin-left: 0; }
+  .config-detail-title { overflow-wrap: anywhere; }
+  .agents-feature-setting { flex-wrap: wrap; }
+  .agents-feature-actions { justify-content: flex-start; flex-wrap: wrap; }
 
   .config-sidebar {
     width: 100%;
-    height: 190px;
+    height: clamp(96px, 21dvh, 160px);
+    min-height: 96px;
+    flex-shrink: 1;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
@@ -2284,137 +2296,59 @@
   }
 
   .config-detail {
+    min-height: 120px;
     padding: 14px;
   }
 
+  .config-add-source-example.has-label { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container settings-dialog (max-width: 960px) {
+  .settings-dialog-surface > .settings-dialog-header {
+    padding: 12px 6px;
+  }
+  .settings-dialog-title { padding: 0 2px 8px; }
+  .settings-section-tab { gap: 6px; padding-inline: 8px; }
+}
+
+@media (max-width: 640px) {
+  .settings-dialog-resizer { display: none; }
+  .config-panel-root.is-modal > .config-panel-surface {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+  }
   .settings-dialog-surface {
-    grid-template-columns: minmax(0, 1fr) 48px;
-    grid-template-rows: 50px minmax(0, 1fr);
-    width: calc(100vw - 12px);
-    height: calc(100dvh - 12px);
+    --settings-sidebar-track: min(var(--settings-sidebar-width, 200px), max(160px, calc(100% - 160px)));
+    grid-template-rows: 44px minmax(0, 1fr);
+    width: 100vw;
+    height: 100dvh;
     max-width: 100vw;
     max-height: 100dvh;
-    border-radius: 8px;
+    border: 0;
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
-
-  .settings-dialog-sidebar,
-  .settings-dialog-surface > .settings-dialog-header {
-    grid-column: 1;
-    grid-row: 1;
-    position: relative;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: flex-start;
-    width: 100%;
-    min-width: 100%;
-    max-width: 100%;
-    height: 50px;
-    min-height: 50px;
-    padding: 0 0 0 14px;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    overflow: visible;
+  .settings-dialog-surface.is-collapsed { --settings-sidebar-track: 58px; }
+  .settings-sidebar-resizer {
+    left: calc(var(--settings-sidebar-track) - 12px);
+    width: 24px;
   }
-
-  .settings-dialog-title {
+  .settings-dialog-title { gap: 2px; font-size: 14px; }
+  .settings-nav-group-title {
     height: auto;
-    min-height: 0;
-    padding: 0;
-    margin: 0;
-    border-bottom: none;
-    font-size: 15px;
+    min-height: 24px;
+    padding-inline: 4px;
+    font-size: 10px;
+    letter-spacing: 0;
+    white-space: normal;
   }
-
-  .settings-sidebar-collapse-btn {
-    display: none;
-  }
-
-  .settings-section-tabs {
-    display: none;
-  }
-
-  .settings-mobile-section-picker {
-    display: block;
-    width: 100%;
-    max-width: 210px;
-    min-width: 0;
-    height: 32px;
-    margin-left: 14px;
-    padding: 0 9px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background: var(--bg-panel);
-    color: var(--text);
-    font-size: 16px;
-  }
-
-  .settings-sidebar-resizer,
-  .settings-dialog-resizer {
-    display: none;
-  }
-
-  .settings-dialog-toolbar {
-    padding: 0 8px;
-  }
-
-  .settings-dialog-main {
-    grid-column: 1 / -1;
-  }
-
-  .settings-general {
-    padding: 16px 14px 28px;
-  }
-
-  .settings-general-title {
-    display: none;
-  }
-
-  .settings-row:not(.is-switch-row) {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
-    padding: 12px 14px;
-  }
-
-  .settings-row:not(.is-switch-row) .settings-row-control {
-    width: 100%;
-    min-width: 0;
-    justify-content: stretch;
-  }
-
-  .settings-row:not(.is-switch-row) .settings-select {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .settings-row:not(.is-switch-row) .settings-chat-range-control {
-    width: 100%;
-  }
-
-  .settings-row.is-switch-row {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
-  .settings-row.is-switch-row .settings-row-info {
-    flex: 1 1 auto;
-    min-width: 0;
-    padding-right: 0;
-  }
-
-  .settings-row.is-switch-row .settings-row-control {
-    flex: 0 0 auto;
-    min-width: 0;
-    width: auto;
-    justify-content: flex-end;
-  }
-
-  .settings-theme-options {
-    width: 100%;
-  }
+  .settings-section-tab { min-height: 44px; padding-inline: 5px; font-size: 11px; }
+  .settings-section-icon { width: 15px; height: 15px; }
+  .settings-dialog-toolbar { padding-inline: 8px; }
 }
 
 @keyframes saved-pop {
@@ -2474,7 +2408,7 @@
   overflow-y: auto;
 }
 
-@media (max-width: 640px) {
+@container config-panel (max-width: 720px) {
   .mcp-config-notices {
     max-height: 30vh;
     max-height: 30dvh;

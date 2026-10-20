@@ -18,6 +18,7 @@ export interface SessionDetailSnapshotOptions {
   deferToolResultImages: boolean;
   tail: number;
   fingerprint?: string;
+  unstable?: boolean;
 }
 
 export interface SessionDetailSnapshot {
@@ -59,6 +60,7 @@ export function buildSessionDetailSnapshot(
     entryCount: entries.length,
     latestEntryId: typeof latestEntry?.id === "string" ? latestEntry.id : null,
     leafId: leafId ?? null,
+    unstable: options.unstable,
     ...(options.fingerprint ? { fingerprint: options.fingerprint } : {}),
   });
   const firstUserEntry = entries.find((entry) => entry.type === "message" && entry.message.role === "user");

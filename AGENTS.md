@@ -1,4 +1,11 @@
-# Pi Web - Development Notes
+# Agent Web Plus - Development Notes
+
+## 发布认证与附件关卡
+
+- 发布统一执行 `scripts/publish-release.py`，由已登记的发布容器使用已保存的 `gh` 登录；不得回退本机登录、导出令牌或用环境变量令牌覆盖。部署目标配置保留在私有运维目录，不写入公开源码。
+- 源码、发布说明和最终附件必须先通过脱敏扫描。`.next` 构建内容也必须在最终压缩包中扫描；不得用源码扫描成功代替附件扫描，不得直接调用 `gh release create/upload` 绕过关卡。
+- 默认仅预检；只有明确发布时才添加 `--apply`。上传使用已扫描的临时副本，先创建草稿，下载回读 SHA256 一致后公开。不覆盖已有 Release；失败时保留草稿并核查，不自动重传。
+- 当前可执行步骤见 `docs/release.md`；历史发布文档仅供追溯。
 
 ## Quick Start
 
@@ -19,6 +26,12 @@ Lint: `npm run lint`
 - Next.js may append a generated `BEGIN:nextjs-agent-rules` block to `AGENTS.md` when `next dev` starts. Treat that as generated tooling output, verify it with `git status`, and do not include it in an unrelated feature commit.
 
 ---
+
+## Pi / Codex 共享前端约定
+
+- Pi Agent 与 Codex 统一使用同一套原生前端组件和样式；布局、间距、菜单、队列、手势等公共交互必须同改同生效，不得按引擎复制界面或叠加单独的 CSS/DOM 补丁。
+- 引擎差异限于能力和协议适配层；确有差异时以明确的能力数据驱动同一组件。
+- 修改公共前端时，用相同内容、相同视口分别验证 Pi 与 Codex 的直接受影响路径，并保留原有操作。按变更范围执行最小检查，不因此启动无关全量回归。
 
 ## Architecture
 

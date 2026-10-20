@@ -213,6 +213,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (url.pathname.endsWith('/navigation')) { response.statusCode = 204; return response.end(); }
   const sessionMatch = /^\/api\/sessions\/([^/]+)(?:\/(context))?$/.exec(url.pathname);
   if (sessionMatch) {
     const sessionId = decodeURIComponent(sessionMatch[1]);
@@ -406,7 +407,10 @@ async function runBaselinePhone(browser, origin) {
 async function runDesktopBoundedPrefetch(browser, origin) {
   const config = makeSession("desktop-prefetch", 9, 1, { longLastAssistant: true, holdFirstPage: true });
   const { context, page, scroll } = await openBrowserPage(browser, origin, 980, [config]);
-  await waitFor(() => Boolean(config.pending), "desktop first automatic page request");
+  await page.waitForTimeout(180);
+  assert.equal(config.pageRequests.length, 0, "opening a long thread must not prefetch old bodies");
+  await page.locator("button[data-history-load-state]").first().evaluate(el=>el.click());
+  await waitFor(() => Boolean(config.pending), "desktop explicit page request");
   const initialState = await page.evaluate(() => window.__PI_ENH_GET_HISTORY_STATE__?.());
   assert.equal(initialState?.entryIds?.length, 2, "the desktop fixture starts with one user turn and its assistant reply");
   assert.equal(initialState?.hasEarlierMessages, true, "the initial desktop context must advertise older history");
@@ -432,10 +436,10 @@ async function runDesktopBoundedPrefetch(browser, origin) {
 
   const before = await scrollMetrics(scroll);
   releasePendingPage(config);
-  await waitFor(async () => config.pageRequests.length === 2 && await page.locator("[data-minimap-node-index]").count() === 5,
-    "desktop navigation to stop at five loaded user turns");
+  await waitFor(async () => config.pageRequests.length === 1 && await page.locator("[data-minimap-node-index]").count() === 3,
+    "one explicit page loads two earlier user turns");
   await page.waitForTimeout(180);
-  assert.equal(config.pageRequests.length, 2, "the five-turn target must remain stable after the render settles");
+  assert.equal(config.pageRequests.length, 1, "one click must not recursively fetch remaining old bodies");
   await waitFor(() => sentinel.getAttribute("data-history-load-state").then((state) => state === "idle"), "idle history indicator");
   const after = await scrollMetrics(scroll);
   assert.ok(Math.abs(after.distanceFromBottom - before.distanceFromBottom) < 3,
@@ -443,13 +447,13 @@ async function runDesktopBoundedPrefetch(browser, origin) {
   assert.equal(await page.locator("[data-history-load-spinner]").count(), 0, "idle state must not retain or animate the spinner");
   assert.equal((await page.evaluate(() => window.__PI_ENH_GET_HISTORY_STATE__?.()))?.hasEarlierMessages, true,
     "navigation should stop at five turns while the session still has older history");
-  assert.equal(await showDesktopNodes(page), 5, "the visible desktop navigator must contain five loaded user nodes");
-  assert.equal(config.pageRequests.length, 2, "two pages of two user turns should satisfy the five-turn target");
+  assert.equal(await showDesktopNodes(page), 3, "the visible desktop navigator contains only loaded user nodes");
+  assert.equal(config.pageRequests.length, 1);
   await captureScenario(page, {
     scenario: "desktop-bounded-prefetch",
     width: 980,
     initialUserTurns: 1,
-    finalUserNodes: 5,
+    finalUserNodes: 3,
     requests: records(config),
     before,
     after,
@@ -469,12 +473,11 @@ async function runPhoneOpenLoad(browser, origin) {
   const dialog = page.getByRole("dialog", { name: "会话导航" });
   await dialog.waitFor({ timeout: 3000 });
   await waitFor(async () => config.pageRequests.length === 2 && await dialog.locator("[data-minimap-preview-user]").count() === 5,
-    "mobile overlay to load exactly five user navigation nodes");
-  await page.waitForTimeout(180);
-  assert.equal(config.pageRequests.length, 2, "mobile navigation must stop once five user turns are loaded");
+    "Pi without an index retains its five-turn fallback when navigation opens");
+  assert.equal(config.pageRequests.length, 2);
   const widthAfter = await scroll.evaluate((element) => element.getBoundingClientRect().width);
   assert.equal(widthAfter, widthBefore, "opening the mobile navigation overlay must not resize the chat");
-  assert.equal(config.pageRequests.length, 2, "the opened mobile navigation must stop at five loaded user turns");
+  assert.equal(config.pageRequests.length, 2);
   assert.equal((await page.evaluate(() => window.__PI_ENH_GET_HISTORY_STATE__?.()))?.hasEarlierMessages, true);
   await captureScenario(page, { scenario: "phone-closed-then-open", width: 390, widthBefore, widthAfter, nodes: 5, requests: records(config) });
   await context.close();
@@ -516,6 +519,7 @@ async function runAlreadyLoadedAndScrollAnchor(browser, origin) {
 async function runShortHistory(browser, origin) {
   const config = makeSession("short-history", 2, 1, { longLastAssistant: true });
   const { context, page } = await openBrowserPage(browser, origin, 980, [config]);
+  await page.locator("button[data-history-load-state]").first().evaluate(el=>el.click());
   await waitFor(async () => config.pageRequests.length === 1 && await page.locator("[data-minimap-node-index]").count() === 2,
     "short history to reach its terminal page");
   await page.waitForTimeout(250);
@@ -529,6 +533,7 @@ async function runFailureAndExplicitRetry(browser, origin) {
   const config = makeSession("retry-history", 5, 1, { failures: 1, longLastAssistant: true });
   const { context, page } = await openBrowserPage(browser, origin, 980, [config]);
   const sentinel = page.locator("button[data-history-load-state]").first();
+  await sentinel.evaluate(el=>el.click());
   await waitFor(async () => config.pageRequests.length === 1 && await sentinel.getAttribute("data-history-load-state") === "error",
     "one failed automatic history request and visible error state");
   await page.waitForTimeout(300);
@@ -536,15 +541,12 @@ async function runFailureAndExplicitRetry(browser, origin) {
   assert.equal(await sentinel.isEnabled(), true, "failed history must expose an actionable retry");
   assert.match(await sentinel.innerText(), /失败|重试/, "retry action must announce the failure and retry affordance");
 
-  const rail = page.locator("[data-minimap-native-owner]").first();
-  await rail.hover({ timeout: 3000 });
-  const navRetry = page.locator("[data-pi-enh-minimap-load-earlier]");
-  await navRetry.waitFor({ timeout: 3000 });
-  assert.equal(await navRetry.isEnabled(), true);
-  assert.match(await navRetry.getAttribute("aria-label"), /失败|重试/);
-  await navRetry.click();
+  await sentinel.evaluate(element=>element.click());
+  await waitFor(async () => config.pageRequests.length === 2 && await page.locator("[data-minimap-node-index]").count() === 3,
+    "explicit history retry loads its requested page");
+  await showDesktopNodes(page); // Pi fallback may now fill its five-turn navigator.
   await waitFor(async () => config.pageRequests.length === 3 && await page.locator("[data-minimap-node-index]").count() === 5,
-    "explicit navigation retry to recover the remaining short history");
+    "opened Pi navigator recovers remaining title context");
   assert.deepEqual(config.pageRequests.map((request) => request.before), ["u5", "u5", "u3"]);
   await captureScenario(page, { scenario: "failed-then-explicit-retry", width: 980, nodes: 5, requests: records(config), retryAccessible: true });
   await context.close();
@@ -561,6 +563,7 @@ async function runSessionSwitchWhilePending(browser, origin) {
   });
   newSession.hasMore = false;
   const { context, page } = await openBrowserPage(browser, origin, 980, [oldSession, newSession], newSession.id);
+  await page.locator("button[data-history-load-state]").first().evaluate(el=>el.click());
   await waitFor(() => Boolean(oldSession.pending), "old session page to remain pending");
   await page.locator("#fixture-switch-session").click();
   await page.locator("#fixture-active-session").getByText(newSession.id, { exact: true }).waitFor({ timeout: 5000 });
@@ -660,7 +663,7 @@ let browser;
 try {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined, headless: true, args: ["--no-sandbox"] });
 
   const scenarioRunners = baseline
     ? {

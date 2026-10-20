@@ -267,11 +267,28 @@ export function buildSessionContext(
   );
   const hasMore = Boolean(tail && tail > 0 && sliced[0]?.parentId);
 
+  // Pi records an auto-retried provider failure by omitting that failed
+  // assistant entry from future model context. Keep it visible in history,
+  // but annotate it as a superseded attempt instead of a terminal failure.
+  const omittedTargets = new Set<string>();
+  for (const entry of sliced) {
+    if (entry.type !== "context_edit") continue;
+    if (entry.replacement === null) omittedTargets.add(entry.targetId);
+    else omittedTargets.delete(entry.targetId);
+  }
+
   // Convert messages and their IDs together to keep fork/navigation targets aligned.
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
   for (const entry of sliced) {
-    const m = entryToUiMessage(entry, options);
+    let m = entryToUiMessage(entry, options);
+    if (
+      m?.role === "assistant"
+      && m.stopReason === "error"
+      && omittedTargets.has(entry.id)
+    ) {
+      m = { ...m, retryAttempt: true };
+    }
     if (m) {
       messages.push(m);
       entryIds.push(entry.id);

@@ -1,3 +1,9 @@
+  // Queue bootstrap can call the hoisted composer resolver before modes init.
+  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
+  let lastTrackedModeUrlSessionId = undefined;
+  let lastTrackedModeNativeDraftKey = undefined;
+  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
+
   // ==========================================
   // 2.6 AI Quick Actions (同轮 AI 结构化选择 + 安全兜底)
   // ==========================================
@@ -521,7 +527,8 @@
   }
 
   async function refreshQuickActionSelection(force = false) {
-    if (window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__ || !isPluginEnabled("quick-action-buttons")) return null;
+    if (window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__ || !isPluginEnabled("quick-action-buttons")
+      || findComposerTextarea()?.closest?.('[data-pi-native-inline-suggestions="true"]')) return null;
     const sessionId = getCurrentSessionId();
     if (!sessionId || isChatSessionRunning()) return null;
     if (quickActionSelectionSessionId !== sessionId) {
@@ -1086,7 +1093,7 @@
       return true;
     }
 
-    // Compatibility fallback for Pi Web variants without a discoverable send button.
+    // Compatibility fallback for Agent Web Plus variants without a discoverable send button.
     dispatchComposerSubmitShortcut(textarea);
     return true;
   }
@@ -1100,7 +1107,7 @@
   let emptySendContinueComposing = false;
 
   function isEmptySendContinueButton(button) {
-    if (!button) return false;
+    if (!button || button.closest?.('[data-pi-native-inline-suggestions="true"]')) return false;
     if (!isNativeComposerLayoutButton(button)) return false;
     const className = String(button.className || "");
     if (/\bpi-enh-quick-(?:start-button|fallback-trigger|menu-item)\b/.test(className)) return false;
@@ -1158,7 +1165,8 @@
   }
 
   function canUseEmptySendContinue(textarea) {
-    return isPluginEnabled("empty-send-continue")
+    return !textarea?.hasAttribute?.("data-pi-inline-suggestion")
+      && isPluginEnabled("empty-send-continue")
       && !emptySendContinueComposing
       && hasExistingConversation()
       && !isChatSessionRunning()
@@ -1188,6 +1196,7 @@
   }
 
   function syncEmptySendContinue() {
+    notifyComposerSubmissionStateChange();
     const textarea = findComposerTextarea();
     const candidates = getEmptySendContinueButtons(textarea);
     const eligible = Boolean(textarea && canUseEmptySendContinue(textarea));
@@ -1327,7 +1336,7 @@
   }
 
   function readNativeComposerDraft() {
-    // Compatibility adapter for Pi Web 0.9.1 ChatInput. Locate state by semantic
+    // Compatibility adapter for Agent Web Plus 0.9.1 ChatInput. Locate state by semantic
     // identity rather than hook indices; if upstream changes, fail closed.
     const textarea = document.querySelector("textarea.chat-input-textarea");
     const fieldset = textarea?.closest("[data-pi-native-composer-host]");
@@ -1482,6 +1491,7 @@
     const textarea = findComposerTextarea();
     const hasQuickReply = Boolean(isPluginEnabled("quick-action-buttons")
       && textarea
+      && !textarea.closest?.('[data-pi-native-inline-suggestions="true"]')
       && !isChatSessionRunning()
       && isComposerInputEmpty(textarea)
       && !composerHasAnySendPayload(textarea)
@@ -1490,12 +1500,13 @@
       hasAnnotations,
       hasAttachments: isPluginEnabled("composer-file-paste") && pendingComposerAttachments.length > 0,
       hasQuickReply,
+      emptyContinueEnabled: isPluginEnabled("empty-send-continue"),
     };
   }
 
   function notifyComposerSubmissionStateChange() {
     const state = getComposerSubmissionState();
-    const signature = `${state.hasAnnotations ? 1 : 0}:${state.hasAttachments ? 1 : 0}:${state.hasQuickReply ? 1 : 0}`;
+    const signature = `${state.hasAnnotations ? 1 : 0}:${state.hasAttachments ? 1 : 0}:${state.hasQuickReply ? 1 : 0}:${state.emptyContinueEnabled ? 1 : 0}`;
     if (lastComposerSubmissionState === signature) return;
     lastComposerSubmissionState = signature;
     window.dispatchEvent(new Event("pi-enh-composer-submission-state-change"));
@@ -2813,7 +2824,7 @@
           showToast(`读取文件失败: ${file.name}`, null, 4000);
         }
       } else {
-        // 二进制/文档/大文件：先创建会话隔离目录，再经 Pi Web 原生上传接口写入。
+        // 二进制/文档/大文件：先创建会话隔离目录，再经 Agent Web Plus 原生上传接口写入。
         showToast(`正在上传附件: ${file.name}...`, null, 2400);
         try {
           const cwd = await getEffectiveComposerCwd();
@@ -4161,6 +4172,7 @@
   let composerQueueCurrentEntries = [];
   let composerQueueRequest = null;
   let composerQueueBusy = false;
+  let composerQueueActionsEnabled = true;
   const composerQueueUnsupported = new Set();
   let composerQueueActionsState = null;
   const composerQueueErrors = new Map();
@@ -4250,7 +4262,8 @@
 
   async function loadComposerQueueTokens(sessionId, entriesSignature, entries) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
+    if (!composerQueueActionsEnabled
+      || !activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
     composerQueueRequest = entriesSignature;
     try {
       const response = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
@@ -4259,6 +4272,7 @@
         body: JSON.stringify({ type: "get_queue_actions" }),
       });
       const result = await response.json();
+      if (!composerQueueActionsEnabled) return;
       const data = result?.data;
       if (!response.ok || result.success === false) {
         composerQueueActionsState = null;
@@ -4689,24 +4703,39 @@
 
   function publishNativeQueueDetails(explicitSid = null) {
     const sessionId = getEffectiveQueueSessionId(explicitSid);
-    const items = composerQueueActionsState?.signature === composerQueueLastEntriesSignature
+    const actionsEnabled = composerQueueActionsEnabled;
+    const items = actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature
       ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
+    const hasDeliveryStatuses = items.some((item) => typeof item?.status === "string");
+    const statuses = hasDeliveryStatuses ? items.map((item) => ({
+      status: typeof item?.status === "string" ? item.status : "",
+      ...(typeof item?.error === "string" && item.error ? { error: item.error } : {}),
+    })) : undefined;
     window.dispatchEvent(new CustomEvent("pi:native-queue-details", { detail: {
       signature: composerQueueLastEntriesSignature,
-      enabled: isPluginEnabled("composer-queue-panel"),
+      enabled: actionsEnabled && isPluginEnabled("composer-queue-panel")
+        && composerQueueActionsState?.sessionId === sessionId
+        && composerQueueActionsState?.signature === composerQueueLastEntriesSignature,
+      actionsEnabled,
       busy: composerQueueBusy,
-      reorder: composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
+      reorder: actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
+      ...(statuses ? { statuses } : {}),
       images: composerQueueCurrentEntries.map((entry, i) => getQueueEntryAttachments(sessionId, entry.text, i, entry.kind, items[i]?.token)),
     } }));
   }
 
   function syncComposerQueuePanel(isAttachmentUpdateOnly = false, explicitSid = null) {
+    const activeSid = getEffectiveQueueSessionId(explicitSid);
+    if (!composerQueueActionsEnabled) {
+      composerQueueActionsState = null;
+      publishNativeQueueDetails(activeSid);
+      return;
+    }
     if (!isPluginEnabled("composer-queue-panel")) {
       publishNativeQueueDetails(explicitSid);
       return;
     }
     if (!composerQueuePanel?.isConnected || !composerQueueCurrentEntries.length) return;
-    const activeSid = getEffectiveQueueSessionId(explicitSid);
     publishNativeQueueDetails(activeSid);
     // Only React explicit snapshot event refreshes tokens; never DOM scans/timers.
     if (!isAttachmentUpdateOnly && activeSid && !composerQueueBusy) {
@@ -4719,20 +4748,29 @@
     if (!detail || !Array.isArray(detail.entries)) return;
     const activeSid = getEffectiveQueueSessionId(detail.sessionId);
     if (!activeSid) return;
+    composerQueueActionsEnabled = detail.actionsEnabled !== false;
     composerQueuePanel = detail.host;
     const signature = JSON.stringify([activeSid, detail.entries]);
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
     composerQueueLastEntriesSignature = signature;
     if (changed) composerQueueActionsState = null;
-    if (!detail.entries.length) { clearQueueDetailCache(); return; }
-    syncComposerQueuePanel(!changed, activeSid);
-    triggerSessionHydration(activeSid);
+    if (!detail.entries.length) {
+      clearQueueDetailCache();
+      publishNativeQueueDetails(activeSid);
+      return;
+    }
+    // Entries can arrive before connection/inbox hydration marks actions ready.
+    // Read tokens when readiness returns even if the text signature is unchanged.
+    const needsTokens = composerQueueActionsEnabled && !composerQueueActionsState;
+    syncComposerQueuePanel(!changed && !needsTokens, activeSid);
+    if (composerQueueActionsEnabled) triggerSessionHydration(activeSid);
   };
   const handleNativeQueueAction = (event) => {
     const { action, index, targetIndex, sessionId, signature } = event.detail || {};
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!isPluginEnabled("composer-queue-panel") || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    if (!composerQueueActionsEnabled || !isPluginEnabled("composer-queue-panel") || !activeSid
+      || signature !== composerQueueLastEntriesSignature) return;
     if (action === "recall") void recallSingleQueuedMessage(index, activeSid, signature);
     else if (action === "recallAll") void recallAllQueuedMessages(activeSid, signature, composerQueueCurrentEntries);
     else if (action === "delete") void deleteSingleQueuedMessage(index, activeSid, signature);
@@ -4755,6 +4793,7 @@
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
     removeComposerQueuePanel();
   });
+  window.dispatchEvent(new Event("pi:native-queue-ready"));
   window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
@@ -5326,10 +5365,6 @@
     activeComposerFormatTextarea = null;
   }
 
-  window.__PI_ENH_SYNC_COMPOSER_MARKDOWN_FORMAT__ = syncComposerMarkdownFormat;
-  window.__PI_ENH_REMOVE_COMPOSER_MARKDOWN_FORMAT__ = removeComposerMarkdownFormat;
-  window.__PI_ENH_HTML_TO_MARKDOWN__ = htmlToMarkdown;
-
   activeCleanups.push(removeComposerMarkdownFormat);
   window.__PI_ENH_SYNC_COMPOSER_MARKDOWN_FORMAT__ = syncComposerMarkdownFormat;
   window.__PI_ENH_REMOVE_COMPOSER_MARKDOWN_FORMAT__ = removeComposerMarkdownFormat;
@@ -5350,7 +5385,7 @@
   composerModesStateMap = new Map(); // sessionId -> { mode: "normal"|"plan"|"goal", goal?: string, pausePending?: boolean, paused?: boolean }
   let composerModeSwitching = false;
   let isGoalActionRunning = false;
-  pendingNewComposerMode = null; // {mode, project, sessionId?}; never a server success claim
+  pendingNewComposerMode = null; // {mode, engine, project, sessionId?}; never a server success claim
   let composerAddMenuEl = null;
   let composerAddMenuContext = null;
   let composerModesEventsBound = false;
@@ -5359,8 +5394,8 @@
   let lastComposerGoalMismatchKey = null;
 
   // Shared same-origin SVG geometry keeps the native menu and React controls aligned.
-  const SVG_GOAL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><use href="/icons/composer-mode-icons.svg#goal"></use></svg>`;
-  const SVG_PLAN_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><use href="/icons/composer-mode-icons.svg#plan"></use></svg>`;
+  const SVG_GOAL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${COMPOSER_MODE_ICON_MARKUP.goal}</svg>`;
+  const SVG_PLAN_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${COMPOSER_MODE_ICON_MARKUP.plan}</svg>`;
   const SVG_ATTACH_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>`;
   const SVG_IMAGE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
   const SVG_CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -5384,10 +5419,47 @@
     }
   }
 
-  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
-  let lastTrackedModeUrlSessionId = undefined;
-  let lastTrackedModeNativeDraftKey = undefined;
-  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
+  function normalizeComposerModeState(state) {
+    if (!state || state.version !== 1 || !["normal", "plan", "goal"].includes(state.mode)) return null;
+    const normalized = { version: 1, mode: state.mode };
+    if (state.capabilities && typeof state.capabilities === "object" && !Array.isArray(state.capabilities)) {
+      const capabilities = {};
+      for (const key of ["goal", "plan"]) {
+        if (typeof state.capabilities[key] === "boolean") capabilities[key] = state.capabilities[key];
+      }
+      normalized.capabilities = capabilities;
+    }
+    if (typeof state.goalKnown === "boolean") normalized.goalKnown = state.goalKnown;
+    if (Array.isArray(state.toolsBeforePlan)) normalized.toolsBeforePlan = state.toolsBeforePlan;
+    if (state.mode !== "normal" || state.goalKnown === true) {
+      if (typeof state.goal === "string") normalized.goal = state.goal;
+      if (state.mode === "goal" || state.goalKnown === true) {
+        if (typeof state.goalStatus === "string") normalized.goalStatus = state.goalStatus;
+        if (state.goalIdentity && typeof state.goalIdentity === "object" && !Array.isArray(state.goalIdentity)) {
+          const identity = {};
+          if (typeof state.goalIdentity.objective === "string") identity.objective = state.goalIdentity.objective;
+          if (typeof state.goalIdentity.createdAt === "string" || typeof state.goalIdentity.createdAt === "number") {
+            identity.createdAt = state.goalIdentity.createdAt;
+          }
+          if (Object.keys(identity).length) normalized.goalIdentity = identity;
+        }
+        if (["paused", "pending", "active"].includes(state.goalStatus)) {
+          normalized.paused = state.goalStatus === "paused";
+          normalized.pausePending = state.goalStatus === "pending";
+        } else {
+          normalized.paused = Boolean(state.paused);
+          normalized.pausePending = Boolean(state.pausePending);
+        }
+        if (typeof state.goalElapsedMs === "number" && Number.isFinite(state.goalElapsedMs)) {
+          normalized.goalElapsedMs = state.goalElapsedMs;
+        }
+        if (typeof state.goalActiveSinceMs === "number" && Number.isFinite(state.goalActiveSinceMs)) {
+          normalized.goalActiveSinceMs = state.goalActiveSinceMs;
+        }
+      }
+    }
+    return normalized;
+  }
 
   function readComposerNativeDraftKey() {
     try {
@@ -5524,6 +5596,7 @@
       }
       .pi-enh-composer-menu-item:hover { background: color-mix(in srgb, var(--text, #fff) 8%, transparent) !important; }
       .pi-enh-composer-menu-item.active { background: color-mix(in srgb, var(--text, #fff) 12%, transparent) !important; }
+      .pi-enh-composer-menu-item:disabled { opacity: .55; cursor: not-allowed; }
       .pi-enh-composer-menu-item:focus-visible { outline: 2px solid var(--text-muted, #a1a1aa); outline-offset: 1px; }
       .pi-enh-composer-menu-icon { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 18px !important; height: 18px !important; flex-shrink: 0 !important; color: var(--text-muted, #a1a1aa) !important; }
       .pi-enh-composer-menu-label { display: flex !important; align-items: center !important; flex: 1 1 auto !important; min-width: 0 !important; }
@@ -5540,16 +5613,58 @@
   }
 
   function getSessionComposerMode(sessionId) {
-    if (!sessionId) return pendingNewComposerMode?.project === getCurrentProjectStatusKey() ? pendingNewComposerMode.mode : "normal";
+    if (!sessionId) {
+      const engine = getComposerExecutionEngineHint();
+      return pendingNewComposerMode?.project === getCurrentProjectStatusKey() && pendingNewComposerMode?.engine === engine
+        ? pendingNewComposerMode.mode
+        : "normal";
+    }
     return composerModesStateMap.get(sessionId)?.mode || "normal";
+  }
+
+  function getComposerExecutionEngineHint(sessionId = getEffectiveComposerSessionId()) {
+    if (sessionId) return sessionId.startsWith("codex:") ? "codex" : "pi";
+    const composerHost = findComposerTextarea()?.closest?.("[data-pi-native-composer-host]");
+    const engine = composerHost?.dataset?.piExecutionEngine;
+    return engine === "pi" || engine === "codex" ? engine : null;
+  }
+
+  function setComposerModeEntriesAvailability(menu, engine, sessionId, currentMode = getSessionComposerMode(sessionId), capabilityCheckComplete = false) {
+    if (!menu?.isConnected) return;
+    const state = sessionId ? composerModesStateMap.get(sessionId) : null;
+    for (const item of menu.querySelectorAll('[data-composer-mode-entry="goal"], [data-composer-mode-entry="plan"]')) {
+      const mode = item.dataset.composerModeEntry;
+      const mayExit = currentMode === mode;
+      const supported = engine === "pi" || (!sessionId && engine === "codex") || state?.capabilities?.[mode] === true;
+      const unknown = engine === "codex" && sessionId && typeof state?.capabilities?.[mode] !== "boolean";
+      item.disabled = engine !== "pi" && !mayExit && !supported;
+      item.setAttribute("aria-disabled", String(item.disabled));
+      if (item.disabled && engine === "codex") {
+        item.title = unknown
+          ? capabilityCheckComplete ? "服务端未声明此模式能力" : "正在确认当前 Codex 接口的模式能力"
+          : `当前 Codex 接口不支持${mode === "goal" ? "目标" : "计划"}模式`;
+        const description = item.querySelector(".pi-enh-composer-menu-desc");
+        if (description) description.textContent = unknown
+          ? capabilityCheckComplete ? "服务端未声明能力" : "正在确认能力"
+          : "当前接口不支持";
+      } else if (!item.disabled && engine === "codex" && !supported && mayExit) {
+        item.title = "退出当前模式";
+      } else {
+        item.title = mode === "goal" ? "设置要持续追求的目标" : "开启计划模式；快捷键 Shift+Tab";
+        const description = item.querySelector(".pi-enh-composer-menu-desc");
+        if (description) description.textContent = mode === "goal" ? "设置要持续追求的目标" : "开启计划模式";
+      }
+    }
   }
 
   function getComposerGoalState(sessionId = getEffectiveComposerSessionId()) {
     const state = sessionId ? composerModesStateMap.get(sessionId) : null;
-    const goal = state?.mode === "goal" ? String(state.goal || "").trim() : "";
+    const goal = state?.mode === "goal" || state?.goalKnown === true ? String(state.goal || "").trim() : "";
     if (!sessionId || !goal) return null;
-    const paused = Boolean(state.paused);
-    const pausePending = Boolean(state.pausePending);
+    const pausePending = state.goalStatus === "pending" || Boolean(state.pausePending);
+    const paused = !pausePending && (state.goalStatus === "paused" || Boolean(state.paused));
+    const statusKey = state.goalStatus || (pausePending ? "pending" : paused ? "paused" : "active");
+    const canControl = ["active", "pending", "paused"].includes(statusKey);
     return {
       sessionId,
       mode: "goal",
@@ -5558,8 +5673,8 @@
       pausePending,
       goalElapsedMs: typeof state.goalElapsedMs === "number" ? state.goalElapsedMs : null,
       goalActiveSinceMs: typeof state.goalActiveSinceMs === "number" ? state.goalActiveSinceMs : null,
-      statusKey: pausePending ? "pending" : paused ? "paused" : "active",
-      action: paused || pausePending ? "resume" : "pause",
+      statusKey,
+      action: canControl ? (paused || pausePending ? "resume" : "pause") : null,
     };
   }
 
@@ -5572,6 +5687,20 @@
         detail: { sessionId: sessionId || null, mode, state, goalState: getComposerGoalState(sessionId) },
       }));
     } catch (_) {}
+  }
+
+  function commitComposerModeState(sessionId, state) {
+    const normalized = normalizeComposerModeState(state);
+    if (!sessionId || !normalized) return null;
+    composerModesStateMap.set(sessionId, normalized);
+    if (getEffectiveComposerSessionId() === sessionId) {
+      if (lastObservedModesSessionId !== sessionId) {
+        lastObservedModesSessionId = sessionId;
+        closeComposerAddMenu();
+      }
+      syncComposerModes();
+    }
+    return normalized;
   }
 
   window.__PI_ENH_GET_COMPOSER_GOAL_STATE__ = getComposerGoalState;
@@ -5663,6 +5792,7 @@
     const goalItem = document.createElement("button");
     goalItem.type = "button";
     goalItem.className = `pi-enh-composer-menu-item${currentMode === "goal" ? " active" : ""}`;
+    goalItem.dataset.composerModeEntry = "goal";
     goalItem.setAttribute("aria-label", "目标模式：设置要持续追求的目标");
     goalItem.title = "设置要持续追求的目标";
     goalItem.innerHTML = `
@@ -5685,6 +5815,7 @@
     const planItem = document.createElement("button");
     planItem.type = "button";
     planItem.className = `pi-enh-composer-menu-item${currentMode === "plan" ? " active" : ""}`;
+    planItem.dataset.composerModeEntry = "plan";
     planItem.setAttribute("aria-label", "计划模式：开启计划模式");
     planItem.title = "开启计划模式；快捷键 Shift+Tab";
     planItem.innerHTML = `
@@ -5709,6 +5840,19 @@
     menu.style.bottom = "auto";
     composerAddMenuEl = menu;
     composerAddMenuContext = { card, addBtn, openWidth: window.innerWidth };
+    const engineHint = getComposerExecutionEngineHint(sessionId);
+    const applyAvailability = (capabilityCheckComplete = false) => setComposerModeEntriesAvailability(
+      menu, engineHint, sessionId, getSessionComposerMode(sessionId), capabilityCheckComplete
+    );
+    applyAvailability();
+    if (engineHint === "codex" && sessionId) {
+      const capabilities = composerModesStateMap.get(sessionId)?.capabilities;
+      if (typeof capabilities?.goal !== "boolean" || typeof capabilities?.plan !== "boolean") {
+        void querySessionModeState(sessionId).then(() => {
+          if (composerAddMenuEl === menu && menu.isConnected) applyAvailability(true);
+        });
+      }
+    }
     positionComposerAddMenu();
     emitComposerAddMenuChange(true);
   }
@@ -5717,8 +5861,21 @@
     if (!["normal", "plan", "goal"].includes(targetMode)) return false;
     findComposerTextarea()?.focus();
     const sessionId = targetSessionId || getEffectiveComposerSessionId();
+    const executionEngine = getComposerExecutionEngineHint(sessionId);
+    if (!executionEngine) {
+      if (targetMode === "normal") {
+        pendingNewComposerMode = null;
+        return true;
+      }
+      showToast("无法确认当前执行引擎，目标或计划模式未启用；消息草稿和附件已保留", null, 3000);
+      return false;
+    }
     if (!sessionId) {
-      pendingNewComposerMode = targetMode === "normal" ? null : {mode: targetMode, project: getCurrentProjectStatusKey()};
+      pendingNewComposerMode = targetMode === "normal" ? null : {
+        mode: targetMode,
+        engine: executionEngine,
+        project: getCurrentProjectStatusKey(),
+      };
       syncComposerModes();
       findComposerTextarea()?.focus();
       return true;
@@ -5730,6 +5887,19 @@
     composerModeSwitching = true;
 
     try {
+      const isStagedNewSession = pendingNewComposerMode?.sessionId === sessionId &&
+        pendingNewComposerMode?.engine === executionEngine &&
+        pendingNewComposerMode?.project === getCurrentProjectStatusKey();
+      if (executionEngine === "codex" && targetMode !== "normal" && !isStagedNewSession) {
+        const capability = composerModesStateMap.get(sessionId)?.capabilities?.[targetMode];
+        if (typeof capability !== "boolean") {
+          await querySessionModeState(sessionId);
+        }
+        if (composerModesStateMap.get(sessionId)?.capabilities?.[targetMode] !== true) {
+          showToast(`当前 Codex 接口未确认支持${targetMode === "goal" ? "目标" : "计划"}模式；消息草稿和附件已保留`, null, 3000);
+          return false;
+        }
+      }
       // One atomic request saves the next-input mode and reads the extension's
       // authoritative result; no prompt execution or speculative UI state.
       composerModeFetchToken++;
@@ -5751,24 +5921,14 @@
         showToast(`模式切换未生效（当前仍为 ${realMode}），可能状态忙碌或参数受限`, null, 3000);
         return false;
       }
+      if (executionEngine === "codex" && targetMode !== "normal" && parsed?.capabilities?.[targetMode] !== true) {
+        showToast("服务端未确认该模式能力，消息草稿和附件已保留", null, 3000);
+        return false;
+      }
 
       // 真实生效后，才更新本地会话模式状态
       composerModeFetchToken++;
-      const updatedSwitchState = {
-        mode: realMode,
-        goal: parsed?.goal,
-        pausePending: Boolean(parsed?.pausePending),
-        paused: Boolean(parsed?.paused),
-      };
-      if (typeof parsed?.goalElapsedMs === "number") {
-        updatedSwitchState.goalElapsedMs = parsed.goalElapsedMs;
-      }
-      if (typeof parsed?.goalActiveSinceMs === "number") {
-        updatedSwitchState.goalActiveSinceMs = parsed.goalActiveSinceMs;
-      }
-      composerModesStateMap.set(sessionId, updatedSwitchState);
-      syncComposerModes();
-      syncComposerGoalBar();
+      if (!commitComposerModeState(sessionId, parsed)) return false;
       return true;
     } catch (err) {
       showToast("切换模式发生异常，请检查网络", null, 3000);
@@ -5794,27 +5954,13 @@
       const stateObj = data?.state || (data && typeof data === "object" && "extensionStatuses" in data ? data : null);
       const parsed = parseExtensionStatus(stateObj || data, "composer-modes");
       if (parsed?.mode) {
-        const updatedQueryState = {
-          mode: parsed.mode,
-          goal: parsed.goal,
-          pausePending: Boolean(parsed.pausePending),
-          paused: Boolean(parsed.paused),
-        };
-        if (typeof parsed.goalElapsedMs === "number") {
-          updatedQueryState.goalElapsedMs = parsed.goalElapsedMs;
-        }
-        if (typeof parsed.goalActiveSinceMs === "number") {
-          updatedQueryState.goalActiveSinceMs = parsed.goalActiveSinceMs;
-        }
-        composerModesStateMap.set(sessionId, updatedQueryState);
-        syncComposerModes();
-        syncComposerGoalBar();
+        return commitComposerModeState(sessionId, parsed);
       } else if (stateObj && Array.isArray(stateObj.extensionStatuses)) {
-        composerModesStateMap.set(sessionId, { mode: "normal" });
-        syncComposerModes();
-        syncComposerGoalBar();
+        return commitComposerModeState(sessionId, { version: 1, mode: "normal" });
       }
+      return null;
     } catch (e) {}
+    return null;
   }
 
   // ==========================================
@@ -5829,6 +5975,9 @@
     "paused",
     "goalElapsedMs",
     "goalActiveSinceMs",
+    "capabilities",
+    "goalStatus",
+    "goalIdentity",
   ]);
   const composerModesTextNodeMap = new Map(); // TextNode -> { raw: string, formatted: string }
   const composerModesAttrMap = new Map(); // Element -> Map<attrName, { raw: string, formatted: string }>
@@ -5988,6 +6137,7 @@
   }
 
   async function handleComposerGoalAction(action, targetSessionId, btnEl) {
+    if (!["pause", "resume"].includes(action)) return false;
     if (isGoalActionRunning) return;
     const sid = targetSessionId || (typeof getEffectiveComposerSessionId === "function" ? getEffectiveComposerSessionId() : getCurrentSessionId());
     if (!sid) return;
@@ -5995,6 +6145,39 @@
     isGoalActionRunning = true;
 
     try {
+      const engine = getComposerExecutionEngineHint(sid);
+      if (engine === "codex") {
+        const current = composerModesStateMap.get(sid);
+        const goalState = getComposerGoalState(sid);
+        const identity = current?.goalIdentity;
+        const objective = typeof identity?.objective === "string" ? identity.objective : String(current?.goal || "").trim();
+        if (current?.capabilities?.goal !== true || !goalState || !objective || !goalState.action) {
+          showToast("当前目标状态不可操作", null, 2500);
+          return false;
+        }
+        const expected = { objective };
+        if (typeof identity?.createdAt === "string" || typeof identity?.createdAt === "number") {
+          expected.createdAt = identity.createdAt;
+        }
+        const actionRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "composer_goal_action", action, expected }),
+        });
+        const actionData = await actionRes.json().catch(() => null);
+        const authoritative = parseExtensionStatus(actionData, "composer-modes");
+        if (!actionRes.ok || actionData?.success === false || authoritative?.version !== 1 || authoritative.mode !== "goal") {
+          showToast(actionData?.error || "目标控制未获服务端确认", null, 3000);
+          return false;
+        }
+        const returnedObjective = authoritative.goalIdentity?.objective || authoritative.goal;
+        if (returnedObjective !== objective || !commitComposerModeState(sid, authoritative)) {
+          showToast("目标状态已变化，未应用控制结果", null, 3000);
+          return false;
+        }
+        return true;
+      }
+
       // 0. 检查后端扩展命令是否已注册，防止旧会话尚未加载扩展时将 /composer-goal 当作普通用户消息发给模型
       const cmdRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
         method: "POST",
@@ -6069,27 +6252,9 @@
       }
 
       // 3. 真实确认后更新本地会话模式映射
-      const prev = composerModesStateMap.get(sid) || {};
-      const updatedActionState = {
-        ...prev,
-        mode: parsed.mode || "goal",
-        goal: parsed.goal || prev.goal,
-        pausePending: newPending,
-        paused: newPaused,
-      };
-      if (typeof parsed?.goalElapsedMs === "number") {
-        updatedActionState.goalElapsedMs = parsed.goalElapsedMs;
-      }
-      if (typeof parsed?.goalActiveSinceMs === "number") {
-        updatedActionState.goalActiveSinceMs = parsed.goalActiveSinceMs;
-      } else {
-        delete updatedActionState.goalActiveSinceMs;
-      }
-      composerModesStateMap.set(sid, updatedActionState);
+      if (!commitComposerModeState(sid, parsed)) return false;
 
-      // 4. 刷新目标独立行
-      syncComposerGoalBar();
-      syncComposerModesBottomStatus();
+      // The shared commit already publishes controls and the legacy footer once.
       return true;
     } catch (e) {
       showToast("操作发生异常，请检查网络", null, 3000);
@@ -6108,6 +6273,14 @@
   function syncComposerModesBottomStatus() {
     if (!isPluginEnabled("composer-modes")) {
       restoreComposerModesBottomStatus();
+      return;
+    }
+    // The native composer hook commits authoritative extensionStatuses to the shared map.
+    // Keep DOM status scraping only for legacy composers without the native host.
+    if (document.querySelector?.("[data-pi-native-composer-host]")) {
+      if (composerModesStatusObserver || composerModesTextNodeMap.size || composerModesAttrMap.size) {
+        restoreComposerModesBottomStatus();
+      }
       return;
     }
     if (isCleaningComposerModesStatus) return;
@@ -6178,19 +6351,25 @@
                     const nextPaused = Boolean(p.paused);
                     const nextElapsed = typeof p.goalElapsedMs === "number" ? p.goalElapsedMs : undefined;
                     const nextActiveSince = typeof p.goalActiveSinceMs === "number" ? p.goalActiveSinceMs : undefined;
+                    const nextGoalStatus = typeof p.goalStatus === "string"
+                      ? p.goalStatus
+                      : nextPending ? "pending" : nextPaused ? "paused" : "active";
                     if (
                       Boolean(prev.pausePending) !== nextPending ||
                       Boolean(prev.paused) !== nextPaused ||
                       prev.goalElapsedMs !== nextElapsed ||
-                      prev.goalActiveSinceMs !== nextActiveSince
+                      prev.goalActiveSinceMs !== nextActiveSince ||
+                      prev.goalStatus !== nextGoalStatus
                     ) {
                       const updatedBottomState = {
                         ...prev,
                         mode: "goal",
                         goal: p.goal,
+                        goalStatus: nextGoalStatus,
                         pausePending: nextPending,
                         paused: nextPaused,
                       };
+                      if (p.goalIdentity) updatedBottomState.goalIdentity = p.goalIdentity;
                       if (nextElapsed !== undefined) {
                         updatedBottomState.goalElapsedMs = nextElapsed;
                       } else {
@@ -6201,8 +6380,7 @@
                       } else {
                         delete updatedBottomState.goalActiveSinceMs;
                       }
-                      composerModesStateMap.set(currentSid, updatedBottomState);
-                      syncComposerGoalBar();
+                      commitComposerModeState(currentSid, updatedBottomState);
                     }
                   } else {
                     const mismatchKey = `${currentSid}|${p.goal}`;
@@ -6586,7 +6764,6 @@
     }
 
     ensureComposerModesStyle();
-    ensureComposerModesStatusObserver();
     bindComposerModesEvents();
     document.querySelectorAll(".pi-enh-composer-modes-disabled-notice").forEach((el) => el.remove());
     if (pendingNewComposerMode && pendingNewComposerMode.project !== getCurrentProjectStatusKey()) pendingNewComposerMode = null;
@@ -6598,16 +6775,19 @@
 
   async function requestExitModeWithVerification(sessionId) {
     if (!sessionId) return false;
+    const engine = getComposerExecutionEngineHint(sessionId);
     const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "prompt", message: "/composer-mode normal" }),
+      body: JSON.stringify(engine === "codex"
+        ? { type: "set_composer_mode", mode: "normal" }
+        : { type: "prompt", message: "/composer-mode normal" }),
     }).catch(() => null);
     if (!res || !res.ok) {
       showToast("请求退出模式失败，写权限未恢复", null, 3000);
       return false;
     }
-    const stateRes = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+    const stateRes = engine === "codex" ? res : await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "get_state" }),
@@ -6616,8 +6796,7 @@
     const parsed = parseExtensionStatus(postData, "composer-modes");
     const realMode = parsed?.mode;
     if (stateRes?.ok && postData?.success !== false && parsed?.version === 1 && realMode === "normal") {
-      composerModesStateMap.set(sessionId, { mode: "normal" });
-      dispatchComposerModeChange(sessionId);
+      commitComposerModeState(sessionId, parsed);
       document.querySelectorAll(".pi-enh-composer-modes-disabled-notice").forEach((el) => {
         try { el.remove(); } catch (e) {}
       });
@@ -6695,6 +6874,13 @@
   window.__PI_ENH_RESTORE_COMPOSER_MODES_BOTTOM_STATUS__ = restoreComposerModesBottomStatus;
   window.__PI_ENH_COMPOSER_MODES_TEXT_NODE_MAP__ = composerModesTextNodeMap;
   window.__PI_ENH_COMPOSER_MODES_ATTR_MAP__ = composerModesAttrMap;
+  const commitComposerModeStateBridge = (sessionId, state) => commitComposerModeState(sessionId, state);
+  window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__ = commitComposerModeStateBridge;
+  activeCleanups.push(() => {
+    if (window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__ === commitComposerModeStateBridge) {
+      delete window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__;
+    }
+  });
   window.__PI_ENH_SET_COMPOSER_MODE_STATE__ = (sessionId, state) => {
     pendingComposerNavOverride = null;
     if (sessionId) {
@@ -6702,10 +6888,10 @@
         sessionId,
         whileDraftKey: readComposerNativeDraftKey(),
       };
+      return commitComposerModeState(sessionId, state?.version === 1 ? state : { ...state, version: 1 });
     }
-    composerModesStateMap.set(sessionId, state);
     syncComposerModes();
-    syncComposerGoalBar();
+    return null;
   };
   window.__PI_ENH_SYNC_COMPOSER_GOAL_BAR__ = syncComposerGoalBar;
   window.__PI_ENH_REMOVE_COMPOSER_GOAL_BAR__ = removeComposerGoalBar;
@@ -6792,7 +6978,7 @@
       categoryLabel: "🧩 插件与技能",
       title: "synology-docker-ops",
       badge: "NAS",
-      subtitle: "群晖 10.0.0.2 NAS 容器与存储安全运维",
+      subtitle: "NAS 容器与存储安全运维",
       insertText: "@synology-docker-ops ",
       icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 13h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h4"></path><path d="M2 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H2"></path><path d="M20 21a8 8 0 0 0-16 0"></path><rect x="9" y="3" width="6" height="6" rx="1"></rect></svg>',
       keywords: ["synology-docker-ops", "synology", "nas", "群晖", "docker", "容器"],
@@ -8108,7 +8294,7 @@
   window.__PI_ENH_IS_MOBILE_ENV__ = isMobileEnvironment;
 
   // ==========================================
-  // Mobile Swipe Drawer (手机手势右滑打开会话与关闭文件面板)
+  // Mobile Swipe Drawer (手机手势右滑打开会话、右边缘左滑打开会话导航与关闭文件面板)
   // ==========================================
   let mobileSwipeTracking = false;
   let mobileSwipeStartX = 0;
@@ -8134,6 +8320,8 @@
   function getFilePanelElement() {
     return (typeof document !== "undefined" && (document.getElementById("file-panel") || document.querySelector(".right-panel-container"))) || null;
   }
+
+
 
   function isMobileDrawerMode() {
     if (typeof window === "undefined") return true;
@@ -8258,6 +8446,7 @@
       filePanel.style.transition = "";
       filePanel.style.transform = "";
     }
+
   }
 
   // 关键防护：精准识别拖动调整宽度（Resize Handle / isResizing），坚决避让绝不误关闭侧边栏
@@ -8381,7 +8570,16 @@
   }
 
   function handleMobileSwipeTouchStart(e) {
-    if (!isPluginEnabled("mobile-swipe-drawer")) return;
+    if (!isPluginEnabled("mobile-swipe-drawer")) {
+      return;
+    }
+    // The native AppShell owns session-sidebar touch state for both engines.
+    // This legacy handler retains only the file-panel gesture on native pages.
+    if (getSessionSidebarElement()?.getAttribute("data-pi-native-sidebar-gestures") === "true" && !isFilePanelOpen()) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
     if (mobileSwipeResetTimer) {
       resetMobileSwipeStyles();
     }
@@ -8428,20 +8626,41 @@
       return;
     }
 
+    // 4. 关键原则：触摸起点在 native 导航层一律早退，聊天左滑由原生 own
+    if (
+      (targetEl && targetEl.closest && targetEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']")) ||
+      (pointEl && pointEl.closest && pointEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']"))
+    ) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
     const winWidth = typeof window !== "undefined" && typeof window.innerWidth === "number" ? window.innerWidth : 390;
     const isDrawer = isMobileDrawerMode();
     const isSidebarCurrentlyOpen = isSessionSidebarOpen();
+    const isFilePanelCurrentlyOpen = isFilePanelOpen();
 
-    // 4. 起始 X 范围检测：
-    // 当侧边栏已打开时，用户想左滑收起，允许在屏幕任意水平位置（包括侧边栏内部、右边缘外及遮罩层）触发！
-    // 仅当侧边栏关闭时，才限制最大起始 X 坐标，防止与主聊天右侧区域发生歧义
-    if (!isSidebarCurrentlyOpen) {
+    // 5. 起始手势目标分类 (Target Type) 与范围检测：仅保留 session-sidebar 与 file-panel
+    if (isFilePanelCurrentlyOpen) {
+      mobileSwipeTargetType = "file-panel";
+      mobileSwipeInitialFilePanelOpen = true;
+      mobileSwipeInitialOpen = false;
+    } else if (isSidebarCurrentlyOpen) {
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = true;
+      mobileSwipeInitialFilePanelOpen = false;
+    } else {
+      // 侧边栏未打开：只有在允许滑出的屏幕区域才锁定为 session-sidebar
       const maxStartX = isDrawer ? Math.max(280, winWidth * 0.85) : Math.min(580, winWidth * 0.75);
       if (touch.clientX > maxStartX) {
         mobileSwipeTracking = false;
         mobileSwipeEligible = false;
         return;
       }
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = false;
+      mobileSwipeInitialFilePanelOpen = false;
     }
 
     mobileSwipeStartX = touch.clientX;
@@ -8451,16 +8670,14 @@
     mobileSwipeEligible = true;
     mobileSwipeIntent = null;
 
-    mobileSwipeInitialFilePanelOpen = isFilePanelOpen();
-    mobileSwipeInitialOpen = isSidebarCurrentlyOpen;
-
-    // 缓存侧边栏宽度并准备 GPU 合成层，消除滑动期间每次 touchmove 的强制重排（Reflow）
-    const currentSidebar = getSessionSidebarElement();
-    if (currentSidebar) {
-      mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
-      if (currentSidebar.style) currentSidebar.style.willChange = "transform";
-    } else {
-      mobileSwipeCachedWidth = 280;
+    if (mobileSwipeTargetType === "session-sidebar") {
+      const currentSidebar = getSessionSidebarElement();
+      if (currentSidebar) {
+        mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
+        if (currentSidebar.style) currentSidebar.style.willChange = "transform";
+      } else {
+        mobileSwipeCachedWidth = 280;
+      }
     }
   }
 
@@ -8503,13 +8720,28 @@
       }
     }
 
-    // 2. 意图已锁定为水平滑动：立即阻止原生滚动抢占，保持跟手平滑响应
+    // 关键防抢占：当侧边栏与文件面板均未打开时，负向滑动（deltaX <= 0 向左划）
+    // 属于聊天原生左滑打开导航手势，05 模块绝不 preventDefault，直接早退放弃
+    if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
+    // 2. 意图已锁定为水平滑动：
     if (mobileSwipeIntent === "horizontal") {
+      // 再次确认：如果未打开侧边栏且 deltaX <= 0，绝不 preventDefault
+      if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+        mobileSwipeTracking = false;
+        mobileSwipeEligible = false;
+        return;
+      }
+
       if (e.cancelable && typeof e.preventDefault === "function") {
         e.preventDefault();
       }
 
-      // 优先判定：右侧文件面板打开且向右滑，驱动文件面板关闭
+      // 判定 1：右侧文件面板打开且向右滑，驱动文件面板关闭
       if (mobileSwipeInitialFilePanelOpen && deltaX > 0) {
         const filePanel = getFilePanelElement();
         if (filePanel) {
@@ -8519,7 +8751,7 @@
         return;
       }
 
-      // 会话列表滑动逻辑
+      // 判定 3：会话列表滑动逻辑
       const isDrawer = isMobileDrawerMode();
       const sidebar = getSessionSidebarElement();
       const backdrop = getSidebarBackdropElement();
@@ -8743,6 +8975,7 @@
     closeSessionSidebar,
     isFilePanelOpen,
     closeFilePanel,
+
     getSidebarToggleButton,
     isCodeBlockOrScrollableElement,
     isTouchOnHorizontalScrollable,
@@ -9807,7 +10040,7 @@
   function consumeQuickReplyClick(event) {
     if (quickReplyPassthrough) return false;
     const button = event?.target?.closest?.("button");
-    if (!isNativeComposerLayoutButton(button)) return false;
+    if (!isNativeComposerLayoutButton(button) || button.closest?.('[data-pi-native-inline-suggestions="true"]')) return false;
     const stop = () => { event.preventDefault?.(); event.stopPropagation?.(); event.stopImmediatePropagation?.(); };
     if (quickReplySending && button === quickReplySendingButton) { stop(); return true; }
     if (!button?.hasAttribute(QUICK_REPLY_BUTTON_ATTR)) return false;
@@ -9886,6 +10119,13 @@
 
     const host = textarea.parentElement || (typeof getChatInputArea === "function" ? getChatInputArea() : null);
     if (!host) {
+      removeQuickActionDoms();
+      return;
+    }
+
+    // Native inline suggestions own preview/acceptance; never rewrite their Send button.
+    if (textarea.closest?.('[data-pi-native-inline-suggestions="true"]')) {
+      restoreAllQuickReplyButtons(host);
       removeQuickActionDoms();
       return;
     }
@@ -10045,7 +10285,3 @@
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
-
-  // The native queue responds synchronously. Announce readiness only after
-  // its composer/session dependencies have finished initializing.
-  window.dispatchEvent(new Event("pi:native-queue-ready"));

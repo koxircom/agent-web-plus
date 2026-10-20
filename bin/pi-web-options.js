@@ -29,10 +29,28 @@ function normalizePort(value) {
   return String(port);
 }
 
-function getHelpText() {
+function getHelpText(command = "pi-web") {
+  if (command === "agent-web") return `用法：agent-web [选项]
+
+启动 Agent Web Plus。旧命令 pi-web 继续可用。
+
+选项：
+  -p, --port <端口>          服务端口（默认 30141，可用 PORT 指定）
+  -H, --hostname <地址>      监听地址（默认 127.0.0.1）
+      --no-open             不自动打开浏览器
+  -h, --help                显示帮助
+
+数据与兼容：
+  默认继续使用 ~/.pi/agent，保留原会话、置顶和设置。
+  PI_CODING_AGENT_DIR        继续支持旧版自定义数据目录
+  AGENT_WEB_DATA_DIR         同一数据目录的新变量别名
+  两个目录变量同时设置时必须指向同一目录。
+  原 PI_WEB_* 环境变量及浏览器存储键保持有效。
+`;
+
   return `Usage: pi-web [options]
 
-Start the Pi Web UI server.
+Start the Agent Web Plus server (legacy pi-web command).
 
 Options:
   -p, --port <port>          Server port (default: 30141, or PORT)

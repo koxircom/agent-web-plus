@@ -121,7 +121,7 @@ export const NATIVE_NOTIFICATION_CHANNELS: readonly NativeNotificationChannel[] 
     {
       id: "security-guard",
       name: "安全拦截与防护",
-      desc: "WSL、NAS、Pi Web 重启及超时看门狗等高危操作拦截提示。",
+      desc: "WSL、NAS、Agent Web Plus 重启及超时看门狗等高危操作拦截提示。",
       group: "异常与安全",
       defaultEnabled: true,
     },
@@ -202,7 +202,7 @@ export function classifyNativeNotification(
     return "mcp";
   }
   if (
-    /已(?:物理)?拦截|WSL|NAS|Pi Web.*(?:杀死|重启|高危)|看门狗|超时兜底/i.test(
+    /已(?:物理)?拦截|WSL|NAS|Agent Web Plus.*(?:杀死|重启|高危)|看门狗|超时兜底/i.test(
       text,
     )
   ) {

@@ -28,17 +28,20 @@ export function ExtensionStatusBar({
   statuses: ExtensionStatusItem[];
   widgets?: ExtensionWidgetItem[];
 }) {
-  if (statuses.length === 0 && widgets.length === 0) return null;
+  // Composer protocol state belongs to the shared mode controls, not a JSON footer.
+  // Keep it in the session hook for GET/SSE synchronization; other extensions render normally.
+  const visibleStatuses = statuses.filter(status => status.key !== "composer-modes");
+  if (visibleStatuses.length === 0 && widgets.length === 0) return null;
 
-  const statusLine = formatExtensionStatusLine(statuses);
+  const statusLine = formatExtensionStatusLine(visibleStatuses);
   const plainStatusLine = stripAnsi(statusLine);
 
   return (
     <div
-      className={`extension-status-shelf${widgets.length > 0 ? " has-widgets" : ""}${statuses.length > 0 ? " has-status" : ""}`}
+      className={`extension-status-shelf${widgets.length > 0 ? " has-widgets" : ""}${visibleStatuses.length > 0 ? " has-status" : ""}`}
     >
       {widgets.length > 0 && <ExtensionWidgets widgets={widgets} />}
-      {statuses.length > 0 && (
+      {visibleStatuses.length > 0 && (
         <div
           role="status"
           className="extension-status-line"

@@ -1,6 +1,6 @@
 {
   "name": "@agegr/pi-web",
-  "version": "1.3.74",
+  "version": "1.4.0",
   "capabilities": {
     "nativeSettingsHost": true,
     "nativeSettingsLayout": true,
@@ -8,11 +8,13 @@
     "nativeComposerLayout": true,
     "nativeComposerPreferences": true,
     "nativeAskUser": true,
-    "nativeSessionTags": true
+    "nativeSessionTags": true,
+    "nativeUserMessageIdentity": true,
+    "codexExecutionEngine": true
   },
   "piWebEdition": "koxir-standalone",
   "standalone": true,
-  "description": "PI Web Plus — Web UI for the Pi coding agent",
+  "description": "Agent Web Plus — Pi Agent 与 Codex 共用的浏览器工作台",
   "homepage": "https://github.com/koxircom/pi-web-plus#readme",
   "repository": {
     "type": "git",
@@ -26,7 +28,8 @@
     "node": ">=22.19.0"
   },
   "bin": {
-    "pi-web": "bin/pi-web.js"
+    "pi-web": "bin/pi-web.js",
+    "agent-web": "bin/agent-web.js"
   },
   "files": [
     "bin",
@@ -41,11 +44,16 @@
     "!public/pi-*-manifest.json",
     "!public/pi-usage-ledger.json",
     "!public/*.before-*",
-    "!public/**/*.test.mjs"
+    "!public/**/*.test.mjs",
+    "connectors/codex-bridge",
+    "docs/codex-engine.md",
+    "!connectors/**/__pycache__",
+    "!connectors/**/*.pyc",
+    "docs/agent-web-compatibility.md"
   ],
   "scripts": {
-    "prebuild": "node enhancements/build-pi-web-enhancements.cjs --build --verify && node scripts/build-session-history-worker.cjs",
-    "prepack": "node enhancements/build-pi-web-enhancements.cjs --verify && node scripts/check-client-budget.cjs && node scripts/build-session-history-worker.cjs",
+    "prebuild": "node scripts/check-sdk-baseline.cjs && node enhancements/build-pi-web-enhancements.cjs --build --verify && node scripts/build-session-history-worker.cjs",
+    "prepack": "python3 scripts/check-publication.py --root . && node enhancements/build-pi-web-enhancements.cjs --verify && node scripts/check-client-budget.cjs && node scripts/build-session-history-worker.cjs && node scripts/qa/release-gate.cjs",
     "postinstall": "node bin/prepare-terminal.js",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
@@ -57,13 +65,17 @@
     "test:e2e": "node e2e/run.mjs",
     "test": "node --experimental-strip-types --test \"app/**/*.test.mjs\" \"components/**/*.test.mjs\" \"hooks/**/*.test.mjs\" \"lib/**/*.test.mjs\" \"public/**/*.test.mjs\"",
     "release": "npm run build && npm pack",
-    "postbuild": "node scripts/check-client-budget.cjs"
+    "postbuild": "node scripts/check-client-budget.cjs",
+    "qa:list": "node scripts/qa/release-gate.cjs --list",
+    "qa:release": "node scripts/qa/release-gate.cjs",
+    "check:publication": "python3 scripts/check-publication.py --root .",
+    "release:publish": "python3 scripts/publish-release.py"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "1.2.0",
-    "@earendil-works/pi-ai": "1.2.0",
-    "@earendil-works/pi-coding-agent": "1.2.0",
-    "@earendil-works/pi-tui": "1.2.0",
+    "@earendil-works/pi-agent-core": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-coding-agent": "1.3.0",
+    "@earendil-works/pi-tui": "1.3.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "js-yaml": "5.4.2",

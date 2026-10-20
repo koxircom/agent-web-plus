@@ -34,6 +34,7 @@ interface FileNode {
 
 interface Props {
   cwd: string;
+  sessionId?: string | null;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
@@ -78,9 +79,11 @@ interface PendingConflict {
   nonReplaceable: string[];
 }
 
-async function fetchEntries(dirPath: string): Promise<FileNode[]> {
+async function fetchEntries(dirPath: string, sessionId?: string | null): Promise<FileNode[]> {
   const encoded = encodeFilePathForApi(dirPath);
-  const res = await fetch(`/api/files/${encoded}?type=list`);
+  const params = new URLSearchParams({ type: "list" });
+  if (sessionId) params.set("sessionId", sessionId);
+  const res = await fetch(`/api/files/${encoded}?${params.toString()}`);
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
     try {
@@ -102,8 +105,9 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
   }));
 }
 
-async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
+async function fetchGitStatus(cwd: string, sessionId?: string | null): Promise<GitStatusResponse> {
   const params = new URLSearchParams({ cwd });
+  if (sessionId) params.set("sessionId", sessionId);
   const res = await fetch(`/api/git/status?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
   return res.json() as Promise<GitStatusResponse>;
@@ -155,16 +159,16 @@ function uploadFiles(
   files: File[],
   strategy: UploadConflictStrategy,
   onProgress: (progress: number) => void,
+  sessionId?: string | null,
 ): Promise<{ status: number; data: UploadResponse }> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file, file.name));
 
     const xhr = new XMLHttpRequest();
-    xhr.open(
-      "POST",
-      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}`,
-    );
+    const params = new URLSearchParams({ type: "upload", conflict: strategy });
+    if (sessionId) params.set("sessionId", sessionId);
+    xhr.open("POST", `/api/files/${encodeFilePathForApi(targetDirectory)}?${params.toString()}`);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
         onProgress(Math.round((event.loaded / event.total) * 100));
@@ -217,6 +221,7 @@ function TreeNode({
   node,
   depth,
   cwd,
+  sessionId,
   onOpenFile,
   onAtMention,
   expandedPaths,
@@ -230,6 +235,7 @@ function TreeNode({
   node: FileNode;
   depth: number;
   cwd: string;
+  sessionId?: string | null;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   expandedPaths: Set<string>;
@@ -247,6 +253,9 @@ function TreeNode({
   const containsGitChanges = node.isDir && (
     gitStatus !== undefined || changedDirectoryPaths.has(normalizedPath)
   );
+  const downloadParams = new URLSearchParams({ type: "download" });
+  if (sessionId) downloadParams.set("sessionId", sessionId);
+  const downloadHref = `/api/files/${encodeFilePathForApi(node.fullPath)}?${downloadParams.toString()}`;
   const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
@@ -256,7 +265,7 @@ function TreeNode({
     if (loaded && !force) return;
     setLoading(true);
     try {
-      const entries = await fetchEntries(node.fullPath);
+      const entries = await fetchEntries(node.fullPath, sessionId);
       setChildren(entries);
       setLoaded(true);
     } catch {
@@ -264,7 +273,7 @@ function TreeNode({
     } finally {
       setLoading(false);
     }
-  }, [loaded, node.fullPath]);
+  }, [loaded, node.fullPath, sessionId]);
 
   // Re-fetch children when the tree refreshes and the directory is open.
   useEffect(() => {
@@ -397,7 +406,7 @@ function TreeNode({
         )}
         {hovered && !node.isDir && (
           <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
+            href={downloadHref}
             download
             onClick={(e) => e.stopPropagation()}
             title={t("files.download")}
@@ -439,6 +448,7 @@ function TreeNode({
               node={child}
               depth={depth + 1}
               cwd={cwd}
+              sessionId={sessionId}
               onOpenFile={onOpenFile}
               onAtMention={onAtMention}
               expandedPaths={expandedPaths}
@@ -584,6 +594,7 @@ function ChangeRow({
 
 export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileExplorer({
   cwd,
+  sessionId,
   onOpenFile,
   refreshKey,
   onAtMention,
@@ -616,7 +627,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const searchInputRef = useRef<HTMLInputElement>(null);
   const prevCwdRef = useRef<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}`;
+  const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}:${sessionId ?? ""}`;
   const uploadBusy = uploadPhase !== "idle";
   const hasSearchQuery = searchQuery.trim().length > 0;
 
@@ -634,7 +645,9 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setSearchLoading(true);
     setSearchError(false);
     const timer = setTimeout(() => {
-      fetch(`/api/file-index?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}`, { signal: controller.signal })
+      const params = new URLSearchParams({ cwd, q: query });
+      if (sessionId) params.set("sessionId", sessionId);
+      fetch(`/api/file-index?${params.toString()}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() as Promise<{ matches?: FileIndexEntry[] }> : Promise.reject(new Error("Search failed")))
         .then((data) => setSearchPaths((data.matches ?? []).filter((entry) => !entry.isDir).map((entry) => entry.path)))
         .catch(() => {
@@ -646,7 +659,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         .finally(() => { if (!controller.signal.aborted) setSearchLoading(false); });
     }, 150);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [cwd, fileSearchOpen, searchQuery]);
+  }, [cwd, fileSearchOpen, searchQuery, sessionId]);
 
   // Focus the search input whenever the search panel opens.
   useEffect(() => {
@@ -738,7 +751,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setUploadPhase("uploading");
 
     try {
-      const { status, data } = await uploadFiles(cwd, files, strategy, setUploadProgress);
+      const { status, data } = await uploadFiles(cwd, files, strategy, setUploadProgress, sessionId);
       if (status === 409 && data.conflicts?.length) {
         setPendingConflict({
           files,
@@ -757,7 +770,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     } finally {
       setUploadPhase("idle");
     }
-  }, [applyUploadResult, cwd]);
+  }, [applyUploadResult, cwd, sessionId]);
 
   const prepareUpload = useCallback(async (files: File[]) => {
     if (files.length === 0 || uploadBusy) return;
@@ -769,8 +782,10 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setUploadPhase("checking");
 
     try {
+      const params = new URLSearchParams({ type: "upload-check" });
+      if (sessionId) params.set("sessionId", sessionId);
       const res = await fetch(
-        `/api/files/${encodeFilePathForApi(cwd)}?type=upload-check`,
+        `/api/files/${encodeFilePathForApi(cwd)}?${params.toString()}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -795,7 +810,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     } finally {
       setUploadPhase("idle");
     }
-  }, [cwd, performUpload, uploadBusy]);
+  }, [cwd, performUpload, sessionId, uploadBusy]);
 
   const handleUploadInput = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -831,16 +846,16 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setLoading(cwdChanged);
     setError(null);
     let cancelled = false;
-    fetchEntries(cwd)
+    fetchEntries(cwd, sessionId)
       .then((entries) => { if (!cancelled) setRoots(entries); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, treeRefreshKey]);
+  }, [cwd, refreshKey, sessionId, treeRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchGitStatus(cwd)
+    fetchGitStatus(cwd, sessionId)
       .then((status) => {
         if (!cancelled) {
           setGitFiles(status.isGitRepository ? status.files : []);
@@ -856,7 +871,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         }
       });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, treeRefreshKey]);
+  }, [cwd, refreshKey, sessionId, treeRefreshKey]);
 
   useEffect(() => {
     onChangesCountChange?.(gitFiles.length);
@@ -1036,6 +1051,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                     node={node}
                     depth={0}
                     cwd={cwd}
+                    sessionId={sessionId}
                     onOpenFile={onOpenFile}
                     onAtMention={onAtMention}
                     expandedPaths={searchExpanded}
@@ -1101,6 +1117,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 node={node}
                 depth={0}
                 cwd={cwd}
+                sessionId={sessionId}
                 onOpenFile={onOpenFile}
                 onAtMention={onAtMention}
                 expandedPaths={expandedPaths}

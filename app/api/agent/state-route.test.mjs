@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd() }, interopDefault: true });
+const jiti = createJiti(import.meta.url, { alias: { "@": process.cwd(), "server-only": "next/dist/compiled/server-only/empty.js" }, interopDefault: true });
 const { GET: getAgent } = await jiti.import("./[id]/route.ts");
 const { GET: getSession } = await jiti.import("../sessions/[id]/state/route.ts");
 const { GET: getRunning } = await jiti.import("./running/route.ts");
@@ -60,7 +60,7 @@ test("idle retained runtime and active turns report the same activity on both st
       assert.equal(result.status, 200);
       assert.deepEqual(await result.json(), { running: busy, runtimeAlive: true, state });
     }
-    const sidebar = await (await getRunning()).json();
+    const sidebar = await (await getRunning(new Request("http://localhost/api/agent/running?engine=pi"))).json();
     assert.equal(sidebar.runningSessionIds.includes(id), busy);
   }
 });

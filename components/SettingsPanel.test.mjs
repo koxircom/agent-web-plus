@@ -22,13 +22,13 @@ test("opens one settings panel from direct sidebar shortcuts", () => {
   assert.match(shellSource, /initialSection=\{settingsSection\}/);
   assert.match(shortcutSource, /t\("common\.settings"\)/);
   assert.match(shortcutSource, /<SettingsSectionIcon section=\{id\} size=\{14\} strokeWidth=\{2\} \/><span>\{label\}<\/span>/);
-  assert.match(shellSource, /<SettingsShortcuts cwd=\{projectTrustCwd\} onOpen=\{setSettingsSection\}/);
+  assert.match(shellSource, /<SettingsShortcuts cwd=\{piExecutionReady \? projectTrustCwd : null\} onOpen=\{setSettingsSection\}/);
   assert.doesNotMatch(shellSource, /\["plugins", translate\("common\.plugins"\)\]/);
   assert.doesNotMatch(shellSource, /setModelsConfigOpen|setSkillsConfigOpen|setAgentsConfigOpen|setPluginsConfigOpen/);
 });
 
 test("keeps every requested configuration surface inside the settings panel", () => {
-  for (const section of ["general", "models", "skills", "agents", "plugins", "mcp"]) {
+  for (const section of ["general", "models", "skills", "agents", "plugins", "mcp", "execution-engine"]) {
     assert.match(panelSource, new RegExp(`id: "${section}"`));
   }
   for (const component of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"]) {
@@ -93,12 +93,12 @@ test("focus moves into Settings as it opens and back to its opener as it closes"
 
 test("Settings › MCP offers Trust through the page's trust dialog, which opens above Settings", () => {
   // AppShell owns trust: its status and its dialog opener go through SettingsPanel to McpConfig.
-  assert.match(shellSource, /<SettingsPanel[\s\S]*?projectTrust=\{projectTrust\}\n\s*onOpenTrustDialog=\{openProjectTrustDialog\}[\s\S]*?\/>/);
+  assert.match(shellSource, /<SettingsPanel[\s\S]*?projectTrust=\{piExecutionReady \? projectTrust : null\}\n\s*onOpenTrustDialog=\{piExecutionReady \? openProjectTrustDialog : undefined\}[\s\S]*?\/>/);
   assert.match(panelSource, /<McpConfig embedded key=\{cwd \?\? ""\} cwd=\{cwd\} trust=\{projectTrust\} onTrustProject=\{onOpenTrustDialog\} onProjectTrustChanged=\{onProjectTrustChanged\} onClose=\{onClose\} \/>/);
   // The banner and Settings open the same dialog, for the same folder Settings shows.
-  assert.match(shellSource, /const openProjectTrustDialog = useCallback\(\(\) => \{\n\s*setProjectTrustError\(null\);\n\s*setProjectTrustDialogOpen\(true\);\n\s*\}, \[\]\);/);
+  assert.match(shellSource, /const openProjectTrustDialog = useCallback\(\(\) => \{\n\s*if \(\!piExecutionReady\) return;\n\s*setProjectTrustError\(null\);\n\s*setProjectTrustDialogOpen\(true\);\n\s*\}, \[piExecutionReady\]\);/);
   assert.match(shellSource, /onClick=\{openProjectTrustDialog\}/);
-  assert.match(shellSource, /<SettingsPanel\n\s*resolveReturnFocus=\{resolveSettingsReturnFocus\}\n\s*cwd=\{projectTrustCwd\}/);
+  assert.match(shellSource, /<SettingsPanel\n\s*resolveReturnFocus=\{resolveSettingsReturnFocus\}\n\s*cwd=\{piExecutionReady \? projectTrustCwd : null\}/);
   assert.match(shellSource, /<ProjectTrustDialog\n\s*cwd=\{projectTrustCwd\}/);
   // Rendered after Settings and stacked above it.
   assert.ok(shellSource.indexOf("<ProjectTrustDialog") > shellSource.indexOf("<SettingsPanel"));
@@ -110,7 +110,7 @@ test("Settings › MCP offers Trust through the page's trust dialog, which opens
 test("an Add in Settings › MCP hands the folder's new trust to the page, which every section reloads on", () => {
   // Adding a project server writes .pi/mcp.json (the folder now requires trust) and may trust a
   // fresh folder in the same step; the page takes that status only for the folder Settings shows.
-  assert.match(shellSource, /<SettingsPanel[\s\S]*?onProjectTrustChanged=\{handleProjectTrustChanged\}[\s\S]*?\/>/);
+  assert.match(shellSource, /<SettingsPanel[\s\S]*?onProjectTrustChanged=\{piExecutionReady \? handleProjectTrustChanged : undefined\}[\s\S]*?\/>/);
   assert.match(shellSource, /const handleProjectTrustChanged = useCallback\(\(cwd: string, status: ProjectTrustStatus\) => \{\n\s*if \(cwd === projectTrustCwd\) setProjectTrust\(status\);\n\s*\}, \[projectTrustCwd\]\);/);
   // Nothing was rebuilt on the server, so the chat keeps its session key.
   const handler = shellSource.slice(shellSource.indexOf("const handleProjectTrustChanged"), shellSource.indexOf("}, [projectTrustCwd]);", shellSource.indexOf("const handleProjectTrustChanged")));
@@ -188,8 +188,8 @@ test("keeps General free of divider rows", () => {
   assert.doesNotMatch(panelSource, /borderLeft: index > 0/);
 });
 
-test("uses sidebar navigation on desktop and one compact section picker on mobile", () => {
-  assert.match(panelSource, /className="settings-mobile-section-picker"/);
+test("uses one vertical sidebar navigation at every viewport", () => {
+  assert.doesNotMatch(panelSource, /settings-mobile-section-picker/);
   assert.match(panelSource, /className="settings-section-tabs"/);
   assert.match(panelSource, /className="settings-section-tab"/);
   assert.match(cssSource, /\.settings-section-tab \{[\s\S]*?width: 100%/);
@@ -198,8 +198,6 @@ test("uses sidebar navigation on desktop and one compact section picker on mobil
   assert.match(cssSource, /\.settings-section-tab\[aria-current="page"\]::after/);
   assert.match(cssSource, /\.settings-section-tab:focus-visible:not\(\[aria-current="page"\]\)/);
   assert.match(cssSource, /\.settings-section-tab:focus-visible\[aria-current="page"\][\s\S]*?outline: none/);
-  assert.match(cssSource, /@media \(max-width: 640px\)[\s\S]*?\.settings-section-tabs \{[\s\S]*?display: none/);
-  assert.match(cssSource, /@media \(max-width: 640px\)[\s\S]*?\.settings-mobile-section-picker \{[\s\S]*?display: block/);
   assert.doesNotMatch(panelSource, /width: isMobile \? "100%" : 188/);
   assert.match(panelSource, /<main className="settings-dialog-main">/);
   assert.doesNotMatch(panelSource, /<style>/);
@@ -274,9 +272,9 @@ test("enforces safe resizing lifecycle: no animating timers, pointercancel rever
   assert.match(panelSource, /if \(target\.requiresProject && !cwd(?:Ref\.current)?\) return false;/);
 });
 
-test("groups navigation sections into three categories on sidebar and mobile picker", () => {
+test("groups the shared vertical navigation into three categories", () => {
   assert.match(panelSource, /SETTINGS_NAV_GROUPS/);
-  assert.match(panelSource, /<optgroup key=\{group\.id\} label=\{group\.label\}>/);
+  assert.doesNotMatch(panelSource, /<optgroup/);
   assert.match(panelSource, /className="settings-nav-group"/);
   assert.match(panelSource, /className="settings-nav-group-title"/);
 });

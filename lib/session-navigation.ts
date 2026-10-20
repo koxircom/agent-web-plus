@@ -9,3 +9,8 @@ export function replaceSessionUrl(url: string): void {
   // Next patches the native History API to keep useSearchParams synchronized.
   window.history.replaceState(null, "", next.pathname + next.search + next.hash);
 }
+
+/** A directory belongs to an execution host; persist both in shareable links. */
+export function newSessionUrl(cwd: string, engine: "pi" | "codex"): string {
+  return `?engine=${engine}&cwd=${encodeURIComponent(cwd)}`;
+}

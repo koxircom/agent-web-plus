@@ -16,7 +16,7 @@ import { hasJsonContentType, isApiRequestAllowed } from "./request-security";
 // session: Settings › MCP's Test (`POST /api/mcp/test`) and its sign-in
 // (`POST /api/mcp/sign-in`). Each starts a process or contacts a URL and may
 // run a `!command` value, so each re-checks everything a session's start
-// would: the request is Pi Web's own, MCP is not off, the entry is read from
+// would: the request is Agent Web Plus's own, MCP is not off, the entry is read from
 // its file (never a config from the browser) and valid, it does not reference
 // PI_WEB_PASSWORD, and a project entry's folder is allowed and trusted.
 
@@ -99,14 +99,14 @@ export async function validateMcpProject(value: unknown): Promise<McpRequestProj
  * The SDK's internals, or MCP off as every Settings › MCP route reads it: the
  * operator's switch (`PI_WEB_DISABLE_MCP`), which nothing in the browser may
  * override, or SDK modules that cannot load, without which nothing can be
- * checked, written or connected through Pi Web's transport. `-builtin:mcp`
+ * checked, written or connected through Agent Web Plus's transport. `-builtin:mcp`
  * does not count: a project may reverse that setting, and an explicit action
- * still works. `doing` ends the operator's message ("so Pi Web …").
+ * still works. `doing` ends the operator's message ("so Agent Web Plus …").
  */
 export async function mcpInternalsOrRefusal(doing: string): Promise<PiSdkInternals | McpEntryRefusal> {
-  if (isMcpDisabledByOperator()) return mcpEntryRefusal(409, "mcp-off", `${MCP_DISABLE_VARIABLE} is set, so Pi Web ${doing}`);
+  if (isMcpDisabledByOperator()) return mcpEntryRefusal(409, "mcp-off", `${MCP_DISABLE_VARIABLE} is set, so Agent Web Plus ${doing}`);
   const internals = await loadPiSdkInternals();
-  if (!internals.ok) return mcpEntryRefusal(409, "mcp-off", `Pi Web cannot load the SDK's MCP modules: ${internals.reason}`);
+  if (!internals.ok) return mcpEntryRefusal(409, "mcp-off", `Agent Web Plus cannot load the SDK's MCP modules: ${internals.reason}`);
   return internals;
 }
 
@@ -123,7 +123,7 @@ function readScope(value: unknown): McpScope | undefined {
 export function mcpProjectTrustRefusal(
   cwd: string,
   agentDir: string,
-  untrustedMessage = "The project is not trusted, so Pi Web does not start its MCP servers",
+  untrustedMessage = "The project is not trusted, so Agent Web Plus does not start its MCP servers",
 ): McpEntryRefusal | undefined {
   try {
     const status = getProjectTrustStatus(cwd, agentDir);
@@ -198,7 +198,7 @@ export async function readConnectableMcpEntry(req: Request): Promise<McpConnecta
       .find((server) => server.scope === scope && server.name === name);
     if (listed?.invalidError) return mcpEntryRefusal(409, "server-invalid", listed.invalidError, { name });
     if (findWebPasswordField(config, internals)) {
-      return mcpEntryRefusal(409, "web-password", `"${name}" references PI_WEB_PASSWORD, so Pi Web does not connect it`, { name });
+      return mcpEntryRefusal(409, "web-password", `"${name}" references PI_WEB_PASSWORD, so Agent Web Plus does not connect it`, { name });
     }
     return {
       scope,

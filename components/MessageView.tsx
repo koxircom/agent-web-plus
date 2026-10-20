@@ -653,6 +653,7 @@ function AssistantMessageView({
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, message.displayBlockIndices, isStreaming]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
   const providerError = getAssistantErrorMessage(message, { isStreaming });
+  const retryAttempt = Boolean(message.retryAttempt && !isStreaming);
   const truncated = isAssistantTruncated(message, { isStreaming });
   const [copied, setCopied] = useState(false);
   const blockItemsRef = useRef(blockItems);
@@ -758,7 +759,7 @@ function AssistantMessageView({
     return () => clearInterval(id);
   }, [isStreaming]);
 
-  if (blocks.length === 0 && !isStreaming && !providerError && !truncated) return null;
+  if (blocks.length === 0 && !isStreaming && !providerError && !retryAttempt && !truncated) return null;
 
   const copyButton = textContent && !isStreaming ? (
     <button
@@ -895,11 +896,31 @@ function AssistantMessageView({
         </div>
       )}
 
+      {retryAttempt && (
+        <div
+          role="status"
+          title={message.errorMessage}
+          style={{
+            marginTop: blocks.length > 0 ? 8 : 0,
+            padding: "7px 10px",
+            border: "1px solid rgba(234,179,8,0.3)",
+            borderRadius: 6,
+            background: "rgba(234,179,8,0.07)",
+            color: "#ca8a04",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          {t("chat.providerRetryAttempt")}
+        </div>
+      )}
+
       {truncated && (
         <div
           role="alert"
           style={{
-            marginTop: blocks.length > 0 || providerError ? 8 : 0,
+            marginTop: blocks.length > 0 || providerError || retryAttempt ? 8 : 0,
             padding: "7px 10px",
             border: "1px solid rgba(234,179,8,0.3)",
             borderRadius: 6,

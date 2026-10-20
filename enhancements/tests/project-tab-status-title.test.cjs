@@ -93,15 +93,7 @@ test("compact titles omit zero counts and long status labels", () => {
     [{healthy:false,running:12,attention:4},"work"],
   ]){c.syncProjectTabStatusSnapshot=()=>snapshot;assert.equal(c.compose("work - Pi Web"),expected);}
 });
-test("favicon count matches its color when running and waiting coexist", () => {
-  const sync=extractBetween("function syncProjectStatusFavicon(snapshot)","function getCurrentProjectTabStatusSnapshot()");
-  let rendered,restored=0;const favicon={setAttribute(){}};const c={
-    projectStatusDisposed:false,isPluginEnabled:()=>true,projectStatusOriginalIcons:new Map(),
-    document:{head:{querySelectorAll:()=>[],querySelector:()=>favicon,appendChild(){}}},
-    renderProjectStatusFavicon:(count,attention)=>{rendered={count,attention};},
-    restoreProjectStatusFavicon:()=>{restored++;},
-  };vm.createContext(c);vm.runInContext(sync+";this.sync=syncProjectStatusFavicon;",c);
-  c.sync({count:5,running:2,attention:3,hasAttention:true});assert.deepEqual(rendered,{count:3,attention:true});
-  c.sync({count:2,running:2,attention:0,hasAttention:false});assert.deepEqual(rendered,{count:2,attention:false});
-  c.sync({count:0,running:0,attention:0,hasAttention:false});assert.equal(restored,1);
+test("the status publisher leaves favicon DOM exclusively to the native tab owner", () => {
+  assert.doesNotMatch(source, /data-pi-enh-attention-favicon|renderProjectStatusFavicon|projectStatusOriginalIcons/);
+  assert.match(source, /window\.__PI_WEB_PROJECT_TAB_STATUS__ = projectTabStatusSnapshot/);
 });

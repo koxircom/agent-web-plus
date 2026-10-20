@@ -1,9 +1,4 @@
-/**
- * Model catalog as a real Pi Web install reports it for this demo setup:
- * ChatGPT Plus/Pro (Codex) signed in with OAuth, DeepSeek with an API key and
- * a custom "Claude Gateway" provider from models.json. Captured from
- * GET /api/models and friends against the pi SDK, see mock/captured/.
- */
+/** Synthetic UI-only model catalog. No credentials or live account state. */
 import modelsResponse from "../captured/models.json";
 import enabledModelsResponse from "../captured/models-enabled.json";
 import authProvidersResponse from "../captured/auth-providers.json";

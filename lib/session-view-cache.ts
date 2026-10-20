@@ -1,7 +1,8 @@
 import { clearToolResultContentCache, deleteToolResultContentCache } from "./tool-result-content.ts";
 // Bounded in-memory snapshot of settled session history. The view snapshot and
 // sync wire baseline share one resident-session LRU and one byte budget.
-// Streaming state, queued messages and SSE objects stay in their live owners.
+// Streaming and SSE objects stay in their live owners. Queue previews are
+// display-only, memory-only metadata, never certified or persisted wire state.
 
 import type { AgentMessage } from "./types";
 import type { SessionData } from "../hooks/useAgentSession";
@@ -28,9 +29,12 @@ export interface SessionViewSnapshot {
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
 	stats?: unknown;
+	navigationTotalTurns?: number;
 	totalActiveMs?: number;
 	/** Ids of history pages the user already paged in beyond the first window. */
 	loadedEntryIds: string[];
+	/** Last confirmed queue for immediate paint; the live owner must revalidate it. */
+	queuePreview?: { steering: string[]; followUp: string[]; deliveryStates?: {status: string; error?: string}[] };
 	/** Ranking metadata only; does not change the authoritative snapshot. */
 	cachePriority?: SessionViewCachePriority;
 	savedAt: number;
@@ -114,7 +118,12 @@ function snapshotBytes(snapshot: unknown): number {
 	try {
 		const wire = snapshot as SessionWireBaseline;
 		const record = wire?.data ? prepareSessionWireDisk(wire) : null;
-		if (record) { if (cacheKey) byteSizes.set(cacheKey, record.bytes); return record.bytes; }
+		if (record) {
+      const preview = (snapshot as SessionViewSnapshot).queuePreview;
+      const bytes = record.bytes + (preview ? new TextEncoder().encode(JSON.stringify(preview)).byteLength : 0);
+      if (cacheKey) byteSizes.set(cacheKey, bytes);
+      return bytes;
+    }
 		const serialized = JSON.stringify(snapshot);
 		const bytes = typeof serialized === "string"
 			? new TextEncoder().encode(serialized).byteLength
@@ -225,6 +234,7 @@ export function setSessionViewSnapshot(snapshot: Omit<SessionViewSnapshot, "save
 	const priority = inheritedPriority(snapshot.sessionId, snapshot, previous);
 	const entry = Object.freeze({
 		...snapshot,
+		queuePreview: snapshot.queuePreview ?? previous?.queuePreview,
 		savedAt: Date.now(),
 		...(priority ? { cachePriority: priority } : {}),
 	}) as SessionViewSnapshot;

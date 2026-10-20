@@ -1,7 +1,7 @@
-# Pi Web demo
+# Agent Web Plus demo
 
-A static, backend-free copy of the Pi Web UI for GitHub Pages. It uses the
-real Pi Web components, and an in-browser mock answers every `/api/*` request
+A static, backend-free copy of the Agent Web Plus UI for GitHub Pages. It uses the
+real Agent Web Plus components, and an in-browser mock answers every `/api/*` request
 the UI makes, so visitors can click through sessions, files, models and
 settings without installing anything.
 
@@ -26,12 +26,12 @@ settings without installing anything.
 ## How it works
 
 ```text
-app/DemoRoot.tsx        imports mock/install.ts, then renders Pi Web's AppShell
+app/DemoRoot.tsx        imports mock/install.ts, then renders Agent Web Plus's AppShell
 mock/install.ts         replaces window.fetch (for /api/*) and EventSource
 mock/router.ts          the API routes: sessions, agent, files, git, models, …
 mock/agent.ts           streams replies with pi's SSE event sequence
 mock/sessions/          tutorial scripts, expanded into pi session entries
-mock/captured/          responses recorded from a real Pi Web + pi SDK setup
+mock/captured/          synthetic API-shaped fixtures; no credentials or live account state
 scripts/prepare-demo-files.mjs
                         snapshots the repository into public/demo-files
 ```
@@ -50,13 +50,13 @@ differ from their originals:
 To pick up UI changes from the main project, copy the updated files over and
 re-apply the changes above (search for `demo` / `@/mock` in those files).
 
-## Isolation from Pi Web
+## Isolation from Agent Web Plus
 
 The demo never ends up in the app or its npm package:
 
 - **Not published.** The root `package.json` publishes only the paths in its
   `files` whitelist, so `npm pack` contains nothing from `demo/`.
-- **Not compiled into the app.** Pi Web imports nothing from `demo/`; the root
+- **Not compiled into the app.** Agent Web Plus imports nothing from `demo/`; the root
   `tsconfig.json` excludes it and `eslint.config.mjs` ignores it.
 - **Kept out of the app's CSS.** Tailwind scans every file that isn't
   gitignored, so `app/globals.css` has `@source not "../demo";`. The demo's copy

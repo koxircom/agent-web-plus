@@ -1,3 +1,5 @@
+var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" /><path d=\"M12 7a5 5 0 1 0 5 5\" /><path d=\"M13 3.055a9 9 0 1 0 7.941 7.945\" /><path d=\"M15 6v3h3l3 -3h-3v-3l-3 3\" /><path d=\"M15 9l-3 3\" /></g>","plan":"<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7\" /><path d=\"M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3\" /><path d=\"M9.7 17l4.6 0\" /></g>"};
+;
 /* Shared, side-effect-free accounting used by the generator and Usage plugin. */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -108,9 +110,23 @@
     return canonicalModel(id, null, null).name;
   }
 
+  // Only validated Codex lineage changes the conversation dimension. Physical
+  // execution buckets, dates, roles and Pi's existing ownership stay intact.
+  function conversationId(ledger, id) {
+    const seen = new Set([id]);
+    let current = id;
+    while (true) {
+      const parent = ledger.sessions?.[current]?.parentSessionId;
+      if (typeof parent !== "string" || !parent.startsWith("codex:") || !ledger.sessions?.[parent]) return current;
+      if (seen.has(parent)) return id;
+      seen.add(parent);
+      current = parent;
+    }
+  }
+
   function aggregate(ledger, options = {}) {
     const total = empty(), roles = { main: empty(), subagent: empty(), system: empty() };
-    const models = new Map(), sessions = new Map(), allModels = new Map();
+    const models = new Map(), sessions = new Map(), allModels = new Map(), physicalSessions = new Set();
     const now = options.now ?? Date.now(), range = options.timeRange || "all";
 
     const validRanges = ["all", "today", "yesterday", "24h", "7d", "30d", "custom"];
@@ -121,6 +137,11 @@
     if (options.role && !validRoles.includes(options.role)) {
       throw new Error(`Invalid role: ${options.role}`);
     }
+    const validEngines = ["all", "pi", "codex"];
+    if (options.engine !== undefined && !validEngines.includes(options.engine)) {
+      throw new Error(`Invalid engine: ${options.engine}`);
+    }
+    const selectedEngine = options.engine === undefined ? "all" : options.engine;
     if (options.now !== undefined && (typeof options.now !== "number" || !Number.isFinite(options.now))) {
       throw new Error("Invalid now timestamp");
     }
@@ -171,6 +192,12 @@
     let excludedTokens = 0, excludedRecords = 0;
 
     for (const b of ledger.buckets || []) {
+      const bucketEngine = b.engine === undefined ? "pi" : b.engine;
+      if (bucketEngine !== "pi" && bucketEngine !== "codex") {
+        throw new Error(`Invalid bucket engine: ${bucketEngine}`);
+      }
+      if (selectedEngine !== "all" && bucketEngine !== selectedEngine) continue;
+
       const c = canonicalModel(b.model, b.provider, b.role);
       const cKey = c.key;
       allModels.set(cKey, c.name);
@@ -255,9 +282,9 @@
       }
 
       // 智能价格核算：有原生上报优先原值；旧桶整个桶 cost=0 时全桶补价；不得对 cost>0 且部分 unpriced 用比例近似冒充精确
-      let effectiveCostNano = item.costNano || 0;
+      let effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
       let effectiveUnpriced = item.unpricedTokens || 0;
-      if (item.totalTokens > 0) {
+      if (bucketEngine !== "codex" && item.totalTokens > 0) {
         const rate = STANDARD_RATES[cKey];
         if (rate) {
           if (effectiveCostNano <= 0) {
@@ -276,6 +303,10 @@
       if (matchExecutionCandidate && matchRole) {
         add(total, item);
         add(roles[item.role], item);
+        if (bucketEngine === "codex") {
+          total.codexTokens = (total.codexTokens || 0) + item.totalTokens;
+          roles[item.role].codexTokens = (roles[item.role].codexTokens || 0) + item.totalTokens;
+        }
 
         if (!models.has(cKey)) {
           models.set(cKey, {
@@ -292,7 +323,13 @@
         const m = models.get(cKey);
         add(m, item);
         add(m.roles[item.role], item);
-        m.sessionIds.add(item.sessionId);
+        if (bucketEngine === "codex") {
+          m.codexTokens = (m.codexTokens || 0) + item.totalTokens;
+          m.roles[item.role].codexTokens = (m.roles[item.role].codexTokens || 0) + item.totalTokens;
+        }
+        const groupId = bucketEngine === "codex" ? conversationId(ledger, item.sessionId) : item.sessionId;
+        physicalSessions.add(item.sessionId);
+        m.sessionIds.add(groupId);
         if (b.provider && b.provider !== "unknown") m.providerList.add(b.provider);
 
         if (b.role === "subagent") {
@@ -301,10 +338,37 @@
           m.workerSubagents.messages += item.messageCount;
         }
 
-        if (!sessions.has(item.sessionId)) {
-          sessions.set(item.sessionId, { ...(ledger.sessions?.[item.sessionId] || {}), ...empty(), id: item.sessionId });
+        if (!sessions.has(groupId)) {
+          sessions.set(groupId, { ...(ledger.sessions?.[groupId] || {}), ...empty(), id: groupId,
+            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map() });
         }
-        add(sessions.get(item.sessionId), item);
+        const group = sessions.get(groupId);
+        add(group, item);
+        if (bucketEngine === "codex") {
+          group.codexTokens = (group.codexTokens || 0) + item.totalTokens;
+          if (item.role === "subagent") {
+            group.subagentTokens += item.totalTokens;
+            group.subagentIds.add(item.sessionId);
+          } else group.mainTokens += item.totalTokens;
+        }
+        // These rows explain already-counted Codex physical usage. They never
+        // flow back into aggregate totals, and require a validated parent link.
+        if (bucketEngine === "codex" && item.role === "subagent" && groupId !== item.sessionId) {
+          const detailDay = typeof b.day === "string" ? b.day : "unknown";
+          const detailKey = JSON.stringify([item.sessionId, detailDay]);
+          let detail = group.subtaskDetails.get(detailKey);
+          if (!detail) {
+            const childSession = ledger.sessions?.[item.sessionId] || {};
+            detail = {
+              ...empty(), sessionId: item.sessionId,
+              name: childSession.name || childSession.title || item.sessionId,
+              day: detailDay, codexTokens: 0,
+            };
+            group.subtaskDetails.set(detailKey, detail);
+          }
+          add(detail, item);
+          detail.codexTokens += item.totalTokens;
+        }
       }
 
       // 2. 调度归属维度：双向子代理归属，仅记录发起调用的主控模型（非加和信息，不计入物理总量）
@@ -330,13 +394,14 @@
         cm.dispatchedSubagents.tokens += item.totalTokens;
         cm.dispatchedSubagents.calls += item.calls;
         cm.dispatchedSubagents.messages += item.messageCount;
+        if (bucketEngine === "codex") cm.dispatchedSubagents.codexTokens = (cm.dispatchedSubagents.codexTokens || 0) + item.totalTokens;
 
         // 子 Agent 实际费用：优先使用已按事件精确聚合的 item.costNano（item.costNano 是唯一实际费用入口）
         // 只有 unpricedTokens === 0 才算该子桶完整定价。
         // 若任何选中调度子桶未完整定价，整个 controller 的 savings 标记为 pricingComplete=false
         const mainRate = STANDARD_RATES[ctrl.key];
-        const isSubPriced = (item.unpricedTokens || 0) === 0;
-        const hasHypMainCost = Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+        const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
+        const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
 
         if (isSubPriced && hasHypMainCost) {
           const actualSubCost = (item.costNano || 0) / 1e9;
@@ -387,7 +452,13 @@
       modelBreakdowns,
       allModels: [...allModels],
       sessionCount: sessions.size,
-      topSessions: [...sessions.values()].sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
+      physicalSessionCount: physicalSessions.size,
+      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => ({
+        ...session,
+        subagentCount: subagentIds.size,
+        subtasks: [...subtaskDetails.values()].sort((a, b) =>
+          b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
+      })).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
       timeCoverage: { excludedTokens, excludedRecords },
     };
   }
@@ -395,6 +466,7 @@
   function validate(ledger) {
     if (ledger.version !== 2 || !Array.isArray(ledger.buckets)) throw new Error("Unsupported Usage ledger schema");
     for (const b of ledger.buckets) {
+      if (b.engine !== undefined && b.engine !== "pi" && b.engine !== "codex") throw new Error(`Invalid bucket engine: ${b.engine}`);
       if (!["main", "subagent", "system"].includes(b.role)) throw new Error("Invalid execution role");
       if (b.day !== "unknown") {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(b.day)) throw new Error(`Invalid day format: ${b.day}`);
@@ -472,7 +544,7 @@
 /* Optional resources share one request and publish no UI ownership. */
 (function (root) {
   "use strict";
-  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-d8dd277768dc16a0.js","integrity":"sha256-2N0nd2jcFqBSHu5ZuTqChaQiL+dMN4ABKOe/STnG0fU=","bytes":63831},"image-editor":{"path":"/pi-web-assets/image-editor-42f6645a70f43e69.js","integrity":"sha256-QvZkWnD0PmlNxebzPKvYNLKW//UgBpYPtG+DxJYS9ps=","bytes":54018}};
+  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-f4a6b4b140d01297.js","integrity":"sha256-9Ka0sUDQEpfzhWcQFqe/BEXyO7kHkgsTsP9rGo/kt6I=","bytes":72995},"image-editor":{"path":"/pi-web-assets/image-editor-42f6645a70f43e69.js","integrity":"sha256-QvZkWnD0PmlNxebzPKvYNLKW//UgBpYPtG+DxJYS9ps=","bytes":54018}};
   const pending = new Map();
   // Hot reloads may change an optional asset while keeping the same window.
   // Reuse only an export stamped with this exact content-addressed path.
@@ -565,10 +637,10 @@
   };
 })(function(key) {
     return typeof localStorage !== "undefined" && localStorage ? localStorage.getItem(key) : null;
-  }, {"stop-fast-response":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"user-message-reconcile":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
+  }, {"stop-fast-response":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"model-scope-warning":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
 ;
 /**
- * Pi Web Enhancements v4.3.4:
+ * Agent Web Plus Enhancements v4.3.4:
  * 1. Session Row Context Menu (Right-click in sidebar)
  *    - Copy Session ID / Path / Prompt / CWD
  * 2. Quick Action Quote Toolbar (Select text in chat output)
@@ -611,7 +683,7 @@
     try {
       window.__PI_WEB_ENHANCEMENTS_CLEANUP__();
     } catch (err) {
-      console.warn("[Pi Web Enhancements] error cleaning up previous instance:", err);
+      console.warn("[Agent Web Plus Enhancements] error cleaning up previous instance:", err);
     }
   }
   // 立即清除任何可能残留的孤儿 Toast 节点
@@ -747,7 +819,7 @@
       try {
         fn();
       } catch (err) {
-        console.error("[Pi Web Enhancements] Error in managed timeout:", err);
+        console.error("[Agent Web Plus Enhancements] Error in managed timeout:", err);
       }
     }, ms);
     managedTimeoutCleanups.set(id, cleanup);
@@ -1000,16 +1072,9 @@
       defaultEnabled: true,
     },
     {
-      id: "user-message-reconcile",
-      name: "用户消息状态对齐与大图去重",
-      desc: "智能对齐发送含大图消息时的乐观状态与服务端 SSE 消息，消除重复追加气泡，修复 React 状态并杜绝旧轮误匹配。",
-      category: "交互增强",
-      defaultEnabled: true,
-    },
-    {
       id: "general-settings-dashboard",
       name: "常规设置双列布局与服务重启",
-      desc: "将设置弹窗“常规”面板优化为现代双列卡片仪表盘布局，消除右侧大片空白，并在页面维护模块增加一键重启 Pi Web 服务功能。",
+      desc: "将设置弹窗“常规”面板优化为现代双列卡片仪表盘布局，消除右侧大片空白，并在页面维护模块增加一键重启 Agent Web Plus 服务功能。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1051,7 +1116,7 @@
     {
       id: "subagent-dispatch-cards",
       name: "子代理调度原生折叠卡片",
-      desc: "隐藏旧式“调度子代理”正文播报，并在 Pi Web 原生 subagent 折叠卡片中补充无图标模型名；保留原生耗时、展开箭头和交互。",
+      desc: "隐藏旧式“调度子代理”正文播报，并在 Agent Web Plus 原生 subagent 折叠卡片中补充无图标模型名；保留原生耗时、展开箭头和交互。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1094,7 +1159,7 @@
     {
       id: "pi-mail-auto-collapse",
       name: "协作消息自动折叠",
-      desc: "跨会话协作消息默认显示主题摘要，支持展开、收起与可读内容复制。",
+      desc: "跨会话协作消息长卡片默认收起为单行亲民摘要，仅呈现「协作消息 · 已收到」并支持随时展开/收起及原文复制。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1103,6 +1168,13 @@
       name: "实时执行秒表",
       desc: "任务运行中在会话内显示执行时长；标签页标题由统一状态管理，避免计时前缀闪烁。", 
       category: "运行监控",
+      defaultEnabled: true,
+    },
+    {
+      id: "model-scope-warning",
+      name: "隐藏模型范围警告",
+      desc: "隐藏输入区的模型范围警告，并在模型菜单对应选项后显示黄色提示图标；关闭插件后恢复原生警告。",
+      category: "显示增强",
       defaultEnabled: true,
     },
     {
@@ -1150,7 +1222,7 @@
     {
       id: "native-message-font",
       name: "助手正文原生字号",
-      desc: "将助手 Markdown 正文恢复为 Pi Web 原生 14px 排版；不改变消息底部的时间、Token 消耗和费用显示。",
+      desc: "将助手 Markdown 正文恢复为 Agent Web Plus 原生 14px 排版；不改变消息底部的时间、Token 消耗和费用显示。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1199,7 +1271,7 @@
     {
       id: "project-status-indicator",
       name: "跨项目会话状态提示",
-      desc: "当前项目有未读完成或待回答会话时，标签页标题显示项目名和去重合计数；Pi 图标以蓝色数字徽标标记未读完成，以橙色数字徽标标记待处理。阅读完成或服务器确认答复后计数减少，折叠会话不会清除计数。", 
+      desc: "精简标签页标题，移除冗余 Agent Web Plus 标识与跳动的计时秒数。运行中以蓝色小球 🔵 纯净指示，需要确认 🟠、错误 🔴、已完成 🟢 显示状态文字与对应颜色小球；多标签页一目了然。", 
       category: "运行监控",
       defaultEnabled: true,
     },
@@ -1380,8 +1452,8 @@
     },
     {
       id: "mobile-swipe-drawer",
-      name: "移动端手势滑出会话与文件面板",
-      desc: "在手机触摸屏上，向右滑动可顺畅滑出打开会话列表面板（代码块与水平滚动区域优先内部滚动不冲突）；侧边栏打开时向左滑动顺畅收起，打开文件面板时向右滑动可收起文件面板。",
+      name: "移动端手势滑出会话、导航与文件面板",
+      desc: "在手机触摸屏上，向右滑动滑出打开会话列表面板，侧边栏打开时向左滑动收起；屏幕右边缘向左滑打开会话导航，会话导航打开时向右滑收起；文件面板打开时向右滑动收起文件面板（代码块与水平滚动区域优先内部滚动不冲突）。",
       category: "交互增强",
       defaultEnabled: true,
     },
@@ -1541,8 +1613,8 @@
     },
     {
       id: "pi-web-plus-branding",
-      name: "Pi Web Plus 品牌装饰",
-      desc: "控制侧边栏与界面的附加紧凑头距、字体和间距等品牌装饰样式；原生「π+ Pi Web Plus」自有基础品牌标识始终保持生效。",
+      name: "Agent Web Plus 品牌装饰",
+      desc: "控制侧边栏与界面的附加紧凑头距、字体和间距等品牌装饰样式；原生「π+ Agent Web Plus」自有基础品牌标识始终保持生效。",
       version: "1.0.0",
       category: "显示增强",
       defaultEnabled: true,
@@ -1554,7 +1626,7 @@
   const ENHANCEMENT_SETTINGS_STORAGE_KEY = "pi-enh-settings-v1";
   const ENHANCEMENT_PLUGIN_SETTINGS = {
     "minimap-full-nav": {
-      initialTurns: { type: "number", defaultValue: 5, min: 5, max: 50, legacyKey: "pi-enh-minimap-initial-turns" },
+      initialTurns: { type: "number", defaultValue: 5, min: 1, max: 50, legacyKey: "pi-enh-minimap-initial-turns" },
       stepTurns: { type: "number", defaultValue: 5, min: 1, max: 50, legacyKey: "pi-enh-minimap-step-turns" },
     },
     "session-pin-archive": {
@@ -1574,7 +1646,7 @@
   };
   const ENHANCEMENT_MODULES = [
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
-    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["user-message-reconcile", "task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
+    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
     { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
     { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer"] },
@@ -1582,7 +1654,7 @@
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
     { id: "background-attention", name: "后台会话提醒", desc: "管理跨项目状态、提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
     { id: "notification-management", name: "通知管理", desc: "管理所有站内通知、网页操作提示、提示音与桌面提醒，并查看通知历史。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["notification-center"] },
-    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
+    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护、模型警告可见性和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["model-scope-warning", "esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
     { id: "local-workspace", name: "本地工作区工具", desc: "管理本地路径直达和会话缓存。", category: "快捷操作", version: "1.0.0", defaultEnabled: true, features: ["local-path-launcher", "obsidian-markdown-viewer", "excel-sheet-preview", "session-memory-cache", "session-history-integrity", "session-history-order-guard", "cross-device-session-sync", "session-panel-binding", "file-panel-overlay-guard", "general-settings-dashboard", "workspace-picker-hover", "pi-web-plus-branding"] },
     { id: "preference-memory", name: "偏好记忆", desc: "管理思考深度的跨会话记忆与浏览器增强设置归档。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["thinking-persistence", "enhancement-settings-archive"] },
   ];
@@ -1953,12 +2025,17 @@
       window.__PI_ENH_CRASH_DIAGNOSTICS__?.setEnabled(enabled);
     } else if (id === "notification-center") {
       applyNotificationVisibility();
+      if (enabled) {
+        initNotificationCapture();
+      }
     } else if (id === "obsidian-markdown-viewer") {
       if (!enabled) removeMarkdownViewerEnhancements();
       else syncMarkdownViewerMode();
     } else if (id === "excel-sheet-preview") {
       if (!enabled && typeof removeExcelViewerEnhancements === "function") removeExcelViewerEnhancements();
       else if (typeof syncExcelViewerMode === "function") syncExcelViewerMode();
+    } else if (id === "model-scope-warning") {
+      syncModelScopeWarnings();
     } else if (id === "turn-duration") {
       if (!enabled) {
         for (const badge of document.querySelectorAll(".pi-enh-duration-badge")) {
@@ -2023,7 +2100,24 @@
         removeCompactionEnhancements();
       }
     } else if (id === "pi-mail-auto-collapse") {
-      window.dispatchEvent(new Event("pi-mail-collapse-change"));
+      if (typeof syncPiMailActiveState === "function") {
+        syncPiMailActiveState();
+      } else if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_PI_MAIL_ACTIVE_STATE__ === "function") {
+        window.__PI_ENH_SYNC_PI_MAIL_ACTIVE_STATE__();
+      }
+      if (enabled) {
+        if (typeof syncPiMailCards === "function") {
+          syncPiMailCards();
+        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_PI_MAIL_CARDS__ === "function") {
+          window.__PI_ENH_SYNC_PI_MAIL_CARDS__();
+        }
+      } else {
+        if (typeof removePiMailEnhancements === "function") {
+          removePiMailEnhancements();
+        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_REMOVE_PI_MAIL_ENHANCEMENTS__ === "function") {
+          window.__PI_ENH_REMOVE_PI_MAIL_ENHANCEMENTS__();
+        }
+      }
     } else if (id === "live-stopwatch") {
       if (!enabled) {
         for (const timer of document.querySelectorAll(".pi-enh-live-timer")) {
@@ -2085,7 +2179,8 @@
     } else if (id === "minimap-full-nav") {
       syncMinimapEnhancements();
     } else if (id === "scroll-to-bottom") {
-      syncScrollBottomPreferences();
+      if (!enabled) removeScrollBottomButton();
+      else syncScrollBottomButton();
     } else if (id === "local-path-launcher") {
       if (!enabled) removeLocalPathLauncher();
       else syncLocalPathLauncher();
@@ -2128,12 +2223,12 @@
       }
       syncSessionOdooAddonsLayout();
       syncSessionSectionHeaders();
-      requestSessionListRefresh();
+      window.__PI_ENH_RERENDER_SESSIONS__?.();
     } else if (id === "session-section-headers") {
       if (!enabled) removeSessionSectionHeaders();
       syncSessionOdooAddonsLayout();
       syncSessionSectionHeaders();
-      requestSessionListRefresh();
+      window.__PI_ENH_RERENDER_SESSIONS__?.();
     } else if (id === "session-model-label") {
       if (!enabled) removeSessionModelLabels();
       else syncSessionModelLabels();
@@ -2268,6 +2363,203 @@
     }
   }
 
+  const MODEL_SCOPE_WARNING_MARKER = "data-pi-enh-model-scope-warning";
+  const MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY = "data-pi-enh-model-scope-warning-display";
+  const MODEL_SCOPE_WARNING_ICON_SELECTOR = ".pi-enh-model-scope-warning-icon";
+  const MODEL_SCOPE_WARNING_TEXT_MARKERS = [
+    "模型范围警告",
+    "model scope warning",
+    "no models match pattern",
+  ];
+  const MODEL_SCOPE_WARNING_PATTERN_RE = /no models match(?:es)? pattern\s+(?:["“'‘]([^"”'’\r\n]+)["”'’]|([^\s,;]+))/gi;
+  const MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE = /:(?:none|off|minimal|low|medium|high|xhigh|max)$/i;
+
+  function isModelScopeWarningCard(card) {
+    if (!card || card.getAttribute?.("role") !== "alert") return false;
+    const text = String(card.textContent || "").toLocaleLowerCase();
+    return MODEL_SCOPE_WARNING_TEXT_MARKERS.some((marker) => text.includes(marker.toLocaleLowerCase()));
+  }
+
+  function restoreModelScopeWarningCard(card) {
+    if (!card?.hasAttribute?.(MODEL_SCOPE_WARNING_MARKER)) return;
+    if (card.style) {
+      card.style.display = card.getAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY) || "";
+    }
+    card.removeAttribute(MODEL_SCOPE_WARNING_MARKER);
+    card.removeAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY);
+  }
+
+  function removeModelScopeWarningIndicators() {
+    for (const icon of document.querySelectorAll(MODEL_SCOPE_WARNING_ICON_SELECTOR)) {
+      icon.remove();
+    }
+  }
+
+  function clearModelScopeWarningVisibility() {
+    for (const card of document.querySelectorAll('[role="alert"]')) {
+      restoreModelScopeWarningCard(card);
+    }
+    removeModelScopeWarningIndicators();
+    document.documentElement?.classList?.remove("pi-enh-model-scope-warning-hidden");
+  }
+
+  function normalizeModelScopeIdentity(value) {
+    return String(value || "").toLocaleLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function collectModelScopeWarningPatterns(cards) {
+    const patternsByModel = new Map();
+    for (const card of cards) {
+      const text = String(card.textContent || "");
+      MODEL_SCOPE_WARNING_PATTERN_RE.lastIndex = 0;
+      let match;
+      while ((match = MODEL_SCOPE_WARNING_PATTERN_RE.exec(text))) {
+        const rawPattern = String(match[1] || match[2] || "").trim().replace(/[.!?]+$/, "");
+        const modelRef = rawPattern.replace(MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE, "").trim();
+        if (!modelRef) continue;
+        const key = modelRef.toLocaleLowerCase();
+        let warning = patternsByModel.get(key);
+        if (!warning) {
+          const parts = modelRef.split("/").filter(Boolean);
+          warning = {
+            modelRef,
+            provider: parts.length > 1 ? parts[0] : "",
+            modelName: parts[parts.length - 1] || modelRef,
+            rawPatterns: new Set(),
+          };
+          patternsByModel.set(key, warning);
+        }
+        warning.rawPatterns.add(rawPattern);
+      }
+    }
+    return Array.from(patternsByModel.values());
+  }
+
+  function getModelScopeOptionProvider(option, listbox) {
+    const group = option?.parentElement;
+    if (!group || group === listbox) return "";
+    for (const child of Array.from(group.children || [])) {
+      if (child === option || child.matches?.('button[role="option"]')) continue;
+      if (child.querySelector?.('button[role="option"]')) continue;
+      const label = String(child.textContent || "").trim();
+      if (label) return label;
+    }
+    return "";
+  }
+
+  function modelScopeWarningMatchesOption(option, listbox, warning) {
+    const modelNameIdentity = normalizeModelScopeIdentity(warning.modelName);
+    const modelRefIdentity = normalizeModelScopeIdentity(warning.modelRef);
+    const explicitModel = option.getAttribute("data-model-id") ||
+      option.getAttribute("data-model") ||
+      option.getAttribute("data-provider-model") ||
+      option.getAttribute("value") || "";
+    if (explicitModel) {
+      const explicitIdentity = normalizeModelScopeIdentity(explicitModel.replace(MODEL_SCOPE_WARNING_REASONING_SUFFIX_RE, ""));
+      if (explicitIdentity === modelRefIdentity || explicitIdentity === modelNameIdentity) {
+        const explicitProvider = option.getAttribute("data-provider") || "";
+        return !warning.provider || !explicitProvider ||
+          normalizeModelScopeIdentity(explicitProvider) === normalizeModelScopeIdentity(warning.provider);
+      }
+    }
+
+    const labelNode = option.querySelector?.("[title]");
+    const label = String(labelNode?.getAttribute("title") || labelNode?.textContent || option.textContent || "").trim();
+    const labelIdentity = normalizeModelScopeIdentity(label);
+    if (!modelNameIdentity || !labelIdentity.includes(modelNameIdentity)) return false;
+
+    const provider = option.getAttribute("data-provider") || getModelScopeOptionProvider(option, listbox);
+    return !warning.provider || !provider ||
+      normalizeModelScopeIdentity(provider) === normalizeModelScopeIdentity(warning.provider);
+  }
+
+  function createModelScopeWarningIcon(warning) {
+    const svgNamespace = "http://www.w3.org/2000/svg";
+    const icon = document.createElementNS(svgNamespace, "svg");
+    icon.classList.add("pi-enh-model-scope-warning-icon");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("width", "15");
+    icon.setAttribute("height", "15");
+    icon.setAttribute("fill", "none");
+    icon.setAttribute("stroke", "#eab308");
+    icon.setAttribute("stroke-width", "2");
+    icon.setAttribute("stroke-linecap", "round");
+    icon.setAttribute("stroke-linejoin", "round");
+    icon.setAttribute("role", "img");
+    icon.style.cssText = "display:block;width:15px;height:15px;flex:0 0 15px;margin-left:6px;color:#eab308";
+
+    const triangle = document.createElementNS(svgNamespace, "path");
+    triangle.setAttribute("d", "M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z");
+    const exclamation = document.createElementNS(svgNamespace, "path");
+    exclamation.setAttribute("d", "M12 9v4");
+    const dot = document.createElementNS(svgNamespace, "circle");
+    dot.setAttribute("cx", "12");
+    dot.setAttribute("cy", "17");
+    dot.setAttribute("r", "0.5");
+    dot.setAttribute("fill", "#eab308");
+    dot.setAttribute("stroke", "none");
+    icon.append(triangle, exclamation, dot);
+    return icon;
+  }
+
+  function syncModelScopeWarningIndicators(warnings) {
+    const matchedOptions = new Set();
+    if (warnings.length) {
+      for (const listbox of document.querySelectorAll('.model-selector div[role="listbox"]')) {
+        for (const option of listbox.querySelectorAll('[role="option"]')) {
+          const matchedWarnings = warnings.filter((warning) => modelScopeWarningMatchesOption(option, listbox, warning));
+          if (!matchedWarnings.length) continue;
+          matchedOptions.add(option);
+          let icon = option.querySelector(MODEL_SCOPE_WARNING_ICON_SELECTOR);
+          if (!icon) {
+            icon = createModelScopeWarningIcon(matchedWarnings[0]);
+            option.appendChild(icon);
+          }
+          const tooltip = `模型范围警告：${matchedWarnings.flatMap((warning) =>
+            Array.from(warning.rawPatterns, (pattern) => `No models match pattern "${pattern}"`)
+          ).join("；")}`;
+          if (icon.getAttribute("title") !== tooltip) icon.setAttribute("title", tooltip);
+          if (icon.getAttribute("aria-label") !== tooltip) icon.setAttribute("aria-label", tooltip);
+        }
+      }
+    }
+    for (const icon of document.querySelectorAll(MODEL_SCOPE_WARNING_ICON_SELECTOR)) {
+      if (!matchedOptions.has(icon.parentElement)) icon.remove();
+    }
+    return matchedOptions.size;
+  }
+
+  function syncModelScopeWarnings() {
+    const matchingCards = [];
+    for (const card of document.querySelectorAll('[role="alert"]')) {
+      if (isModelScopeWarningCard(card)) {
+        matchingCards.push(card);
+      } else {
+        restoreModelScopeWarningCard(card);
+      }
+    }
+
+    if (!isPluginEnabled("model-scope-warning")) {
+      for (const card of matchingCards) restoreModelScopeWarningCard(card);
+      removeModelScopeWarningIndicators();
+      document.documentElement?.classList?.remove("pi-enh-model-scope-warning-hidden");
+      return;
+    }
+
+    for (const card of matchingCards) {
+      if (!card.hasAttribute(MODEL_SCOPE_WARNING_MARKER)) {
+        card.setAttribute(MODEL_SCOPE_WARNING_ORIGINAL_DISPLAY, card.style?.display || "");
+      }
+      card.setAttribute(MODEL_SCOPE_WARNING_MARKER, "true");
+      if (card.style && card.style.display !== "none") card.style.display = "none";
+    }
+
+    const warningPatterns = collectModelScopeWarningPatterns(matchingCards);
+    syncModelScopeWarningIndicators(warningPatterns);
+    document.documentElement?.classList?.toggle("pi-enh-model-scope-warning-hidden", matchingCards.length > 0);
+  }
+
+  window.__PI_ENH_SYNC_MODEL_SCOPE_WARNINGS__ = syncModelScopeWarnings;
   window.__PI_ENH_PLUGINS__ = ENHANCEMENT_PLUGINS;
   window.__PI_ENH_MODULES__ = ENHANCEMENT_MODULES;
   window.__PI_ENH_SUITE_VERSION__ = ENHANCEMENT_SUITE_VERSION;
@@ -2282,160 +2574,7 @@
   window.__PI_ENH_SET_PLUGIN_SETTING__ = setPluginSetting;
   window.__PI_ENH_CONFIG__ = getEnhancementConfig();
 
-  // ==========================================
-  // 用户消息状态对齐与大图去重 (User Message Reconcile)
-  // ==========================================
-
-  function extractContentText(content) {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
-        .map((part) => (part && typeof part === "object" && part.type === "text" && typeof part.text === "string" ? part.text : ""))
-        .filter(Boolean)
-        .join("\n");
-    }
-    return "";
-  }
-
-  function extractContentImages(content) {
-    if (!Array.isArray(content)) return [];
-    return content.filter((part) => part && typeof part === "object" && part.type === "image");
-  }
-
-  function stripDimensionNotes(text) {
-    if (typeof text !== "string") return "";
-    return text.replace(/\n*\s*\[Image:\s*original\s+[\s\S]*?\]\s*/gi, "").trim();
-  }
-
-  function reconcileUserMessage(prevMessages, serverMsg, options = {}) {
-    const fallback = typeof options.fallback === "function"
-      ? options.fallback
-      : () => [...(Array.isArray(prevMessages) ? prevMessages : []), serverMsg];
-
-    if (!isPluginEnabled("user-message-reconcile")) {
-      return fallback();
-    }
-
-    if (!Array.isArray(prevMessages) || prevMessages.length === 0) {
-      return [serverMsg];
-    }
-
-    if (!serverMsg || serverMsg.role !== "user") {
-      return fallback();
-    }
-
-    const lastFingerprint = options.lastFingerprint;
-    const serverFingerprint = options.serverFingerprint;
-    const fingerprintFn = typeof options.fingerprintFn === "function" ? options.fingerprintFn : null;
-
-    // 严格倒序扫描：向后仅跳过 role 为 system 或 custom 的元数据消息
-    // assistant / toolResult / 其他任何角色均视为边界，绝不跨越
-    let targetIdx = -1;
-    for (let i = prevMessages.length - 1; i >= 0; i--) {
-      const msg = prevMessages[i];
-      if (!msg) break;
-      if (msg.role === "system" || msg.role === "custom") {
-        continue;
-      }
-      if (msg.role === "user") {
-        targetIdx = i;
-        break;
-      }
-      break;
-    }
-
-    if (targetIdx === -1) {
-      return fallback();
-    }
-
-    const targetMsg = prevMessages[targetIdx];
-    if (!targetMsg) {
-      return fallback();
-    }
-
-    // 替换候选必须保留后缀元数据，不能 slice(0, -1) 误删 system/custom
-    const replaceTarget = () => [
-      ...prevMessages.slice(0, targetIdx),
-      serverMsg,
-      ...prevMessages.slice(targetIdx + 1)
-    ];
-
-    // 1. 防重复 SSE：
-    // 1a. 若目标消息已是本次服务端消息（相同对象引用）
-    if (targetMsg === serverMsg) {
-      return prevMessages;
-    }
-    // 1b. 权威 ID 判定：
-    if (serverMsg.id && targetMsg.id) {
-      if (serverMsg.id === targetMsg.id) {
-        return prevMessages;
-      }
-      // 权威 id 冲突：两者都有不同权威 ID 时，不去重且不替换，直接 fallback 追加
-      return fallback();
-    }
-
-    const isOptimistic = Boolean(targetMsg && targetMsg.__piEnhOptimistic);
-
-    // 1c. 服务端消息无 id（或服务端 ID 不可靠），但属于不同引用的重复 SSE 事件：
-    // 必须仅对非乐观消息、相同 timestamp 且精确相同 fingerprint 才去重；禁止纯文本/时间窗吞同文历史
-    const hasValidTimestamp = typeof serverMsg.timestamp === "number" &&
-      typeof targetMsg.timestamp === "number" &&
-      serverMsg.timestamp === targetMsg.timestamp;
-
-    if (!isOptimistic && hasValidTimestamp) {
-      let isExactFingerprint = false;
-      if (fingerprintFn) {
-        const fpTarget = fingerprintFn(targetMsg);
-        const fpServer = typeof serverFingerprint === "string" ? serverFingerprint : fingerprintFn(serverMsg);
-        isExactFingerprint = Boolean(fpTarget && fpServer && fpTarget === fpServer);
-      } else if (serverFingerprint && typeof lastFingerprint === "string") {
-        isExactFingerprint = lastFingerprint === serverFingerprint;
-      } else {
-        isExactFingerprint = JSON.stringify(targetMsg.content) === JSON.stringify(serverMsg.content);
-      }
-
-      if (isExactFingerprint) {
-        return prevMessages;
-      }
-    }
-
-    // 2. 深度比对当前回合乐观消息与服务端消息：
-    // 铁律：仅在明确具有 __piEnhOptimistic 标记时才做文本/图片归一化替换！
-    // 绝不能对无标记的已持久化历史消息凭同文误吞
-    if (isOptimistic) {
-      const textA = extractContentText(targetMsg.content).trim();
-      const textB = extractContentText(serverMsg.content).trim();
-      const imgsA = extractContentImages(targetMsg.content);
-      const imgsB = extractContentImages(serverMsg.content);
-
-      // 2a. 高分辨率图片消息对齐：两端包含相同数量的图片，
-      // 且服务端文本在剥离 [Image: original ...] 尺寸标注后与乐观消息文本一致
-      if (imgsA.length > 0 && imgsA.length === imgsB.length) {
-        const cleanTextB = stripDimensionNotes(textB);
-        const cleanTextA = stripDimensionNotes(textA);
-        if (textA === textB || textA === cleanTextB || cleanTextA === cleanTextB) {
-          return replaceTarget();
-        }
-      }
-
-      // 2b. 纯文本消息对齐：文本完全一致时将客户端乐观项替换为权威服务端消息
-      if (imgsA.length === 0 && imgsB.length === 0 && textA.length > 0 && textA === textB) {
-        return replaceTarget();
-      }
-    }
-
-    // 2c. 原生指纹完全匹配（在标记缺失时仍保留原有兜底）：
-    // 若发送时记录的 lastFingerprint 还在且与目标消息匹配，
-    // 原生指纹匹配也应替换为权威对象避免后续重放
-    if (lastFingerprint && fingerprintFn && fingerprintFn(targetMsg) === lastFingerprint) {
-      return replaceTarget();
-    }
-
-    // 3. 其他情况（不同文本、不同内容、历史未标记消息）：绝不乱去重，走 fallback 追加
-    return fallback();
-  }
-
-  window.__PI_ENH_RECONCILE_USER_MESSAGE__ = reconcileUserMessage;
+  // User-message identity and reconciliation belong to the native session hook.
 
   // ==========================================
   // 0.1 Codex-style Session Pin & Archive (会话置顶与归档状态)
@@ -2505,11 +2644,6 @@
   const pendingModelMetadataQueue = [];
   let activeModelMetadataWorkers = 0;
 
-  function isPersistentSessionModelId(sessionId) {
-    return typeof sessionId === "string" && sessionId.length > 0 &&
-      !sessionId.startsWith("new:") && !sessionId.startsWith("parked-new:");
-  }
-
   function loadPersistedSessionModelMetadata() {
     try {
       const raw = localStorage.getItem(SESSION_MODEL_STORAGE_KEY);
@@ -2517,7 +2651,7 @@
       const parsed = JSON.parse(raw);
       if (typeof parsed !== "object" || parsed === null) return;
       for (const [sId, item] of Object.entries(parsed)) {
-        if (!isPersistentSessionModelId(sId) || !item || typeof item !== "object" || !item.modelId) continue;
+        if (!sId || !item || typeof item !== "object" || !item.modelId) continue;
         const updatedAt = Number(item.updatedAt) || 0;
         sessionModelMetadata.set(sId, {
           provider: item.provider || "",
@@ -2535,7 +2669,7 @@
     try {
       const validEntries = [];
       for (const [sId, meta] of sessionModelMetadata.entries()) {
-        if (!isPersistentSessionModelId(sId) || !meta?.modelId) continue;
+        if (!sId || !meta?.modelId) continue;
         validEntries.push({
           id: sId,
           provider: meta.provider || "",
@@ -2560,7 +2694,7 @@
   }
 
   function recordSessionModelMetadataFromPayload(sessionId, payload) {
-    if (!isPersistentSessionModelId(sessionId) || !payload?.context?.model?.modelId) return;
+    if (!sessionId || !payload?.context?.model?.modelId) return;
     const m = payload.context.model;
     const now = Date.now();
     sessionModelMetadata.set(sessionId, {
@@ -2632,7 +2766,7 @@
   function renderSessionModelLabel(row, metadata) {
     const existing = row.querySelector(".pi-enh-session-model-badge");
     // 关键守卫：若当前行处于编辑状态（包含 input 或标记为 editing），严禁强行显示模型名字
-    if (row.querySelector('input:not([type="checkbox"])') || row.getAttribute("data-pi-enh-editing") === "true") {
+    if (row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
       existing?.remove();
       return;
     }
@@ -2677,7 +2811,7 @@
   }
 
   async function fetchSessionModelMetadata(sessionId) {
-    if (!isPersistentSessionModelId(sessionId) || sessionModelRequests.has(sessionId)) return;
+    if (!sessionId || sessionModelRequests.has(sessionId)) return;
     sessionModelRequests.add(sessionId);
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}?deferThinking=1&deferMedia=1&tail=1`, { cache: "no-store" });
@@ -2719,7 +2853,7 @@
   }
 
   function enqueueSessionModelMetadata(sessionId) {
-    if (!isPersistentSessionModelId(sessionId) || sessionModelRequests.has(sessionId) || pendingModelMetadataQueue.includes(sessionId)) return;
+    if (!sessionId || sessionModelRequests.has(sessionId) || pendingModelMetadataQueue.includes(sessionId)) return;
     pendingModelMetadataQueue.push(sessionId);
     pumpSessionModelMetadataQueue();
   }
@@ -2756,7 +2890,7 @@
     const now = Date.now();
     for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]")) {
       const sessionId = row.getAttribute("data-pi-enh-session-id");
-      if (!isPersistentSessionModelId(sessionId)) continue;
+      if (!sessionId) continue;
       const metadata = sessionModelMetadata.get(sessionId);
       if (metadata && metadata.modelId) {
         renderSessionModelLabel(row, metadata);
@@ -2958,33 +3092,13 @@
   }
 
   function isDurableStateEnabled() {
-    if (typeof window === "undefined" || !window) return false;
-    if (window.__PI_ENH_DURABLE_STATE_ENABLED__ !== true) return false;
-    if (window.__PI_ENH_NATIVE_STATE_API__ === true) return true;
-    try {
-      const loc = window.location;
-      if (!loc) return false;
-      const hostname = loc.hostname;
-      const port = String(loc.port || "");
-      const allowedHosts = ["10.0.0.2", "127.0.0.1", "localhost"];
-      if (!allowedHosts.includes(hostname)) return false;
-      if (port !== "30141" && port !== "30142") return false;
-      return true;
-    } catch (e) {
-      return false;
-    }
+    return typeof window !== "undefined" && !!window &&
+      window.__PI_ENH_DURABLE_STATE_ENABLED__ === true &&
+      window.__PI_ENH_NATIVE_STATE_API__ === true;
   }
 
   function getDurableStateBaseUrl() {
-    if (window.__PI_ENH_NATIVE_STATE_API__ === true) return "/api";
-    try {
-      const loc = window.location;
-      const protocol = loc.protocol || "http:";
-      const hostname = loc.hostname || "127.0.0.1";
-      return `${protocol}//${hostname}:30149`;
-    } catch (e) {
-      return "http://127.0.0.1:30149";
-    }
+    return "/api";
   }
 
   function getDurableStateInstanceParam() {
@@ -3223,8 +3337,7 @@
       writeSessionTagsDefinitions(replayedDefs);
       writeSessionTagMappings(replayedMappings);
       syncSessionTags();
-      // Decorations only change presentation. React's existing bridge has
-      // already rerendered the rows; do not refetch every transcript here.
+      window.__PI_ENH_RERENDER_SESSIONS__?.();
     }
 
     if (state.sessionColors && typeof state.sessionColors === "object" && !Array.isArray(state.sessionColors)) {
@@ -3255,16 +3368,12 @@
           : `${getDurableStateBaseUrl()}/enhancement-state?instance=${getDurableStateInstanceParam()}`;
         let res, data;
         try {
-          const initialState = !force && window.__PI_ENH_INITIAL_DURABLE_STATE__;
-          delete window.__PI_ENH_INITIAL_DURABLE_STATE__;
-          const fetchRes = initialState
-            ? await Promise.resolve({ resp: { ok: true, status: 200 }, json: initialState })
-            : await fetchModelsConfigBounded(endpoint, {
-              method: "GET",
-              credentials: "include",
-              cache: "no-store",
-              readJson: true,
-            }, 15000);
+          const fetchRes = await fetchModelsConfigBounded(endpoint, {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+            readJson: true,
+          }, 15000);
           res = fetchRes?.resp;
           data = fetchRes?.json;
         } catch (netErr) {
@@ -4195,9 +4304,7 @@
         }
 
         syncSessionTags();
-        if (typeof requestSessionListRefresh === "function") {
-          requestSessionListRefresh(false, true);
-        }
+        window.__PI_ENH_RERENDER_SESSIONS__?.();
 
         const tagsPanel = typeof document !== "undefined" ? document.querySelector(".pi-enh-tags-panel") : null;
         const nav = typeof document !== "undefined" ? document.querySelector(".settings-section-tabs") : null;
@@ -4558,34 +4665,94 @@
     return count;
   }
 
-  let lastNativeSessionTagsSignature = null;
-  let lastNativeSessionTagsBridge = null;
+  function syncSessionTagsRow(row, sessionId) {
+    if (!row || !sessionId) return;
 
-  function notifyNativeSessionTagsChanged() {
-    const bridge = window.__PI_ENH_RERENDER_SESSIONS__;
-    if (typeof bridge !== "function") return;
-    const signature = JSON.stringify([
-      isPluginEnabled("session-tags"),
-      readSessionTagsDefinitions(),
-      readSessionTagMappings(),
-    ]);
-    if (signature === lastNativeSessionTagsSignature && bridge === lastNativeSessionTagsBridge) return;
-    // Commit before notifying: native row rendering schedules another sidebar sync.
-    lastNativeSessionTagsSignature = signature;
-    lastNativeSessionTagsBridge = bridge;
-    bridge();
-  }
+    // 行内重命名守卫：处于编辑状态时隐藏标签
+    if (!isPluginEnabled("session-tags") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+      row.querySelector(".pi-enh-session-tags-row")?.remove();
+      row.removeAttribute("data-pi-enh-has-tags");
+      return;
+    }
 
-  function syncSessionTagsRow() {
-    notifyNativeSessionTagsChanged();
+    const tags = getSessionTags(sessionId);
+    let tagsRow = row.querySelector(".pi-enh-session-tags-row");
+
+    if (tags.length === 0) {
+      tagsRow?.remove();
+      row.removeAttribute("data-pi-enh-has-tags");
+      return;
+    }
+
+    row.setAttribute("data-pi-enh-has-tags", "true");
+
+    if (!tagsRow) {
+      tagsRow = document.createElement("div");
+      tagsRow.className = "pi-enh-session-tags-row";
+    }
+
+    const contentHost = row.querySelector(".pi-enh-session-meta")?.parentElement ||
+      row.querySelector("div[style*='flex: 1'], div[style*='flex:1']") ||
+      row.firstElementChild;
+
+    if (!contentHost) {
+      tagsRow.remove();
+      return;
+    }
+
+    const metaDiv = contentHost.querySelector(".pi-enh-session-meta") ||
+      (contentHost.children && contentHost.children.length >= 2 ? contentHost.children[1] : null);
+
+    if (metaDiv && metaDiv.nextSibling !== tagsRow) {
+      metaDiv.after(tagsRow);
+    } else if (tagsRow.parentElement !== contentHost) {
+      contentHost.appendChild(tagsRow);
+    }
+
+    const visibleTags = tags.slice(0, 2);
+    const overflowCount = tags.length - visibleTags.length;
+
+    let pillsHtml = visibleTags.map((tag) => {
+      const palette = getTagPaletteItem(tag.color);
+      return `<span class="pi-enh-session-tag-pill" style="background:${palette.bg};border:1px solid ${palette.border};color:${palette.color};" title="${escapeHtml(tag.name)}">
+        <span class="pi-enh-tag-dot" style="background:${tag.color};"></span>
+        <span class="pi-enh-tag-name">${escapeHtml(tag.name)}</span>
+      </span>`;
+    }).join("");
+
+    if (overflowCount > 0) {
+      const allTagNames = tags.map((t) => t.name).join("、");
+      pillsHtml += `<span class="pi-enh-session-tag-pill pi-enh-session-tag-more" style="background:rgba(156,163,175,0.16);border:1px solid rgba(156,163,175,0.35);color:#9ca3af;" title="全部标签：${escapeHtml(allTagNames)}">+${overflowCount}</span>`;
+    }
+
+    if (tagsRow.__renderedHtml !== pillsHtml || !tagsRow.firstElementChild) {
+      tagsRow.innerHTML = pillsHtml;
+      tagsRow.__renderedHtml = pillsHtml;
+    }
   }
 
   function removeSessionTagsRowAll() {
-    notifyNativeSessionTagsChanged();
+    for (const el of document.querySelectorAll(".pi-enh-session-tags-row")) {
+      el.remove();
+    }
+    for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-tags]")) {
+      row.removeAttribute("data-pi-enh-has-tags");
+    }
   }
 
   function syncSessionTags() {
-    notifyNativeSessionTagsChanged();
+    if (!isPluginEnabled("session-tags")) {
+      removeSessionTagsRowAll();
+      syncSessionOdooAddonsLayout();
+      return;
+    }
+    const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    for (const row of rows) {
+      const sessionId = row.getAttribute("data-pi-enh-session-id");
+      if (sessionId) {
+        syncSessionTagsRow(row, sessionId);
+      }
+    }
     syncSessionOdooAddonsLayout();
   }
 
@@ -5199,7 +5366,6 @@
     });
   }
 
-  window.__PI_ENH_GET_SESSION_TAGS__ = (sessionId) => isPluginEnabled("session-tags") ? getSessionTags(sessionId) : [];
   window.__PI_ENH_READ_SESSION_TAGS__ = readSessionTagsDefinitions;
   window.__PI_ENH_WRITE_SESSION_TAGS__ = writeSessionTagsDefinitions;
   window.__PI_ENH_READ_SESSION_TAG_MAPPINGS__ = readSessionTagMappings;
@@ -5413,11 +5579,83 @@
     return normalizeSessionOdooAddonItems(items, sessionId, manifest);
   }
 
+  function syncSessionOdooAddonsHeight(row, sessionId) {
+    const height = getSessionItemHeight(sessionId) + "px";
+    if (row.style.height !== height) row.style.height = height;
+    const wrapper = row.parentElement;
+    if (wrapper?.style.position === "absolute" && wrapper.style.height !== height) wrapper.style.height = height;
+  }
+
+  function removeSessionOdooAddonsAll() {
+    for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-odoo-addons='true']")) {
+      row.querySelector(".pi-enh-session-odoo-addons")?.remove();
+      row.removeAttribute("data-pi-enh-has-odoo-addons");
+      syncSessionOdooAddonsHeight(row, row.dataset.piEnhSessionId);
+    }
+  }
+
+  function syncSessionOdooAddonsRow(row, sessionId) {
+    if (!row || !sessionId) return;
+
+    if (!isPluginEnabled("session-odoo-addons") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+      row.querySelector(".pi-enh-session-odoo-addons")?.remove();
+      row.removeAttribute("data-pi-enh-has-odoo-addons");
+      syncSessionOdooAddonsHeight(row, sessionId);
+      return;
+    }
+
+    const addons = getSessionOdooAddons(sessionId);
+    let container = row.querySelector(".pi-enh-session-odoo-addons");
+
+    if (addons.length === 0) {
+      container?.remove();
+      row.removeAttribute("data-pi-enh-has-odoo-addons");
+      syncSessionOdooAddonsHeight(row, sessionId);
+      return;
+    }
+
+    if (row.getAttribute("data-pi-enh-has-odoo-addons") !== "true") row.setAttribute("data-pi-enh-has-odoo-addons", "true");
+
+    if (!container) {
+      container = document.createElement("div");
+      container.className = "pi-enh-session-odoo-addons";
+    }
+
+    // 独立的全宽第二行，不挤占第一行标题、标签与操作按钮，也不继承元数据截断。
+    if (container.parentElement !== row) row.appendChild(container);
+
+    // 渲染每个插件一行：仅显示插件的技术标识名称（不显示中文，如仅显示 kx_srm）
+    let html = "";
+    const activeManifest = window.__PI_ENH_ODOO_ADDONS_MANIFEST__;
+    for (const addon of addons) {
+      const tech = (typeof addon === "string" ? addon : (addon.technical || addon.name || "")).trim();
+      if (!tech) continue;
+      const isLatest = isLatestSessionForOdooAddon(sessionId, tech, activeManifest);
+      const baseTooltip = addon.status ? `${tech} · ${addon.status}` : tech;
+      const tooltip = isLatest ? `${baseTooltip} · 最新实际更新会话` : `${baseTooltip} · 历史更新会话`;
+      const ariaLabel = isLatest ? `${tech}（最新实际更新会话）` : `${tech}（历史更新会话）`;
+      const pillClass = isLatest ? "pi-enh-odoo-addon-pill is-latest" : "pi-enh-odoo-addon-pill";
+
+      html += `<div class="pi-enh-odoo-addon-row">
+        <span class="${pillClass}" data-pi-enh-latest="${isLatest ? "true" : "false"}" title="${escapeHtml(tooltip)}" aria-label="${escapeHtml(ariaLabel)}">
+          <span class="pi-enh-odoo-addon-dot" aria-hidden="true"></span>
+          <span class="pi-enh-odoo-addon-name">${escapeHtml(tech)}</span>
+        </span>
+      </div>`;
+    }
+
+    // 不重复替换相同节点，避免 MutationObserver 自激和悬停/选择闪烁。
+    if (container.__renderedHtml !== html && container.innerHTML !== html) {
+      container.innerHTML = html;
+    }
+    container.__renderedHtml = html;
+    syncSessionOdooAddonsHeight(row, sessionId);
+  }
+
   function syncSessionOdooAddonsLayout() {
-    // React 的刷新是异步的；切换开关/热加载时，同步用同一高度函数重排整组，
-    // 不能只改变某一行高度而暂时保留下方旧坐标。
-    // An empty native group list is valid (for example, a tag filter with no matches).
-    // Layout must not request another render or restore stale bootstrap groups.
+    // React owns the filtered list, including an empty result. Never restore
+    // bootstrap groups or request another render from a layout observation:
+    // an engine/project switch can legitimately hide every catalogue row.
 
     const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
     if (!rows || rows.length === 0) {
@@ -5463,6 +5701,7 @@
           const index = indices.get(entry.sid);
           const top = getSessionItemTop(index, groups) + "px";
           if (entry.wrapper.style.top !== top) entry.wrapper.style.top = top;
+          syncSessionOdooAddonsHeight(entry.row, entry.sid);
         }
         const height = (SESSION_NORMAL_ITEM_HEIGHT * groups.length + getSessionHeadersHeight(groups)) + "px";
         if (container.style.height !== height) container.style.height = height;
@@ -5481,9 +5720,21 @@
     }
   }
 
-  // Explicit state notifications only. SessionSidebar owns addon DOM and row lifecycle.
   function syncSessionOdooAddons() {
-    window.__PI_ENH_RERENDER_SESSIONS__?.();
+    if (!isPluginEnabled("session-odoo-addons")) {
+      removeSessionOdooAddonsAll();
+      syncSessionOdooAddonsLayout();
+      return;
+    }
+
+    const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    for (const row of rows) {
+      const sessionId = row.getAttribute("data-pi-enh-session-id");
+      if (sessionId) {
+        syncSessionOdooAddonsRow(row, sessionId);
+      }
+    }
+    syncSessionOdooAddonsLayout();
   }
 
   let activeOdooAddonsRefreshPromise = null;
@@ -5607,7 +5858,12 @@
         }
 
         window.__PI_ENH_ODOO_ADDONS_MANIFEST__ = nextManifest;
-        if (contentChanged) syncSessionOdooAddons();
+        syncSessionOdooAddons();
+        if (contentChanged) {
+          try {
+            window.__PI_ENH_RERENDER_SESSIONS__?.();
+          } catch (e) {}
+        }
         return { updated: true, changed: contentChanged, versionChanged, revision: nextRev };
       } catch (err) {
         return { updated: false, changed: false, error: err && err.message ? err.message : "FETCH_ERROR" };
@@ -6139,7 +6395,7 @@
             void persistArchivedSessionsToServer(mergedEntries, newRev);
           }
 
-          requestSessionListRefresh();
+          window.__PI_ENH_RERENDER_SESSIONS__?.();
           const panel = document.querySelector(".pi-enh-archived-panel");
           const nav = document.querySelector(".settings-section-tabs");
           if (panel && panel.style.display !== "none") {
@@ -6196,7 +6452,7 @@
           if (remoteRevision > 0) setLocalArchivedRevision(remoteRevision);
           window.__PI_ENH_ARCHIVED_MANIFEST__ = remoteEntries;
           if (changed || force) {
-            requestSessionListRefresh();
+            window.__PI_ENH_RERENDER_SESSIONS__?.();
             const panel = document.querySelector(".pi-enh-archived-panel");
             const nav = document.querySelector(".settings-section-tabs");
             if (panel && panel.style.display !== "none") {
@@ -6446,7 +6702,7 @@
           }
 
           if (collectionChanged || force || isFirstVisit) {
-            requestSessionListRefresh();
+            window.__PI_ENH_RERENDER_SESSIONS__?.();
             syncSessionPinArchiveControls();
           }
         }
@@ -6516,12 +6772,12 @@
     return false;
   }
 
-  function markSessionAsDeleted(sessionId, retentionMs = 60000, notify = true) {
+  function markSessionAsDeleted(sessionId, retentionMs = 60000) {
     if (!sessionId) return;
     pendingDeletedSessionIds.add(sessionId);
     confirmedDeletedSessionIds.set(sessionId, Date.now() + retentionMs);
     try {
-      if (notify && typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+      if (typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
         window.__PI_ENH_RERENDER_SESSIONS__();
       }
     } catch (e) {}
@@ -6533,12 +6789,12 @@
     confirmedDeletedSessionIds.set(sessionId, Date.now() + retentionMs);
   }
 
-  function restoreSessionDeleteState(sessionId, notify = true) {
+  function restoreSessionDeleteState(sessionId) {
     if (!sessionId) return;
     pendingDeletedSessionIds.delete(sessionId);
     confirmedDeletedSessionIds.delete(sessionId);
     try {
-      if (notify && typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+      if (typeof window !== "undefined" && typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
         window.__PI_ENH_RERENDER_SESSIONS__();
       }
     } catch (e) {}
@@ -7546,6 +7802,7 @@
   window.__PI_ENH_GET_ARCHIVE_RETENTION_DAYS__ = getArchiveRetentionDays;
   window.__PI_ENH_SET_ARCHIVE_RETENTION_DAYS__ = setArchiveRetentionDays;
   window.__PI_ENH_PURGE_EXPIRED_ARCHIVES__ = purgeExpiredArchives;
+
   // ==========================================
   // 0.2 Session Memory Cache (会话内存秒开与长会话优化)
   // ==========================================
@@ -8884,18 +9141,10 @@
         return true;
       }
       if (!isSessionIngested(sessionId, meta)) {
-        const refreshHost = (typeof window !== "undefined" && window.location?.hostname) ? window.location.hostname : "10.0.0.2";
-        let result;
-        try {
-          result = await request(`http://${refreshHost}:30149/usage/refresh`, { method: "POST" });
-        } catch (fetchErr) {
-          if (refreshHost !== "10.0.0.2") {
-            result = await request("http://10.0.0.2:30149/usage/refresh", { method: "POST" });
-          } else {
-            throw fetchErr;
-          }
+        const result = await request("/api/usage/ledger", { method: "POST" });
+        if (result.version !== 2 || !Array.isArray(result.buckets)) {
+          throw new Error("服务端入账失败，已阻止删除");
         }
-        if (result.ok !== true) throw new Error("服务端入账失败，已阻止删除");
         await window.__PI_ENH_LOAD_OPTIONAL__("usage-panel");
         if (!window.PiUsagePanel?.fetchSnapshotOnce) throw new Error("用量模块不可用，已阻止删除");
         await window.PiUsagePanel.fetchSnapshotOnce(controller.signal);
@@ -9695,17 +9944,24 @@
     return `${(query || "").trim().toLowerCase()}::${tagId || "all"}`;
   }
 
-  function getFromSearchCache(key) {
+  function getNativeSearchCatalog() {
+    try {
+      const snapshot = window.__PI_ENH_GET_SEARCH_CATALOG__?.();
+      return snapshot && Array.isArray(snapshot.sessions) && typeof snapshot.scope === "string" ? snapshot : null;
+    } catch (_) { return null; }
+  }
+
+  function getFromSearchCache(key, catalogScope) {
     const entry = SESSION_SEARCH_CACHE.get(key);
     if (!entry) return null;
-    if (Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
+    if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
       SESSION_SEARCH_CACHE.delete(key);
       return null;
     }
     return entry.data;
   }
 
-  function setToSearchCache(key, data) {
+  function setToSearchCache(key, data, catalogScope) {
     if (!key || !data) return;
     if (SESSION_SEARCH_CACHE.size >= SEARCH_CACHE_MAX_SIZE) {
       const oldestKey = SESSION_SEARCH_CACHE.keys().next().value;
@@ -9714,6 +9970,7 @@
     SESSION_SEARCH_CACHE.set(key, {
       timestamp: Date.now(),
       data,
+      catalogScope,
     });
   }
 
@@ -9721,12 +9978,13 @@
     SESSION_SEARCH_CACHE.clear();
   }
 
-  function findNarrowableParentCache(query) {
+  function findNarrowableParentCache(query, catalogScope) {
     const qClean = (query || "").trim().toLowerCase();
     if (!qClean) return null;
 
     // 1. 尝试找前缀词缓存：例如当前是 "解耦"，检查是否已有 "解" 的完整缓存
     for (const [cacheKey, entry] of SESSION_SEARCH_CACHE.entries()) {
+      if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) continue;
       const [cachedQ, cachedTag] = cacheKey.split("::");
       if (cachedTag !== (activeSessionFilterTagId || "all")) continue;
       if (cachedQ && cachedQ.length < qClean.length && qClean.startsWith(cachedQ)) {
@@ -10012,9 +10270,15 @@
       return realFetch(input, init);
     }
 
+    // Native catalogue ownership is required before local metadata can add hits.
+    // Older tabs without this bridge use the authoritative server search.
+    const catalog = getNativeSearchCatalog();
+    if (!catalog) return realFetch(input, init);
+    const catalogById = new Map(catalog.sessions.filter((s) => s?.id && !s.transient && !s.submissionPending).map((s) => [s.id, s]));
+
     // 1. 优先命中 0ms 闪电 LRU 缓存
     const cacheKey = getSearchCacheKey(query, activeSessionFilterTagId);
-    const cachedData = getFromSearchCache(cacheKey);
+    const cachedData = getFromSearchCache(cacheKey, catalog.scope);
     if (cachedData) {
       scheduleSearchResultsHighlight();
       return createCachedResponse(cachedData, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_CACHE");
@@ -10023,7 +10287,7 @@
     const keywords = query.split(/\s+/).map((k) => k.trim()).filter(Boolean);
 
     // 1.1 前缀或多词子集内存收窄匹配 (0ms 瞬发响应)
-    const narrowableParent = findNarrowableParentCache(query);
+    const narrowableParent = findNarrowableParentCache(query, catalog.scope);
     if (narrowableParent) {
       const parentResults = narrowableParent.data.results || [];
       const filtered = [];
@@ -10031,7 +10295,7 @@
       for (const item of parentResults) {
         const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
         const sid = item.session?.id;
-        const sess = sid ? knownSessionsMap.get(sid) : null;
+        const sess = sid ? catalogById.get(sid) : null;
         const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
         const combined = fullSnippet + " " + sessMeta;
 
@@ -10046,7 +10310,7 @@
           results: filtered,
           truncated: narrowableParent.data.truncated || false,
         };
-        setToSearchCache(cacheKey, narrowedJson);
+        setToSearchCache(cacheKey, narrowedJson, catalog.scope);
         scheduleSearchResultsHighlight();
         return createCachedResponse(narrowedJson, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_NARROWED");
       }
@@ -10058,11 +10322,6 @@
     }
     activeSearchAbortController = new AbortController();
     const currentAbortSignal = activeSearchAbortController.signal;
-
-    // 3. 内存索引预热保证
-    if (knownSessionsMap.size === 0) {
-      await prewarmSessionSearchIndex();
-    }
 
     let nativeResults = [];
     let isTruncated = false;
@@ -10100,7 +10359,7 @@
           for (const item of primaryList) {
             const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
             const sid = item.session?.id;
-            const sess = sid ? knownSessionsMap.get(sid) : null;
+            const sess = sid ? catalogById.get(sid) : null;
             const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
             const combined = fullSnippet + " " + sessMeta;
 
@@ -10120,7 +10379,7 @@
     const titleMatches = [];
 
     // 本地标题/首条消息多关键词 AND 匹配
-    for (const [id, s] of knownSessionsMap.entries()) {
+    for (const [id, s] of catalogById.entries()) {
       if (seenSessionIds.has(id)) continue;
       const name = (s.name || "").trim();
       const firstMsg = (s.firstMessage || "").trim();
@@ -10158,7 +10417,7 @@
       seenSessionIds.add(id);
     }
 
-    let mergedResults = [...titleMatches, ...nativeResults];
+    let mergedResults = [...titleMatches, ...nativeResults].filter((r) => catalogById.has(r.session?.id));
 
     // 结合标签过滤：若选中了具体标签，严格过滤出满足该标签的会话
     if (isPluginEnabled("session-tags") && activeSessionFilterTagId && activeSessionFilterTagId !== "all") {
@@ -10175,7 +10434,7 @@
     };
 
     // 保存至 LRU 高性能缓存
-    setToSearchCache(cacheKey, mergedJson);
+    if (getNativeSearchCatalog()?.scope === catalog.scope) setToSearchCache(cacheKey, mergedJson, catalog.scope);
 
     // 触发搜索关键词全量高亮与导航
     scheduleSearchResultsHighlight();
@@ -10757,54 +11016,6 @@
   ]);
 
   const pendingStopRequests = new Map();
-  const pendingStopRuntimePreparations = new Map();
-
-  async function prepareStopRuntimeForPrompt(target, input, init) {
-    const entry = { cancelled: false };
-    let entries = pendingStopRuntimePreparations.get(target.sessionId);
-    if (!entries) pendingStopRuntimePreparations.set(target.sessionId, entries = new Set());
-    entries.add(entry);
-    const signal = init?.signal || input?.signal;
-    const checkCancelled = () => {
-      if (entry.cancelled || signal?.aborted) throw new DOMException("消息已在启动前停止", "AbortError");
-    };
-    try {
-      checkCancelled();
-      const activeFetch = baseFetch || originalWindowFetch;
-      if (!activeFetch) return true;
-      const headers = new Headers(init?.headers || input?.headers);
-      headers.set("Content-Type", "application/json");
-      const call = (type) => activeFetch.call(window, target.urlStr, {
-        method: "POST", headers, credentials: init?.credentials || input?.credentials || "same-origin",
-        signal, body: JSON.stringify({ type })
-      });
-      const response = await call("get_state");
-      checkCancelled();
-      if (!response.ok) return;
-      const result = await response.json();
-      const state = result?.data || result;
-      checkCancelled();
-      // Never reload a running session or consume its user queue. Fresh SDK
-      // resources are loaded only at the existing idle command boundary.
-      if (state?.isStreaming || state?.isPromptRunning || state?.isBashRunning || state?.isCompacting) return true;
-      if (!(state?.stopRuntimeVersion === "1.0.0" && ["1.0.0", "not-applicable"].includes(state?.subagentCancellationVersion))) {
-        const reload = await call("reload");
-        checkCancelled();
-        if (!reload.ok) throw new Error("停止保护更新失败，消息未启动");
-      }
-      // Keep Stop ownership through the lazy SSE upgrade, before dispatch.
-      const lazyEs = dormantSessionEventSources.get(target.sessionId);
-      if (lazyEs && typeof lazyEs.upgradeToReal === "function") await lazyEs.upgradeToReal();
-      checkCancelled();
-      return true;
-    } catch (error) {
-      if (entry.cancelled && !signal?.aborted) return false;
-      throw error;
-    } finally {
-      entries.delete(entry);
-      if (!entries.size) pendingStopRuntimePreparations.delete(target.sessionId);
-    }
-  }
 
   // 记录每个 DOM 按钮最初的属性以及当前持有反馈的 token 集合
   // 使用 WeakMap 避免持有已销毁 DOM 的引用引起内存泄漏
@@ -11180,9 +11391,6 @@
       throw callerSignal.reason || new DOMException("The user aborted a request.", "AbortError");
     }
 
-    if (abortType === "abort") {
-      for (const entry of pendingStopRuntimePreparations.get(sessionId) || []) entry.cancelled = true;
-    }
     const myEntry = { promise: null, sessionId, abortType };
     applyStopFeedback(sessionId, myEntry);
 
@@ -11264,21 +11472,6 @@
         if (syncAbortType) {
           return dispatchDirectStopFetch.call(this, agentTarget, syncAbortType, input, init);
         }
-        let commandType = null;
-        if (typeof init?.body === "string") {
-          try { commandType = JSON.parse(init.body)?.type; } catch (_) {}
-        }
-        if (commandType === "prompt" && await prepareStopRuntimeForPrompt(agentTarget, input, init) === false) {
-          const command = JSON.parse(init.body);
-          const activeFetch = baseFetch || originalWindowFetch;
-          const response = await activeFetch.call(this, input, { ...init,
-            body: JSON.stringify({ ...command, type: "retain_stopped_prompt" }) });
-          if (response.ok) {
-            markSessionRunning(agentTarget.sessionId, false, { settled: true });
-            void invalidateSessionCache(agentTarget.sessionId);
-          }
-          return response;
-        }
         const asyncAbortType = await resolveAgentAbortType(input, init);
         if (asyncAbortType) {
           return dispatchDirectStopFetch.call(this, agentTarget, asyncAbortType, input, init);
@@ -11313,16 +11506,27 @@
     }
 
     // A new-chat mode is staged locally; establish and verify it BEFORE the first prompt.
-    if (queueRequestBody && pendingNewComposerMode?.sessionId && isPluginEnabled("composer-modes")) {
+    if (queueRequestBody && isPluginEnabled("composer-modes")) {
       const owner = extractSessionIdFromUrl(requestUrl);
-      const payload = await queueRequestBody.then(text => { try { return JSON.parse(text); } catch { return null; } });
-      if (owner === pendingNewComposerMode.sessionId && payload?.type === "prompt" &&
-          !String(payload.message || "").startsWith("/composer-mode")) {
-        const staged = pendingNewComposerMode;
-        if (!await requestSwitchComposerMode(staged.mode, owner)) {
-          return new Response(JSON.stringify({success:false,accepted:false,code:"prompt_rejected",error:"计划/目标模式尚未确认生效，消息未发送，请重试。"}), {status:409,headers:{"Content-Type":"application/json"}});
+      const stagedPending = pendingNewComposerMode;
+      const staged = pendingNewComposerMode?.sessionId ? pendingNewComposerMode : null;
+      // Creation is not a Pi session id; it has no owner until the response.
+      const ownerEngine = owner === "new" ? null : owner?.startsWith("codex:") ? "codex" : owner ? "pi" : null;
+      const stagedEngine = stagedPending?.engine || "pi";
+      if (stagedPending && (
+        (ownerEngine && ownerEngine !== stagedEngine) ||
+        stagedPending.project !== getCurrentProjectStatusKey()
+      )) {
+        pendingNewComposerMode = null;
+      } else if (staged && owner === staged.sessionId && ownerEngine === stagedEngine) {
+        const payload = await queueRequestBody.then(text => { try { return JSON.parse(text); } catch { return null; } });
+        const internalPiModePrompt = stagedEngine === "pi" && String(payload?.message || "").startsWith("/composer-mode");
+        if (payload?.type === "prompt" && !internalPiModePrompt) {
+          if (!await requestSwitchComposerMode(staged.mode, owner)) {
+            return new Response(JSON.stringify({success:false,accepted:false,code:"prompt_rejected",error:"计划/目标模式尚未确认生效，消息未发送，请重试。"}), {status:409,headers:{"Content-Type":"application/json"}});
+          }
+          if (pendingNewComposerMode === staged) pendingNewComposerMode = null;
         }
-        if (pendingNewComposerMode === staged) pendingNewComposerMode = null;
       }
     }
 
@@ -11698,15 +11902,20 @@
     if (response?.ok && requestMethod === "POST" && /\/api\/agent\/new(?:[?#]|$)/.test(requestUrl) && pendingNewComposerMode) {
       const created = await response.clone().json().catch(() => null);
       if (created?.sessionId && pendingNewComposerMode.project === getCurrentProjectStatusKey()) {
-        pendingNewComposerMode.sessionId = created.sessionId;
+        const createdEngine = created.sessionId.startsWith("codex:") ? "codex" : "pi";
+        const stagedEngine = pendingNewComposerMode.engine || "pi";
+        if (createdEngine === stagedEngine) pendingNewComposerMode.sessionId = created.sessionId;
+        else pendingNewComposerMode = null;
       }
     }
     // Keep native GET/poll state authoritative, including changes from another browser.
     if (response?.ok && requestMethod === "GET" && /\/api\/agent\/[^/?#]+(?:[?#]|$)/.test(requestUrl)) {
       const state = await response.clone().json().catch(() => null);
-      const parsedMode = parseExtensionStatus(state?.state, "composer-modes");
+      const parsedMode = parseExtensionStatus(state?.state || state, "composer-modes");
       if (parsedMode?.version === 1 && ["normal", "plan", "goal"].includes(parsedMode.mode)) {
-        composerModesStateMap.set(extractSessionIdFromUrl(requestUrl), parsedMode);
+        const sessionId = extractSessionIdFromUrl(requestUrl);
+        const commitModeState = window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__;
+        if (sessionId && typeof commitModeState === "function") commitModeState(sessionId, parsedMode);
       }
     }
 
@@ -11948,8 +12157,8 @@
     const urlStr = typeof input === "string" ? input : input?.url ? input.url : String(input);
     // HEAD is a read-only validator, never an Agent command or cache mutation.
     if (method === "HEAD") return activeFetch(input, init);
-    // Native versioned envelopes own their exact baseline; directly return activeFetch without caching or rewriting.
-    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?sync=1(?=[&#]|$)/.test(urlStr)) {
+    // Native sync envelopes and current-identity lookups must bypass all history caches.
+    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?(?:sync|lookup)=1(?=[&#]|$)/.test(urlStr)) {
       return activeFetch(input, init);
     }
     // Interaction queues and prompt receipts belong to the live server.
@@ -12068,15 +12277,8 @@
 
     // 场景 0: /api/agent/:id 状态请求（绝不能当作会话详情缓存！）
     if (urlStr.includes("/api/agent/")) {
-      if (
-        isPluginEnabled("session-memory-cache") &&
-        knownSessionsMap.has(sessionId) &&
-        !entry.isRunning &&
-        !entry.hasPendingAgentEnd &&
-        !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sessionId))
-      ) {
-        return createCachedResponse(entry.state?.data || { running: false }, {}, "IDLE_STATE");
-      }
+      // Runtime state is ephemeral: idle sessions can still own paused queues
+      // and pending questions. Only the native service may report it empty.
       const reqGeneration = entry.runGeneration;
       const realResp = await activeFetch(input, { ...init, cache: "no-store" });
       if (realResp && (realResp.ok || realResp.status === 200)) {
@@ -12117,15 +12319,8 @@
     // 场景 2: 会话状态请求 (/api/sessions/:id/state)
     const isStateRequest = urlStr.endsWith("/state") || urlStr.includes("/state?");
     if (isStateRequest) {
-      if (
-        isPluginEnabled("session-memory-cache") &&
-        knownSessionsMap.has(sessionId) &&
-        !entry.isRunning &&
-        !entry.hasPendingAgentEnd &&
-        !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sessionId))
-      ) {
-        return createCachedResponse(entry.state?.data || { running: false }, {}, "IDLE_STATE");
-      }
+      // Runtime state is ephemeral: idle sessions can still own paused queues
+      // and pending questions. Only the native service may report it empty.
       const reqGeneration = entry.runGeneration;
       const realResp = await activeFetch(input, { ...init, cache: "no-store" });
       if (realResp && (realResp.ok || realResp.status === 200)) {
@@ -13195,6 +13390,7 @@
         const sId = extractSessionIdFromUrl(urlStr);
         if (
           sId &&
+          !sId.startsWith("codex:") &&
           urlStr.includes("/events") &&
           urlStr.includes("/api/agent/") &&
           isPluginEnabled("session-memory-cache") &&
@@ -13202,7 +13398,8 @@
           !sessionMemoryCache.get(sId)?.isRunning &&
           !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sId))
         ) {
-          // 休眠历史会话惰性 SSE 代理：浏览历史会话时不向服务端发起 /events 触发 startRpcSession 冷启动阻塞；
+          // Codex 的共享执行端可由电脑启动任务，其只读 SSE 必须真实订阅。
+          // 休眠 Pi 历史会话惰性 SSE 代理：浏览历史会话时不向服务端发起 /events 触发 startRpcSession 冷启动阻塞；
           // 当用户在该会话发送消息（POST /api/agent/:id）时自动升级连接真实 OriginalEventSource。
           const listeners = new Map();
           let realEs = null;
@@ -14578,6 +14775,7 @@
       document.documentElement.classList.remove("pi-enh-scroll-restoring");
     }
     const pinned = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
+    const canDelete = !sessionId.startsWith("codex:");
     const unread = isSessionUnread(sessionId);
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu pi-enh-session-menu";
@@ -14588,7 +14786,7 @@
       <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>从磁盘重载 (Alt+R)</span></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-session-action="archive">${sessionArchiveIcon}<span>归档会话</span></div>
-      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" data-stage="init" title="点击一次进入确认，再次点击彻底删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
+      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" aria-disabled="${!canDelete}" data-stage="init" title="${canDelete ? "点击一次进入确认，再次点击彻底删除" : "Codex 原始记录由执行端管理，可使用归档隐藏会话"}" style="${canDelete ? "" : "opacity:.45"}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
     `;
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -14646,6 +14844,7 @@
       if (!action) return;
       event.stopPropagation();
       if (action === "delete") {
+        if (!canDelete) { showToast("Codex 原始记录由执行端管理，可使用归档隐藏会话"); return; }
         if ((item.getAttribute("data-stage") || "init") !== "confirm") {
           armDeleteMenuItem();
           return;
@@ -14798,7 +14997,7 @@
       }
     } catch (_) {}
 
-    const { id, path, cwd, name, clientX, clientY } = event.detail || {};
+    const { id, path, cwd, name, clientX, clientY, executionEngine } = event.detail || {};
     if (!id) return;
 
     const menu = document.createElement("div");
@@ -14806,7 +15005,7 @@
     const displayName = name || id.slice(0, 18) + "...";
 
     menu.innerHTML = `
-      <div class="pi-enh-menu-header" title="${id}">会话: ${displayName}</div>
+      <div class="pi-enh-menu-header"></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="toggle-unread">
         ${isSessionUnread(id) ? sessionReadIcon : sessionUnreadIcon}
@@ -14860,6 +15059,9 @@
       </div>
       ${renderSessionColorMenuItems(id)}
     `;
+    const header = menu.querySelector(".pi-enh-menu-header");
+    header.textContent = `会话: ${displayName}`;
+    header.title = id;
 
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -14988,7 +15190,7 @@
       } else if (action === "copy-path") {
         copyText(path || "", `已复制会话文件路径`);
       } else if (action === "copy-prompt") {
-        const prompt = `这是我之前的 Pi 会话（ID: ${id}，文件路径: ${path || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
+        const prompt = `这是我之前的 ${executionEngine === "codex" || id.startsWith("codex:") ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${path || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
         copyText(cwd || "", `已复制工作目录`);
@@ -16882,7 +17084,7 @@
   let isApprovalSoundUnlocked = false;
   async function unlockApprovalSound(preview = false) {
     if (isApprovalSoundUnlocked && !preview) return;
-    if (!approvalSoundEnabled()) { if (preview) showToast("请开启审批提示音，并检查 Pi Web 声音总开关"); return; }
+    if (!approvalSoundEnabled()) { if (preview) showToast("请开启审批提示音，并检查 Agent Web Plus 声音总开关"); return; }
     const sound = getApprovalSound();
     if (sound.ready() && !preview) {
       isApprovalSoundUnlocked = true;
@@ -16974,12 +17176,12 @@
           try {
             const registration = await navigator.serviceWorker.getRegistration();
             if (registration) {
-              await registration.showNotification("Pi Web · 待你处理", options);
+              await registration.showNotification("Agent Web Plus · 待你处理", options);
               return () => { void registration.getNotifications({tag:payload.tag}).then(items => items.forEach(item => item.close())).catch(() => {}); };
             }
           } catch { /* Same fallback as native browser-notifications.ts. */ }
         }
-        const notification = new Notification("Pi Web · 待你处理", options);
+        const notification = new Notification("Agent Web Plus · 待你处理", options);
         notification.onclick = () => { notification.close(); window.focus(); openProjectStatusSession(payload.sessionId); };
         return () => { notification.onclick = null; notification.close(); };
       },
@@ -17011,7 +17213,6 @@
   projectStatusState = readProjectStatusState();
   projectStatusCatalog = new Map();
   let projectStatusIntervalId = null;
-  const projectStatusOriginalIcons = new Map();
   let projectTabStatusSnapshot = null;
   let projectInteractionInterval = null;
   let projectInteractionController = null;
@@ -17382,47 +17583,6 @@
     return cleanSessionTitleBase(title);
   }
 
-  function renderProjectStatusFavicon(count, hasAttention) {
-    const favicon = document.head?.querySelector("link[data-pi-enh-attention-favicon]");
-    if (!favicon) return;
-    const color = hasAttention ? "#f59e0b" : "#3b82f6";
-    const badge = count > 9 ? "9+" : String(count);
-    const fontSize = badge.length > 1 ? 22 : 26;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><linearGradient id="flatBlueViolet" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4F5AE8"/><stop offset="100%" stop-color="#7850E8"/></linearGradient></defs><g transform="translate(13.7 21.6) scale(0.84)"><circle cx="91.2" cy="96" r="87.5" fill="url(#flatBlueViolet)"/><path fill="#FFFFFF" d="M67.7,59.5H132.7C135.9,59.5 136.1,62.9 135.4,67.2C134.8,71.3 133.9,73.5 130.4,73.5H114.1L107.7,107.5C106.3,114.4 106.7,118.8 110.8,121.2C114.6,123.3 121.1,123.8 124.9,119.8C126.7,117.9 128.6,120 129.5,123C131.7,130.9 122.2,137.5 113.8,137.5C101.1,137.5 92.2,131.4 93.7,114.9C94.1,105.5 97.7,86.3 100.5,73.5H82.1L75.5,108.4C72.9,122.1 66.6,137.5 55.6,137.5C49.5,137.5 45.8,132.7 48,127.2C49.6,123.8 54.5,122 57.5,116C62.4,106.5 65.3,89.4 68.7,73.7H60.2C56.7,73.7 55.3,75.4 53.1,78.4C50.5,82.3 43.5,82.9 44.9,77.2C47.2,67.1 56.2,59.5 67.7,59.5Z"/></g><circle cx="167" cy="38" r="34" fill="${color}" stroke="#FFFFFF" stroke-width="3"/><text x="167" y="${badge.length > 1 ? 46 : 47}" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="white">${badge}</text></svg>`;
-    const href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
-    if (favicon.getAttribute("href") !== href) favicon.setAttribute("href", href);
-  }
-
-  function restoreProjectStatusFavicon() {
-    document.head?.querySelector("link[data-pi-enh-attention-favicon]")?.remove();
-    for (const [icon, rel] of projectStatusOriginalIcons) {
-      if (rel) icon.setAttribute("rel", rel);
-      else icon.removeAttribute("rel");
-    }
-    projectStatusOriginalIcons.clear();
-  }
-
-  function syncProjectStatusFavicon(snapshot) {
-    if (!snapshot?.count || projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
-      restoreProjectStatusFavicon();
-      return;
-    }
-    for (const icon of document.head.querySelectorAll('link[rel~="icon"]')) {
-      if (icon.hasAttribute("data-pi-enh-attention-favicon")) continue;
-      if (!projectStatusOriginalIcons.has(icon)) projectStatusOriginalIcons.set(icon, icon.getAttribute("rel"));
-      icon.removeAttribute("rel");
-    }
-    let favicon = document.head.querySelector("link[data-pi-enh-attention-favicon]");
-    if (!favicon) {
-      favicon = document.createElement("link");
-      favicon.setAttribute("rel", "icon");
-      favicon.setAttribute("type", "image/svg+xml");
-      favicon.setAttribute("data-pi-enh-attention-favicon", "true");
-      document.head.appendChild(favicon);
-    }
-    renderProjectStatusFavicon(snapshot.hasAttention ? snapshot.attention : snapshot.running, snapshot.hasAttention);
-  }
-
   function getCurrentProjectTabStatusSnapshot() {
     const projectKey = getCurrentProjectStatusKey();
     const counts = { running: 0, attention: 0 };
@@ -17446,7 +17606,7 @@
       ? { projectKey: currentProjectKey, count: 0, hasAttention: false }
       : getCurrentProjectTabStatusSnapshot();
     window.__PI_WEB_PROJECT_TAB_STATUS__ = projectTabStatusSnapshot;
-    syncProjectStatusFavicon(projectTabStatusSnapshot);
+    window.dispatchEvent(new Event("pi-web-project-tab-status-change"));
     return projectTabStatusSnapshot;
   }
 
@@ -17492,7 +17652,7 @@
 
   function composeProjectWindowTitle(base) {
     if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
-      return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Pi Web";
+      return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Agent Web Plus";
     }
     const snapshot = syncProjectTabStatusSnapshot(false);
     return formatProjectTabTitle(base, snapshot);
@@ -18340,7 +18500,7 @@
       question: "优先查看哪类验收证据？",
       context: "单选后自动进入下一题；可使用“上一题”回来修改。",
       options: [
-        { title: "真实浏览器操作", description: "直接在 Pi Web 中点击、填写与提交，最接近实际体验；适合确认布局、动画、焦点和交互路径。" },
+        { title: "真实浏览器操作", description: "直接在 Agent Web Plus 中点击、填写与提交，最接近实际体验；适合确认布局、动画、焦点和交互路径。" },
         { title: "自动化回归结果", description: "可重复执行，适合覆盖状态切换、边界条件和未来改动后的回归保护。" },
         { title: "两者都看", description: "先跑自动测试确认基础行为，再用真实页面验证视觉和最终交互。适合重要的用户可见功能。" },
       ],
@@ -18574,6 +18734,12 @@
     };
     renderAskUserBatchPrototype();
   }
+  // Queue bootstrap can call the hoisted composer resolver before modes init.
+  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
+  let lastTrackedModeUrlSessionId = undefined;
+  let lastTrackedModeNativeDraftKey = undefined;
+  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
+
   // ==========================================
   // 2.6 AI Quick Actions (同轮 AI 结构化选择 + 安全兜底)
   // ==========================================
@@ -19097,7 +19263,8 @@
   }
 
   async function refreshQuickActionSelection(force = false) {
-    if (window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__ || !isPluginEnabled("quick-action-buttons")) return null;
+    if (window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__ || !isPluginEnabled("quick-action-buttons")
+      || findComposerTextarea()?.closest?.('[data-pi-native-inline-suggestions="true"]')) return null;
     const sessionId = getCurrentSessionId();
     if (!sessionId || isChatSessionRunning()) return null;
     if (quickActionSelectionSessionId !== sessionId) {
@@ -19662,7 +19829,7 @@
       return true;
     }
 
-    // Compatibility fallback for Pi Web variants without a discoverable send button.
+    // Compatibility fallback for Agent Web Plus variants without a discoverable send button.
     dispatchComposerSubmitShortcut(textarea);
     return true;
   }
@@ -19676,7 +19843,7 @@
   let emptySendContinueComposing = false;
 
   function isEmptySendContinueButton(button) {
-    if (!button) return false;
+    if (!button || button.closest?.('[data-pi-native-inline-suggestions="true"]')) return false;
     if (!isNativeComposerLayoutButton(button)) return false;
     const className = String(button.className || "");
     if (/\bpi-enh-quick-(?:start-button|fallback-trigger|menu-item)\b/.test(className)) return false;
@@ -19734,7 +19901,8 @@
   }
 
   function canUseEmptySendContinue(textarea) {
-    return isPluginEnabled("empty-send-continue")
+    return !textarea?.hasAttribute?.("data-pi-inline-suggestion")
+      && isPluginEnabled("empty-send-continue")
       && !emptySendContinueComposing
       && hasExistingConversation()
       && !isChatSessionRunning()
@@ -19764,6 +19932,7 @@
   }
 
   function syncEmptySendContinue() {
+    notifyComposerSubmissionStateChange();
     const textarea = findComposerTextarea();
     const candidates = getEmptySendContinueButtons(textarea);
     const eligible = Boolean(textarea && canUseEmptySendContinue(textarea));
@@ -19903,7 +20072,7 @@
   }
 
   function readNativeComposerDraft() {
-    // Compatibility adapter for Pi Web 0.9.1 ChatInput. Locate state by semantic
+    // Compatibility adapter for Agent Web Plus 0.9.1 ChatInput. Locate state by semantic
     // identity rather than hook indices; if upstream changes, fail closed.
     const textarea = document.querySelector("textarea.chat-input-textarea");
     const fieldset = textarea?.closest("[data-pi-native-composer-host]");
@@ -20058,6 +20227,7 @@
     const textarea = findComposerTextarea();
     const hasQuickReply = Boolean(isPluginEnabled("quick-action-buttons")
       && textarea
+      && !textarea.closest?.('[data-pi-native-inline-suggestions="true"]')
       && !isChatSessionRunning()
       && isComposerInputEmpty(textarea)
       && !composerHasAnySendPayload(textarea)
@@ -20066,12 +20236,13 @@
       hasAnnotations,
       hasAttachments: isPluginEnabled("composer-file-paste") && pendingComposerAttachments.length > 0,
       hasQuickReply,
+      emptyContinueEnabled: isPluginEnabled("empty-send-continue"),
     };
   }
 
   function notifyComposerSubmissionStateChange() {
     const state = getComposerSubmissionState();
-    const signature = `${state.hasAnnotations ? 1 : 0}:${state.hasAttachments ? 1 : 0}:${state.hasQuickReply ? 1 : 0}`;
+    const signature = `${state.hasAnnotations ? 1 : 0}:${state.hasAttachments ? 1 : 0}:${state.hasQuickReply ? 1 : 0}:${state.emptyContinueEnabled ? 1 : 0}`;
     if (lastComposerSubmissionState === signature) return;
     lastComposerSubmissionState = signature;
     window.dispatchEvent(new Event("pi-enh-composer-submission-state-change"));
@@ -21389,7 +21560,7 @@
           showToast(`读取文件失败: ${file.name}`, null, 4000);
         }
       } else {
-        // 二进制/文档/大文件：先创建会话隔离目录，再经 Pi Web 原生上传接口写入。
+        // 二进制/文档/大文件：先创建会话隔离目录，再经 Agent Web Plus 原生上传接口写入。
         showToast(`正在上传附件: ${file.name}...`, null, 2400);
         try {
           const cwd = await getEffectiveComposerCwd();
@@ -22737,6 +22908,7 @@
   let composerQueueCurrentEntries = [];
   let composerQueueRequest = null;
   let composerQueueBusy = false;
+  let composerQueueActionsEnabled = true;
   const composerQueueUnsupported = new Set();
   let composerQueueActionsState = null;
   const composerQueueErrors = new Map();
@@ -22826,7 +22998,8 @@
 
   async function loadComposerQueueTokens(sessionId, entriesSignature, entries) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
+    if (!composerQueueActionsEnabled
+      || !activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
     composerQueueRequest = entriesSignature;
     try {
       const response = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
@@ -22835,6 +23008,7 @@
         body: JSON.stringify({ type: "get_queue_actions" }),
       });
       const result = await response.json();
+      if (!composerQueueActionsEnabled) return;
       const data = result?.data;
       if (!response.ok || result.success === false) {
         composerQueueActionsState = null;
@@ -23265,24 +23439,39 @@
 
   function publishNativeQueueDetails(explicitSid = null) {
     const sessionId = getEffectiveQueueSessionId(explicitSid);
-    const items = composerQueueActionsState?.signature === composerQueueLastEntriesSignature
+    const actionsEnabled = composerQueueActionsEnabled;
+    const items = actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature
       ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
+    const hasDeliveryStatuses = items.some((item) => typeof item?.status === "string");
+    const statuses = hasDeliveryStatuses ? items.map((item) => ({
+      status: typeof item?.status === "string" ? item.status : "",
+      ...(typeof item?.error === "string" && item.error ? { error: item.error } : {}),
+    })) : undefined;
     window.dispatchEvent(new CustomEvent("pi:native-queue-details", { detail: {
       signature: composerQueueLastEntriesSignature,
-      enabled: isPluginEnabled("composer-queue-panel"),
+      enabled: actionsEnabled && isPluginEnabled("composer-queue-panel")
+        && composerQueueActionsState?.sessionId === sessionId
+        && composerQueueActionsState?.signature === composerQueueLastEntriesSignature,
+      actionsEnabled,
       busy: composerQueueBusy,
-      reorder: composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
+      reorder: actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
+      ...(statuses ? { statuses } : {}),
       images: composerQueueCurrentEntries.map((entry, i) => getQueueEntryAttachments(sessionId, entry.text, i, entry.kind, items[i]?.token)),
     } }));
   }
 
   function syncComposerQueuePanel(isAttachmentUpdateOnly = false, explicitSid = null) {
+    const activeSid = getEffectiveQueueSessionId(explicitSid);
+    if (!composerQueueActionsEnabled) {
+      composerQueueActionsState = null;
+      publishNativeQueueDetails(activeSid);
+      return;
+    }
     if (!isPluginEnabled("composer-queue-panel")) {
       publishNativeQueueDetails(explicitSid);
       return;
     }
     if (!composerQueuePanel?.isConnected || !composerQueueCurrentEntries.length) return;
-    const activeSid = getEffectiveQueueSessionId(explicitSid);
     publishNativeQueueDetails(activeSid);
     // Only React explicit snapshot event refreshes tokens; never DOM scans/timers.
     if (!isAttachmentUpdateOnly && activeSid && !composerQueueBusy) {
@@ -23295,20 +23484,29 @@
     if (!detail || !Array.isArray(detail.entries)) return;
     const activeSid = getEffectiveQueueSessionId(detail.sessionId);
     if (!activeSid) return;
+    composerQueueActionsEnabled = detail.actionsEnabled !== false;
     composerQueuePanel = detail.host;
     const signature = JSON.stringify([activeSid, detail.entries]);
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
     composerQueueLastEntriesSignature = signature;
     if (changed) composerQueueActionsState = null;
-    if (!detail.entries.length) { clearQueueDetailCache(); return; }
-    syncComposerQueuePanel(!changed, activeSid);
-    triggerSessionHydration(activeSid);
+    if (!detail.entries.length) {
+      clearQueueDetailCache();
+      publishNativeQueueDetails(activeSid);
+      return;
+    }
+    // Entries can arrive before connection/inbox hydration marks actions ready.
+    // Read tokens when readiness returns even if the text signature is unchanged.
+    const needsTokens = composerQueueActionsEnabled && !composerQueueActionsState;
+    syncComposerQueuePanel(!changed && !needsTokens, activeSid);
+    if (composerQueueActionsEnabled) triggerSessionHydration(activeSid);
   };
   const handleNativeQueueAction = (event) => {
     const { action, index, targetIndex, sessionId, signature } = event.detail || {};
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!isPluginEnabled("composer-queue-panel") || !activeSid || signature !== composerQueueLastEntriesSignature) return;
+    if (!composerQueueActionsEnabled || !isPluginEnabled("composer-queue-panel") || !activeSid
+      || signature !== composerQueueLastEntriesSignature) return;
     if (action === "recall") void recallSingleQueuedMessage(index, activeSid, signature);
     else if (action === "recallAll") void recallAllQueuedMessages(activeSid, signature, composerQueueCurrentEntries);
     else if (action === "delete") void deleteSingleQueuedMessage(index, activeSid, signature);
@@ -23331,6 +23529,7 @@
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
     removeComposerQueuePanel();
   });
+  window.dispatchEvent(new Event("pi:native-queue-ready"));
   window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
@@ -23902,10 +24101,6 @@
     activeComposerFormatTextarea = null;
   }
 
-  window.__PI_ENH_SYNC_COMPOSER_MARKDOWN_FORMAT__ = syncComposerMarkdownFormat;
-  window.__PI_ENH_REMOVE_COMPOSER_MARKDOWN_FORMAT__ = removeComposerMarkdownFormat;
-  window.__PI_ENH_HTML_TO_MARKDOWN__ = htmlToMarkdown;
-
   activeCleanups.push(removeComposerMarkdownFormat);
   window.__PI_ENH_SYNC_COMPOSER_MARKDOWN_FORMAT__ = syncComposerMarkdownFormat;
   window.__PI_ENH_REMOVE_COMPOSER_MARKDOWN_FORMAT__ = removeComposerMarkdownFormat;
@@ -23926,7 +24121,7 @@
   composerModesStateMap = new Map(); // sessionId -> { mode: "normal"|"plan"|"goal", goal?: string, pausePending?: boolean, paused?: boolean }
   let composerModeSwitching = false;
   let isGoalActionRunning = false;
-  pendingNewComposerMode = null; // {mode, project, sessionId?}; never a server success claim
+  pendingNewComposerMode = null; // {mode, engine, project, sessionId?}; never a server success claim
   let composerAddMenuEl = null;
   let composerAddMenuContext = null;
   let composerModesEventsBound = false;
@@ -23935,8 +24130,8 @@
   let lastComposerGoalMismatchKey = null;
 
   // Shared same-origin SVG geometry keeps the native menu and React controls aligned.
-  const SVG_GOAL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><use href="/icons/composer-mode-icons.svg#goal"></use></svg>`;
-  const SVG_PLAN_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><use href="/icons/composer-mode-icons.svg#plan"></use></svg>`;
+  const SVG_GOAL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${COMPOSER_MODE_ICON_MARKUP.goal}</svg>`;
+  const SVG_PLAN_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${COMPOSER_MODE_ICON_MARKUP.plan}</svg>`;
   const SVG_ATTACH_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>`;
   const SVG_IMAGE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
   const SVG_CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -23960,10 +24155,47 @@
     }
   }
 
-  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
-  let lastTrackedModeUrlSessionId = undefined;
-  let lastTrackedModeNativeDraftKey = undefined;
-  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
+  function normalizeComposerModeState(state) {
+    if (!state || state.version !== 1 || !["normal", "plan", "goal"].includes(state.mode)) return null;
+    const normalized = { version: 1, mode: state.mode };
+    if (state.capabilities && typeof state.capabilities === "object" && !Array.isArray(state.capabilities)) {
+      const capabilities = {};
+      for (const key of ["goal", "plan"]) {
+        if (typeof state.capabilities[key] === "boolean") capabilities[key] = state.capabilities[key];
+      }
+      normalized.capabilities = capabilities;
+    }
+    if (typeof state.goalKnown === "boolean") normalized.goalKnown = state.goalKnown;
+    if (Array.isArray(state.toolsBeforePlan)) normalized.toolsBeforePlan = state.toolsBeforePlan;
+    if (state.mode !== "normal" || state.goalKnown === true) {
+      if (typeof state.goal === "string") normalized.goal = state.goal;
+      if (state.mode === "goal" || state.goalKnown === true) {
+        if (typeof state.goalStatus === "string") normalized.goalStatus = state.goalStatus;
+        if (state.goalIdentity && typeof state.goalIdentity === "object" && !Array.isArray(state.goalIdentity)) {
+          const identity = {};
+          if (typeof state.goalIdentity.objective === "string") identity.objective = state.goalIdentity.objective;
+          if (typeof state.goalIdentity.createdAt === "string" || typeof state.goalIdentity.createdAt === "number") {
+            identity.createdAt = state.goalIdentity.createdAt;
+          }
+          if (Object.keys(identity).length) normalized.goalIdentity = identity;
+        }
+        if (["paused", "pending", "active"].includes(state.goalStatus)) {
+          normalized.paused = state.goalStatus === "paused";
+          normalized.pausePending = state.goalStatus === "pending";
+        } else {
+          normalized.paused = Boolean(state.paused);
+          normalized.pausePending = Boolean(state.pausePending);
+        }
+        if (typeof state.goalElapsedMs === "number" && Number.isFinite(state.goalElapsedMs)) {
+          normalized.goalElapsedMs = state.goalElapsedMs;
+        }
+        if (typeof state.goalActiveSinceMs === "number" && Number.isFinite(state.goalActiveSinceMs)) {
+          normalized.goalActiveSinceMs = state.goalActiveSinceMs;
+        }
+      }
+    }
+    return normalized;
+  }
 
   function readComposerNativeDraftKey() {
     try {
@@ -24100,6 +24332,7 @@
       }
       .pi-enh-composer-menu-item:hover { background: color-mix(in srgb, var(--text, #fff) 8%, transparent) !important; }
       .pi-enh-composer-menu-item.active { background: color-mix(in srgb, var(--text, #fff) 12%, transparent) !important; }
+      .pi-enh-composer-menu-item:disabled { opacity: .55; cursor: not-allowed; }
       .pi-enh-composer-menu-item:focus-visible { outline: 2px solid var(--text-muted, #a1a1aa); outline-offset: 1px; }
       .pi-enh-composer-menu-icon { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 18px !important; height: 18px !important; flex-shrink: 0 !important; color: var(--text-muted, #a1a1aa) !important; }
       .pi-enh-composer-menu-label { display: flex !important; align-items: center !important; flex: 1 1 auto !important; min-width: 0 !important; }
@@ -24116,16 +24349,58 @@
   }
 
   function getSessionComposerMode(sessionId) {
-    if (!sessionId) return pendingNewComposerMode?.project === getCurrentProjectStatusKey() ? pendingNewComposerMode.mode : "normal";
+    if (!sessionId) {
+      const engine = getComposerExecutionEngineHint();
+      return pendingNewComposerMode?.project === getCurrentProjectStatusKey() && pendingNewComposerMode?.engine === engine
+        ? pendingNewComposerMode.mode
+        : "normal";
+    }
     return composerModesStateMap.get(sessionId)?.mode || "normal";
+  }
+
+  function getComposerExecutionEngineHint(sessionId = getEffectiveComposerSessionId()) {
+    if (sessionId) return sessionId.startsWith("codex:") ? "codex" : "pi";
+    const composerHost = findComposerTextarea()?.closest?.("[data-pi-native-composer-host]");
+    const engine = composerHost?.dataset?.piExecutionEngine;
+    return engine === "pi" || engine === "codex" ? engine : null;
+  }
+
+  function setComposerModeEntriesAvailability(menu, engine, sessionId, currentMode = getSessionComposerMode(sessionId), capabilityCheckComplete = false) {
+    if (!menu?.isConnected) return;
+    const state = sessionId ? composerModesStateMap.get(sessionId) : null;
+    for (const item of menu.querySelectorAll('[data-composer-mode-entry="goal"], [data-composer-mode-entry="plan"]')) {
+      const mode = item.dataset.composerModeEntry;
+      const mayExit = currentMode === mode;
+      const supported = engine === "pi" || (!sessionId && engine === "codex") || state?.capabilities?.[mode] === true;
+      const unknown = engine === "codex" && sessionId && typeof state?.capabilities?.[mode] !== "boolean";
+      item.disabled = engine !== "pi" && !mayExit && !supported;
+      item.setAttribute("aria-disabled", String(item.disabled));
+      if (item.disabled && engine === "codex") {
+        item.title = unknown
+          ? capabilityCheckComplete ? "服务端未声明此模式能力" : "正在确认当前 Codex 接口的模式能力"
+          : `当前 Codex 接口不支持${mode === "goal" ? "目标" : "计划"}模式`;
+        const description = item.querySelector(".pi-enh-composer-menu-desc");
+        if (description) description.textContent = unknown
+          ? capabilityCheckComplete ? "服务端未声明能力" : "正在确认能力"
+          : "当前接口不支持";
+      } else if (!item.disabled && engine === "codex" && !supported && mayExit) {
+        item.title = "退出当前模式";
+      } else {
+        item.title = mode === "goal" ? "设置要持续追求的目标" : "开启计划模式；快捷键 Shift+Tab";
+        const description = item.querySelector(".pi-enh-composer-menu-desc");
+        if (description) description.textContent = mode === "goal" ? "设置要持续追求的目标" : "开启计划模式";
+      }
+    }
   }
 
   function getComposerGoalState(sessionId = getEffectiveComposerSessionId()) {
     const state = sessionId ? composerModesStateMap.get(sessionId) : null;
-    const goal = state?.mode === "goal" ? String(state.goal || "").trim() : "";
+    const goal = state?.mode === "goal" || state?.goalKnown === true ? String(state.goal || "").trim() : "";
     if (!sessionId || !goal) return null;
-    const paused = Boolean(state.paused);
-    const pausePending = Boolean(state.pausePending);
+    const pausePending = state.goalStatus === "pending" || Boolean(state.pausePending);
+    const paused = !pausePending && (state.goalStatus === "paused" || Boolean(state.paused));
+    const statusKey = state.goalStatus || (pausePending ? "pending" : paused ? "paused" : "active");
+    const canControl = ["active", "pending", "paused"].includes(statusKey);
     return {
       sessionId,
       mode: "goal",
@@ -24134,8 +24409,8 @@
       pausePending,
       goalElapsedMs: typeof state.goalElapsedMs === "number" ? state.goalElapsedMs : null,
       goalActiveSinceMs: typeof state.goalActiveSinceMs === "number" ? state.goalActiveSinceMs : null,
-      statusKey: pausePending ? "pending" : paused ? "paused" : "active",
-      action: paused || pausePending ? "resume" : "pause",
+      statusKey,
+      action: canControl ? (paused || pausePending ? "resume" : "pause") : null,
     };
   }
 
@@ -24148,6 +24423,20 @@
         detail: { sessionId: sessionId || null, mode, state, goalState: getComposerGoalState(sessionId) },
       }));
     } catch (_) {}
+  }
+
+  function commitComposerModeState(sessionId, state) {
+    const normalized = normalizeComposerModeState(state);
+    if (!sessionId || !normalized) return null;
+    composerModesStateMap.set(sessionId, normalized);
+    if (getEffectiveComposerSessionId() === sessionId) {
+      if (lastObservedModesSessionId !== sessionId) {
+        lastObservedModesSessionId = sessionId;
+        closeComposerAddMenu();
+      }
+      syncComposerModes();
+    }
+    return normalized;
   }
 
   window.__PI_ENH_GET_COMPOSER_GOAL_STATE__ = getComposerGoalState;
@@ -24239,6 +24528,7 @@
     const goalItem = document.createElement("button");
     goalItem.type = "button";
     goalItem.className = `pi-enh-composer-menu-item${currentMode === "goal" ? " active" : ""}`;
+    goalItem.dataset.composerModeEntry = "goal";
     goalItem.setAttribute("aria-label", "目标模式：设置要持续追求的目标");
     goalItem.title = "设置要持续追求的目标";
     goalItem.innerHTML = `
@@ -24261,6 +24551,7 @@
     const planItem = document.createElement("button");
     planItem.type = "button";
     planItem.className = `pi-enh-composer-menu-item${currentMode === "plan" ? " active" : ""}`;
+    planItem.dataset.composerModeEntry = "plan";
     planItem.setAttribute("aria-label", "计划模式：开启计划模式");
     planItem.title = "开启计划模式；快捷键 Shift+Tab";
     planItem.innerHTML = `
@@ -24285,6 +24576,19 @@
     menu.style.bottom = "auto";
     composerAddMenuEl = menu;
     composerAddMenuContext = { card, addBtn, openWidth: window.innerWidth };
+    const engineHint = getComposerExecutionEngineHint(sessionId);
+    const applyAvailability = (capabilityCheckComplete = false) => setComposerModeEntriesAvailability(
+      menu, engineHint, sessionId, getSessionComposerMode(sessionId), capabilityCheckComplete
+    );
+    applyAvailability();
+    if (engineHint === "codex" && sessionId) {
+      const capabilities = composerModesStateMap.get(sessionId)?.capabilities;
+      if (typeof capabilities?.goal !== "boolean" || typeof capabilities?.plan !== "boolean") {
+        void querySessionModeState(sessionId).then(() => {
+          if (composerAddMenuEl === menu && menu.isConnected) applyAvailability(true);
+        });
+      }
+    }
     positionComposerAddMenu();
     emitComposerAddMenuChange(true);
   }
@@ -24293,8 +24597,21 @@
     if (!["normal", "plan", "goal"].includes(targetMode)) return false;
     findComposerTextarea()?.focus();
     const sessionId = targetSessionId || getEffectiveComposerSessionId();
+    const executionEngine = getComposerExecutionEngineHint(sessionId);
+    if (!executionEngine) {
+      if (targetMode === "normal") {
+        pendingNewComposerMode = null;
+        return true;
+      }
+      showToast("无法确认当前执行引擎，目标或计划模式未启用；消息草稿和附件已保留", null, 3000);
+      return false;
+    }
     if (!sessionId) {
-      pendingNewComposerMode = targetMode === "normal" ? null : {mode: targetMode, project: getCurrentProjectStatusKey()};
+      pendingNewComposerMode = targetMode === "normal" ? null : {
+        mode: targetMode,
+        engine: executionEngine,
+        project: getCurrentProjectStatusKey(),
+      };
       syncComposerModes();
       findComposerTextarea()?.focus();
       return true;
@@ -24306,6 +24623,19 @@
     composerModeSwitching = true;
 
     try {
+      const isStagedNewSession = pendingNewComposerMode?.sessionId === sessionId &&
+        pendingNewComposerMode?.engine === executionEngine &&
+        pendingNewComposerMode?.project === getCurrentProjectStatusKey();
+      if (executionEngine === "codex" && targetMode !== "normal" && !isStagedNewSession) {
+        const capability = composerModesStateMap.get(sessionId)?.capabilities?.[targetMode];
+        if (typeof capability !== "boolean") {
+          await querySessionModeState(sessionId);
+        }
+        if (composerModesStateMap.get(sessionId)?.capabilities?.[targetMode] !== true) {
+          showToast(`当前 Codex 接口未确认支持${targetMode === "goal" ? "目标" : "计划"}模式；消息草稿和附件已保留`, null, 3000);
+          return false;
+        }
+      }
       // One atomic request saves the next-input mode and reads the extension's
       // authoritative result; no prompt execution or speculative UI state.
       composerModeFetchToken++;
@@ -24327,24 +24657,14 @@
         showToast(`模式切换未生效（当前仍为 ${realMode}），可能状态忙碌或参数受限`, null, 3000);
         return false;
       }
+      if (executionEngine === "codex" && targetMode !== "normal" && parsed?.capabilities?.[targetMode] !== true) {
+        showToast("服务端未确认该模式能力，消息草稿和附件已保留", null, 3000);
+        return false;
+      }
 
       // 真实生效后，才更新本地会话模式状态
       composerModeFetchToken++;
-      const updatedSwitchState = {
-        mode: realMode,
-        goal: parsed?.goal,
-        pausePending: Boolean(parsed?.pausePending),
-        paused: Boolean(parsed?.paused),
-      };
-      if (typeof parsed?.goalElapsedMs === "number") {
-        updatedSwitchState.goalElapsedMs = parsed.goalElapsedMs;
-      }
-      if (typeof parsed?.goalActiveSinceMs === "number") {
-        updatedSwitchState.goalActiveSinceMs = parsed.goalActiveSinceMs;
-      }
-      composerModesStateMap.set(sessionId, updatedSwitchState);
-      syncComposerModes();
-      syncComposerGoalBar();
+      if (!commitComposerModeState(sessionId, parsed)) return false;
       return true;
     } catch (err) {
       showToast("切换模式发生异常，请检查网络", null, 3000);
@@ -24370,27 +24690,13 @@
       const stateObj = data?.state || (data && typeof data === "object" && "extensionStatuses" in data ? data : null);
       const parsed = parseExtensionStatus(stateObj || data, "composer-modes");
       if (parsed?.mode) {
-        const updatedQueryState = {
-          mode: parsed.mode,
-          goal: parsed.goal,
-          pausePending: Boolean(parsed.pausePending),
-          paused: Boolean(parsed.paused),
-        };
-        if (typeof parsed.goalElapsedMs === "number") {
-          updatedQueryState.goalElapsedMs = parsed.goalElapsedMs;
-        }
-        if (typeof parsed.goalActiveSinceMs === "number") {
-          updatedQueryState.goalActiveSinceMs = parsed.goalActiveSinceMs;
-        }
-        composerModesStateMap.set(sessionId, updatedQueryState);
-        syncComposerModes();
-        syncComposerGoalBar();
+        return commitComposerModeState(sessionId, parsed);
       } else if (stateObj && Array.isArray(stateObj.extensionStatuses)) {
-        composerModesStateMap.set(sessionId, { mode: "normal" });
-        syncComposerModes();
-        syncComposerGoalBar();
+        return commitComposerModeState(sessionId, { version: 1, mode: "normal" });
       }
+      return null;
     } catch (e) {}
+    return null;
   }
 
   // ==========================================
@@ -24405,6 +24711,9 @@
     "paused",
     "goalElapsedMs",
     "goalActiveSinceMs",
+    "capabilities",
+    "goalStatus",
+    "goalIdentity",
   ]);
   const composerModesTextNodeMap = new Map(); // TextNode -> { raw: string, formatted: string }
   const composerModesAttrMap = new Map(); // Element -> Map<attrName, { raw: string, formatted: string }>
@@ -24564,6 +24873,7 @@
   }
 
   async function handleComposerGoalAction(action, targetSessionId, btnEl) {
+    if (!["pause", "resume"].includes(action)) return false;
     if (isGoalActionRunning) return;
     const sid = targetSessionId || (typeof getEffectiveComposerSessionId === "function" ? getEffectiveComposerSessionId() : getCurrentSessionId());
     if (!sid) return;
@@ -24571,6 +24881,39 @@
     isGoalActionRunning = true;
 
     try {
+      const engine = getComposerExecutionEngineHint(sid);
+      if (engine === "codex") {
+        const current = composerModesStateMap.get(sid);
+        const goalState = getComposerGoalState(sid);
+        const identity = current?.goalIdentity;
+        const objective = typeof identity?.objective === "string" ? identity.objective : String(current?.goal || "").trim();
+        if (current?.capabilities?.goal !== true || !goalState || !objective || !goalState.action) {
+          showToast("当前目标状态不可操作", null, 2500);
+          return false;
+        }
+        const expected = { objective };
+        if (typeof identity?.createdAt === "string" || typeof identity?.createdAt === "number") {
+          expected.createdAt = identity.createdAt;
+        }
+        const actionRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "composer_goal_action", action, expected }),
+        });
+        const actionData = await actionRes.json().catch(() => null);
+        const authoritative = parseExtensionStatus(actionData, "composer-modes");
+        if (!actionRes.ok || actionData?.success === false || authoritative?.version !== 1 || authoritative.mode !== "goal") {
+          showToast(actionData?.error || "目标控制未获服务端确认", null, 3000);
+          return false;
+        }
+        const returnedObjective = authoritative.goalIdentity?.objective || authoritative.goal;
+        if (returnedObjective !== objective || !commitComposerModeState(sid, authoritative)) {
+          showToast("目标状态已变化，未应用控制结果", null, 3000);
+          return false;
+        }
+        return true;
+      }
+
       // 0. 检查后端扩展命令是否已注册，防止旧会话尚未加载扩展时将 /composer-goal 当作普通用户消息发给模型
       const cmdRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
         method: "POST",
@@ -24645,27 +24988,9 @@
       }
 
       // 3. 真实确认后更新本地会话模式映射
-      const prev = composerModesStateMap.get(sid) || {};
-      const updatedActionState = {
-        ...prev,
-        mode: parsed.mode || "goal",
-        goal: parsed.goal || prev.goal,
-        pausePending: newPending,
-        paused: newPaused,
-      };
-      if (typeof parsed?.goalElapsedMs === "number") {
-        updatedActionState.goalElapsedMs = parsed.goalElapsedMs;
-      }
-      if (typeof parsed?.goalActiveSinceMs === "number") {
-        updatedActionState.goalActiveSinceMs = parsed.goalActiveSinceMs;
-      } else {
-        delete updatedActionState.goalActiveSinceMs;
-      }
-      composerModesStateMap.set(sid, updatedActionState);
+      if (!commitComposerModeState(sid, parsed)) return false;
 
-      // 4. 刷新目标独立行
-      syncComposerGoalBar();
-      syncComposerModesBottomStatus();
+      // The shared commit already publishes controls and the legacy footer once.
       return true;
     } catch (e) {
       showToast("操作发生异常，请检查网络", null, 3000);
@@ -24684,6 +25009,14 @@
   function syncComposerModesBottomStatus() {
     if (!isPluginEnabled("composer-modes")) {
       restoreComposerModesBottomStatus();
+      return;
+    }
+    // The native composer hook commits authoritative extensionStatuses to the shared map.
+    // Keep DOM status scraping only for legacy composers without the native host.
+    if (document.querySelector?.("[data-pi-native-composer-host]")) {
+      if (composerModesStatusObserver || composerModesTextNodeMap.size || composerModesAttrMap.size) {
+        restoreComposerModesBottomStatus();
+      }
       return;
     }
     if (isCleaningComposerModesStatus) return;
@@ -24754,19 +25087,25 @@
                     const nextPaused = Boolean(p.paused);
                     const nextElapsed = typeof p.goalElapsedMs === "number" ? p.goalElapsedMs : undefined;
                     const nextActiveSince = typeof p.goalActiveSinceMs === "number" ? p.goalActiveSinceMs : undefined;
+                    const nextGoalStatus = typeof p.goalStatus === "string"
+                      ? p.goalStatus
+                      : nextPending ? "pending" : nextPaused ? "paused" : "active";
                     if (
                       Boolean(prev.pausePending) !== nextPending ||
                       Boolean(prev.paused) !== nextPaused ||
                       prev.goalElapsedMs !== nextElapsed ||
-                      prev.goalActiveSinceMs !== nextActiveSince
+                      prev.goalActiveSinceMs !== nextActiveSince ||
+                      prev.goalStatus !== nextGoalStatus
                     ) {
                       const updatedBottomState = {
                         ...prev,
                         mode: "goal",
                         goal: p.goal,
+                        goalStatus: nextGoalStatus,
                         pausePending: nextPending,
                         paused: nextPaused,
                       };
+                      if (p.goalIdentity) updatedBottomState.goalIdentity = p.goalIdentity;
                       if (nextElapsed !== undefined) {
                         updatedBottomState.goalElapsedMs = nextElapsed;
                       } else {
@@ -24777,8 +25116,7 @@
                       } else {
                         delete updatedBottomState.goalActiveSinceMs;
                       }
-                      composerModesStateMap.set(currentSid, updatedBottomState);
-                      syncComposerGoalBar();
+                      commitComposerModeState(currentSid, updatedBottomState);
                     }
                   } else {
                     const mismatchKey = `${currentSid}|${p.goal}`;
@@ -25162,7 +25500,6 @@
     }
 
     ensureComposerModesStyle();
-    ensureComposerModesStatusObserver();
     bindComposerModesEvents();
     document.querySelectorAll(".pi-enh-composer-modes-disabled-notice").forEach((el) => el.remove());
     if (pendingNewComposerMode && pendingNewComposerMode.project !== getCurrentProjectStatusKey()) pendingNewComposerMode = null;
@@ -25174,16 +25511,19 @@
 
   async function requestExitModeWithVerification(sessionId) {
     if (!sessionId) return false;
+    const engine = getComposerExecutionEngineHint(sessionId);
     const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "prompt", message: "/composer-mode normal" }),
+      body: JSON.stringify(engine === "codex"
+        ? { type: "set_composer_mode", mode: "normal" }
+        : { type: "prompt", message: "/composer-mode normal" }),
     }).catch(() => null);
     if (!res || !res.ok) {
       showToast("请求退出模式失败，写权限未恢复", null, 3000);
       return false;
     }
-    const stateRes = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+    const stateRes = engine === "codex" ? res : await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "get_state" }),
@@ -25192,8 +25532,7 @@
     const parsed = parseExtensionStatus(postData, "composer-modes");
     const realMode = parsed?.mode;
     if (stateRes?.ok && postData?.success !== false && parsed?.version === 1 && realMode === "normal") {
-      composerModesStateMap.set(sessionId, { mode: "normal" });
-      dispatchComposerModeChange(sessionId);
+      commitComposerModeState(sessionId, parsed);
       document.querySelectorAll(".pi-enh-composer-modes-disabled-notice").forEach((el) => {
         try { el.remove(); } catch (e) {}
       });
@@ -25271,6 +25610,13 @@
   window.__PI_ENH_RESTORE_COMPOSER_MODES_BOTTOM_STATUS__ = restoreComposerModesBottomStatus;
   window.__PI_ENH_COMPOSER_MODES_TEXT_NODE_MAP__ = composerModesTextNodeMap;
   window.__PI_ENH_COMPOSER_MODES_ATTR_MAP__ = composerModesAttrMap;
+  const commitComposerModeStateBridge = (sessionId, state) => commitComposerModeState(sessionId, state);
+  window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__ = commitComposerModeStateBridge;
+  activeCleanups.push(() => {
+    if (window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__ === commitComposerModeStateBridge) {
+      delete window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__;
+    }
+  });
   window.__PI_ENH_SET_COMPOSER_MODE_STATE__ = (sessionId, state) => {
     pendingComposerNavOverride = null;
     if (sessionId) {
@@ -25278,10 +25624,10 @@
         sessionId,
         whileDraftKey: readComposerNativeDraftKey(),
       };
+      return commitComposerModeState(sessionId, state?.version === 1 ? state : { ...state, version: 1 });
     }
-    composerModesStateMap.set(sessionId, state);
     syncComposerModes();
-    syncComposerGoalBar();
+    return null;
   };
   window.__PI_ENH_SYNC_COMPOSER_GOAL_BAR__ = syncComposerGoalBar;
   window.__PI_ENH_REMOVE_COMPOSER_GOAL_BAR__ = removeComposerGoalBar;
@@ -25368,7 +25714,7 @@
       categoryLabel: "🧩 插件与技能",
       title: "synology-docker-ops",
       badge: "NAS",
-      subtitle: "群晖 10.0.0.2 NAS 容器与存储安全运维",
+      subtitle: "NAS 容器与存储安全运维",
       insertText: "@synology-docker-ops ",
       icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 13h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h4"></path><path d="M2 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H2"></path><path d="M20 21a8 8 0 0 0-16 0"></path><rect x="9" y="3" width="6" height="6" rx="1"></rect></svg>',
       keywords: ["synology-docker-ops", "synology", "nas", "群晖", "docker", "容器"],
@@ -26684,7 +27030,7 @@
   window.__PI_ENH_IS_MOBILE_ENV__ = isMobileEnvironment;
 
   // ==========================================
-  // Mobile Swipe Drawer (手机手势右滑打开会话与关闭文件面板)
+  // Mobile Swipe Drawer (手机手势右滑打开会话、右边缘左滑打开会话导航与关闭文件面板)
   // ==========================================
   let mobileSwipeTracking = false;
   let mobileSwipeStartX = 0;
@@ -26710,6 +27056,8 @@
   function getFilePanelElement() {
     return (typeof document !== "undefined" && (document.getElementById("file-panel") || document.querySelector(".right-panel-container"))) || null;
   }
+
+
 
   function isMobileDrawerMode() {
     if (typeof window === "undefined") return true;
@@ -26834,6 +27182,7 @@
       filePanel.style.transition = "";
       filePanel.style.transform = "";
     }
+
   }
 
   // 关键防护：精准识别拖动调整宽度（Resize Handle / isResizing），坚决避让绝不误关闭侧边栏
@@ -26957,7 +27306,16 @@
   }
 
   function handleMobileSwipeTouchStart(e) {
-    if (!isPluginEnabled("mobile-swipe-drawer")) return;
+    if (!isPluginEnabled("mobile-swipe-drawer")) {
+      return;
+    }
+    // The native AppShell owns session-sidebar touch state for both engines.
+    // This legacy handler retains only the file-panel gesture on native pages.
+    if (getSessionSidebarElement()?.getAttribute("data-pi-native-sidebar-gestures") === "true" && !isFilePanelOpen()) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
     if (mobileSwipeResetTimer) {
       resetMobileSwipeStyles();
     }
@@ -27004,20 +27362,41 @@
       return;
     }
 
+    // 4. 关键原则：触摸起点在 native 导航层一律早退，聊天左滑由原生 own
+    if (
+      (targetEl && targetEl.closest && targetEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']")) ||
+      (pointEl && pointEl.closest && pointEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']"))
+    ) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
     const winWidth = typeof window !== "undefined" && typeof window.innerWidth === "number" ? window.innerWidth : 390;
     const isDrawer = isMobileDrawerMode();
     const isSidebarCurrentlyOpen = isSessionSidebarOpen();
+    const isFilePanelCurrentlyOpen = isFilePanelOpen();
 
-    // 4. 起始 X 范围检测：
-    // 当侧边栏已打开时，用户想左滑收起，允许在屏幕任意水平位置（包括侧边栏内部、右边缘外及遮罩层）触发！
-    // 仅当侧边栏关闭时，才限制最大起始 X 坐标，防止与主聊天右侧区域发生歧义
-    if (!isSidebarCurrentlyOpen) {
+    // 5. 起始手势目标分类 (Target Type) 与范围检测：仅保留 session-sidebar 与 file-panel
+    if (isFilePanelCurrentlyOpen) {
+      mobileSwipeTargetType = "file-panel";
+      mobileSwipeInitialFilePanelOpen = true;
+      mobileSwipeInitialOpen = false;
+    } else if (isSidebarCurrentlyOpen) {
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = true;
+      mobileSwipeInitialFilePanelOpen = false;
+    } else {
+      // 侧边栏未打开：只有在允许滑出的屏幕区域才锁定为 session-sidebar
       const maxStartX = isDrawer ? Math.max(280, winWidth * 0.85) : Math.min(580, winWidth * 0.75);
       if (touch.clientX > maxStartX) {
         mobileSwipeTracking = false;
         mobileSwipeEligible = false;
         return;
       }
+      mobileSwipeTargetType = "session-sidebar";
+      mobileSwipeInitialOpen = false;
+      mobileSwipeInitialFilePanelOpen = false;
     }
 
     mobileSwipeStartX = touch.clientX;
@@ -27027,16 +27406,14 @@
     mobileSwipeEligible = true;
     mobileSwipeIntent = null;
 
-    mobileSwipeInitialFilePanelOpen = isFilePanelOpen();
-    mobileSwipeInitialOpen = isSidebarCurrentlyOpen;
-
-    // 缓存侧边栏宽度并准备 GPU 合成层，消除滑动期间每次 touchmove 的强制重排（Reflow）
-    const currentSidebar = getSessionSidebarElement();
-    if (currentSidebar) {
-      mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
-      if (currentSidebar.style) currentSidebar.style.willChange = "transform";
-    } else {
-      mobileSwipeCachedWidth = 280;
+    if (mobileSwipeTargetType === "session-sidebar") {
+      const currentSidebar = getSessionSidebarElement();
+      if (currentSidebar) {
+        mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
+        if (currentSidebar.style) currentSidebar.style.willChange = "transform";
+      } else {
+        mobileSwipeCachedWidth = 280;
+      }
     }
   }
 
@@ -27079,13 +27456,28 @@
       }
     }
 
-    // 2. 意图已锁定为水平滑动：立即阻止原生滚动抢占，保持跟手平滑响应
+    // 关键防抢占：当侧边栏与文件面板均未打开时，负向滑动（deltaX <= 0 向左划）
+    // 属于聊天原生左滑打开导航手势，05 模块绝不 preventDefault，直接早退放弃
+    if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
+    // 2. 意图已锁定为水平滑动：
     if (mobileSwipeIntent === "horizontal") {
+      // 再次确认：如果未打开侧边栏且 deltaX <= 0，绝不 preventDefault
+      if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
+        mobileSwipeTracking = false;
+        mobileSwipeEligible = false;
+        return;
+      }
+
       if (e.cancelable && typeof e.preventDefault === "function") {
         e.preventDefault();
       }
 
-      // 优先判定：右侧文件面板打开且向右滑，驱动文件面板关闭
+      // 判定 1：右侧文件面板打开且向右滑，驱动文件面板关闭
       if (mobileSwipeInitialFilePanelOpen && deltaX > 0) {
         const filePanel = getFilePanelElement();
         if (filePanel) {
@@ -27095,7 +27487,7 @@
         return;
       }
 
-      // 会话列表滑动逻辑
+      // 判定 3：会话列表滑动逻辑
       const isDrawer = isMobileDrawerMode();
       const sidebar = getSessionSidebarElement();
       const backdrop = getSidebarBackdropElement();
@@ -27319,6 +27711,7 @@
     closeSessionSidebar,
     isFilePanelOpen,
     closeFilePanel,
+
     getSidebarToggleButton,
     isCodeBlockOrScrollableElement,
     isTouchOnHorizontalScrollable,
@@ -28383,7 +28776,7 @@
   function consumeQuickReplyClick(event) {
     if (quickReplyPassthrough) return false;
     const button = event?.target?.closest?.("button");
-    if (!isNativeComposerLayoutButton(button)) return false;
+    if (!isNativeComposerLayoutButton(button) || button.closest?.('[data-pi-native-inline-suggestions="true"]')) return false;
     const stop = () => { event.preventDefault?.(); event.stopPropagation?.(); event.stopImmediatePropagation?.(); };
     if (quickReplySending && button === quickReplySendingButton) { stop(); return true; }
     if (!button?.hasAttribute(QUICK_REPLY_BUTTON_ATTR)) return false;
@@ -28462,6 +28855,13 @@
 
     const host = textarea.parentElement || (typeof getChatInputArea === "function" ? getChatInputArea() : null);
     if (!host) {
+      removeQuickActionDoms();
+      return;
+    }
+
+    // Native inline suggestions own preview/acceptance; never rewrite their Send button.
+    if (textarea.closest?.('[data-pi-native-inline-suggestions="true"]')) {
+      restoreAllQuickReplyButtons(host);
       removeQuickActionDoms();
       return;
     }
@@ -28621,10 +29021,6 @@
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
-
-  // The native queue responds synchronously. Announce readiness only after
-  // its composer/session dependencies have finished initializing.
-  window.dispatchEvent(new Event("pi:native-queue-ready"));
   // ==========================================
   // 3. Task Total Duration & Turn Usage Tooltips (点击展开耗时拆解与消耗明细气泡)
   // ==========================================
@@ -28826,7 +29222,7 @@
 
   // Per-assistant-step throughput. This intentionally uses provider-reported
   // `usage.output`, not rendered thinking text: Gemini may stream encrypted or
-  // empty thinking blocks, which made Pi Web's native CJK estimate stay at 0.
+  // empty thinking blocks, which made Agent Web Plus's native CJK estimate stay at 0.
   const knownStepSpeeds = new Map();
   const liveStepSpeeds = new Map();
   const MAX_KNOWN_STEP_SPEEDS = 500;
@@ -31322,7 +31718,7 @@
     let data = typeof nativeReader === "function" ? nativeReader(sessionId) : null;
     // A registered native owner will notify when its first read settles.
     // Starting another read here would race and duplicate that request.
-    if (typeof nativeReader === "function" && !data) return null;
+    if ((typeof nativeReader === "function" || sessionId.startsWith("codex:")) && !data) return null;
     const nativeInput = data ? { sessionId, messages: data.context?.messages,
       entryIds: data.context?.entryIds, tree: data.tree } : null;
     if (nativeInput && lastNativeMetricsInput?.sessionId === sessionId
@@ -31353,6 +31749,7 @@
 
     // 当会话超过 1000 条且尚未获取到当前回合完整起点时，向前安全分页追溯（最多 10 页，每页 1000 条）
     while (
+      !sessionId.startsWith("codex:") &&
       context?.hasMore &&
       (!hasCompleteTurnStart(context.messages)
         // A user at the page edge may be steering within an older turn.
@@ -32348,7 +32745,7 @@
     }
     syncOperationErrors.set(fnName, { signature: errSig, error: errorObj, lastLoggedAt: now });
 
-    console.error(`[Pi Web Enhancements] Sync operation "${fnName}" failed:`, errorObj);
+    console.error(`[Agent Web Plus Enhancements] Sync operation "${fnName}" failed:`, errorObj);
   }
 
   function recordSyncStepSuccess(fnName) {
@@ -32685,7 +33082,7 @@
   window.__PI_ENH_CHECK_AGENT_UPDATE__ = checkPiAgentUpdate;
 
   function syncPiAgentUpdateBadge(el, officialPiVer) {
-    if (!el) return;
+    if (!el || el.closest?.("[data-pi-native-version-header]")) return;
     ensurePiAgentUpdateStyle();
     const enabled = isPluginEnabled("pi-agent-update-notice");
     const state = getPiAgentUpdateState();
@@ -32744,6 +33141,7 @@
       const officialPiVer = (typeof window !== "undefined" && window.__PI_OFFICIAL_AGENT_VERSION__) || "0.99.1";
       for (let i = 0; i < spans.length; i++) {
         const el = spans[i];
+        if (el.closest?.("[data-pi-native-version-header]")) continue;
         if (el.childNodes && el.childNodes.length === 2 && el.childNodes[0].nodeType === 3) {
           const prefix = el.childNodes[0].nodeValue || "";
           const inner = el.querySelector("span");
@@ -33354,7 +33752,7 @@
   function enhanceDirectoryPickerModal() {
     if (!isPluginEnabled("workspace-picker-hover")) return;
     const picker = document.querySelector(".directory-picker-panel");
-    if (!picker) return;
+    if (!picker || picker.hasAttribute("data-pi-native-directory-picker")) return;
 
     // 1. 移除顶栏可能残留的重复新建按钮，让输入框自然充满并紧挨“转到”按钮
     const oldTopBtn = picker.querySelector(".directory-picker-top-new-folder-btn");
@@ -34403,7 +34801,7 @@
     const tabTitle = activeTab?.querySelector("span[title]")?.getAttribute("title") || "";
     if (!tabTitle) return;
 
-    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian") || tabTitle.includes("10.0.0.2")) {
+    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian")) {
       if (accessDeniedDiv.__piRecoverAttempted) return;
       accessDeniedDiv.__piRecoverAttempted = true;
 
@@ -35009,7 +35407,7 @@
         chatObserver.observe(observedTarget, { childList: true, subtree: true });
       }
     } catch (e) {
-      console.warn("[Pi Web Enhancements] chatObserver init warning:", e);
+      console.warn("[Agent Web Plus Enhancements] chatObserver init warning:", e);
     }
   }
 
@@ -36449,7 +36847,7 @@
 
     const desc = document.createElement("div");
     desc.className = "settings-general-description";
-    desc.textContent = "遇到手机端显示旧版本、界面未更新或 Service Worker 缓存异常时可清理缓存；如需重启 Pi Web 服务，可在此手动一键重启。";
+    desc.textContent = "遇到手机端显示旧版本、界面未更新或 Service Worker 缓存异常时可清理缓存；如需重启 Agent Web Plus 服务，可在此手动一键重启。";
 
     const actionsRow = document.createElement("div");
     actionsRow.className = "pi-enh-service-actions-row";
@@ -36467,11 +36865,11 @@
     `;
     btnReload.addEventListener("click", forceHardReloadApp);
 
-    // 按钮 2：一键重启 Pi Web
+    // 按钮 2：一键重启 Agent Web Plus
     const btnRestart = document.createElement("button");
     btnRestart.type = "button";
     btnRestart.className = "pi-enh-btn-sm pi-enh-restart-service-btn";
-    btnRestart.title = "手动重启 Pi Web 后台服务并在恢复后自动重新连接";
+    btnRestart.title = "手动重启 Agent Web Plus 后台服务并在恢复后自动重新连接";
     btnRestart.innerHTML = `
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
@@ -36479,7 +36877,7 @@
         <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
         <path d="M3 21v-5h5"/>
       </svg>
-      <span>⚡ 一键重启 Pi Web</span>
+      <span>⚡ 一键重启 Agent Web Plus</span>
     `;
     btnRestart.addEventListener("click", triggerManualRestartPiWebModal);
 
@@ -36522,7 +36920,7 @@
     card.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; line-height: 1.5;">
         <span style="color: var(--text-muted);">Web 前端发行版</span>
-        <span style="font-family: var(--font-mono, monospace); font-weight: 600;">v${suiteVer} (Koxir Standalone)</span>
+        <span style="font-family: var(--font-mono, monospace); font-weight: 600;">v${suiteVer} (Agent Web Plus Standalone)</span>
       </div>
       <div style="display: flex; justify-content: space-between; align-items: center; line-height: 1.5;">
         <span style="color: var(--text-muted);">Pi Agent 本地核心</span>
@@ -36597,7 +36995,7 @@
     enhancements: { id: "enhancements", label: "增强插件" },
     notifications: { id: "notifications", label: "通知管理" },
     archived: { id: "archived", label: "已归档" },
-    usage: { id: "usage", label: "Usage" },
+    usage: { id: "usage", label: "用量统计" },
     tags: { id: "tags", label: "会话标签" },
   };
 
@@ -36730,7 +37128,7 @@
   const DEFAULT_SHORTCUTS = [
     { id: "enhancements", label: "增强插件" },
     { id: "archived", label: "已归档" },
-    { id: "usage", label: "Usage" },
+    { id: "usage", label: "用量统计" },
     { id: "settings", label: "设置" },
   ];
 
@@ -37450,129 +37848,28 @@
   window.__PI_ENH_FORCE_HARD_RELOAD__ = forceHardReloadApp;
 
   function resolveCurrentPiInstanceInfo() {
-    const loc = typeof window !== "undefined" ? window.location : null;
-    const hostname = String(loc?.hostname || "").toLowerCase();
-    const port = String(loc?.port || "30141");
-    const platform = String(typeof navigator !== "undefined" ? (navigator.platform || navigator.userAgent || "") : "").toLowerCase();
-
-    // 1. 同事端容器 (30142)：无论访问来自内网 IP、域名或手机，端口为 30142 即确定为群晖同事端容器
-    if (port === "30142") {
-      const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.0.0.2";
-      return {
-        id: "synology-30142",
-        type: "container",
-        isSynology: true,
-        displayName: "群晖同事端 Pi Web (30142)",
-        containerName: "pi-agent-colleague",
-        targetParam: "30142",
-        port: 30142,
-        bridgeCandidateUrls: [
-          `http://${bridgeHost}:30149`,
-          "http://10.0.0.2:30149"
-        ],
-        restartApi: "/restart-container",
-        statusApi: "/container-status?target=30142",
-        probePath: "/login",
-        manualScriptPath: "/volume1/docker/pi-agent-colleague/restart-container-30142.sh",
-        manualCommand: 'ssh root@10.0.0.2 -p 2222 "/volume1/docker/pi-agent-colleague/restart-container-30142.sh"',
-      };
-    }
-
-    // 2. Windows 本地端：主机名为 10.0.0.89，或在 Windows 系统下的 localhost / 127.0.0.1
-    const isWindowsHost = hostname === "10.0.0.89";
-    const isWindowsLocal = (hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("win");
-    if (isWindowsHost || isWindowsLocal) {
-      const host = isWindowsHost ? "10.0.0.89" : "127.0.0.1";
-      return {
-        id: "windows-30141",
-        type: "process",
-        isSynology: false,
-        displayName: "Windows 本地 Pi Web (30141)",
-        containerName: null,
-        targetParam: "windows",
-        port: 30141,
-        bridgeCandidateUrls: [
-          `http://${host}:30149`,
-          "http://127.0.0.1:30149",
-          "http://localhost:30149",
-          "http://10.0.0.89:30149"
-        ],
-        restartApi: "/restart-pi-web",
-        statusApi: "/pi-web-status",
-        probePath: "/login",
-        manualScriptPath: "C:\\Users\\KOXIR\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
-        manualCommand: "node C:\\Users\\KOXIR\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
-      };
-    }
-
-    // 3. MacBook 本地端：主机名为 10.7.7.2，或在 Mac 下的 localhost / 127.0.0.1
-    if (hostname === "10.7.7.2" || ((hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("mac"))) {
-      return {
-        id: "mac-30141",
-        type: "process",
-        isSynology: false,
-        displayName: "MacBook 本地 Pi Web (30141)",
-        containerName: null,
-        targetParam: "mac",
-        port: 30141,
-        bridgeCandidateUrls: [
-          "http://127.0.0.1:30149",
-          "http://localhost:30149",
-          "http://10.7.7.2:30149"
-        ],
-        restartApi: "/restart-pi-web",
-        statusApi: "/pi-web-status",
-        probePath: "/login",
-        manualScriptPath: "/Users/palhan/.pi/agent/scripts/restart-pi-web.sh",
-        manualCommand: "bash /Users/palhan/.pi/agent/scripts/restart-pi-web.sh",
-      };
-    }
-
-    // 4. 群晖主开发端容器 (30141 / pi-agent)：默认全覆盖（10.0.0.2、手机/平板客户端访问、OpenVPN 192.168.255.6、外网域名）
-    const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.0.0.2";
     return {
-      id: "synology-30141",
-      type: "container",
-      isSynology: true,
-      displayName: "群晖 NAS Pi Web (30141)",
-      containerName: "pi-agent",
-      targetParam: "30141",
-      port: 30141,
-      bridgeCandidateUrls: [
-        `http://${bridgeHost}:30149`,
-        "http://10.0.0.2:30149"
-      ],
-      restartApi: "/restart-container",
-      statusApi: "/container-status?target=30141",
-      probePath: "/login",
-      manualScriptPath: "/volume1/docker/pi-agent/restart-container-30141.sh",
-      manualCommand: 'ssh root@10.0.0.2 -p 2222 "/volume1/docker/pi-agent/restart-container-30141.sh"',
+      id: "current-origin",
+      type: "process",
+      displayName: "Agent Web Plus 当前实例",
+      bridgeCandidateUrls: [],
+      manualCommand: "agent-web",
     };
   }
 
   async function resolveTargetPiBridge(instanceInfo) {
-    const candidates = instanceInfo?.bridgeCandidateUrls || [];
-    for (const cand of candidates) {
+    const candidates = Array.isArray(instanceInfo?.bridgeCandidateUrls) ? instanceInfo.bridgeCandidateUrls : [];
+    for (const candidate of candidates) {
       try {
-        const response = await fetch(`${cand}/ping?_t=${Date.now()}`, {
+        const response = await fetch(`${candidate}/ping?_t=${Date.now()}`, {
           cache: "no-store",
           signal: AbortSignal.timeout(1500),
         });
         const identity = await response.json().catch(() => null);
-        if (response.ok && identity?.ok === true) {
-          if (instanceInfo.isSynology) {
-            if (identity.service === "syno-enhancement-sync" || identity.isSynology === true) {
-              return cand;
-            }
-          } else {
-            if (identity.service === "pi-local-bridge" || identity.service === "syno-enhancement-sync") {
-              return cand;
-            }
-          }
-        }
-      } catch (e) {}
+        if (response.ok && identity?.ok === true) return candidate;
+      } catch (error) {}
     }
-    throw new Error(`未连接到 ${instanceInfo?.displayName || "目标实例"} 对应的管理桥接服务 (${candidates[0] || "30149"})`);
+    throw new Error("当前实例未配置重启接口，请在运行服务的主机上重启。");
   }
 
   function triggerManualRestartPiWebModal() {
@@ -37582,336 +37879,27 @@
 
     const backdrop = document.createElement("div");
     backdrop.className = "pi-enh-restart-backdrop";
-
     const modal = document.createElement("div");
     modal.className = "pi-enh-restart-modal";
     modal.innerHTML = `
       <div class="pi-enh-restart-modal-header">
-        <div class="pi-enh-restart-modal-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-        </div>
-        <h3 class="pi-enh-restart-modal-title">确认重启 ${instanceInfo.displayName}？</h3>
+        <div class="pi-enh-restart-modal-icon" aria-hidden="true">!</div>
+        <h3 class="pi-enh-restart-modal-title">Agent Web Plus 当前实例</h3>
       </div>
       <div class="pi-enh-restart-modal-body">
-        您即将手动重启 <strong>${instanceInfo.displayName}</strong>${instanceInfo.containerName ? ` (容器: <code>${instanceInfo.containerName}</code>)` : ""}。
-        <div class="pi-enh-restart-modal-tips">
-          • 重启由您手动发起，当前进行中的会话连接将短暂中断约 3~8 秒；<br>
-          • ${instanceInfo.type === "container" ? `宿主机管理服务将安全重启容器 <code>${instanceInfo.containerName}</code> 并拉起服务；` : "后台服务重新拉起后，页面将自动进行健康探活并无缝重新加载；"}<br>
-          • 服务恢复就绪后，页面将自动无缝刷新，无需手动干预。
-        </div>
+        <p>当前实例未配置重启接口，请在运行服务的主机上重启。</p>
+        <p>请使用启动此服务时的 <code>${instanceInfo.manualCommand}</code> 命令，或通过该服务对应的进程管理器重启。重启会中断当前连接；服务恢复后请刷新页面。</p>
       </div>
       <div class="pi-enh-restart-modal-actions">
-        <button type="button" class="pi-enh-restart-btn-cancel">取消</button>
-        <button type="button" class="pi-enh-restart-btn-confirm">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
-            <path d="M21 3v5h-5"/>
-            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-            <path d="M3 21v-5h5"/>
-          </svg>
-          <span>立即重启</span>
-        </button>
+        <button type="button" class="pi-enh-restart-btn-cancel">关闭</button>
       </div>
     `;
-
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
-
-    const btnCancel = modal.querySelector(".pi-enh-restart-btn-cancel");
-    const btnConfirm = modal.querySelector(".pi-enh-restart-btn-confirm");
-
-    btnCancel.addEventListener("click", () => backdrop.remove());
-    backdrop.addEventListener("click", (e) => {
-      if (e.target === backdrop) backdrop.remove();
+    modal.querySelector(".pi-enh-restart-btn-cancel")?.addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) backdrop.remove();
     });
-
-    btnConfirm.addEventListener("click", () => {
-      executePiWebRestartWithProbe(backdrop, modal);
-    });
-  }
-
-  async function executePiWebRestartWithProbe(backdrop, modal) {
-    const instanceInfo = resolveCurrentPiInstanceInfo();
-    modal.className = "pi-enh-restart-modal pi-enh-probe-card";
-    modal.innerHTML = `
-      <div class="pi-enh-probe-spinner"></div>
-      <h3 class="pi-enh-probe-title">${instanceInfo.displayName} 重启中…</h3>
-      <p class="pi-enh-probe-desc">${instanceInfo.type === "container"
-        ? `正在通过群晖宿主机管理服务重启容器 ${instanceInfo.containerName}。确认容器服务恢复后才会更新状态。`
-        : `正在通过此电脑的本地桥接服务重启 Windows Pi Web。确认本机服务恢复后才会更新状态。`}</p>
-      <div class="pi-enh-probe-status">📡 正在向管理桥接服务发送重启信号…</div>
-      <div class="pi-enh-probe-actions" style="margin-top: 10px; display: flex; gap: 8px;">
-        <button type="button" class="pi-enh-restart-btn-cancel pi-enh-probe-close-btn" style="font-size: 11px; padding: 5px 12px;">关闭遮罩</button>
-        <button type="button" class="pi-enh-restart-btn-cancel pi-enh-probe-reload-btn" style="font-size: 11px; padding: 5px 12px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">立即手动刷新</button>
-      </div>
-    `;
-
-    const statusEl = modal.querySelector(".pi-enh-probe-status");
-    const titleEl = modal.querySelector(".pi-enh-probe-title");
-    let probeInterval = null;
-    let probeStopped = false;
-    modal.querySelector(".pi-enh-probe-close-btn")?.addEventListener("click", () => {
-      probeStopped = true;
-      if (probeInterval) clearInterval(probeInterval);
-      backdrop.remove();
-    });
-    modal.querySelector(".pi-enh-probe-reload-btn")?.addEventListener("click", () => {
-      probeStopped = true;
-      if (probeInterval) clearInterval(probeInterval);
-      window.location.reload();
-    });
-
-    function copyTextToClipboard(text) {
-      if (!text) return;
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(text).catch(() => {
-          fallbackExecCopy(text);
-        });
-      } else {
-        fallbackExecCopy(text);
-      }
-      function fallbackExecCopy(str) {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = str;
-          ta.style.position = "fixed";
-          ta.style.left = "-9999px";
-          ta.style.top = "-9999px";
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          document.execCommand("copy");
-          document.body.removeChild(ta);
-        } catch (_) {}
-      }
-    }
-
-    function addManualRestartFallback() {
-      if (modal.querySelector(".pi-enh-probe-fallback")) return;
-      const fallbackBox = document.createElement("div");
-      fallbackBox.className = "pi-enh-probe-fallback";
-      fallbackBox.innerHTML = `
-        <div class="pi-enh-probe-fallback-title">提示：如需在终端手动执行匹配脚本</div>
-        <div style="font-family: monospace; font-size: 11px; background: rgba(0,0,0,0.35); padding: 6px 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; margin-bottom: 6px;">
-          ${instanceInfo.manualCommand}
-        </div>
-        <button type="button" class="pi-enh-btn-sm pi-enh-probe-copy-btn">
-          📋 复制重启命令
-        </button>
-      `;
-      fallbackBox.querySelector("button")?.addEventListener("click", (event) => {
-        const button = event.currentTarget;
-        try {
-          copyTextToClipboard(instanceInfo.manualCommand);
-        } catch (e) {}
-        button.textContent = "已复制 √";
-        setTimeout(() => { if (button.isConnected) button.textContent = "📋 复制重启命令"; }, 2000);
-      });
-      modal.insertBefore(fallbackBox, modal.querySelector(".pi-enh-probe-actions"));
-    }
-
-    let bridgeUrl = null;
-    let initialPiWebRunning = false;
-    let bridgeSuccess = false;
-
-    if (instanceInfo.isSynology) {
-      try {
-        bridgeUrl = await resolveTargetPiBridge(instanceInfo);
-        if (probeStopped) return;
-        const beforeResponse = await fetch(`${bridgeUrl}${instanceInfo.statusApi}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(2000),
-        });
-        const beforeStatus = await beforeResponse.json().catch(() => null);
-        initialPiWebRunning = beforeStatus?.running === true;
-
-        const res = await fetch(`${bridgeUrl}${instanceInfo.restartApi}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target: instanceInfo.targetParam }),
-          signal: AbortSignal.timeout(3500),
-        });
-        const result = await res.json().catch(() => null);
-        if (!res.ok || result?.ok !== true) {
-          throw new Error(result?.error || result?.message || `重启请求失败 (HTTP ${res.status})`);
-        }
-        bridgeSuccess = true;
-        if (statusEl) statusEl.textContent = `⚡ 宿主机重启指令已送达，正在等待容器 ${instanceInfo.containerName} 重启…`;
-      } catch (err) {
-        console.warn("[Pi Enh] Synology Pi Web restart bridge failed:", err);
-        if (titleEl) titleEl.textContent = "重启未执行";
-        if (statusEl) {
-          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-          statusEl.style.background = "rgba(239, 68, 68, 0.1)";
-          statusEl.style.borderColor = "rgba(239, 68, 68, 0.3)";
-          statusEl.textContent = `⚠️ 未连接到宿主机管理服务；本次没有执行重启。${err?.message ? ` (${err.message})` : ""}`;
-        }
-      }
-    } else {
-      try {
-        bridgeUrl = await resolveWindowsPiBridgeUrl();
-        if (probeStopped) return;
-        const beforeResponse = await fetch(`${bridgeUrl}/pi-web-status`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(1500),
-        });
-        const beforeStatus = await beforeResponse.json();
-        if (!beforeResponse.ok || beforeStatus?.service !== "pi-local-bridge" || typeof beforeStatus.running !== "boolean") {
-          throw new Error("Windows 桥接服务未返回有效的 Pi Web 状态");
-        }
-        initialPiWebRunning = beforeStatus.running;
-
-        const res = await fetch(`${bridgeUrl}/restart-pi-web`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(3000),
-        });
-        const result = await res.json().catch(() => null);
-        if (!res.ok || result?.ok !== true) {
-          throw new Error(result?.error || `重启请求失败 (HTTP ${res.status})`);
-        }
-        bridgeSuccess = true;
-        if (statusEl) statusEl.textContent = "⚡ Windows 重启指令已送达，正在检查本机 30141…";
-      } catch (err) {
-        console.warn("[Pi Enh] Windows Pi Web restart bridge failed:", err);
-        if (titleEl) titleEl.textContent = "重启未执行";
-        if (statusEl) {
-          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-          statusEl.textContent = `❌ 未连接到 Windows 本地桥接；本次没有执行重启。${err?.message ? ` (${err.message})` : ""}`;
-        }
-      }
-    }
-
-    if (!bridgeSuccess) {
-      addManualRestartFallback();
-      return;
-    }
-
-    let attempts = 0;
-    const maxAttempts = 60;
-    let sawServerDown = !initialPiWebRunning;
-    let probeInFlight = false;
-    probeInterval = setInterval(async () => {
-      if (probeStopped || probeInFlight) return;
-      probeInFlight = true;
-      attempts++;
-
-      try {
-        if (instanceInfo.isSynology) {
-          // 双重探活：优先向宿主机桥接查容器真实状态，同时直探当前页面 /login
-          let containerRunning = false;
-          let webResponding = false;
-          try {
-            const checkRes = await fetch(`${bridgeUrl}${instanceInfo.statusApi}&_t=${Date.now()}`, {
-              cache: "no-store",
-              signal: AbortSignal.timeout(1200),
-            });
-            const checkData = await checkRes.json().catch(() => null);
-            if (checkRes.ok && checkData?.running === true) {
-              containerRunning = true;
-            }
-          } catch (_) {}
-
-          try {
-            const webRes = await fetch(`${instanceInfo.probePath}?_t=${Date.now()}`, {
-              cache: "no-store",
-              signal: AbortSignal.timeout(1200),
-            });
-            if (webRes.status === 200 || webRes.status === 302 || webRes.status === 307 || webRes.status === 308) {
-              webResponding = true;
-            }
-          } catch (_) {}
-
-          if (!containerRunning && !webResponding) {
-            sawServerDown = true;
-            if (statusEl) statusEl.textContent = `📡 容器 ${instanceInfo.containerName} 已停止，等待重新拉起 (${attempts}/${maxAttempts})…`;
-          } else if (webResponding && (sawServerDown || attempts >= 3)) {
-            probeStopped = true;
-            clearInterval(probeInterval);
-            if (titleEl) titleEl.textContent = `${instanceInfo.displayName} 已恢复`;
-            if (statusEl) {
-              statusEl.style.color = "var(--pi-enh-probe-success-color, #15803d)";
-              statusEl.style.borderColor = "rgba(74, 222, 128, 0.3)";
-              statusEl.style.background = "rgba(74, 222, 128, 0.1)";
-              statusEl.textContent = `🎉 ${instanceInfo.displayName} 已恢复！正在重新加载…`;
-            }
-            const spinner = modal.querySelector(".pi-enh-probe-spinner");
-            if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
-            setTimeout(() => {
-              window.location.reload();
-            }, 800);
-            return;
-          } else if (statusEl) {
-            statusEl.textContent = `⏳ 重启指令已送达，正在探活 ${instanceInfo.displayName} (${attempts}/${maxAttempts})…`;
-          }
-        } else {
-          // Windows 探测分支
-          const checkRes = await fetch(`${bridgeUrl}/pi-web-status?_t=${Date.now()}`, {
-            cache: "no-store",
-            signal: AbortSignal.timeout(1000),
-          });
-          const checkStatus = await checkRes.json();
-          if (!checkRes.ok || checkStatus?.service !== "pi-local-bridge" || typeof checkStatus.running !== "boolean") {
-            throw new Error("Windows 本机服务状态响应无效");
-          }
-
-          if (!checkStatus.running) {
-            sawServerDown = true;
-            if (statusEl) statusEl.textContent = `📡 Windows Pi Web 已停止，等待重新启动 (${attempts}/${maxAttempts})…`;
-          } else if (sawServerDown) {
-            probeStopped = true;
-            clearInterval(probeInterval);
-            if (titleEl) titleEl.textContent = "Windows Pi Web 已恢复";
-            if (statusEl) {
-              statusEl.style.color = "var(--pi-enh-probe-success-color, #15803d)";
-              statusEl.style.borderColor = "rgba(74, 222, 128, 0.3)";
-              statusEl.style.background = "rgba(74, 222, 128, 0.1)";
-              statusEl.textContent = "🎉 Windows Pi Web 已恢复！正在打开本机服务…";
-            }
-            const spinner = modal.querySelector(".pi-enh-probe-spinner");
-            if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
-            const currentHost = String(window.location.hostname || "").toLowerCase();
-            const alreadyOnWindowsPiWeb = ["127.0.0.1", "localhost", "10.0.0.89"].includes(currentHost);
-            setTimeout(() => {
-              if (alreadyOnWindowsPiWeb) window.location.reload();
-              else window.location.assign("http://127.0.0.1:30141/");
-            }, 800);
-            return;
-          } else if (attempts >= 20) {
-            probeStopped = true;
-            clearInterval(probeInterval);
-            if (titleEl) titleEl.textContent = "重启未能确认";
-            if (statusEl) {
-              statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-              statusEl.textContent = "❌ 已收到重启请求，但 Windows 30141 服务始终未中断；未能确认重启，请检查 Windows 端日志。";
-            }
-            addManualRestartFallback();
-            return;
-          } else if (statusEl) {
-            statusEl.textContent = `⏳ 重启指令已送达，等待 Windows 30141 停止 (${attempts}/20)…`;
-          }
-        }
-      } catch (err) {
-        if (statusEl) statusEl.textContent = `📡 正在探测 ${instanceInfo.displayName} 运行状态 (${attempts}/${maxAttempts})…`;
-      } finally {
-        probeInFlight = false;
-      }
-
-      if (attempts >= maxAttempts) {
-        probeStopped = true;
-        clearInterval(probeInterval);
-        if (titleEl) titleEl.textContent = "等待服务恢复超时";
-        if (statusEl) {
-          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
-          statusEl.textContent = `⚠️ 等待 ${instanceInfo.displayName} 恢复超时；请检查重启脚本与日志。`;
-        }
-        addManualRestartFallback();
-      }
-    }, 500);
   }
 
   window.__PI_ENH_MANUAL_RESTART_PI_WEB__ = triggerManualRestartPiWebModal;
@@ -39724,7 +39712,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
     } catch (error) {
       if (!control.isConnected || control.__piEnhSubagentModelState !== state) return;
-      console.warn(`[Pi Web Enhancements] 保存子 Agent ${profileName} 配置失败:`, error);
+      console.warn(`[Agent Web Plus Enhancements] 保存子 Agent ${profileName} 配置失败:`, error);
       state.savingProfiles.delete(profKey);
       // Rollback
       if (prevModel) modelSelect.value = prevModel;
@@ -39860,7 +39848,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       ? `微内核沙箱：0 异常 · ${modeLabel}`
       : `微内核沙箱：已隔离 ${totalIsolated} 项异常 · ${modeLabel}`;
     const bootTimeStr = kh?.bootedAt ? new Date(kh.bootedAt).toLocaleTimeString() : "即时";
-    const editionStr = kh?.edition || "koxir-standalone-1.0.0";
+    const editionStr = kh?.edition || "agent-web-standalone-1.0.0";
     const detailLines = [
       `发行版内核：${editionStr} (v${ENHANCEMENT_SUITE_VERSION})`,
       `加载模式：${isInline ? "layout chunk 编译期静态内联 (0 网络请求 / 0ms 延迟)" : "动态热重载模式"}`,
@@ -39960,666 +39948,45 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
   }
 
-  async function resolveWindowsPiBridgeUrl() {
-    const candidates = [
-      "http://127.0.0.1:30149",
-      "http://localhost:30149",
-      "http://10.0.0.89:30149",
-    ];
-    for (const candidate of candidates) {
-      try {
-        const response = await fetch(`${candidate}/ping?_t=${Date.now()}`, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(1200),
-        });
-        const identity = await response.json();
-        if (response.ok && identity?.ok === true && identity?.service === "pi-local-bridge") {
-          return candidate;
-        }
-      } catch (e) {}
-    }
-    throw new Error("Windows 本地桥接未运行（127.0.0.1:30149）");
-  }
-
-  bridgeBaseSyncUrl = null;
-  async function resolveBridgeSyncUrl() {
-    if (bridgeBaseSyncUrl) return bridgeBaseSyncUrl;
-    const hostname = (typeof window !== "undefined" && window.location?.hostname) || "10.0.0.2";
-    // On non-Windows localhost there is no desktop bridge; go directly to the NAS.
-    const candidates = /^(127\.0\.0\.1|localhost)$/.test(hostname) && !/Win/i.test(navigator.platform || "")
-      ? ["http://10.0.0.2:30149"]
-      : [`http://${hostname}:30149`, "http://10.0.0.2:30149", "http://127.0.0.1:30149"];
-    for (const cand of candidates) {
-      try {
-        const res = await fetch(`${cand}/ping`, { signal: AbortSignal.timeout(1500) });
-        if (res.ok) { bridgeBaseSyncUrl = cand; return cand; }
-      } catch (e) {}
-    }
-    bridgeBaseSyncUrl = `http://${hostname}:30149`;
-    return bridgeBaseSyncUrl;
-  }
-
-  async function updateSyncCardView(card, data) {
+  function updateSyncCardView(card, data) {
     if (!card) return;
     const badge = card.querySelector("[data-sync-badge]");
     const sourceDetail = card.querySelector("[data-sync-source-detail]");
     const targetDetail = card.querySelector("[data-sync-target-detail]");
     const windowsDetail = card.querySelector("[data-sync-windows-detail]");
     const macDetail = card.querySelector("[data-sync-mac-detail]");
-    const arrow = card.querySelector("[data-sync-arrow]");
     const syncBtn = card.querySelector('[data-sync-action="sync"]');
     const rollbackBtn = card.querySelector('[data-sync-action="rollback"]');
-    const isColleagueInstance = typeof window !== "undefined" && String(window.location?.port) === "30142";
+    const targetToggles = card.querySelectorAll("[data-sync-target-toggle]");
+    const notice = card.querySelector("[data-sync-notice]");
+    const message = data?.message || "跨实例同步后端未配置";
 
-    const colleagueCheckbox = card.querySelector('[data-sync-target-toggle="colleague"]');
-    const windowsCheckbox = card.querySelector('[data-sync-target-toggle="windows"]');
-    const macCheckbox = card.querySelector('[data-sync-target-toggle="mac"]');
-
-    if (data?.preferences) {
-      if (colleagueCheckbox) colleagueCheckbox.checked = data.preferences.colleague !== false;
-      if (windowsCheckbox) windowsCheckbox.checked = data.preferences.windows !== false;
-      if (macCheckbox) macCheckbox.checked = data.preferences.mac !== false;
-    }
-
-    if (!data || !data.ok) {
-      if (badge) {
-        badge.setAttribute("data-state", "DISCONNECTED");
-        badge.textContent = data?.message || "同步守护未响应";
-      }
-      if (sourceDetail) sourceDetail.textContent = "守护未连接";
-      if (targetDetail) targetDetail.textContent = "守护未连接";
-      if (windowsDetail) windowsDetail.textContent = "守护未连接";
-      if (macDetail) macDetail.textContent = "守护未连接";
-      if (syncBtn) syncBtn.disabled = true;
-      if (rollbackBtn) rollbackBtn.disabled = true;
-      return;
-    }
-
-    const srcVer = data.sourceVersion ? `v${data.sourceVersion}` : `v${ENHANCEMENT_SUITE_VERSION}`;
-    const srcTime = data.sourceMtime ? new Date(data.sourceMtime).toLocaleTimeString() : "";
-
-    const colleagueInfo = data.colleague || {
-      version: data.targetVersion,
-      targetMtime: data.targetMtime,
-      isSynced: data.isColleagueSynced !== false,
-      backups: data.backups || [],
-    };
-    const dstVer = colleagueInfo.version ? `v${colleagueInfo.version}` : `v${ENHANCEMENT_SUITE_VERSION}`;
-    const dstTime = colleagueInfo.targetMtime ? new Date(colleagueInfo.targetMtime).toLocaleTimeString() : "";
-
-    const windowsInfo = data.windows;
-    const macInfo = data.mac;
-
-    if (sourceDetail) {
-      sourceDetail.textContent = `${srcVer}${srcTime ? ` · ${srcTime}` : ""} · 日常开发源`;
-    }
-    if (targetDetail) {
-      if (data.preferences && !data.preferences.colleague) {
-        targetDetail.textContent = `${dstVer}${dstTime ? ` · ${dstTime}` : ""} · 同步已暂停 (未勾选)`;
-      } else {
-        const synDesc = colleagueInfo.isSynced ? (isColleagueInstance ? "本机已热生效" : "自动热生效就绪") : "待同步最新改动";
-        targetDetail.textContent = `${dstVer}${dstTime ? ` · ${dstTime}` : ""} · ${synDesc}`;
-      }
-    }
-    if (windowsDetail) {
-      if (data.preferences && !data.preferences.windows) {
-        windowsDetail.textContent = `同步已暂停 (未勾选)${windowsInfo?.online ? "" : " · 设备离线"}`;
-      } else if (!windowsInfo || !windowsInfo.online) {
-        windowsDetail.textContent = windowsInfo?.error ? `离线待机 (${windowsInfo.error}) · 开机自动补齐` : "离线待机 · 开机后自动同步";
-      } else {
-        const winVer = windowsInfo.version ? `v${windowsInfo.version}` : "v未知";
-        const winTime = windowsInfo.targetMtime ? new Date(windowsInfo.targetMtime).toLocaleTimeString() : "";
-        const winDesc = windowsInfo.isSynced ? "自动热生效就绪" : "待同步最新改动";
-        windowsDetail.textContent = `${winVer}${winTime ? ` · ${winTime}` : ""} · ${winDesc}`;
-      }
-    }
-    if (macDetail) {
-      if (data.preferences && !data.preferences.mac) {
-        macDetail.textContent = `同步已暂停 (未勾选)${macInfo?.online ? "" : " · 设备离线"}`;
-      } else if (!macInfo || !macInfo.online) {
-        macDetail.textContent = macInfo?.error ? `离线待机 (${macInfo.error}) · 开机自动补齐` : "离线待机 · 开机后自动同步";
-      } else {
-        const macVer = macInfo.version ? `v${macInfo.version}` : "v未知";
-        const macTime = macInfo.targetMtime ? new Date(macInfo.targetMtime).toLocaleTimeString() : "";
-        const macDesc = macInfo.isSynced ? "自动热生效就绪" : "待同步最新改动";
-        macDetail.textContent = `${macVer}${macTime ? ` · ${macTime}` : ""} · ${macDesc}`;
-      }
-    }
-
-    const allSynced = data.isFullySynced;
     if (badge) {
-      if (allSynced) {
-        badge.setAttribute("data-state", "SYNCED");
-        const disabledCount = (data.preferences ? [!data.preferences.colleague, !data.preferences.windows, !data.preferences.mac].filter(Boolean).length : 0);
-        if (isColleagueInstance) {
-          badge.textContent = `已同步 30141 最新插件 (${dstVer}) · 自动守护中`;
-        } else if (disabledCount > 0) {
-          badge.textContent = `已启用端已对齐 (${srcVer}) · ${disabledCount} 端同步已暂停`;
-        } else {
-          const winOnline = Boolean(windowsInfo?.online);
-          const macOnline = Boolean(macInfo?.online);
-          if (winOnline && macOnline) {
-            badge.textContent = `四端已完全对齐 (${srcVer}) · 自动守护运行中`;
-          } else {
-            const offlineList = [];
-            if (!winOnline) offlineList.push("Win");
-            if (!macOnline) offlineList.push("Mac");
-            badge.textContent = `已在线端已对齐 (${srcVer}) · ${offlineList.join("/")} 待机`;
-          }
-        }
-      } else {
-        badge.setAttribute("data-state", "PENDING");
-        badge.textContent = `30141 有新改动待同步至各端`;
-      }
+      badge.setAttribute("data-state", "DISCONNECTED");
+      badge.textContent = message;
     }
-
-    if (arrow) {
-      arrow.textContent = "➔";
-      arrow.title = "单向流转：群晖 30141 开发源 ➔ 群晖 30142 同事端 & Windows 本地端 & MacBook 本地端";
-    }
-
-    if (syncBtn) {
-      if (isColleagueInstance) {
-        syncBtn.disabled = false;
-        syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>检查 30141 最新更新';
-        syncBtn.title = "从 30141 获取最新增强插件并热生效";
-      } else {
-        syncBtn.disabled = allSynced;
-        if (allSynced) {
-          syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>各已启用端已对齐';
-        } else {
-          syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>立即同步至各端';
-        }
-      }
-    }
-
-    if (rollbackBtn) {
-      const hasBackups30142 = (data.backups?.length > 0) || (colleagueInfo.backups?.length > 0);
-      const hasBackupsWin = (windowsInfo?.backups?.length > 0);
-      const hasBackupsMac = (macInfo?.backups?.length > 0);
-      rollbackBtn.disabled = !hasBackups30142 && !hasBackupsWin && !hasBackupsMac;
-      rollbackBtn.title = "一键回滚 30142、Windows 或 MacBook 至最近历史快照";
-    }
+    if (notice) notice.textContent = "不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。";
+    if (sourceDetail) sourceDetail.textContent = "Agent Web Plus 当前实例";
+    if (targetDetail) targetDetail.textContent = "目标实例 1 · 未配置";
+    if (windowsDetail) windowsDetail.textContent = "目标实例 2 · 未配置";
+    if (macDetail) macDetail.textContent = "目标实例 3 · 未配置";
+    for (const toggle of targetToggles) toggle.disabled = true;
+    if (syncBtn) syncBtn.disabled = true;
+    if (rollbackBtn) rollbackBtn.disabled = true;
   }
 
-  async function fetchSyncStatus(card, force = false) {
-    try {
-      const bridgeUrl = await resolveBridgeSyncUrl();
-      const query = force ? "?refresh=1" : "";
-      const res = await fetch(bridgeUrl + "/sync/status" + query, { signal: AbortSignal.timeout(8000) });
-      const data = await res.json();
-      updateSyncCardView(card, data);
-      return data;
-    } catch (e) {
-      updateSyncCardView(card, { ok: false, message: "同步服务不可达" });
-      return null;
-    }
+  async function fetchSyncStatus(card) {
+    updateSyncCardView(card, { ok: false, message: "跨实例同步后端未配置" });
+    return null;
   }
 
   function initCrossDeviceSyncController(card) {
-    fetchSyncStatus(card);
-
-    // 绑定目标独立复选框（失败恢复 UI）
-    card.querySelectorAll("[data-sync-target-toggle]").forEach((toggle) => {
-      toggle.addEventListener("change", async () => {
-        const target = toggle.getAttribute("data-sync-target-toggle");
-        const enabled = toggle.checked;
-        const prev = !enabled;
-        const targetNames = { colleague: "30142 同事端", windows: "Windows 本地端", mac: "MacBook 本地端" };
-        const label = targetNames[target] || target;
-        toggle.disabled = true;
-
-        try {
-          const bridgeUrl = await resolveBridgeSyncUrl();
-          const res = await fetch(`${bridgeUrl}/sync/preferences`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target, enabled }),
-            signal: AbortSignal.timeout(10000),
-          });
-          const result = await res.json();
-          if (!res.ok || !result.ok) {
-            toggle.checked = prev;
-            showToast(`设置保存失败: ${result?.error || "请求未成功"}`, null, 4000);
-          } else {
-            showToast(`${label} 自动同步已${enabled ? "开启（正在补齐最新改动）" : "暂停"}`);
-            await fetchSyncStatus(card, true);
-          }
-        } catch (err) {
-          toggle.checked = prev;
-          showToast(`更新设置异常: ${err.message}`, null, 4000);
-        } finally {
-          toggle.disabled = false;
-        }
-      });
-    });
-
+    if (!card) return;
+    updateSyncCardView(card, { ok: false, message: "跨实例同步后端未配置" });
     card.querySelector('[data-sync-action="refresh"]')?.addEventListener("click", () => {
-      fetchSyncStatus(card, true);
-      showToast("已刷新 30141、30142、Windows 与 Mac 对齐状态");
+      fetchSyncStatus(card);
+      showToast("跨实例同步后端未配置");
     });
-
-    card.querySelector('[data-sync-action="sync"]')?.addEventListener("click", async () => {
-      const syncBtn = card.querySelector('[data-sync-action="sync"]');
-      if (syncBtn) syncBtn.disabled = true;
-      showToast("正在将 30141 最新插件同步至各启用端并热生效…", null, 4000);
-      try {
-        const bridgeUrl = await resolveBridgeSyncUrl();
-        const res = await fetch(bridgeUrl + "/sync/execute", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target: "all" }),
-          signal: AbortSignal.timeout(25000),
-        });
-        const result = await res.json();
-        if (result.ok) {
-          showToast(result.message || "已成功同步至目标端！", null, 3500);
-          await fetchSyncStatus(card, true);
-          if (typeof window.__PI_ENH_RELOAD__ === "function") {
-            window.__PI_ENH_RELOAD__();
-          }
-        } else {
-          showToast("同步失败: " + (result.message || result.error || "未知错误"), null, 5000);
-        }
-      } catch (e) {
-        showToast("同步异常: " + e.message, null, 5000);
-      } finally {
-        if (syncBtn) syncBtn.disabled = false;
-      }
-    });
-
-    card.querySelector('[data-sync-action="rollback"]')?.addEventListener("click", async () => {
-      const targetChoice = prompt("请选择要回滚的目标端：\\n输入 1: 回滚 30142 同事端\\n输入 2: 回滚 Windows 本地端\\n输入 3: 回滚 MacBook 本地端 (10.7.7.2)", "1");
-      if (!targetChoice) return;
-      let target = "30142";
-      let targetName = "30142 同事端";
-      if (targetChoice.trim() === "2") {
-        target = "windows";
-        targetName = "Windows 本地端";
-      } else if (targetChoice.trim() === "3") {
-        target = "mac";
-        targetName = "MacBook 本地端";
-      }
-      showToast(`正在执行 ${targetName} 版本回滚…`, null, 4000);
-      try {
-        const bridgeUrl = await resolveBridgeSyncUrl();
-        const res = await fetch(bridgeUrl + "/sync/rollback", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target }),
-          signal: AbortSignal.timeout(20000),
-        });
-        const result = await res.json();
-        if (result.ok) {
-          showToast(result.message || `回滚成功！${targetName} 已恢复上一版本快照`, null, 3500);
-          await fetchSyncStatus(card, true);
-          if (typeof window.__PI_ENH_RELOAD__ === "function") {
-            window.__PI_ENH_RELOAD__();
-          }
-        } else {
-          showToast("回滚失败: " + (result.message || result.error || "未知错误"), null, 5000);
-        }
-      } catch (e) {
-        showToast("回滚异常: " + e.message, null, 5000);
-      }
-    });
-  }
-
-  function renderEnhancementModulesPanel(panel, nav) {
-    const enabledCount = ENHANCEMENT_MODULES.filter((module) => getModuleState(module.id).active > 0).length;
-    const categories = [...new Set(ENHANCEMENT_MODULES.map((module) => module.category))];
-    panel.innerHTML = `
-      <div class="settings-general-container pi-enh-plugins-shell">
-        <section class="pi-enh-plugins-toolbar" aria-label="增强模块管理工具栏">
-          <div class="pi-enh-plugins-heading-row">
-            <div class="pi-enh-plugins-title-wrap">
-              <h2 class="settings-general-title pi-enh-plugins-title">
-                <span>网页增强模块</span>
-                <span class="pi-enh-module-version">独立版 v${ENHANCEMENT_SUITE_VERSION}</span>
-                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_MODULES.length} 个模块已启用</span>
-              </h2>
-            </div>
-            <div class="pi-enh-plugins-actions" aria-label="批量操作">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-action="hot-reload" title="无感重新加载最新前端补丁，无需刷新或重启后台">↻ 重新热载</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="force-hard-reload" title="穿透 HTTP 强缓存更新前端静态资源并强制刷新">⚡ 强制刷新</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各模块，保留原有子功能选择">全部恢复</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">全部关闭</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="reset-defaults">恢复默认</button>
-            </div>
-          </div>
-          <p class="pi-enh-plugins-description">
-            <span>总开关：开启 / 部分开启 / 关闭。关闭保留子项选择，再次开启恢复；参数即时生效。</span>
-            ${renderKernelHealthBadgeHtml()}
-          </p>
-          <div class="pi-enh-plugins-filter-row" role="search">
-            <label class="pi-enh-plugin-search-wrap">
-              <svg class="pi-enh-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
-              <input class="pi-enh-plugin-search" type="search" data-plugin-search aria-label="搜索增强模块" placeholder="搜索模块或子功能…" autocomplete="off">
-            </label>
-            <div class="pi-enh-category-filters" role="group" aria-label="按类别筛选">
-              <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
-              ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
-            </div>
-            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_MODULES.length} 个模块</span>
-          </div>
-        </section>
-
-        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
-          <div class="pi-enh-sync-header">
-            <div class="pi-enh-sync-title-wrap">
-              <span class="pi-enh-sync-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>跨端自动同步 (群晖 30141 开发源 ➔ 30142 同事端 &amp; Windows &amp; Mac 本地)</span>
-              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="LOADING">正在检测各端对齐状态…</span>
-            </div>
-            <div class="pi-enh-sync-actions">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="立即将 30141 最新增强插件同步并热生效至各目标端">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>立即同步至各端
-              </button>
-              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="一键回滚目标端至最近一次历史快照">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>回滚快照
-              </button>
-              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="重新获取 30141、30142、Windows 与 Mac 的版本及对齐状态">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>刷新
-              </button>
-            </div>
-          </div>
-          <div class="pi-enh-sync-body" data-sync-body>
-            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source">
-              <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>群晖 30141 (日常开发源)</span>
-              <span class="pi-enh-sync-node-detail" data-sync-source-detail>检测中…</span>
-            </div>
-            <div class="pi-enh-sync-arrow" data-sync-arrow>➔</div>
-            <div class="pi-enh-sync-targets-col">
-              <div class="pi-enh-sync-node" data-sync-node="target-colleague">
-                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 30142 同事端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>群晖 30142 (同事使用端)</span>
-                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="开启/暂停 30142 同事端自动同步" checked>
-                </label>
-                <span class="pi-enh-sync-node-detail" data-sync-target-detail>检测中…</span>
-              </div>
-              <div class="pi-enh-sync-node" data-sync-node="target-windows">
-                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 Windows 本地端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>Windows 本地端 (10.0.0.89)</span>
-                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="开启/暂停 Windows 本地端自动同步" checked>
-                </label>
-                <span class="pi-enh-sync-node-detail" data-sync-windows-detail>检测中…</span>
-              </div>
-              <div class="pi-enh-sync-node" data-sync-node="target-mac">
-                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 MacBook 本地端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>MacBook 本地端 (10.7.7.2)</span>
-                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="开启/暂停 MacBook 本地端自动同步" checked>
-                </label>
-                <span class="pi-enh-sync-node-detail" data-sync-mac-detail>检测中…</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="pi-enh-pwa-card" data-pi-enh-pwa-card>
-          <div class="pi-enh-pwa-header">
-            <div class="pi-enh-pwa-title-wrap">
-              <span class="pi-enh-pwa-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>移动端与 PWA 独立应用模式</span>
-              <span class="pi-enh-pwa-badge" data-pwa-status-badge data-standalone="${isPwaStandaloneMode() ? 'true' : 'false'}">${isPwaStandaloneMode() ? "● 原生 PWA 独立运行中" : "○ 浏览器标签页模式"}</span>
-            </div>
-            <div class="pi-enh-pwa-actions">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-pwa-action="copy-flag-origin" title="一键复制局域网安全源地址用于 Chrome Flags 信任">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>复制局域网安全源地址
-              </button>
-            </div>
-          </div>
-          <div class="pi-enh-pwa-body">
-            <p class="pi-enh-pwa-desc">
-              ${isPwaStandaloneMode()
-                ? "当前已处于原生 PWA 独立窗口运行状态，已自动激活全面屏防误触安全区域与系统返回键防误退保护。"
-                : "在手机端 Chrome 打开时，如需像原生 App 一样全屏无地址栏运行：在手机 Chrome 访问 <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>，将当前地址填入并启用，即可在右上角菜单一键【安装应用】。"}
-            </p>
-          </div>
-        </div>
-
-        <div class="pi-enh-plugins-list pi-enh-modules-list">
-          ${ENHANCEMENT_MODULES.map((module) => {
-            const enabled = isModuleEnabled(module.id);
-            const disabled = !enabled;
-            const state = getModuleState(module.id);
-            const features = module.features.map((featureId) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === featureId)).filter(Boolean);
-            const isSubagent = module.id === SUBAGENT_DISPATCH_MODULE_ID;
-            const ariaChecked = isSubagent ? String(enabled) : (state.state === "partial" ? "mixed" : String(state.state === "on"));
-            const dataState = isSubagent ? (enabled ? "on" : "off") : state.state;
-            const statusText = isSubagent ? moduleStateLabel(state, enabled) : moduleStateLabel(state);
-            return `<article class="pi-enh-plugin-item pi-enh-module-item" data-module-row="${module.id}" data-plugin-category-name="${module.category}" data-enabled="${enabled ? "true" : "false"}">
-              <div class="pi-enh-module-header">
-                <div class="pi-enh-plugin-copy">
-                  <div class="pi-enh-plugin-name-row">
-                    <span class="pi-enh-plugin-name">${module.name}</span>
-                    <span class="pi-enh-plugin-category">${module.category}</span>
-                    <span class="pi-enh-module-version">v${module.version}</span>
-                  </div>
-                  <div class="pi-enh-plugin-desc">${module.desc}</div>
-                </div>
-                <div class="pi-enh-module-master">
-                  <span class="pi-enh-module-status" id="pi-enh-status-${module.id}" data-module-status data-state="${dataState}" aria-live="polite">${statusText}</span>
-                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
-                    <span class="config-switch-knob" aria-hidden="true"></span>
-                  </button>
-                </div>
-              </div>
-                <details class="pi-enh-module-settings" data-module-settings="${module.id}" ${disabled ? "data-module-disabled=true" : ""}>
-                  <summary data-module-expand="${module.id}">配置 ${features.length} 项子功能${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
-                  <div class="pi-enh-module-settings-body" ${disabled ? "aria-disabled=true" : ""}>
-                    <div class="pi-enh-module-features">${features.map((plugin) => renderFeatureToggle(plugin, disabled)).join("")}</div>
-                    ${module.id === "composer-workflow" ? renderQuickActionsEditor(disabled || !isPluginEnabled("quick-action-buttons")) : ""}
-                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, disabled || (setting.featureId && !isPluginEnabled(setting.featureId)))).join("")}</div>` : ""}
-                  </div>
-                </details>
-            </article>`;
-          }).join("")}
-        </div>
-        <div class="pi-enh-plugin-empty" data-plugin-empty role="status" hidden>没有匹配的模块，请调整搜索词或分类。</div>
-      </div>`;
-
-    bindQuickActionsEditor(panel);
-    if (!window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__) void loadQuickActionsConfig().then(() => refreshQuickActionsEditorDom(panel));
-
-    const searchInput = panel.querySelector("[data-plugin-search]");
-    if (searchInput) {
-      searchInput.value = enhancementPanelFilter.query;
-      searchInput.addEventListener("input", () => {
-        enhancementPanelFilter.query = searchInput.value || "";
-        applyEnhancementPanelFilter(panel);
-      });
-    }
-    for (const categoryButton of panel.querySelectorAll("[data-plugin-category]")) {
-      categoryButton.addEventListener("click", () => {
-        enhancementPanelFilter.category = categoryButton.getAttribute("data-plugin-category") || "all";
-        applyEnhancementPanelFilter(panel);
-      });
-    }
-    panel.querySelector('[data-action="hot-reload"]')?.addEventListener("click", () => {
-      if (typeof window.__PI_ENH_RELOAD__ === "function") {
-        if (typeof window.__PI_WEB_ENHANCEMENTS_CLEANUP__ === "function") {
-          try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
-        }
-        window.__PI_ENH_PENDING_TOAST__ = { message: "已成功热载最新补丁，会话零中断" };
-        window.__PI_ENH_RELOAD__();
-      } else showToast("已处于最新热载状态");
-    });
-    panel.querySelector('[data-action="force-hard-reload"]')?.addEventListener("click", forceHardReloadApp);
-    let isSubagentDispatchBusy = false;
-    function setSubagentDispatchBusyState(busy) {
-      isSubagentDispatchBusy = busy;
-      const masterToggle = panel.querySelector(`[data-module-toggle="${SUBAGENT_DISPATCH_MODULE_ID}"]`);
-      if (masterToggle) {
-        masterToggle.disabled = busy;
-        if (busy) masterToggle.setAttribute("aria-busy", "true");
-        else masterToggle.removeAttribute("aria-busy");
-      }
-      const batchBtns = panel.querySelectorAll('[data-action="enable-all"], [data-action="disable-all"], [data-action="reset-defaults"]');
-      for (const btn of batchBtns) {
-        btn.disabled = busy;
-      }
-    }
-
-    panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", async () => {
-      if (isSubagentDispatchBusy) return;
-      setSubagentDispatchBusyState(true);
-      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-      try {
-        await enqueueSubagentDispatchCommit(true);
-        for (const module of ENHANCEMENT_MODULES) {
-          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, true);
-        }
-        const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
-        const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
-        if (st && st.selected === 0 && mod) {
-          for (const fId of mod.features) {
-            const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
-            if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
-          }
-        }
-        showToast("已恢复全部模块；保留原有子功能选择");
-      } catch (err) {
-        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
-        showToast(`恢复全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
-      } finally {
-        setSubagentDispatchBusyState(false);
-        syncEnhancementPanelControls();
-      }
-    });
-
-    panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", async () => {
-      if (isSubagentDispatchBusy) return;
-      setSubagentDispatchBusyState(true);
-      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-      try {
-        await enqueueSubagentDispatchCommit(false);
-        for (const module of ENHANCEMENT_MODULES) {
-          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, false);
-        }
-        showToast("已关闭所有增强模块；子功能偏好已保留");
-      } catch (err) {
-        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
-        showToast(`关闭全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
-      } finally {
-        setSubagentDispatchBusyState(false);
-        syncEnhancementPanelControls();
-      }
-    });
-
-    panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", async () => {
-      if (isSubagentDispatchBusy) return;
-      setSubagentDispatchBusyState(true);
-      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-      try {
-        await enqueueSubagentDispatchCommit(true);
-        resetEnhancementSettings();
-        showToast("已恢复默认增强设置");
-      } catch (err) {
-        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
-        showToast(`恢复默认设置时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
-      } finally {
-        setSubagentDispatchBusyState(false);
-        syncEnhancementPanelControls();
-      }
-    });
-
-    panel.querySelector('[data-pwa-action="copy-flag-origin"]')?.addEventListener("click", () => {
-      const origin = (typeof window !== "undefined" && window.location ? window.location.origin : "http://10.0.0.2:30141");
-      copyText(origin, "已复制局域网安全源地址: " + origin);
-      showToast("已复制地址！在手机 Chrome 访问 chrome://flags/#unsafely-treat-insecure-origin-as-secure 粘贴并启用即可一键安装 PWA", null, 6000);
-    });
-
-    for (const toggle of panel.querySelectorAll("[data-module-toggle]")) {
-      toggle.addEventListener("click", async () => {
-        const id = toggle.getAttribute("data-module-toggle");
-        if (id === SUBAGENT_DISPATCH_MODULE_ID) {
-          if (isSubagentDispatchBusy) return;
-          const nextEnabled = !isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
-          setSubagentDispatchBusyState(true);
-          try {
-            await enqueueSubagentDispatchCommit(nextEnabled);
-            const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
-            const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
-            if (nextEnabled && st && st.selected === 0 && mod) {
-              for (const fId of mod.features) {
-                const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
-                if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
-              }
-            }
-            showToast(`子 Agent 调度已${nextEnabled ? "开启" : "关闭"}`);
-          } catch (err) {
-            showToast(`保存子 Agent 调度服务端总开关失败: ${err.message || "请求异常"}`, null, 5000);
-          } finally {
-            setSubagentDispatchBusyState(false);
-            syncEnhancementPanelControls();
-          }
-          return;
-        }
-        toggleModuleFromPanel(id);
-      });
-    }
-    for (const toggle of panel.querySelectorAll("[data-plugin-toggle]")) {
-      toggle.addEventListener("click", () => {
-        const id = toggle.getAttribute("data-plugin-toggle");
-        if (!toggle.disabled) setPluginEnabled(id, !isPluginSelected(id));
-      });
-    }
-    for (const range of panel.querySelectorAll("[data-plugin-setting-range]")) {
-      const identity = range.getAttribute("data-plugin-setting-range");
-      const [featureId, key] = identity.split(":");
-      const counterpartInput = panel.querySelector(`input[data-plugin-setting="${identity}"]`);
-      range.addEventListener("input", () => {
-        if (counterpartInput) counterpartInput.value = range.value;
-      });
-      range.addEventListener("change", () => {
-        const val = setPluginSetting(featureId, key, range.value);
-        range.value = String(val);
-        if (counterpartInput) counterpartInput.value = String(val);
-        showToast(`已设置 ${range.getAttribute("aria-label")?.replace("滑块", "") || "参数"}: ${val}`);
-      });
-    }
-    for (const input of panel.querySelectorAll("[data-plugin-setting]")) {
-      input.addEventListener("change", () => {
-        const identity = String(input.getAttribute("data-plugin-setting") || "");
-        const [featureId, key] = identity.split(":");
-        const value = setPluginSetting(featureId, key, input.value);
-        input.value = String(value);
-        const counterpartRange = panel.querySelector(`[data-plugin-setting-range="${identity}"]`);
-        if (counterpartRange) counterpartRange.value = String(value);
-        if (featureId === "session-pin-archive" && isPluginEnabled(featureId)) void purgeExpiredArchives();
-        showToast(`已更新 ${input.getAttribute("aria-label") || "参数"}: ${value}`);
-      });
-    }
-    for (const action of panel.querySelectorAll("[data-plugin-action]")) {
-      action.addEventListener("click", async () => {
-        const type = action.getAttribute("data-plugin-action");
-        if (type === "clear-session-cache") {
-          await clearSessionCaches();
-          showToast("已清空会话缓存");
-        } else if (type === "download-crash-diagnostics") {
-          window.__PI_ENH_CRASH_DIAGNOSTICS__?.download();
-        } else if (type === "request-desktop-notification") {
-          await requestDesktopAttentionPermission();
-        } else if (type === "sync-pinned-manifest") {
-          showToast("正在读取统一置顶配置...", sessionPinIcon, 2000);
-          await syncManifestPinnedEntries(true);
-          showToast("已同步统一置顶配置，正在刷新页面...", sessionPinIcon, 1500);
-          setTimeout(() => {
-            if (typeof window !== "undefined" && window.location && typeof window.location.reload === "function") {
-              window.location.reload();
-            }
-          }, 350);
-        }
-      });
-    }
-    bindSubagentModelControls(panel);
-    syncEnhancementPanelControls();
-    void syncSubagentDispatchRemoteState().then(() => {
-      syncEnhancementPanelControls();
-    });
-    const syncCard = panel.querySelector("[data-pi-enh-sync-card]");
-    if (syncCard) {
-      initCrossDeviceSyncController(syncCard);
-    }
-    applyEnhancementPanelFilter(panel);
   }
 
   function applyEnhancementPanelFilter(panel) {
@@ -40697,6 +40064,30 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           </div>
         </section>
 
+        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
+          <div class="pi-enh-sync-header">
+            <div class="pi-enh-sync-title-wrap">
+              <span class="pi-enh-sync-title">跨实例增强插件分发</span>
+              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="DISCONNECTED">跨实例同步后端未配置</span>
+            </div>
+            <div class="pi-enh-sync-actions">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="跨实例同步后端未配置" disabled>跨实例分发未配置</button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="跨实例同步后端未配置" disabled>跨实例回滚未配置</button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="显示跨实例同步配置状态">刷新</button>
+            </div>
+          </div>
+          <p data-sync-notice style="margin: 0 0 10px; color: var(--text-muted); font-size: 12px; line-height: 1.5;">不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。</p>
+          <div class="pi-enh-sync-body" data-sync-body>
+            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source"><span class="pi-enh-sync-node-name">Agent Web Plus 当前实例（源）</span><span class="pi-enh-sync-node-detail" data-sync-source-detail>当前实例</span></div>
+            <div class="pi-enh-sync-arrow" data-sync-arrow aria-hidden="true">➔</div>
+            <div class="pi-enh-sync-targets-col">
+              <div class="pi-enh-sync-node" data-sync-node="target-colleague"><label class="pi-enh-sync-target-check-wrap" title="目标实例 1 尚未配置"><span class="pi-enh-sync-node-name">目标实例 1</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="目标实例 1 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-target-detail>未配置</span></div>
+              <div class="pi-enh-sync-node" data-sync-node="target-windows"><label class="pi-enh-sync-target-check-wrap" title="目标实例 2 尚未配置"><span class="pi-enh-sync-node-name">目标实例 2</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="目标实例 2 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-windows-detail>未配置</span></div>
+              <div class="pi-enh-sync-node" data-sync-node="target-mac"><label class="pi-enh-sync-target-check-wrap" title="目标实例 3 尚未配置"><span class="pi-enh-sync-node-name">目标实例 3</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="目标实例 3 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-mac-detail>未配置</span></div>
+            </div>
+          </div>
+        </div>
+
         <div class="pi-enh-plugins-list">
           ${ENHANCEMENT_PLUGINS.map((plugin) => {
             const enabled = isPluginEnabled(plugin.id);
@@ -40769,6 +40160,8 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       </div>
     `;
 
+    initCrossDeviceSyncController(panel.querySelector("[data-pi-enh-sync-card]"));
+
     const searchInput = panel.querySelector("[data-plugin-search]");
     if (searchInput) {
       searchInput.value = enhancementPanelFilter.query;
@@ -40802,16 +40195,20 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
     panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, true);
+      scheduleUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已开启所有增强插件");
     });
     panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, false);
+      cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已关闭所有增强插件");
     });
     panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, p.defaultEnabled);
+      if (isPluginEnabled("usage-cost-dashboard")) scheduleUsageLedgerPrefetch();
+      else cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已恢复默认增强设置");
     });
@@ -40892,6 +40289,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         const current = toggle.getAttribute("aria-checked") === "true";
         const next = !current;
         setPluginEnabled(id, next);
+        if (id === "usage-cost-dashboard") {
+          if (next && isPluginEnabled(id)) scheduleUsageLedgerPrefetch();
+          else cancelUsageLedgerPrefetch();
+        }
         toggle.setAttribute("aria-checked", next ? "true" : "false");
         toggle.setAttribute("title", next ? "点击禁用" : "点击启用");
         const row = toggle.closest("[data-plugin-row]");
@@ -40926,6 +40327,106 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     return true;
   }
 
+  let usageLedgerPrefetchCancel = null;
+  let usageLedgerPrefetchStarted = false;
+
+  function cancelUsageLedgerPrefetch() {
+    if (usageLedgerPrefetchCancel) {
+      usageLedgerPrefetchCancel();
+      usageLedgerPrefetchCancel = null;
+    }
+  }
+
+  function scheduleUsageLedgerPrefetch() {
+    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchStarted || usageLedgerPrefetchCancel) return;
+
+    let cancelled = false;
+    let idleId = null;
+    let timerId = null;
+    let loadListener = null;
+    let visibilityListener = null;
+    let prefetchAbortController = null;
+
+    const removeVisibilityListener = () => {
+      if (visibilityListener) document.removeEventListener("visibilitychange", visibilityListener);
+      visibilityListener = null;
+    };
+    const cancel = () => {
+      cancelled = true;
+      if (prefetchAbortController) {
+        prefetchAbortController.abort();
+        prefetchAbortController = null;
+      }
+      if (loadListener) window.removeEventListener("load", loadListener);
+      loadListener = null;
+      removeVisibilityListener();
+      if (idleId !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idleId);
+      idleId = null;
+      if (timerId !== null) clearTimeout(timerId);
+      timerId = null;
+    };
+
+    const waitUntilVisible = () => {
+      if (cancelled || visibilityListener) return;
+      visibilityListener = () => {
+        if (document.visibilityState === "hidden") return;
+        removeVisibilityListener();
+        scheduleIdle();
+      };
+      document.addEventListener("visibilitychange", visibilityListener);
+    };
+
+    const run = async () => {
+      idleId = null;
+      timerId = null;
+      if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
+      if (document.visibilityState === "hidden") {
+        waitUntilVisible();
+        return;
+      }
+      const loadOptional = window.__PI_ENH_LOAD_OPTIONAL__;
+      if (typeof loadOptional !== "function") return;
+      try {
+        const usagePanel = await loadOptional("usage-panel");
+        if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
+        if (document.visibilityState === "hidden") {
+          waitUntilVisible();
+          return;
+        }
+        if (typeof usagePanel?.prefetch !== "function") return;
+        usageLedgerPrefetchStarted = true;
+        prefetchAbortController = typeof AbortController === "function" ? new AbortController() : null;
+        void usagePanel.prefetch(prefetchAbortController?.signal).catch(() => {});
+      } catch (_) {
+        // Keep startup quiet; opening Usage remains the visible retry path.
+      }
+    };
+
+    const scheduleIdle = () => {
+      if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
+      if (document.visibilityState === "hidden") {
+        waitUntilVisible();
+        return;
+      }
+      if (typeof window.requestIdleCallback === "function") {
+        idleId = window.requestIdleCallback(run, { timeout: 5000 });
+      } else {
+        timerId = setTimeout(run, 1200);
+      }
+    };
+
+    const afterLoad = () => {
+      loadListener = null;
+      scheduleIdle();
+    };
+    usageLedgerPrefetchCancel = cancel;
+    if (document.readyState === "complete") afterLoad();
+    else {
+      loadListener = afterLoad;
+      window.addEventListener("load", loadListener, { once: true });
+    }
+  }
+
   async function checkScriptUpdate() {
     if (isLoginPage()) return;
     try {
@@ -40945,7 +40446,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
             try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
           }
           // 静默无感热载，控制台记录即可，绝不弹窗打扰用户
-          console.log("[Pi Web Enhancements] Silently reloading latest patch...");
+          console.log("[Agent Web Plus Enhancements] Silently reloading latest patch...");
           window.__PI_ENH_RELOAD__();
         }
       }
@@ -40994,6 +40495,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_WEB_ENHANCEMENTS_CLEANUP__ = function () {
     if (isDisposed) return;
     isDisposed = true;
+    cancelUsageLedgerPrefetch();
 
     try {
       // 0. Disconnect and restore document title observer and descriptor (only restore if still owned)
@@ -41189,7 +40691,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       delete window.__PI_ENH_GET_DURABLE_STATE_BASE_URL__;
       delete window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__;
     } catch (e) {
-      console.warn("[Pi Web Enhancements] cleanup warning:", e);
+      console.warn("[Agent Web Plus Enhancements] cleanup warning:", e);
     }
   };
 
@@ -41229,13 +40731,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
 
   const kernelHealth = window.__PI_ENH_KERNEL_HEALTH__ || {
-    edition: `koxir-standalone-${ENHANCEMENT_SUITE_VERSION}`,
+    edition: `agent-web-standalone-${ENHANCEMENT_SUITE_VERSION}`,
     version: ENHANCEMENT_SUITE_VERSION,
     bootedAt: Date.now(),
     initialSyncCompleted: false,
     isolatedErrors: [],
   };
-  kernelHealth.edition = `koxir-standalone-${ENHANCEMENT_SUITE_VERSION}`;
+  kernelHealth.edition = `agent-web-standalone-${ENHANCEMENT_SUITE_VERSION}`;
   kernelHealth.version = ENHANCEMENT_SUITE_VERSION;
   window.__PI_ENH_KERNEL_HEALTH__ = kernelHealth;
   window.__PI_WEB_STANDALONE_VERSION__ = ENHANCEMENT_SUITE_VERSION;
@@ -41248,7 +40750,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         error: String(err && err.message ? err.message : err),
         at: Date.now(),
       });
-      console.warn(`[Pi Web Kernel Sandbox] Isolated error in ${stepName}:`, err);
+      console.warn(`[Agent Web Plus Kernel Sandbox] Isolated error in ${stepName}:`, err);
     }
   }
   window.__PI_ENH_RUN_ISOLATED_STEP__ = runIsolatedKernelStep;
@@ -41283,10 +40785,16 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   if (typeof setTimeout === "function") {
     setTimeout(() => {
       try {
-        if (!isDisposed && !isLoginPage() && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
+        if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi" && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
           window.__PI_ENH_PRELOAD_MODELS_CACHE__();
         }
       } catch (e) {}
+    }, 1200);
+  }
+
+  if (typeof setTimeout === "function") {
+    setTimeout(() => {
+      if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi") scheduleUsageLedgerPrefetch();
     }, 1200);
   }
 
@@ -41301,5 +40809,5 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }, 1500);
   }
 
-  console.log(`[Pi Web Enhancements] v${ENHANCEMENT_SUITE_VERSION} Loaded: Module Settings Manager active.`);
+  console.log(`[Agent Web Plus Enhancements] v${ENHANCEMENT_SUITE_VERSION} Loaded: Module Settings Manager active.`);
 })();

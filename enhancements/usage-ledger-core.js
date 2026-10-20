@@ -108,9 +108,23 @@
     return canonicalModel(id, null, null).name;
   }
 
+  // Only validated Codex lineage changes the conversation dimension. Physical
+  // execution buckets, dates, roles and Pi's existing ownership stay intact.
+  function conversationId(ledger, id) {
+    const seen = new Set([id]);
+    let current = id;
+    while (true) {
+      const parent = ledger.sessions?.[current]?.parentSessionId;
+      if (typeof parent !== "string" || !parent.startsWith("codex:") || !ledger.sessions?.[parent]) return current;
+      if (seen.has(parent)) return id;
+      seen.add(parent);
+      current = parent;
+    }
+  }
+
   function aggregate(ledger, options = {}) {
     const total = empty(), roles = { main: empty(), subagent: empty(), system: empty() };
-    const models = new Map(), sessions = new Map(), allModels = new Map();
+    const models = new Map(), sessions = new Map(), allModels = new Map(), physicalSessions = new Set();
     const now = options.now ?? Date.now(), range = options.timeRange || "all";
 
     const validRanges = ["all", "today", "yesterday", "24h", "7d", "30d", "custom"];
@@ -121,6 +135,11 @@
     if (options.role && !validRoles.includes(options.role)) {
       throw new Error(`Invalid role: ${options.role}`);
     }
+    const validEngines = ["all", "pi", "codex"];
+    if (options.engine !== undefined && !validEngines.includes(options.engine)) {
+      throw new Error(`Invalid engine: ${options.engine}`);
+    }
+    const selectedEngine = options.engine === undefined ? "all" : options.engine;
     if (options.now !== undefined && (typeof options.now !== "number" || !Number.isFinite(options.now))) {
       throw new Error("Invalid now timestamp");
     }
@@ -171,6 +190,12 @@
     let excludedTokens = 0, excludedRecords = 0;
 
     for (const b of ledger.buckets || []) {
+      const bucketEngine = b.engine === undefined ? "pi" : b.engine;
+      if (bucketEngine !== "pi" && bucketEngine !== "codex") {
+        throw new Error(`Invalid bucket engine: ${bucketEngine}`);
+      }
+      if (selectedEngine !== "all" && bucketEngine !== selectedEngine) continue;
+
       const c = canonicalModel(b.model, b.provider, b.role);
       const cKey = c.key;
       allModels.set(cKey, c.name);
@@ -255,9 +280,9 @@
       }
 
       // 智能价格核算：有原生上报优先原值；旧桶整个桶 cost=0 时全桶补价；不得对 cost>0 且部分 unpriced 用比例近似冒充精确
-      let effectiveCostNano = item.costNano || 0;
+      let effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
       let effectiveUnpriced = item.unpricedTokens || 0;
-      if (item.totalTokens > 0) {
+      if (bucketEngine !== "codex" && item.totalTokens > 0) {
         const rate = STANDARD_RATES[cKey];
         if (rate) {
           if (effectiveCostNano <= 0) {
@@ -276,6 +301,10 @@
       if (matchExecutionCandidate && matchRole) {
         add(total, item);
         add(roles[item.role], item);
+        if (bucketEngine === "codex") {
+          total.codexTokens = (total.codexTokens || 0) + item.totalTokens;
+          roles[item.role].codexTokens = (roles[item.role].codexTokens || 0) + item.totalTokens;
+        }
 
         if (!models.has(cKey)) {
           models.set(cKey, {
@@ -292,7 +321,13 @@
         const m = models.get(cKey);
         add(m, item);
         add(m.roles[item.role], item);
-        m.sessionIds.add(item.sessionId);
+        if (bucketEngine === "codex") {
+          m.codexTokens = (m.codexTokens || 0) + item.totalTokens;
+          m.roles[item.role].codexTokens = (m.roles[item.role].codexTokens || 0) + item.totalTokens;
+        }
+        const groupId = bucketEngine === "codex" ? conversationId(ledger, item.sessionId) : item.sessionId;
+        physicalSessions.add(item.sessionId);
+        m.sessionIds.add(groupId);
         if (b.provider && b.provider !== "unknown") m.providerList.add(b.provider);
 
         if (b.role === "subagent") {
@@ -301,10 +336,37 @@
           m.workerSubagents.messages += item.messageCount;
         }
 
-        if (!sessions.has(item.sessionId)) {
-          sessions.set(item.sessionId, { ...(ledger.sessions?.[item.sessionId] || {}), ...empty(), id: item.sessionId });
+        if (!sessions.has(groupId)) {
+          sessions.set(groupId, { ...(ledger.sessions?.[groupId] || {}), ...empty(), id: groupId,
+            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map() });
         }
-        add(sessions.get(item.sessionId), item);
+        const group = sessions.get(groupId);
+        add(group, item);
+        if (bucketEngine === "codex") {
+          group.codexTokens = (group.codexTokens || 0) + item.totalTokens;
+          if (item.role === "subagent") {
+            group.subagentTokens += item.totalTokens;
+            group.subagentIds.add(item.sessionId);
+          } else group.mainTokens += item.totalTokens;
+        }
+        // These rows explain already-counted Codex physical usage. They never
+        // flow back into aggregate totals, and require a validated parent link.
+        if (bucketEngine === "codex" && item.role === "subagent" && groupId !== item.sessionId) {
+          const detailDay = typeof b.day === "string" ? b.day : "unknown";
+          const detailKey = JSON.stringify([item.sessionId, detailDay]);
+          let detail = group.subtaskDetails.get(detailKey);
+          if (!detail) {
+            const childSession = ledger.sessions?.[item.sessionId] || {};
+            detail = {
+              ...empty(), sessionId: item.sessionId,
+              name: childSession.name || childSession.title || item.sessionId,
+              day: detailDay, codexTokens: 0,
+            };
+            group.subtaskDetails.set(detailKey, detail);
+          }
+          add(detail, item);
+          detail.codexTokens += item.totalTokens;
+        }
       }
 
       // 2. 调度归属维度：双向子代理归属，仅记录发起调用的主控模型（非加和信息，不计入物理总量）
@@ -330,13 +392,14 @@
         cm.dispatchedSubagents.tokens += item.totalTokens;
         cm.dispatchedSubagents.calls += item.calls;
         cm.dispatchedSubagents.messages += item.messageCount;
+        if (bucketEngine === "codex") cm.dispatchedSubagents.codexTokens = (cm.dispatchedSubagents.codexTokens || 0) + item.totalTokens;
 
         // 子 Agent 实际费用：优先使用已按事件精确聚合的 item.costNano（item.costNano 是唯一实际费用入口）
         // 只有 unpricedTokens === 0 才算该子桶完整定价。
         // 若任何选中调度子桶未完整定价，整个 controller 的 savings 标记为 pricingComplete=false
         const mainRate = STANDARD_RATES[ctrl.key];
-        const isSubPriced = (item.unpricedTokens || 0) === 0;
-        const hasHypMainCost = Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+        const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
+        const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
 
         if (isSubPriced && hasHypMainCost) {
           const actualSubCost = (item.costNano || 0) / 1e9;
@@ -387,7 +450,13 @@
       modelBreakdowns,
       allModels: [...allModels],
       sessionCount: sessions.size,
-      topSessions: [...sessions.values()].sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
+      physicalSessionCount: physicalSessions.size,
+      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => ({
+        ...session,
+        subagentCount: subagentIds.size,
+        subtasks: [...subtaskDetails.values()].sort((a, b) =>
+          b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
+      })).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
       timeCoverage: { excludedTokens, excludedRecords },
     };
   }
@@ -395,6 +464,7 @@
   function validate(ledger) {
     if (ledger.version !== 2 || !Array.isArray(ledger.buckets)) throw new Error("Unsupported Usage ledger schema");
     for (const b of ledger.buckets) {
+      if (b.engine !== undefined && b.engine !== "pi" && b.engine !== "codex") throw new Error(`Invalid bucket engine: ${b.engine}`);
       if (!["main", "subagent", "system"].includes(b.role)) throw new Error("Invalid execution role");
       if (b.day !== "unknown") {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(b.day)) throw new Error(`Invalid day format: ${b.day}`);

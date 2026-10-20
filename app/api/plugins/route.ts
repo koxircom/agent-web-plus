@@ -69,7 +69,7 @@ function getDisabledPackages(settingsManager: SettingsManager): Map<string, bool
 
 /**
  * An enabled entry that is an object: it filters the package's resources, or
- * sets `autoload`. Disabling replaces its resource lists, and Pi Web keeps no
+ * sets `autoload`. Disabling replaces its resource lists, and Agent Web Plus keeps no
  * copy, so enabling it again cannot bring the filters back.
  */
 function hasEntrySettings(entry: PackageSource): boolean {

@@ -1,3 +1,4 @@
+import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { NextResponse } from "next/server";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveSessionPath } from "@/lib/session-reader";
@@ -7,6 +8,11 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  if (isCodexSessionId(id)) {
+    const runtime = await (await import("@/lib/execution-engines/codex-engine")).getCodexRuntime(id);
+    const state = await runtime.send({ type: "get_state" });
+    return Response.json({ running: runtime.isStreaming, runtimeAlive: runtime.isAlive(), state });
+  }
   try {
     const rpc = getRpcSession(id);
     if (rpc?.isAlive()) {

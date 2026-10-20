@@ -8,6 +8,6 @@ export async function POST(req: Request) {
     typeof id !== "string" || id.length === 0 || id.length > 200 || /[\/\\\0]/.test(id))) {
     return NextResponse.json({ error: "每批需提供 1 至 100 个有效会话 ID" }, { status: 400 });
   }
-  try { return NextResponse.json(await deleteSessions(ids)); }
+  try { return NextResponse.json(await deleteSessions(ids, { origin: "api-batch" })); }
   catch (error) { return NextResponse.json({ error: String(error) }, { status: 500 }); }
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -12,7 +12,7 @@ const detailRoute = await readFile(new URL("./[id]/route.ts", import.meta.url), 
 const contextRoute = await readFile(new URL("./[id]/context/route.ts", import.meta.url), "utf8");
 const stateRoute = await readFile(new URL("./[id]/state/route.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url, {
-  alias: { "@": process.cwd() },
+  alias: { "@": process.cwd(), "server-only": "next/dist/compiled/server-only/empty.js" },
   interopDefault: true,
   moduleCache: false,
 });
@@ -27,6 +27,53 @@ const {
 } = await jiti.import("../../../lib/session-reader.ts");
 const { getSessionHistoryPool } = await jiti.import("../../../lib/session-history-pool.ts");
 const { SessionManager } = await jiti.import("@earendil-works/pi-coding-agent");
+const { AgentSessionWrapper } = await jiti.import("../../../lib/rpc-manager.ts");
+const { GET: getSessionContext } = await jiti.import("./[id]/context/route.ts");
+
+test("idle SDK bootstrap reads memory before its first message and switches to disk after persistence", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-bootstrap-read-"));
+  const previousRegistry = globalThis.__piSessions;
+  const manager = SessionManager.create(dir, dir);
+  manager.appendCustomEntry("pi-web:tool-selection", { toolNames: [] });
+  const id = manager.getSessionId(), file = manager.getSessionFile();
+  const wrapper = {
+    inner: { sessionManager: manager, sessionId: id },
+    sessionFile: file, sessionId: id, cwd: dir,
+    isAlive: () => true, isRunning: () => false,
+    hasUnpersistedSession: AgentSessionWrapper.prototype.hasUnpersistedSession,
+    send: async () => ({}),
+  };
+  globalThis.__piSessions = new Map([[id, wrapper]]);
+  cacheSessionPath(id, file);
+  t.after(async () => {
+    globalThis.__piSessions = previousRegistry;
+    invalidateSessionPathCache(id);
+    await getSessionHistoryPool().closeAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const routeContext = { params: Promise.resolve({ id }) };
+  assert.equal(wrapper.hasUnpersistedSession(), true);
+  await assert.rejects(readFile(file), { code: "ENOENT" });
+  const detail = await getSessionDetail(new Request(`http://localhost/api/sessions/${id}?sync=1&tree=summary`), routeContext);
+  const payload = await detail.json();
+  assert.equal(detail.status, 200, JSON.stringify(payload));
+  assert.equal(payload.revision, null, "unpersisted memory must not become a certified disk baseline");
+  assert.deepEqual(payload.data.context.messages, []);
+  const context = await getSessionContext(new Request(`http://localhost/api/sessions/${id}/context?tail=5`), routeContext);
+  assert.equal(context.status, 200, JSON.stringify(await context.clone().json()));
+  assert.deepEqual((await context.json()).context.messages, []);
+  await assert.rejects(readFile(file), { code: "ENOENT" }, "reading bootstrap must not invent a persisted transcript");
+
+  manager.appendMessage({ role: "user", content: "First native prompt", timestamp: Date.now() });
+  assert.equal(wrapper.hasUnpersistedSession(), false);
+  const disk = await getSessionDetail(new Request(`http://localhost/api/sessions/${id}?tree=summary`), routeContext);
+  const saved = await disk.json();
+  assert.equal(disk.status, 200, JSON.stringify(saved));
+  assert.equal(saved.context.messages[0].content, "First native prompt");
+  assert.equal(typeof saved.snapshotRevision, "string");
+  await rm(file);
+  assert.equal(wrapper.hasUnpersistedSession(), false, "externally removed old history is not a new bootstrap");
+});
 
 test("list versions expose idle session creation, rename and deletion to other windows", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-list-sync-"));
@@ -51,7 +98,7 @@ test("list versions expose idle session creation, rename and deletion to other w
   });
   const list = async () => {
     const response = await getSessionList(new Request("http://localhost/api/sessions"));
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, response.status === 200 ? undefined : JSON.stringify(await response.clone().json()));
     return response.json();
   };
   const initial = await list();
@@ -71,7 +118,7 @@ test("list versions expose idle session creation, rename and deletion to other w
   const url = `http://localhost/api/sessions/${sessionId}`;
   const renamed = await renameSession(new Request(url, { method: "PATCH", body: JSON.stringify({ name: "Renamed elsewhere" }) }), context);
   assert.equal(renamed.status, 200);
-  const poll = await (await getRunningSessions()).json();
+  const poll = await (await getRunningSessions(new Request("http://localhost/api/agent/running?engine=pi"))).json();
   assert.deepEqual(poll.runningSessionIds, []);
   assert.ok(poll.sessionListVersion > created.sessionListVersion);
   const updated = await list();
@@ -83,7 +130,7 @@ test("list versions expose idle session creation, rename and deletion to other w
   const deleted = await list();
   assert.ok(deleted.sessionListVersion > updated.sessionListVersion);
   assert.deepEqual(deleted.sessions, []);
-  assert.equal((await (await getRunningSessions()).json()).sessionListVersion, deleted.sessionListVersion);
+  assert.equal((await (await getRunningSessions(new Request("http://localhost/api/agent/running?engine=pi"))).json()).sessionListVersion, deleted.sessionListVersion);
 });
 
 test("session listing returns a gzip-compressed response when the client accepts it", async (t) => {
@@ -108,7 +155,7 @@ test("session listing returns a gzip-compressed response when the client accepts
     headers: { "Accept-Encoding": "gzip" },
   }));
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, response.status === 200 ? undefined : JSON.stringify(await response.clone().json()));
   assert.equal(response.headers.get("Content-Encoding"), "gzip");
   assert.match(response.headers.get("Vary") ?? "", /(?:^|,\s*)Accept-Encoding(?:\s*,|$)/i);
   const payload = JSON.parse(gunzipSync(Buffer.from(await response.arrayBuffer())).toString("utf8"));
@@ -117,6 +164,9 @@ test("session listing returns a gzip-compressed response when the client accepts
 
 test("deleting an unpersisted session shuts down its runtime and invalidates caches", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-delete-empty-"));
+  // The SDK catalogue uses agentDir/sessions even when the seal-worker root
+  // is overridden. Keep both test roots valid regardless of prior test order.
+  await mkdir(join(dir, "sessions"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const previousSessionsDir = process.env.PI_SESSIONS_DIR;
   const previousUsageDataDir = process.env.PI_USAGE_DATA_DIR;
@@ -157,26 +207,26 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
         globalThis.__piSessions.delete(id);
       },
     });
-    const before = (await (await getRunningSessions()).json()).sessionListVersion;
+    const before = (await (await getRunningSessions(new Request("http://localhost/api/agent/running?engine=pi"))).json()).sessionListVersion;
     const response = await deleteSession(
       new Request(`http://localhost/api/sessions/${id}`, { method: "DELETE" }),
       { params: Promise.resolve({ id }) },
     );
 
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, response.status === 200 ? undefined : JSON.stringify(await response.clone().json()));
     assert.deepEqual(await response.json(), { ok: true });
     assert.equal(shutdownCalled, true);
     assert.equal(globalThis.__piSessions.has(id), false);
     assert.equal(globalThis.__piSessionPathCache.has(id), false);
     assert.equal([...globalThis.__piPathToSessionIdCache.values()].includes(id), false);
-    assert.ok((await (await getRunningSessions()).json()).sessionListVersion > before);
+    assert.ok((await (await getRunningSessions(new Request("http://localhost/api/agent/running?engine=pi"))).json()).sessionListVersion > before);
     await assert.rejects(readFile(filePath), { code: "ENOENT" });
   }
 });
 
 test("session listing supports cheap summaries and honors force refresh", () => {
   assert.match(listRoute, /searchParams\.get\("summary"\) === "1"/);
-  assert.match(listRoute, /readSessionList\(\{\s*summary,\s*force\s*\}\)/);
+  assert.match(listRoute, /readSessionList\(\{\s*summary,\s*force,\s*engine\s*\}\)/);
   assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
   assert.match(sessionListSource, /options\.summary \? listSessionSummaries\(\) : listAllSessions\(\{ force: options\.force \}\)/);
   assert.match(sessionListSource, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
@@ -210,6 +260,7 @@ test("live agent state is available before the session file is persisted", () =>
 
 test("deleting a session removes all persisted subagent descendants", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-delete-reparent-"));
+  await mkdir(join(dir, "sessions"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   const previousSessionsDir = process.env.PI_SESSIONS_DIR;
   const previousUsageDataDir = process.env.PI_USAGE_DATA_DIR;
@@ -288,7 +339,7 @@ test("deleting a session removes all persisted subagent descendants", async (t) 
     { params: Promise.resolve({ id: parentId }) },
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, response.status === 200 ? undefined : JSON.stringify(await response.clone().json()));
   await assert.rejects(readFile(parentPath), { code: "ENOENT" });
   await assert.rejects(readFile(childPath), { code: "ENOENT" });
   await assert.rejects(readFile(grandchildPath), { code: "ENOENT" });
@@ -386,7 +437,7 @@ test("disk session detail uses the worker and preserves summary, info and usage 
   );
   const detail = await response.json();
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, response.status === 200 ? undefined : JSON.stringify(await response.clone().json()));
   assert.equal(detail.sessionId, id);
   assert.equal(detail.info.id, id);
   assert.equal(detail.info.firstMessage, firstMessage);
@@ -440,7 +491,7 @@ test("session detail returns a gzip-compressed response when the client accepts 
     { params: Promise.resolve({ id }) },
   );
 
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, response.status === 200 ? undefined : JSON.stringify(await response.clone().json()));
   assert.equal(response.headers.get("Content-Encoding"), "gzip");
   const payload = JSON.parse(gunzipSync(Buffer.from(await response.arrayBuffer())).toString("utf8"));
   assert.equal(payload.info.firstMessage, firstMessage);

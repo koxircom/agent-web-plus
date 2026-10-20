@@ -1,5 +1,9 @@
 "use client";
 
+import { createPortal } from "react-dom";
+
+import composerModeIcons from "../lib/composer-mode-icons.json";
+
 import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { SkillsResponse } from "@/lib/api-types";
@@ -35,10 +39,10 @@ import { useChatAppearance } from "@/hooks/useChatAppearance";
 import { rekeyComposerHeight, useComposerLayoutPreferences } from "@/hooks/useComposerLayoutPreferences";
 import type { ToolPreset } from "@/lib/tool-presets";
 import type { PendingPromptSubmission, PromptSubmissionPreviewIdentity } from "@/lib/prompt-submissions";
-import { SavedPromptMenu } from "./SavedPromptMenu";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { ComposerQueue, ComposerQueueIcon } from "./ComposerQueue";
+import { isSuggestionDoubleTap, type InlineSuggestion, type SuggestionTap } from "@/lib/inline-suggestion";
 
 export { filterModelOptions } from "./ModelSelector";
 
@@ -51,10 +55,14 @@ export interface AttachedImage {
 interface Props {
   onSend: (message: string, images?: AttachedImage[]) => void;
   onAbort: () => void;
-  onSteer?: (message: string, images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => void | Promise<void>;
-  onFollowUp?: (message: string, images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => void | Promise<void>;
-  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => void | Promise<void>;
+  onSteer?: (message: string, images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => void | boolean | Promise<void | boolean>;
+  onFollowUp?: (message: string, images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => void | boolean | Promise<void | boolean>;
+  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[], onRegistered?: (identity: PromptSubmissionPreviewIdentity) => void) => void | boolean | Promise<void | boolean>;
   isStreaming: boolean;
+  executionEngine?: "pi" | "codex";
+  /** Preview only; accepted suggestions become ordinary drafts and are never auto-sent. */
+  inlineSuggestion?: InlineSuggestion | null;
+  hasConversation?: boolean;
   /** Text-only composer without the session controls or outer spacing. */
   compact?: boolean;
   /** End rail measured by the owning chat viewport; compact composers ignore it. */
@@ -85,9 +93,10 @@ interface Props {
   thinkingLevelMap?: Record<string, string | null> | null;
   retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
   queuedMessages?: QueuedMessages | null;
+  queueSyncStatus?: "loading" | "ready" | "error";
   inputHistory?: string[];
   retainedSubmissions?: PendingPromptSubmission[];
-  onConfirmSubmission?: (submission: PendingPromptSubmission) => Promise<void>;
+  deliveredRequestIds?: readonly string[];
   onRecallQueue?: () => void;
   onQueuePreviewChange?: (identity: PromptSubmissionPreviewIdentity | null) => void;
   slashCommands?: SlashCommandInfo[];
@@ -127,8 +136,8 @@ interface ComposerGoalSnapshot {
   pausePending: boolean;
   goalElapsedMs: number | null;
   goalActiveSinceMs: number | null;
-  statusKey: "paused" | "pending" | "active";
-  action: "pause" | "resume";
+  statusKey: "paused" | "pending" | "active" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
+  action: "pause" | "resume" | null;
 }
 
 interface ComposerModeSnapshot {
@@ -170,7 +179,7 @@ function formatComposerGoalDuration(totalMs: number): string {
  * the subscription in this leaf prevents mode/goal updates from rerendering the
  * controlled textarea while the user is typing or composing IME text.
  */
-function NativeComposerModeControls({ onModeChange }: { onModeChange: (mode: ComposerMode) => void }) {
+function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeChange: (mode: ComposerMode) => void; goalHost?: HTMLElement | null }) {
   const [snapshot, setSnapshot] = useState<ComposerModeSnapshot>(() => ({ sessionId: null, mode: "normal", goal: null }));
   const [goalClockNow, setGoalClockNow] = useState(0);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -257,7 +266,7 @@ function NativeComposerModeControls({ onModeChange }: { onModeChange: (mode: Com
   }, [snapshot]);
 
   const modeLabel = snapshot.mode === "plan" ? "计划" : snapshot.mode === "goal" ? "目标" : "";
-  const goal = snapshot.mode === "goal" ? snapshot.goal : null;
+  const goal = snapshot.goal;
   const goalText = goal?.goal?.trim() || "";
   const goalDurationMs = goal && typeof goal.goalElapsedMs === "number"
     ? goal.goalElapsedMs + (
@@ -274,14 +283,43 @@ function NativeComposerModeControls({ onModeChange }: { onModeChange: (mode: Com
     : goal?.action === "resume"
       ? "继续"
       : "暂停";
-  const goalStatusLabel = goal?.statusKey === "pending"
-    ? "等待暂停"
-    : goal?.statusKey === "paused"
-      ? "已暂停"
-      : "进行中";
+  const goalStatusLabels: Record<ComposerGoalSnapshot["statusKey"], string> = {
+    pending: "等待暂停", paused: "已暂停", active: "进行中", blocked: "已阻塞",
+    usageLimited: "额度受限", budgetLimited: "预算受限", complete: "已完成",
+  };
+  const goalStatusLabel = goal ? goalStatusLabels[goal.statusKey] || "状态待确认" : "";
+
+  const goalSummary = goalText && goal && (
+            <div
+              className="chat-composer-goal-summary"
+              data-status={goal.statusKey}
+              role="group"
+              aria-label={`当前目标，${goalStatusLabel}：${goalText}`}
+              title={`${goalStatusLabel}：${goalText}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">{composerModeIcons.goal.map(d => <path key={d} d={d} />)}</svg>
+              <span className="chat-composer-goal-status">{goalStatusLabel}</span>
+              <span className="chat-composer-goal-text">{goalText}</span>
+              {goalDurationMs !== null && (
+                <span className="chat-composer-goal-timer" aria-label="目标累计运行时间" title="目标累计运行时间">
+                  {formatComposerGoalDuration(goalDurationMs)}
+                </span>
+              )}
+              {goal.action && <button
+                type="button"
+                className="chat-composer-goal-action"
+                aria-label={goalActionLabel}
+                title={goalActionLabel}
+                onClick={handleGoalAction}
+              >
+                {goalActionText}
+              </button>}
+            </div>
+  );
 
   return (
     <>
+      {goalHost && goalSummary ? createPortal(goalSummary, goalHost) : null}
       <button
         type="button"
         className={`chat-composer-add-btn pi-enh-composer-add-btn${addMenuOpen ? " active" : ""}`}
@@ -305,8 +343,8 @@ function NativeComposerModeControls({ onModeChange }: { onModeChange: (mode: Com
             onClick={exitMode}
           >
             <span className="chat-composer-mode-icon" aria-hidden="true">
-              <svg className="chat-composer-mode-symbol" width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <use href={`/icons/composer-mode-icons.svg#${snapshot.mode}`} />
+              <svg className="chat-composer-mode-symbol" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                {composerModeIcons[snapshot.mode as "plan" | "goal"].map((d) => <path key={d} d={d} />)}
               </svg>
               <svg className="chat-composer-mode-dismiss" width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <circle cx="8" cy="8" r="7" fill="var(--text-muted)" />
@@ -315,32 +353,6 @@ function NativeComposerModeControls({ onModeChange }: { onModeChange: (mode: Com
             </span>
             <span>{modeLabel}</span>
           </button>
-          {goalText && goal && (
-            <div
-              className="chat-composer-goal-summary"
-              data-status={goal.statusKey}
-              role="group"
-              aria-label={`当前目标，${goalStatusLabel}：${goalText}`}
-              title={`${goalStatusLabel}：${goalText}`}
-            >
-              <span className="chat-composer-goal-status">{goalStatusLabel}</span>
-              <span className="chat-composer-goal-text">{goalText}</span>
-              {goalDurationMs !== null && (
-                <span className="chat-composer-goal-timer" aria-label="目标累计运行时间" title="目标累计运行时间">
-                  {formatComposerGoalDuration(goalDurationMs)}
-                </span>
-              )}
-              <button
-                type="button"
-                className="chat-composer-goal-action"
-                aria-label={goalActionLabel}
-                title={goalActionLabel}
-                onClick={handleGoalAction}
-              >
-                {goalActionText}
-              </button>
-            </div>
-          )}
         </div>
       )}
     </>
@@ -353,7 +365,7 @@ export function resizeChatInputTextarea(textarea: HTMLTextAreaElement): void {
   textarea.style.height = "auto";
   const card = textarea.closest<HTMLElement>(".chat-composer-card");
   const minimum = Number(card?.dataset.composerMinHeight) || 0;
-  if (!textarea.value) {
+  if (!textarea.value && !textarea.dataset?.piInlineSuggestion) {
     if (minimum) textarea.style.height = `${minimum}px`;
     return;
   }
@@ -582,7 +594,8 @@ export function buildSlashCommandLayout(
 }
 
 const CLIENT_IMAGE_COMPRESSION_THRESHOLD_BYTES = 1024 * 1024;
-const CLIENT_MAX_IMAGE_SIDE = 1024;
+const CLIENT_MAX_SCREENSHOT_SIDE = 2048;
+const CLIENT_MAX_PHOTO_SIDE = 1024;
 const CLIENT_JPEG_QUALITY = 0.85;
 
 export function shouldCompressImageFile(file: Pick<File, "size" | "type">): boolean {
@@ -613,18 +626,26 @@ export async function compressImageFile(file: File): Promise<{ data: string; mim
   if (!bitmap) return original();
 
   try {
-    const scale = Math.min(1, CLIENT_MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    const preservePng = file.type === "image/png";
+    const outputMimeType = preservePng ? "image/png" : "image/jpeg";
+    const maxSide = preservePng ? CLIENT_MAX_SCREENSHOT_SIDE : CLIENT_MAX_PHOTO_SIDE;
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(bitmap.width * scale));
     canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const ctx = canvas.getContext("2d");
     if (!ctx) return original();
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!preservePng) {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const data = canvas.toDataURL("image/jpeg", CLIENT_JPEG_QUALITY).split(",")[1];
+    const data = (preservePng
+      ? canvas.toDataURL(outputMimeType)
+      : canvas.toDataURL(outputMimeType, CLIENT_JPEG_QUALITY)
+    ).split(",")[1];
     return data && data.length < Math.ceil(file.size / 3) * 4
-      ? { data, mimeType: "image/jpeg" }
+      ? { data, mimeType: outputMimeType }
       : original();
   } catch {
     return original();
@@ -793,10 +814,10 @@ export function modelSupportsImageInput(
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelsLoading, onModelChange, modelSwitching,
-  compactError, compactResult,
+  onSend, onAbort, onSteer, onFollowUp, isStreaming, executionEngine = "pi", model, isAutoModelSelection, modelNames, modelList, modelError, modelsLoading, onModelChange, modelSwitching,
+  compactError, compactResult, inlineSuggestion, hasConversation = false,
   thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, inputHistory = [], retainedSubmissions = [], onConfirmSubmission, onRecallQueue, onQueuePreviewChange,
+  retryInfo, queuedMessages, queueSyncStatus = "ready", inputHistory = [], retainedSubmissions = [], deliveredRequestIds = [], onRecallQueue, onQueuePreviewChange,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
  onAudioUnlock,
@@ -810,13 +831,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const { t, locale } = useI18n();
   const { fontSize } = useChatAppearance();
   const isMobile = useIsMobile();
+  const isCodexEngine = executionEngine === "codex";
   const [value, setValue] = useState(() => (draftKey ? getDraftInMemory(draftKey)?.value ?? "" : ""));
   const [hasEnhancedSubmissionPayload, setHasEnhancedSubmissionPayload] = useState(false);
+  const [emptyContinueEnabled, setEmptyContinueEnabled] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraftInMemory(draftKey)?.images) : []
   ));
   const trimmedValue = value.trimStart();
-  const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
+  const bashMode = !isCodexEngine && attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
@@ -864,10 +887,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [queuedSubmissionPreview, setQueuedSubmissionPreview] = useState<{
     token: object; identity: PromptSubmissionPreviewIdentity | null;
     draftKey: string | undefined; text: string; kind: "steering" | "followUp";
-    baselineCount: number; images: { data: string; mimeType: string }[];
+    images: { data: string; mimeType: string }[];
   } | null>(null);
   const queuedPreviewVisible = Boolean(queuedSubmissionPreview && queuedSubmissionPreview.draftKey === draftKey
-    && (queuedMessages?.[queuedSubmissionPreview.kind].filter((text) => text === queuedSubmissionPreview.text).length ?? 0) <= queuedSubmissionPreview.baselineCount);
+    && !(queuedSubmissionPreview.identity && (
+      deliveredRequestIds.includes(queuedSubmissionPreview.identity.requestId)
+      || retainedSubmissions.some(row => row.requestId === queuedSubmissionPreview.identity!.requestId)
+      || Object.values(queuedMessages?.requestIds ?? {}).flat().includes(queuedSubmissionPreview.identity.requestId))));
+  useEffect(() => {
+    if (queuedSubmissionPreview && !queuedPreviewVisible) setQueuedSubmissionPreview(null);
+  }, [queuedSubmissionPreview, queuedPreviewVisible]);
   const queuePreviewIdentity = queuedPreviewVisible ? queuedSubmissionPreview?.identity ?? null : null;
   useLayoutEffect(() => {
     onQueuePreviewChange?.(queuePreviewIdentity);
@@ -875,6 +904,63 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [queuePreviewIdentity, onQueuePreviewChange]);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
+
+  const [suggestionComposing, setSuggestionComposing] = useState(false);
+  const [consumedSuggestionKey, setConsumedSuggestionKey] = useState<string | null>(null);
+  const suggestionKey = inlineSuggestion ? JSON.stringify([draftKey, inlineSuggestion.sessionId, inlineSuggestion.id, inlineSuggestion.text]) : null;
+  const visibleSuggestion = !compact && inlineSuggestion?.sessionId === draftKey && value.length === 0
+    && !isStreaming && !suggestionComposing && !hasEnhancedSubmissionPayload && attachedImages.length === 0
+    && !slashMenuOpen && !atMenuOpen && !historyMenuOpen && !extensionPanel
+    && !queuedMessages?.steering.length && !queuedMessages?.followUp.length
+    && consumedSuggestionKey !== suggestionKey ? inlineSuggestion : null;
+  const allowEmptyContinue = !compact && hasConversation && emptyContinueEnabled && !isStreaming && !suggestionComposing
+    && !visibleSuggestion && value.trim().length === 0 && attachedImages.length === 0 && !hasEnhancedSubmissionPayload;
+  const lastSuggestionTapRef = useRef<SuggestionTap | null>(null);
+  const suggestionTouchRef = useRef<{id: number; x: number; y: number; key: string} | null>(null);
+  const acceptInlineSuggestion = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!visibleSuggestion || !suggestionKey || draftKeyRef.current !== draftKey
+      || valueRef.current !== "" || !ta || ta.value !== "" || isComposingRef.current) return false;
+    valueRef.current = visibleSuggestion.text;
+    setValue(visibleSuggestion.text);
+    setConsumedSuggestionKey(suggestionKey);
+    lastSuggestionTapRef.current = null;
+    requestAnimationFrame(() => {
+      if (textareaRef.current !== ta || draftKeyRef.current !== draftKey) return;
+      focusEditable(ta, {preventScroll: true});
+      ta.setSelectionRange(visibleSuggestion.text.length, visibleSuggestion.text.length);
+      resizeChatInputTextarea(ta);
+    });
+    return true;
+  }, [visibleSuggestion, suggestionKey, draftKey]);
+  const cancelSuggestionTouch = useCallback(() => {
+    suggestionTouchRef.current = null;
+    lastSuggestionTapRef.current = null;
+  }, []);
+  const startSuggestionTouch = useCallback((event: React.TouchEvent<HTMLTextAreaElement>) => {
+    if (!visibleSuggestion || !suggestionKey || event.touches.length !== 1 || isComposingRef.current
+      || (window.getSelection()?.toString() ?? "").length > 0) { cancelSuggestionTouch(); return; }
+    const touch = event.touches[0];
+    suggestionTouchRef.current = {id: touch.identifier, x: touch.clientX, y: touch.clientY, key: suggestionKey};
+  }, [visibleSuggestion, suggestionKey, cancelSuggestionTouch]);
+  const moveSuggestionTouch = useCallback((event: React.TouchEvent<HTMLTextAreaElement>) => {
+    const active = suggestionTouchRef.current;
+    const touch = event.touches[0];
+    if (!active || event.touches.length !== 1 || touch.identifier !== active.id
+      || Math.hypot(touch.clientX - active.x, touch.clientY - active.y) > 8) cancelSuggestionTouch();
+  }, [cancelSuggestionTouch]);
+  const endSuggestionTouch = useCallback((event: React.TouchEvent<HTMLTextAreaElement>) => {
+    const active = suggestionTouchRef.current;
+    suggestionTouchRef.current = null;
+    const touch = Array.from(event.changedTouches).find(item => item.identifier === active?.id);
+    if (!active || !touch || event.touches.length || !visibleSuggestion || active.key !== suggestionKey
+      || Math.hypot(touch.clientX - active.x, touch.clientY - active.y) > 8) { cancelSuggestionTouch(); return; }
+    const next = {time: performance.now(), x: touch.clientX, y: touch.clientY, key: active.key};
+    if (isSuggestionDoubleTap(lastSuggestionTapRef.current, next) && acceptInlineSuggestion()) {
+      event.preventDefault();
+      lastSuggestionTapRef.current = null;
+    } else lastSuggestionTapRef.current = next;
+  }, [visibleSuggestion, suggestionKey, acceptInlineSuggestion, cancelSuggestionTouch]);
 
   useImperativeHandle(ref, () => ({
     focusEditable() { return focusEditable(textareaRef.current, { preventScroll: true }); },
@@ -1192,7 +1278,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }, [attachedImages.length, clearInput, onBuiltinCommand]);
 
-  const handleSend = useCallback(async () => {
+  const lastSubmissionAtRef = useRef(-Infinity);
+  const handleStopClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    // A send button can become Stop between the two taps of one gesture.
+    // Keyboard activation and the dedicated Escape shortcut remain immediate.
+    if (event.detail !== 0 && performance.now() - lastSubmissionAtRef.current < 500) return;
+    onAbort();
+  }, [onAbort]);
+
+  const handleSend = useCallback(async (event?: React.MouseEvent<HTMLButtonElement>) => {
     const msg = value.trim();
     const currentImageCount = Math.max(attachedImages.length, attachedImagesRef.current.length);
     const builtinAllowed = !isStreaming || offersBuiltinSlashCommandWhileStreaming(msg);
@@ -1202,14 +1296,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       __PI_ENH_PREPARE_COMPOSER_SUBMISSION__?: (kind: "send" | "steer" | "followup", body: string) => { text: string; commit: () => void } | null;
     } : null;
     const submission = enhancementWindow?.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__?.("send", msg) ?? null;
-    const submittedText = submission?.text ?? msg;
+    const submittedText = (submission?.text ?? msg) || (event?.type === "click" && allowEmptyContinue && currentImageCount === 0 ? "继续" : "");
     if (!submittedText && !currentImageCount) return;
     if (currentImageCount > MAX_ATTACHED_IMAGES) return;
     onAudioUnlock?.();
     clearInput();
+    lastSubmissionAtRef.current = performance.now();
     onSend(submittedText, attachedImages.length ? attachedImages : undefined);
     submission?.commit();
-  }, [value, attachedImages, isStreaming, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, isStreaming, allowEmptyContinue, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = !compact && value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -1217,10 +1312,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const filteredSlashCommands = (() => {
     if (slashQuery === null) return [];
-    const builtinCommands = isStreaming
+    const builtinCommands = (isStreaming
       ? BUILTIN_SLASH_COMMANDS.filter((command) => command.availableWhileStreaming)
-      : BUILTIN_SLASH_COMMANDS;
-    const commands = [...builtinCommands, ...(slashCommands ?? [])];
+      : BUILTIN_SLASH_COMMANDS).filter((command) => !isCodexEngine || !["compact", "auto-compact", "clone"].includes(command.name));
+    const commands = [...builtinCommands, ...(isCodexEngine ? [] : slashCommands ?? [])];
     return [...commands]
       .filter((command) => {
         const name = command.name.toLowerCase();
@@ -1245,8 +1340,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
   const hasInputText = Boolean(value.trim());
   const tooManyImagesNotice = getTooManyImagesNotice(attachedImages.length, MAX_ATTACHED_IMAGES, locale);
-  const canSendMessage = (hasInputText || attachedImages.length > 0 || hasEnhancedSubmissionPayload) && !tooManyImagesNotice;
-  const canQueueStreamingMessage = (hasInputText || attachedImages.length > 0 || hasEnhancedSubmissionPayload) && !tooManyImagesNotice && !queuedSubmissionPending;
+  const canSendMessage = (hasInputText || attachedImages.length > 0 || hasEnhancedSubmissionPayload || allowEmptyContinue) && !tooManyImagesNotice;
+  const canQueueStreamingMessage = (hasInputText || attachedImages.length > 0 || hasEnhancedSubmissionPayload) && !tooManyImagesNotice && !queuedSubmissionPending && !queuedPreviewVisible;
   // Warn when images are attached but the selected model is known not to accept
   // image input (#584), including a resolved default. Unknown models stay silent.
   const showImageUnsupportedWarning = (
@@ -1442,7 +1537,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
-    if (queuedSubmissionPendingRef.current) return;
+    if (queuedSubmissionPendingRef.current || queuedPreviewVisible) return;
     const msg = value.trim();
     const images = attachedImagesRef.current;
     const currentImageCount = Math.max(attachedImages.length, images.length);
@@ -1457,36 +1552,44 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const submittedText = submission?.text ?? msg;
     if (!submittedText && !currentImageCount) return;
     if (currentImageCount > MAX_ATTACHED_IMAGES) return;
+    lastSubmissionAtRef.current = performance.now();
     queuedSubmissionPendingRef.current = true;
     setQueuedSubmissionPending(true);
     const kind: "steering" | "followUp" = mode === "steer" ? "steering" : "followUp";
     const preview = {
       token: {}, identity: null,
       draftKey: draftKeyRef.current, text: submittedText, kind,
-      baselineCount: queuedMessages?.[kind].filter((text) => text === submittedText).length ?? 0,
       images: images.map(({ data, mimeType }) => ({ data, mimeType })),
     };
     setQueuedSubmissionPreview(preview);
     const onRegistered = (identity: PromptSubmissionPreviewIdentity) => {
       setQueuedSubmissionPreview((current) => current?.token === preview.token ? { ...current, identity } : current);
+      // The durable outbox now owns text and images. Preserve edits made while
+      // storage was opening rather than clearing a newer draft or another tab.
+      if (identity.durable !== false && draftKeyRef.current === preview.draftKey && valueRef.current === value
+        && attachedImagesRef.current.length === images.length
+        && attachedImagesRef.current.every((image, index) => image === images[index])) clearInput();
     };
-    clearInput();
     try {
       const submittedImages = images.length ? images : undefined;
+      let accepted: boolean | void = false;
       if (submittedText.startsWith("/") && onPromptWithStreamingBehavior) {
-        await onPromptWithStreamingBehavior(submittedText, mode === "steer" ? "steer" : "followUp", submittedImages, onRegistered);
+        accepted = await onPromptWithStreamingBehavior(submittedText, mode === "steer" ? "steer" : "followUp", submittedImages, onRegistered);
       } else if (mode === "steer" && onSteer) {
-        await onSteer(submittedText, submittedImages, onRegistered);
+        accepted = await onSteer(submittedText, submittedImages, onRegistered);
       } else if (mode === "followup" && onFollowUp) {
-        await onFollowUp(submittedText, submittedImages, onRegistered);
+        accepted = await onFollowUp(submittedText, submittedImages, onRegistered);
       }
-      submission?.commit();
+      if (accepted !== false) submission?.commit();
+      else setQueuedSubmissionPreview((current) => current?.token === preview.token ? null : current);
+    } catch (error) {
+      setQueuedSubmissionPreview((current) => current?.token === preview.token ? null : current);
+      throw error;
     } finally {
       queuedSubmissionPendingRef.current = false;
       setQueuedSubmissionPending(false);
-      setQueuedSubmissionPreview((current) => current?.token === preview.token ? null : current);
     }
-  }, [value, attachedImages, queuedMessages, onBuiltinCommand, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, runBuiltinCommand]);
+  }, [value, attachedImages, queuedMessages, queuedPreviewVisible, onBuiltinCommand, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, runBuiltinCommand]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1700,6 +1803,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
 
+      if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !isComposing && !recentlyComposed && acceptInlineSuggestion()) {
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "Escape" && !isComposing && visibleSuggestion && suggestionKey) {
+        e.preventDefault();
+        setConsumedSuggestionKey(suggestionKey);
+        cancelSuggestionTouch();
+        return;
+      }
+
       // Esc stops the agent when no slash/@/history menu or IME composition is active.
       if (e.key === "Escape" && !isComposing && isStreaming && onAbort) {
         e.preventDefault();
@@ -1716,7 +1831,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, acceptInlineSuggestion, visibleSuggestion, suggestionKey, cancelSuggestionTouch]
   );
 
   useEffect(() => {
@@ -1726,10 +1841,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           hasAnnotations?: boolean;
           hasAttachments?: boolean;
           hasQuickReply?: boolean;
+          emptyContinueEnabled?: boolean;
         } | null;
       };
       const state = enhancementWindow.__PI_ENH_GET_COMPOSER_SUBMISSION_STATE__?.();
       setHasEnhancedSubmissionPayload(state?.hasAnnotations === true || state?.hasAttachments === true || state?.hasQuickReply === true);
+      setEmptyContinueEnabled(state?.emptyContinueEnabled === true);
     };
     refreshSubmissionState();
     window.addEventListener("pi-enh-composer-submission-state-change", refreshSubmissionState);
@@ -1830,7 +1947,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // palette opens, so toggles made in the skills panel are reflected on the
   // next open. Failures degrade silently to the unannotated palette.
   useEffect(() => {
-    if (!slashMenuOpen || !cwd) return;
+    if (isCodexEngine || !slashMenuOpen || !cwd) return;
     const requestCwd = cwd;
     let cancelled = false;
     setSkillDormancyState({ cwd: requestCwd, values: {} });
@@ -1851,7 +1968,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return () => {
       cancelled = true;
     };
-  }, [slashMenuOpen, cwd]);
+  }, [slashMenuOpen, cwd, isCodexEngine]);
 
   useEffect(() => {
     if (slashActiveIndex >= displayedSlashCommands.length) {
@@ -2006,8 +2123,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setDragHeight(null);
   }, [draftKey]);
 
+  const [goalHost, setGoalHost] = useState<HTMLDivElement | null>(null);
   const isCodexActive = codexLayoutEnabled && !compact;
-  useLayoutEffect(resizeTextarea, [value, fontSize, isCodexActive, effectiveCustomHeight, fixedHeight, resizeTextarea]);
+  useLayoutEffect(resizeTextarea, [value, visibleSuggestion?.text, fontSize, isCodexActive, effectiveCustomHeight, fixedHeight, resizeTextarea]);
   const hasUserContent = Boolean(value && value.trim().length > 0);
 
   const rootClassName = isCodexActive
@@ -2033,6 +2151,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   return (
     <div
       data-pi-native-composer-host="true"
+      data-pi-execution-engine={executionEngine}
       role="group"
       inert={builtinCommandPending || undefined}
       aria-busy={builtinCommandPending}
@@ -2061,9 +2180,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />}
-      <ComposerQueue sessionId={draftKey ?? ""} queuedMessages={queuedMessages} onRecallQueue={onRecallQueue} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} />
+      <ComposerQueue sessionId={draftKey ?? ""} executionEngine={executionEngine} queuedMessages={queuedMessages} syncStatus={queueSyncStatus} onRecallQueue={onRecallQueue} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} retainedSubmissions={retainedSubmissions} deliveredRequestIds={deliveredRequestIds} />
       {extensionPanel}
-      <div className={rootClassName} style={rootStyle} data-pi-native-composer-layout="true"
+      {isCodexActive && modesEnabled && <div ref={setGoalHost} className="chat-composer-goal-host" style={{maxWidth: rootStyle.maxWidth, marginLeft: "auto", marginRight: "auto"}} />}
+      <div className={rootClassName} style={rootStyle} data-pi-native-composer-layout="true" data-pi-native-inline-suggestions={!compact ? "true" : undefined}
         data-composer-min-height={!fixedHeight ? customHeight ?? undefined : undefined}>
         {isCodexActive && (
           <button
@@ -2563,6 +2683,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <textarea
             ref={textareaRef}
             className="chat-input-textarea"
+            data-pi-inline-suggestion={visibleSuggestion ? suggestionKey : undefined}
+            aria-description={visibleSuggestion ? "建议内容，按 Tab 或在手机上双击采纳；采纳后不会自动发送" : undefined}
+            onTouchStart={startSuggestionTouch}
+            onTouchMove={moveSuggestionTouch}
+            onTouchEnd={endSuggestionTouch}
+            onTouchCancel={cancelSuggestionTouch}
             data-pi-native-list-continuation="true"
             aria-label={compact ? t("chat.quoteQuestion") : undefined}
             value={value}
@@ -2579,16 +2705,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onKeyDown={handleKeyDown}
             onCompositionStart={() => {
               isComposingRef.current = true;
+              setSuggestionComposing(true);
+              cancelSuggestionTouch();
             }}
             onCompositionEnd={(e) => {
               isComposingRef.current = false;
+              setSuggestionComposing(false);
               lastCompositionEndAtRef.current = Date.now();
               const el = e.currentTarget;
               updateAtQuery(el.value, el.selectionStart);
             }}
             onInput={handleInput}
             onPaste={handlePaste}
-            placeholder={
+            placeholder={visibleSuggestion?.text ?? (
               isStreaming && (onSteer || onFollowUp)
                 ? t("chat.steerPlaceholder")
                 : isStreaming ? t("chat.agentPlaceholder")
@@ -2597,7 +2726,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   : isCodexActive && modesEnabled && nativeComposerMode === "goal"
                     ? "描述你的目标，定义可衡量的成果，以获得最佳效果…"
                 : ""
-            }
+            )}
             rows={1}
             style={{
               flex: compact ? "none" : 1,
@@ -2734,7 +2863,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 className="chat-composer-mode-host"
                 data-pi-composer-mode-host="true"
               >
-                <NativeComposerModeControls onModeChange={handleNativeComposerModeChange} />
+                <NativeComposerModeControls onModeChange={handleNativeComposerModeChange} goalHost={goalHost} />
               </div>
             )}
             <div className="chat-composer-attachment-controls">
@@ -2771,7 +2900,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
-            {onConfirmSubmission && <SavedPromptMenu key={retainedSubmissions[0]?.sessionId ?? draftKey} submissions={retainedSubmissions} onConfirm={onConfirmSubmission} />}
             </div>
             {/* 经典模式下模型选择器留在左侧 */}
             {!isCodexActive && (modelsLoading || modelOptions.length > 0 || model || modelError) && onModelChange && (
@@ -2837,7 +2965,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {/* 运行态 Stop 按钮 (在 Codex 模式下为 24px 圆形图标按钮，位于 Col -2) */}
             {isStreaming && (
               <button
-                onClick={onAbort}
+                onClick={handleStopClick}
                 title={t("chat.stopAgent")}
                 aria-label={t("chat.stopAgent")}
                 className={isCodexActive ? "chat-composer-stop" : ""}

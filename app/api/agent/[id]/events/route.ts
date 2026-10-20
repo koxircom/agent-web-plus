@@ -1,3 +1,4 @@
+import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
@@ -11,6 +12,13 @@ export async function GET(
 ) {
   const { id } = await params;
   if (req.signal.aborted) return new Response(null, { status: 204 });
+  if (isCodexSessionId(id)) {
+    const sessionPromise = import("@/lib/execution-engines/codex-engine").then(m => m.getCodexRuntime(id));
+    return new Response(createAgentEventStream(req, id, sessionPromise), { headers: {
+      "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive", "X-Accel-Buffering": "no",
+    } });
+  }
 
   // Fast path: already-running session
   const session = getRpcSession(id);

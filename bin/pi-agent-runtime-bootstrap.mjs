@@ -1,4 +1,4 @@
-// Pi Web Native SDK Runtime Bootstrap
+// Agent Web Plus Native SDK Runtime Bootstrap
 // Preloaded into Next.js server child process via Node.js --import.
 // Captures official SDK evidence without starting an AgentSession or making LLM calls.
 
@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const bootstrapRequire = createRequire(import.meta.url);
+bootstrapRequire("./agent-web-compat.js").prepareAgentWebEnvironment();
 try {
   const { prepareWindowsShellEnvironment } = bootstrapRequire("./windows-shells.cjs");
   prepareWindowsShellEnvironment();

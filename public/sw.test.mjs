@@ -223,6 +223,11 @@ test("a stalled static asset request is bounded as well", async () => {
 
 test("a response that arrives in time is not cut off mid-stream", async () => {
   installOfflineStub();
+  let cacheLookups = 0;
+  globalThis.caches.match = async () => {
+    cacheLookups += 1;
+    return new Response("<title>Cached offline page</title>");
+  };
   let signal;
   globalThis.fetch = async (_request, init) => {
     signal = init.signal;
@@ -240,8 +245,91 @@ test("a response that arrives in time is not cut off mid-stream", async () => {
     mock.timers.tick(60000);
 
     assert.equal(signal.aborted, false);
+    assert.equal(cacheLookups, 0, "a successful navigation must use the network response first");
     assert.match(await response.text(), /<title>Pi Web<\/title>/);
   } finally {
     mock.timers.reset();
   }
+});
+
+test("API and service worker requests bypass the cache handler", () => {
+  let networkRequests = 0;
+  globalThis.fetch = async () => {
+    networkRequests += 1;
+    return new Response("network");
+  };
+
+  assert.equal(dispatchFetch("https://pi.test/api/sessions"), undefined);
+  assert.equal(dispatchFetch("https://pi.test/sw.js?v=test"), undefined);
+  assert.equal(networkRequests, 0, "these requests stay under the browser's normal fetch path");
+});
+
+test("offline shell update precaches into a new version and removes only Pi Web caches", async () => {
+  const stored = new Map([
+    ["pi-web-static-test", new Map([["https://pi.test/offline.html", new Response("old offline page")]])],
+    ["pi-web-static-older", new Map()],
+    ["unrelated-static-v1", new Map()],
+  ]);
+  const cacheFor = (name) => {
+    if (!stored.has(name)) stored.set(name, new Map());
+    const entries = stored.get(name);
+    return {
+      addAll: async (paths) => {
+        for (const path of paths) {
+          const url = new URL(path, self.location.origin).href;
+          entries.set(url, await globalThis.fetch(url));
+        }
+      },
+      match: async (request) => entries.get(typeof request === "string" ? new URL(request, self.location.origin).href : request.url),
+      put: async (request, response) => entries.set(typeof request === "string" ? new URL(request, self.location.origin).href : request.url, response),
+    };
+  };
+  globalThis.caches = {
+    open: async (name) => cacheFor(name),
+    keys: async () => [...stored.keys()],
+    delete: async (name) => stored.delete(name),
+    match: async (request) => {
+      for (const entries of stored.values()) {
+        const response = entries.get(typeof request === "string" ? request : request.url);
+        if (response) return response;
+      }
+      return undefined;
+    },
+  };
+
+  const requested = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(url, self.location.origin).pathname;
+    requested.push(path);
+    return new Response(path === "/offline.html" ? "<h1>Pi Web Plus 离线</h1>" : "precache asset");
+  };
+
+  let skippedWaiting = false;
+  let claimedClients = false;
+  self.skipWaiting = async () => { skippedWaiting = true; };
+  self.clients = { claim: async () => { claimedClients = true; } };
+
+  let installPromise;
+  listeners.get("install")({ waitUntil: (promise) => { installPromise = promise; } });
+  await installPromise;
+
+  const updatedCacheName = "pi-web-static-test-plus-offline-v2";
+  assert.ok(stored.has(updatedCacheName), "the installed worker must use a fresh cache key");
+  const installedOfflinePage = await cacheFor(updatedCacheName).match("/offline.html");
+  assert.match(await installedOfflinePage.text(), /Pi Web Plus 离线/);
+  assert.deepEqual(requested, [
+    "/offline.html",
+    "/manifest.webmanifest",
+    "/icons/icon-192.png",
+    "/icons/icon-512.png",
+    "/icons/apple-touch-icon.png",
+  ]);
+  assert.equal(skippedWaiting, true);
+
+  let activatePromise;
+  listeners.get("activate")({ waitUntil: (promise) => { activatePromise = promise; } });
+  await activatePromise;
+
+  assert.deepEqual([...stored.keys()].sort(), [updatedCacheName, "unrelated-static-v1"].sort());
+  assert.equal(claimedClients, true);
 });

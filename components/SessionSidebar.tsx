@@ -1,5 +1,9 @@
 "use client";
 
+import { codexProjectKey } from "@/lib/execution-engines/codex-projection";
+
+import { useTouchContextMenu } from "@/hooks/useTouchContextMenu";
+
 import { mergeLocalSessions } from "@/lib/session-catalog-client";
 
 import { registerSessionPreloadBridge, updateSessionPreloadCatalog } from "@/lib/session-preload";
@@ -35,8 +39,7 @@ import { DismissButton } from "./DismissButton";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { SessionSearch } from "./SessionSearch";
-import { BRAND_NAME, BRAND_GITHUB_URL } from "@/lib/branding";
-import { useBrandingDecorations } from "@/lib/use-branding-decorations";
+import { ExecutionEngineSwitcher } from "./ExecutionEngineSwitcher";
 
 // Fixed row height for the session list. SessionItem renders at exactly this
 // height, so the list can be windowed (only the visible slice is mounted).
@@ -133,10 +136,10 @@ function ToolbarIconButton({
   );
 }
 
-function sessionListUrl(summary: boolean, force: boolean): string {
-  if (summary) return "/api/sessions?summary=1";
-  if (force) return "/api/sessions?force=1";
-  return "/api/sessions";
+function sessionListUrl(summary: boolean, force: boolean, engine: "pi" | "codex"): string {
+  if (summary) return `/api/sessions?engine=${engine}&summary=1`;
+  if (force) return `/api/sessions?engine=${engine}&force=1`;
+  return `/api/sessions?engine=${engine}`;
 }
 
 const EMPTY_LOCAL_SESSIONS: SessionInfo[] = [];
@@ -145,11 +148,14 @@ import type { SidebarBootstrap } from "@/lib/sidebar-bootstrap";
 
 interface Props {
   bootstrap?: SidebarBootstrap;
+  executionEngine?: "pi" | "codex";
+  codexEnabled?: boolean;
+  onExecutionEngineChange?: (engine: "pi" | "codex") => Promise<void>;
   initialCwd?: string | null;
   localSessions?: SessionInfo[];
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number) => void;
-  onNewSession?: (sessionId: string, cwd: string) => void;
+  onNewSession?: (sessionId: string, cwd: string, engine: "pi" | "codex") => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
@@ -215,19 +221,20 @@ const SESSION_PANE_MIN_HEIGHT = 80;
 const EXPLORER_PANE_MIN_HEIGHT = 120;
 const SESSION_PANE_MAX_HEIGHT = 1600;
 
-function loadLastCustomCwd(): string {
+function loadLastCustomCwd(engine: "pi" | "codex"): string {
   if (typeof window === "undefined") return "";
   try {
-    return window.localStorage.getItem(LAST_CUSTOM_CWD_STORAGE_KEY) ?? "";
+    return window.localStorage.getItem(`${LAST_CUSTOM_CWD_STORAGE_KEY}:${engine}`)
+      ?? (engine === "pi" ? window.localStorage.getItem(LAST_CUSTOM_CWD_STORAGE_KEY) : null) ?? "";
   } catch {
     return "";
   }
 }
 
-function saveLastCustomCwd(cwd: string): void {
+function saveLastCustomCwd(cwd: string, engine: "pi" | "codex"): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(LAST_CUSTOM_CWD_STORAGE_KEY, cwd);
+    window.localStorage.setItem(`${LAST_CUSTOM_CWD_STORAGE_KEY}:${engine}`, cwd);
   } catch {
     // Persistence is best-effort.
   }
@@ -327,108 +334,8 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 
 
 
-const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-
-function useScramble(target: string, running: boolean): string {
-  const [display, setDisplay] = useState(target);
-  const frameRef = useRef<number | null>(null);
-  const iterRef = useRef(0);
-
-  useEffect(() => {
-    if (!running) {
-      setDisplay(target);
-      return;
-    }
-    iterRef.current = 0;
-    const totalFrames = target.length * 4;
-
-    const step = () => {
-      iterRef.current += 1;
-      const progress = iterRef.current / totalFrames;
-      const resolved = Math.floor(progress * target.length);
-
-      setDisplay(
-        target
-          .split("")
-          .map((char, i) => {
-            if (char === " ") return " ";
-            if (i < resolved) return char;
-            return SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-          })
-          .join("")
-      );
-
-      if (iterRef.current < totalFrames) {
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        setDisplay(target);
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(step);
-    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
-  }, [target, running]);
-
-  return display;
-}
-
-function PiWebTitle() {
-  const [showVersion, setShowVersion] = useState(false);
-  const [scrambling, setScrambling] = useState(false);
-  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isDecorated = useBrandingDecorations();
-
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : BRAND_NAME;
-  const display = useScramble(target, scrambling);
-
-  const triggerScramble = useCallback((toVersion: boolean) => {
-    setShowVersion(toVersion);
-    setScrambling(true);
-    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
-  }, []);
-
-  const handleClick = useCallback(() => {
-    if (showVersion) {
-      if (typeof window !== "undefined") {
-        window.open(BRAND_GITHUB_URL, "_blank", "noopener,noreferrer");
-      }
-      return;
-    }
-    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
-
-    const next = !showVersion;
-    triggerScramble(next);
-
-    if (next) {
-      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
-    }
-  }, [showVersion, triggerScramble]);
-
-  useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
-
-  return (
-    <button
-      onClick={handleClick}
-      title={showVersion ? `点击打开 GitHub 仓库 (${BRAND_GITHUB_URL})` : "点击查看版本号"}
-      style={{
-        background: "none", border: "none", padding: 0,
-        cursor: showVersion ? "pointer" : "default",
-        fontWeight: 700,
-        fontSize: isDecorated ? 13.5 : 15,
-        letterSpacing: isDecorated ? "-0.03em" : "-0.01em",
-        color: showVersion ? "var(--accent)" : "var(--text)",
-        fontFamily: "var(--font-mono)",
-        minWidth: "6ch",
-        whiteSpace: "nowrap",
-        flexShrink: 0,
-      }}
-    >
-      {display}
-    </button>
-  );
-}
-
-export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, localSessions = EMPTY_LOCAL_SESSIONS }: Props) {
+export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled = false, onExecutionEngineChange, initialCwd, selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, localSessions = EMPTY_LOCAL_SESSIONS }: Props) {
+  const isCodexEngine = executionEngine === "codex";
   const { t } = useI18n();
   // First client render must use the server snapshot clock; subsequent renders
   // resume local relative times after hydration.
@@ -443,6 +350,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
   // decide whether the list needs reloading, and no render reads it.
   const sessionListVersionRef = useRef<number | null>(bootstrap?.sessionListVersion ?? null);
   const sessionLoadIdRef = useRef(0);
+  const sessionListLoadingRef = useRef(false);
   const [loading, setLoading] = useState(!bootstrap);
   const [error, setError] = useState<string | null>(null);
   const [selectedCwd, setSelectedCwd] = useState<string | null>(() => {
@@ -456,7 +364,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
   const [projectFilter, setProjectFilter] = useState("");
   const [wtFilter, setWtFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
-  const [customPathValue, setCustomPathValue] = useState(loadLastCustomCwd);
+  const [customPathValue, setCustomPathValue] = useState(() => loadLastCustomCwd(executionEngine));
   const [customPathError, setCustomPathError] = useState<string | null>(null);
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const [validatedProject, setValidatedProject] = useState<ValidatedProject | null>(null);
@@ -576,9 +484,10 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
 
   const loadSessions = useCallback(async (showLoading = false, force = false, summary = false) => {
     const loadId = ++sessionLoadIdRef.current;
+    sessionListLoadingRef.current = true;
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch(sessionListUrl(summary, force), {
+      const res = await fetch(sessionListUrl(summary, force, executionEngine), {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -590,6 +499,10 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       };
       if (loadId !== sessionLoadIdRef.current) return;
       sessionListVersionRef.current = data.sessionListVersion;
+      // Status effects can run before React commits this catalogue. Publish to
+      // the existing bridge ref now so an already listed running chat is not
+      // mistaken for a missing chat and fetched a second time.
+      sidebarBridgeStateRef.current.allSessions = data.sessions;
       setAllSessions(data.sessions);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
@@ -615,9 +528,12 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     } catch (e) {
       if (loadId === sessionLoadIdRef.current) setError(String(e));
     } finally {
-      if (loadId === sessionLoadIdRef.current) setLoading(false);
+      if (loadId === sessionLoadIdRef.current) {
+        sessionListLoadingRef.current = false;
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [executionEngine]);
 
   const sidebarBridgeStateRef = useRef({
     loadSessions,
@@ -671,7 +587,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       // selected chat has had a chance to start loading.
       const initialRead = bootstrap ? Promise.resolve() : loadSessions(true, false, true);
       void initialRead.then(() => {
-        if (!active) return;
+        if (!active || executionEngine === "codex") return;
         detailsHydrationTimerRef.current = setTimeout(() => {
           detailsHydrationTimerRef.current = null;
           if (active) void loadSessions(false, true);
@@ -763,7 +679,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
 
     let refreshQueued = false;
     let expiryTimer: ReturnType<typeof setTimeout> | null = null;
-    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("pi-web-native-status-v1") : null;
+    const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(`pi-web-native-status-v1:${executionEngine}`) : null;
     let lastStamp: { epoch: string; revision: number } | null = null;
     const retiredEpochs = new Set<string>();
     const publish = (payload: unknown = null, catalog?: SessionInfo[]) => {
@@ -771,10 +687,25 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       win.__PI_WEB_PROJECT_STATUS_SNAPSHOT__ = payload;
       window.dispatchEvent(new CustomEvent("pi-web-project-status", { detail: { payload, catalog } }));
     };
+    const invalidateSnapshot = () => {
+      // Missing task data is unknown, never a completion receipt.
+      setRunningSessionIds(prev => prev.size ? new Set() : prev);
+      completedReceiptIdsRef.current = new Set();
+      publish();
+    };
     const unavailable = () => {
       setRunningStatusHealthy(false);
-      setRunningSessionIds(prev => prev.size ? new Set() : prev);
-      publish();
+      invalidateSnapshot();
+    };
+    const clearExpiry = () => {
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = null;
+    };
+    const armExpiry = () => {
+      clearExpiry();
+      // Native pickers/background tabs suspend polling; only visible time can
+      // establish that a transport has stopped answering.
+      if (!stopped && document.visibilityState === "visible") expiryTimer = setTimeout(unavailable, 12000);
     };
     const accept = (data: { runningSessionIds: string[]; completionNotificationSuppressedSessionIds?: string[];
       statusSnapshot?: { epoch: string; revision: number; executions: { state: string; sessionId: string }[] } }, broadcast = false, catalog?: SessionInfo[]) => {
@@ -792,8 +723,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       setRunningSessionIds(prev => prev.size === nextIds.size && [...prev].every(id => nextIds.has(id)) ? prev : nextIds);
       setRunningStatusHealthy(true);
       publish(data, catalog);
-      if (expiryTimer) clearTimeout(expiryTimer);
-      expiryTimer = setTimeout(unavailable, 12000);
+      armExpiry();
       if (broadcast) channel?.postMessage({ payload: data, at: Date.now(), catalog: sidebarBridgeStateRef.current.allSessions.filter(session => !session.submissionPending) });
       return true;
     };
@@ -811,17 +741,21 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       controller = current;
       const timeout = setTimeout(() => current.abort(), 8000);
       try {
-        const res = await fetch("/api/agent/running", { cache: "no-store", signal: current.signal });
-        if (!res.ok) throw new Error(`Task status HTTP ${res.status}`);
+        const res = await fetch(`/api/agent/running?engine=${executionEngine}`, { cache: "no-store", signal: current.signal });
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) unavailable();
+          throw new Error(`Task status HTTP ${res.status}`);
+        }
         const data = await res.json();
         if (!Array.isArray(data.runningSessionIds) || data.runningSessionIds.some((id: unknown) => typeof id !== "string")) throw new Error("Invalid running status");
         if (stopped || controller !== current || current.signal.aborted) return;
         accept(data, true);
-        if (data.sessionListVersion !== sessionListVersionRef.current) await loadSessions();
+        if (data.sessionListVersion !== sessionListVersionRef.current && !sessionListLoadingRef.current) void loadSessions();
       } catch {
         if (!stopped && controller === current && current.signal.reason !== "tab-hidden") {
-          // A failed read is not a completion receipt. Do not retain a live spinner.
-          unavailable();
+          // Discard stale task indicators immediately, but let the existing
+          // visible freshness deadline distinguish one failed read from outage.
+          invalidateSnapshot();
         }
       } finally {
         clearTimeout(timeout);
@@ -831,8 +765,15 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       }
     };
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") { clearTimer(); void poll(); }
-      else { clearTimer(); controller?.abort("tab-hidden"); }
+      if (document.visibilityState === "visible") {
+        clearTimer();
+        armExpiry();
+        void poll();
+      } else {
+        clearTimer();
+        clearExpiry();
+        controller?.abort("tab-hidden");
+      }
     };
     const win = window as unknown as Record<string, unknown>;
     win.__PI_WEB_REFRESH_PROJECT_STATUS__ = poll;
@@ -896,9 +837,9 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       });
     }
     const hasUnlistedRunningSession = newlyRunning.some(
-      (id) => !allSessions.some((session) => session.id === id),
+      (id) => !sidebarBridgeStateRef.current.allSessions.some((session) => session.id === id),
     );
-    if (completedInBackground.length > 0 || hasUnlistedRunningSession) {
+    if ((completedInBackground.length > 0 || hasUnlistedRunningSession) && !sessionListLoadingRef.current) {
       loadSessions(false, true);
     }
     if (completedWithNotifications.length > 0) {
@@ -936,10 +877,10 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
   }, [explorerRefreshKey]);
 
   useEffect(() => {
-    fetch("/api/home").then((r) => r.json()).then((d: { home?: string }) => {
+    fetch(`/api/home?engine=${executionEngine}`).then((r) => r.json()).then((d: { home?: string }) => {
       if (d.home) setHomeDir(d.home);
     }).catch(() => {});
-  }, []);
+  }, [executionEngine]);
 
   const restoredRef = useRef(false);
 
@@ -951,6 +892,10 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
   /** Resolve both display root and stable identity from server-provided data. */
   const projectFor = useCallback((cwd: string | null): ProjectSelection | null => {
     if (!cwd) return null;
+    if (isCodexEngine) {
+      const match = allSessions.find(session => session.cwd === cwd || session.projectRoot === cwd);
+      return projectSelection(match?.projectRoot ?? cwd, match ? workspaceKeyOf(match) : codexProjectKey(cwd));
+    }
     // /api/cwd/validate resolves identity before a custom path becomes active,
     // preventing one render with a raw path key from looking like a switch.
     if (validatedProject?.cwd === cwd) {
@@ -970,7 +915,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     return match
       ? projectSelection(match.projectRoot ?? match.cwd, workspaceKeyOf(match))
       : projectSelection(cwd, cwd);
-  }, [validatedProject, worktreeState, allSessions, projectSelection]);
+  }, [isCodexEngine, validatedProject, worktreeState, allSessions, projectSelection]);
 
   // A worktree/session refresh can hydrate the stable key without changing
   // cwd, so notify when either changes. The parent treats same-cwd key changes
@@ -1003,7 +948,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
   // Load worktrees for the current effective cwd
   const [wtRefreshKey, setWtRefreshKey] = useState(0);
   useLayoutEffect(() => {
-    if (!selectedCwd) {
+    if (isCodexEngine || !selectedCwd) {
       setWorktreeState(null);
       setWorktreeLoadingCwd(null);
       return;
@@ -1036,7 +981,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
         }
       });
     return () => { cancelled = true; };
-  }, [selectedCwd, wtRefreshKey, refreshKey]);
+  }, [isCodexEngine, selectedCwd, wtRefreshKey, refreshKey]);
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
@@ -1082,7 +1027,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
       const res = await fetch("/api/cwd/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: path }),
+        body: JSON.stringify({ cwd: path, engine: executionEngine }),
       });
       const data = await res.json().catch(() => ({})) as {
         cwd?: string;
@@ -1099,7 +1044,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
         root: data.projectRoot,
         key: data.projectKey,
       });
-      saveLastCustomCwd(data.cwd);
+      saveLastCustomCwd(data.cwd, executionEngine);
       setCustomPathValue(data.cwd);
       setSelectedCwd(data.cwd);
       setCustomPathOpen(false);
@@ -1109,7 +1054,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathValue, customPathValidating]);
+  }, [customPathValue, customPathValidating, executionEngine]);
 
   const handleCustomPathClick = useCallback(() => {
     setCustomPathOpen(true);
@@ -1118,7 +1063,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
   }, []);
   const handleDefaultCwd = useCallback(async () => {
     try {
-      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const res = await fetch(`/api/default-cwd?engine=${executionEngine}`, { method: "POST" });
       const data = await res.json() as { cwd?: string; error?: string };
       if (data.cwd) {
         setSelectedCwd(data.cwd);
@@ -1129,7 +1074,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     } catch {
       // ignore
     }
-  }, []);
+  }, [executionEngine]);
 
   const handleCreateWorktree = useCallback(async () => {
     const branch = wtNewBranch.trim();
@@ -1229,6 +1174,11 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     onSelectSession(s, false, entryId, blockIndex);
   }, [onSelectSession]);
 
+  const handleUnavailableSearchSession = useCallback((sessionId: string) => {
+    setAllSessions((current) => current.filter((session) => session.id !== sessionId));
+    void loadSessions(false, true);
+  }, [loadSessions]);
+
   const handleNewSession = useCallback(() => {
     const effectiveCwd = selectedCwd ?? selectedCwdProp ?? allSessions[0]?.cwd ?? (homeDir || null);
     if (!effectiveCwd) return;
@@ -1237,8 +1187,8 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     const tempId = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
-    onNewSession?.(tempId, effectiveCwd);
-  }, [selectedCwd, selectedCwdProp, allSessions, homeDir, onNewSession]);
+    onNewSession?.(tempId, effectiveCwd, executionEngine);
+  }, [selectedCwd, selectedCwdProp, allSessions, homeDir, onNewSession, executionEngine]);
 
   const recentProjects = useMemo(() => getRecentProjects(allSessions), [allSessions]);
   const showProjectFilter = recentProjects.length > 8;
@@ -1356,6 +1306,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
     >
       {customPathOpen && (
         <DirectoryPicker
+          executionEngine={executionEngine}
           initialPath={customPathValue}
           busy={customPathValidating}
           error={customPathError}
@@ -1374,10 +1325,12 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
           flexShrink: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 6, flexWrap: "nowrap" }}>
-          <PiWebTitle />
-          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+        <div className="pi-native-sidebar-header-toolbar">
+          <ExecutionEngineSwitcher engine={executionEngine} connected={runningStatusHealthy} codexEnabled={codexEnabled} onChange={onExecutionEngineChange} />
+          <div className="pi-native-sidebar-header-actions">
             <button
+              type="button"
+              aria-label={t("sidebar.new")}
               onClick={handleNewSession}
               disabled={!selectedCwd}
               style={{
@@ -1387,8 +1340,8 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
                 color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
                 cursor: selectedCwd ? "pointer" : "not-allowed",
                 height: 32,
-                paddingLeft: 10,
-                paddingRight: 12,
+                width: 32,
+                padding: 0,
                 borderRadius: 7,
                 fontSize: 12,
                 fontWeight: 500,
@@ -1413,24 +1366,25 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
                 <line x1="6" y1="1" x2="6" y2="11" />
                 <line x1="1" y1="6" x2="11" y2="6" />
               </svg>
-              {t("sidebar.new")}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSessionSearchOpen((open) => !open);
-                setWtDropdownOpen(false);
-              }}
-              title={t("sidebar.toggleSessionSearch")}
-              aria-label={t("sidebar.toggleSessionSearch")}
-              aria-expanded={sessionSearchOpen}
-              aria-controls="session-search-input"
-              className={`flex h-[32px] w-[32px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-border hover:bg-bg-selected focus-visible:outline-2 focus-visible:outline-accent ${sessionSearchOpen ? "bg-bg-selected text-accent" : "bg-bg-hover text-text-muted"}`}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
-              </svg>
-            </button>
+            {(
+              <button
+                type="button"
+                onClick={() => {
+                  setSessionSearchOpen((open) => !open);
+                  setWtDropdownOpen(false);
+                }}
+                title={t("sidebar.toggleSessionSearch")}
+                aria-label={t("sidebar.toggleSessionSearch")}
+                aria-expanded={sessionSearchOpen}
+                aria-controls="session-search-input"
+                className={`flex h-[32px] w-[32px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-border hover:bg-bg-selected focus-visible:outline-2 focus-visible:outline-accent ${sessionSearchOpen ? "bg-bg-selected text-accent" : "bg-bg-hover text-text-muted"}`}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
 
@@ -2021,7 +1975,10 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
           overflow: "hidden",
         }}
       >
-        <SessionSearch open={sessionSearchOpen} query={sessionSearchQuery} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList}>
+        {error && <div role="status" data-pi-catalog-stale="true" title={error} style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
+          {t(allSessions.length ? "sidebar.catalogStale" : "sidebar.catalogReadFailed")}
+        </div>}
+        <SessionSearch executionEngine={executionEngine} open={sessionSearchOpen} query={sessionSearchQuery} sessions={allSessions} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList} onUnavailableSession={handleUnavailableSearchSession}>
         <div
           ref={listScrollRef}
           onScroll={handleListScroll}
@@ -2036,11 +1993,6 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.loading")}
-          </div>
-        )}
-        {error && (
-          <div style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
-            {error}
           </div>
         )}
         {!loading && !error && sessionFamilies.length === 0 && (
@@ -2077,6 +2029,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
                   <SessionItem
                     initialRenderTime={initialRenderTime}
                     initialDecorations={initialDecorations}
+                    executionEngine={executionEngine}
                     session={displaySession}
                     isSelected={familySessions.some((session) => session.id === selectedSessionId)}
                     isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
@@ -2262,6 +2215,7 @@ export function SessionSidebar({ bootstrap, initialCwd, selectedSessionId, onSel
               <FileExplorer
                 ref={fileExplorerRef}
                 cwd={selectedCwd ?? selectedCwdProp!}
+                sessionId={selectedSessionId}
                 onOpenFile={onOpenFile ?? (() => {})}
                 refreshKey={explorerKey}
                 onAtMention={onAtMention}
@@ -2401,6 +2355,7 @@ function showProjectActivity(
 function SessionItem({
   initialRenderTime,
   initialDecorations,
+  executionEngine,
   session,
   isSelected,
   isRunning,
@@ -2414,6 +2369,7 @@ function SessionItem({
 }: {
   initialRenderTime?: Date;
   initialDecorations?: import("@/lib/enhancement-state-store.cjs").EnhancementDurableState;
+  executionEngine: "pi" | "codex";
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
@@ -2487,31 +2443,33 @@ function SessionItem({
     // a skill-invoked session stays a no-op instead of persisting raw XML.)
     if (renameValue === title || name === (session.name ?? "")) return;
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      if (!response.ok) throw new Error((await response.json()).error || "重命名未保存");
       onRenamed?.();
-    } catch {
-      // ignore
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "重命名未保存");
     }
   }, [renameValue, session.id, session.name, onRenamed, title]);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const handled = dispatchSessionRowContextMenu({
+  const openContextMenu = useCallback((clientX: number, clientY: number) => {
+    return dispatchSessionRowContextMenu({
+      executionEngine,
       id: session.id,
       path: session.path,
       cwd: session.cwd,
       name: session.name,
-      clientX: e.clientX,
-      clientY: e.clientY,
+      clientX,
+      clientY,
       refresh: () => { onRenamed?.(); },
     });
-    if (!handled) return;
-    e.preventDefault();
-    e.stopPropagation();
-  }, [onRenamed, session.cwd, session.id, session.name, session.path]);
+  }, [executionEngine, onRenamed, session.cwd, session.id, session.name, session.path]);
+
+  const contextMenu = useTouchContextMenu(openContextMenu, !renaming && !session.submissionPending);
+  const handleContextMenu = contextMenu.onContextMenu;
 
   const taskStatus = getEnhancementSessionStatus(session.id);
   const rowStatus = taskStatus?.status === "completed" && !taskStatus.unread ? undefined : taskStatus?.status;
@@ -2526,6 +2484,7 @@ function SessionItem({
       ref={rowRef}
       data-pi-enh-editing={renaming ? "true" : undefined}
       data-pi-enh-session-id={session.id}
+      data-execution-engine={executionEngine}
       data-pi-native-session-tags="true"
       data-pi-native-project-status="true"
       data-pi-enh-project-status={rowStatus && rowStatus !== "idle" ? rowStatus : undefined}
@@ -2535,6 +2494,7 @@ function SessionItem({
       className={`pi-enh-session-row-host${rowStatus === "attention" ? " pi-enh-session-needs-attention" : ""}`}
       aria-disabled={session.submissionPending || undefined}
       onClick={renaming || session.submissionPending ? undefined : onClick}
+      {...contextMenu}
       onContextMenu={renaming ? undefined : handleContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
@@ -2609,6 +2569,8 @@ function SessionItem({
                 <span title="服务端任务状态暂不可确认">状态待确认</span>
               ) : rowStatus === "attention" ? (
                 <span title="等待你的回复" style={{ color: "#f59e0b" }}>待回复</span>
+              ) : rowStatus === "interrupted" ? (
+                <span title="本轮任务异常停止，点击会话查看具体错误" style={{ color: "#f87171", fontWeight: 600 }}>异常停止</span>
               ) : (taskStatus ? rowStatus === "running" : isRunning) ? (
                 <RunningSessionIndicator />
               ) : isUnread ? (
@@ -2670,6 +2632,7 @@ function SessionItem({
               </svg>
             </button>
           )}
+
 
           {showOdooAddons && (
             <div className="pi-enh-session-odoo-addons">

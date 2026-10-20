@@ -1,17 +1,24 @@
+import { resolveExecutionEngine } from "../lib/execution-engine-context.ts";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
+import ts from "typescript";
+import { newSessionUrl } from "../lib/session-navigation.ts";
 import { transform } from "esbuild";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
-function callbackBlock(name, nextMarker) {
-  const start = source.indexOf(`  const ${name} = useCallback`);
-  const end = source.indexOf(nextMarker, start);
-  assert.notEqual(start, -1, `${name} callback not found`);
-  assert.notEqual(end, -1, `${nextMarker} not found after ${name}`);
-  return source.slice(start, end);
+const syntax = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+function callbackBlock(name) {
+  let found;
+  const visit = node => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(syntax) === name) found = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(syntax);
+  assert.ok(found, `${name} callback not found`);
+  return `const ${found.getText(syntax)};`;
 }
 
 const callbacks = [
@@ -37,6 +44,11 @@ const lifecycle = source.slice(lifecycleStart, lifecycleEnd);
 
 function makeHarness({ sessionCatalog = [], initialSession = { id: "initial", cwd: "/initial", projectKey: "/initial" }, fetchImpl } = {}) {
   const context = vm.createContext({
+    executionEngineRef: { current: "pi" },
+    selectedSessionIdRef: { current: initialSession?.id ?? null },
+    setExecutionEngine(value) { context.executionEngine = value; },
+    codexCwdRef: { current: null },
+    piExecutionReady: true,
     URLSearchParams,
     console,
     encodeURIComponent,
@@ -58,7 +70,10 @@ function makeHarness({ sessionCatalog = [], initialSession = { id: "initial", cw
     activeNewSessionDraftKeyRef: { current: null },
     branchLeafChangeFnRef: { current: null },
     isMobile: false,
+    isMobileRef: { current: false },
     replaceSessionUrl() {},
+    newSessionUrl,
+    resolveExecutionEngine,
     workspaceKeyOf: (session) => session.projectKey ?? session.cwd,
     parkedNewSessionDraftKey: (cwd) => `parked-new:${cwd}`,
     rekeyDraft() {},
@@ -232,4 +247,18 @@ test("unmount cleanup invalidates pending open and detail hydration", async (t) 
 test("create and fork still request the sidebar refresh", () => {
   assert.match(callbackBlock("handleSessionCreated", "\n  const deliverSessionNotification"), /setRefreshKey\(\(k\) => k \+ 1\);/);
   assert.match(callbackBlock("handleSessionForked", "\n  const handleAskInNewChat"), /setRefreshKey\(\(k\) => k \+ 1\);/);
+});
+
+test('New inherits the selected Pi session even if the dormant engine is Codex',()=>{
+ const c=makeHarness({initialSession:{id:'pi-history',cwd:'/pi',projectKey:'/pi'}});c.executionEngineRef.current='codex';
+ c.navigation.handleNewSession('draft','/pi');assert.equal(c.executionEngineRef.current,'pi');assert.equal(c.executionEngine,'pi');
+});
+
+test('an explicit Agent switch wins over the outgoing selected session',()=>{
+ const c=makeHarness({initialSession:{id:'pi-history',cwd:'/pi',projectKey:'/pi'}});
+ c.navigation.handleNewSession('draft','/codex','codex');assert.equal(c.executionEngineRef.current,'codex');assert.equal(c.executionEngine,'codex');
+});
+test('selecting an existing session aligns the dormant engine before later New',()=>{
+ const c=makeHarness();c.executionEngineRef.current='codex';c.navigation.handleSelectSession({id:'pi-history',cwd:'/pi',projectKey:'/pi'});
+ assert.equal(c.executionEngineRef.current,'pi');assert.equal(c.executionEngine,'pi');
 });

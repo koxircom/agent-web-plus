@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { PiWebBrand } from "./PiWebBrand";
 import { useI18n } from "@/hooks/useI18n";
-import { BRAND_GITHUB_URL } from "@/lib/branding";
-import type { AppUpdateResponse } from "@/lib/api-types";
+import { BRAND_GITHUB_URL, CODEX_CLI_GITHUB_URL } from "@/lib/branding";
+import type { AppUpdateResponse, CodexCliReleaseStatus } from "@/lib/api-types";
 import { isNewerReleaseVersion } from "@/lib/release-version";
 import type { PiAgentReleaseStatus } from "@/lib/pi-update";
 
@@ -14,7 +14,12 @@ export interface NewSessionBrandHeaderProps {
   releaseNotesLabel?: (version: string) => string;
   appVersion?: string;
   piVersion?: string;
+  executionEngine?: "pi" | "codex";
+  /** Injected status is useful when the caller already owns a Codex status snapshot. */
+  codexStatus?: CodexCliReleaseStatus | null;
 }
+
+type NewSessionReleaseUpdate = Pick<AppUpdateResponse, "currentVersion" | "latestVersion" | "updateAvailable" | "releaseUrl">;
 
 export function NewSessionUpdateLink({
   label,
@@ -23,15 +28,13 @@ export function NewSessionUpdateLink({
 }: {
   label: (version: string) => string;
   installedVersion?: string;
-  updateData?: AppUpdateResponse | null;
+  updateData?: NewSessionReleaseUpdate | null;
 }) {
-  const [update, setUpdate] = useState<AppUpdateResponse | null>(() => updateData ?? null);
+  const [fetchedUpdate, setFetchedUpdate] = useState<NewSessionReleaseUpdate | null>(null);
+  const update = updateData === undefined ? fetchedUpdate : updateData;
 
   useEffect(() => {
-    if (updateData !== undefined) {
-      setUpdate(updateData);
-      return;
-    }
+    if (updateData !== undefined) return;
     const controller = new AbortController();
     void fetch("/api/app-update", { signal: controller.signal })
       .then(async (response) => {
@@ -40,7 +43,7 @@ export function NewSessionUpdateLink({
       })
       .then((result) => {
         if (result?.updateAvailable && result.latestVersion && result.releaseUrl) {
-          setUpdate(result);
+          setFetchedUpdate(result);
         }
       })
       .catch(() => {});
@@ -111,11 +114,16 @@ export function NewSessionBrandHeader({
   releaseNotesLabel,
   appVersion = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0",
   piVersion = process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0",
+  executionEngine = "pi",
+  codexStatus,
 }: NewSessionBrandHeaderProps) {
   const { t } = useI18n();
   const [piRelease, setPiRelease] = useState<PiAgentReleaseStatus | null>(null);
+  const [fetchedCodexStatus, setFetchedCodexStatus] = useState<CodexCliReleaseStatus | null>(null);
+  const activeCodexStatus = codexStatus !== undefined ? codexStatus : fetchedCodexStatus;
 
   useEffect(() => {
+    if (executionEngine !== "pi") return;
     const controller = new AbortController();
     let active = true;
     void fetch("/api/pi-update", { signal: controller.signal })
@@ -131,13 +139,68 @@ export function NewSessionBrandHeader({
       active = false;
       controller.abort();
     };
-  }, []);
+  }, [executionEngine]);
+
+  useEffect(() => {
+    if (executionEngine !== "codex") return;
+    if (codexStatus !== undefined) {
+      setFetchedCodexStatus(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    let inFlight = false;
+    setFetchedCodexStatus(null);
+    const refreshCodexStatus = async () => {
+      if (!active || document.visibilityState === "hidden" || inFlight) return;
+      inFlight = true;
+      try {
+        const response = await fetch("/api/codex-update", { signal: controller.signal });
+        if (!response.ok) throw new Error(`Codex update status request failed (${response.status})`);
+        const result = await response.json() as CodexCliReleaseStatus;
+        if (active) setFetchedCodexStatus(result);
+      } catch {
+        if (active) {
+          setFetchedCodexStatus({
+            currentVersion: null,
+            installedVersion: null,
+            runningVersion: null,
+            runtimeStatus: "unknown",
+            activationState: "manual",
+            activationMessage: "运行状态暂不可用",
+            latestVersion: null,
+            updateAvailable: false,
+            releaseUrl: "",
+            versionError: "Codex CLI 版本读取失败",
+            updateError: "Codex CLI 更新检查失败",
+          });
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    const refreshTimer = window.setInterval(() => { void refreshCodexStatus(); }, 30_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshCodexStatus();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    void refreshCodexStatus();
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      controller.abort();
+    };
+  }, [executionEngine, codexStatus]);
 
   const getReleaseLabel = releaseNotesLabel ?? ((version: string) => t("appUpdate.releaseNotes", { version }));
+  const installedCodexVersion = activeCodexStatus?.installedVersion ?? activeCodexStatus?.currentVersion ?? null;
 
   return (
     <div
       data-pi-element="new-session-brand-header"
+      data-pi-native-version-header="true"
       className="mb-3 w-full"
       style={{
         paddingLeft: 16,
@@ -147,9 +210,9 @@ export function NewSessionBrandHeader({
     >
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          alignItems: "end",
           gap: 12,
           maxWidth: "var(--chat-content-max-width, 820px)",
           margin: "0 auto",
@@ -160,19 +223,33 @@ export function NewSessionBrandHeader({
           data-pi-element="brand-and-update-row"
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: isMobile ? "4px 8px" : 10,
+            alignItems: "end",
             minWidth: 0,
-            flex: 1,
-            lineHeight: 1.4,
-            flexWrap: "wrap",
           }}
         >
-          <PiWebBrand
-            width={isMobile ? 180 : 200}
-            height={isMobile ? 28.8 : 32}
-            style={{ flexShrink: 0 }}
-          />
+          {executionEngine === "codex" ? (
+            <a
+              href={BRAND_GITHUB_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="打开 Agent Web Plus GitHub 仓库"
+              title={`打开 Agent Web Plus GitHub 仓库 (${BRAND_GITHUB_URL})`}
+              style={{ display: "block", width: "100%", maxWidth: isMobile ? 180 : 200, minWidth: 0, color: "var(--text)", textDecoration: "none" }}
+            >
+              <PiWebBrand
+                variant="codex"
+                width={isMobile ? 180 : 200}
+                height={isMobile ? 28.8 : 32}
+                style={{ width: "100%", height: "auto", maxWidth: isMobile ? 180 : 200, flexShrink: 1 }}
+              />
+            </a>
+          ) : (
+            <PiWebBrand
+              width={isMobile ? 180 : 200}
+              height={isMobile ? 28.8 : 32}
+              style={{ width: "100%", height: "auto", maxWidth: isMobile ? 180 : 200, flexShrink: 1 }}
+            />
+          )}
         </div>
         <div
           data-pi-element="version-info-col"
@@ -181,9 +258,9 @@ export function NewSessionBrandHeader({
             flexDirection: "column",
             alignItems: "flex-end",
             gap: 2,
-            flexShrink: 1,
             minWidth: 0,
-            maxWidth: "60%",
+            maxWidth: "100%",
+            justifySelf: "end",
           }}
         >
           <div data-pi-element="web-version-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minWidth: 0, maxWidth: "100%" }}>
@@ -209,6 +286,53 @@ export function NewSessionBrandHeader({
           </a>
           <NewSessionUpdateLink label={getReleaseLabel} updateData={updateData} installedVersion={appVersion} />
           </div>
+          {executionEngine === "codex" ? (
+            <>
+              <div data-pi-element="codex-cli-version-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minWidth: 0, maxWidth: "100%" }}>
+                <a
+                  href={CODEX_CLI_GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-pi-element="codex-cli-version"
+                  title={`打开 OpenAI Codex CLI GitHub 仓库 (${CODEX_CLI_GITHUB_URL})`}
+                  style={{ display: "inline-flex", minWidth: 0, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", flexShrink: 1, textDecoration: "none", cursor: "pointer", transition: "opacity 0.15s" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
+                  onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
+                >
+                  CLI 已安装 <span style={{ color: "var(--text)" }}>{installedCodexVersion ? `v${installedCodexVersion}` : "版本暂不可用"}</span>
+                </a>
+                {activeCodexStatus?.updateError ? (
+                  <span data-pi-element="codex-cli-update-unavailable" style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", minWidth: 0, maxWidth: 96, overflow: "hidden", textOverflow: "ellipsis", flexShrink: 1 }}>更新检查暂不可用</span>
+                ) : installedCodexVersion && activeCodexStatus?.updateAvailable && activeCodexStatus.latestVersion && activeCodexStatus.releaseUrl ? (
+                  <NewSessionUpdateLink
+                    label={getReleaseLabel}
+                    updateData={{
+                      currentVersion: installedCodexVersion,
+                      latestVersion: activeCodexStatus.latestVersion,
+                      updateAvailable: true,
+                      releaseUrl: activeCodexStatus.releaseUrl,
+                    }}
+                    installedVersion={installedCodexVersion}
+                  />
+                ) : null}
+              </div>
+              <div data-pi-element="codex-cli-running-version-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", minWidth: 0, maxWidth: "100%" }}>
+                <span data-pi-element="codex-cli-running-version" style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {activeCodexStatus?.runtimeStatus === "stopped"
+                    ? "未运行"
+                    : activeCodexStatus?.runtimeStatus === "running" && activeCodexStatus.runningVersion
+                      ? `运行中 v${activeCodexStatus.runningVersion}`
+                      : "运行状态暂不可用"}
+                </span>
+              </div>
+              {activeCodexStatus && ["waiting_for_idle", "switching", "error"].includes(activeCodexStatus.activationState ?? "") ? (
+                <span data-pi-element="codex-cli-activation" style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  {activeCodexStatus.activationState === "waiting_for_idle" ? "待任务空闲后切换"
+                    : activeCodexStatus.activationState === "switching" ? "正在切换运行版本" : "切换待确认，后台将重试"}
+                </span>
+              ) : null}
+            </>
+          ) : (
           <div data-pi-element="pi-version-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minWidth: 0, maxWidth: "100%" }}>
             <a
               href="https://pi.dev/"
@@ -237,6 +361,7 @@ export function NewSessionBrandHeader({
               </a>
             ) : null}
           </div>
+          )}
         </div>
       </div>
     </div>

@@ -29,7 +29,7 @@ interface StorageLike {
 
 export type TabOpen =
   | { kind: "session"; sessionId: string }
-  | { kind: "new"; cwd: string };
+  | { kind: "new"; cwd: string; engine?: "pi" | "codex" };
 
 function getBrowserStorage(): StorageLike | null {
   if (typeof window === "undefined") return null;
@@ -46,12 +46,12 @@ function parseTabOpen(raw: string | null): TabOpen | null {
     try {
       const parsed: unknown = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-      const record = parsed as { kind?: unknown; sessionId?: unknown; cwd?: unknown };
+      const record = parsed as { kind?: unknown; sessionId?: unknown; cwd?: unknown; engine?: unknown };
       if (record.kind === "session" && typeof record.sessionId === "string" && record.sessionId) {
         return { kind: "session", sessionId: record.sessionId };
       }
       if (record.kind === "new" && typeof record.cwd === "string" && record.cwd.trim()) {
-        return { kind: "new", cwd: record.cwd };
+        return { kind: "new", cwd: record.cwd, ...((record.engine === "pi" || record.engine === "codex") ? { engine: record.engine } : {}) };
       }
       return null;
     } catch {
@@ -92,11 +92,12 @@ export function setTabOpenSession(
 export function setTabOpenNewSession(
   cwd: string,
   storage: StorageLike | null = getBrowserStorage(),
+  engine?: "pi" | "codex",
 ): void {
   const trimmed = cwd.trim();
   if (!storage || !trimmed) return;
   try {
-    writeTabOpen({ kind: "new", cwd: trimmed }, storage);
+    writeTabOpen({ kind: "new", cwd: trimmed, ...(engine ? { engine } : {}) }, storage);
   } catch {
     // storage unavailable — memory is best-effort
   }

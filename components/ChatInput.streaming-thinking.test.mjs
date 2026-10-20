@@ -31,7 +31,8 @@ test("shows the resolved level and treats auto as an uncommitted default", () =>
 });
 
 test("session hook layers thinking like the model selector", () => {
-  assert.match(session, /displayThinkingLevel = isNew/);
+  assert.match(session, /requestedDisplayThinkingLevel = isNew/);
+  assert.match(session, /displayThinkingLevel = clampModelThinkingLevel\(requestedDisplayThinkingLevel/);
   assert.match(session, /newSessionThinkingLevel \?\? newSessionDefaultThinkingLevel/);
   assert.match(session, /isAutoThinkingSelection: isNew && newSessionThinkingLevel === null/);
   assert.match(session, /if \(state\?\.thinkingLevel !== undefined\) \{\s*setLiveThinkingLevel\(asConcreteThinkingLevel\(state\.thinkingLevel\)\);/);

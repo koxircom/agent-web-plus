@@ -1,5 +1,5 @@
 /**
- * Safe, atomic in-memory queue operations for Pi Web v2.
+ * Safe, atomic in-memory queue operations for Agent Web Plus v2.
  * Supports image attachment metadata, single-item recall/delete, promote, and all-item recall.
  *
  * Micro-contract v2:

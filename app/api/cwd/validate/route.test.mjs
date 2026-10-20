@@ -6,7 +6,7 @@ import test from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, {
-  alias: { "@": process.cwd() },
+  alias: { "@": process.cwd(), "server-only": "next/dist/compiled/server-only/empty.js" },
   interopDefault: true,
   moduleCache: false,
 });

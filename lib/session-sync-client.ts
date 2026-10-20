@@ -35,9 +35,10 @@ export function buildSessionSyncUrl(options: {
 
 /** Only committed history changes invalidate disk/network snapshots. Streaming
  * deltas and replayed tool progress update separate state and must not starve
- * initial hydration before it even reaches fetch. */
+ * initial hydration before it even reaches fetch. Reconnection and completion are read barriers:
+ * a pre-handshake/settlement flight must not certify the current transcript. */
 export function invalidatesSessionHistory(eventType: string): boolean {
-  return /^(message_end|compaction_start|auto_compaction_start)$/.test(eventType);
+  return /^(connected|message_end|agent_settled|prompt_done|compaction_start|auto_compaction_start)$/.test(eventType);
 }
 
 // Epoch identity survives remounts without unbounded per-session counters.
@@ -131,12 +132,14 @@ export function reconcileSyncResponse(params: {
 
 /** Keep already loaded ancestors when a confirmed tail window advances.
  * The wire baseline stays narrow and exact; only the display view is widened.
- * A changed branch, unknown gap or edited overlap must fail closed.
+ * A changed branch or unknown gap fails closed. Same-epoch linear row IDs
+ * may replace a changing overlap; branch histories also require equal bodies.
  */
 export function preserveLoadedHistoryPrefix(
   next: SessionData,
-  base: SessionWireBaseline | null,
+  base: Pick<SessionWireBaseline, "sessionId" | "messages" | "entryIds"> | null,
   current: { messages: AgentMessage[]; entryIds: string[]; oldestEntryId: string | null; hasMore: boolean },
+  stableRowIdentity = false,
 ): SessionData {
   if (!base || base.sessionId !== next.sessionId || current.messages.length < current.entryIds.length
     || !viewMatchesBaseline(base, current.messages.slice(0, current.entryIds.length), current.entryIds)) return next;
@@ -145,7 +148,7 @@ export function preserveLoadedHistoryPrefix(
   if (offset <= 0) return next;
   const overlap = Math.min(current.entryIds.length - offset, nextIds.length);
   if (!overlap || !nextIds.slice(0, overlap).every((id, i) => id === current.entryIds[offset + i]
-    && isAgentMessageEqual(next.context.messages[i], current.messages[offset + i]))) return next;
+    && (stableRowIdentity || isAgentMessageEqual(next.context.messages[i], current.messages[offset + i])))) return next;
   return { ...next, context: { ...next.context,
     messages: current.messages.slice(0, offset).concat(next.context.messages),
     entryIds: current.entryIds.slice(0, offset).concat(nextIds),
@@ -155,7 +158,7 @@ export function preserveLoadedHistoryPrefix(
 }
 
 /** A wider view is reusable only if its suffix exactly covers this confirmed wire window. */
-export function viewMatchesBaseline(base: SessionWireBaseline, viewMessages: AgentMessage[], viewIds: string[]): boolean {
+export function viewMatchesBaseline<T extends Pick<SessionWireBaseline, "messages" | "entryIds">>(base: T, viewMessages: AgentMessage[], viewIds: string[]): boolean {
   if (viewMessages.length !== viewIds.length || viewIds.length < base.entryIds.length) return false;
   const offset = viewIds.length - base.entryIds.length;
   return base.entryIds.every((id, i) => id === viewIds[offset + i] && equal(base.messages[i], viewMessages[offset + i]));

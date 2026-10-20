@@ -1,3 +1,4 @@
+import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { selectSessionReadRuntime, isSessionReadStable } from "@/lib/session-read-source";
 import { NextResponse } from "next/server";
 import { existsSync, statSync } from "fs";
@@ -10,8 +11,10 @@ import {
   invalidateSessionListCache,
   invalidateSessionManagerCache,
   getSessionFileFingerprint,
+  readSessionHeader,
 } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { getPromptEntryIds } from "@/lib/prompt-delivery";
 import { startServerPerf } from "@/lib/perf";
 import { jsonResponse } from "@/lib/json-response";
 import { negotiateSessionSync, type SessionSyncScope } from "@/lib/session-sync-server";
@@ -35,6 +38,15 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  if (isCodexSessionId(id)) {
+    try {
+      return Response.json(await (await import("@/lib/execution-engines/codex-engine")).readCodexSession(id, req), { headers: { "Cache-Control": "no-store" } });
+    } catch (error) {
+      const status = error && typeof error === "object" && "status" in error ? Number(error.status) : 502;
+      return Response.json({ error: error instanceof Error ? error.message : "历史记录暂时无法读取" },
+        { status: status >= 400 && status <= 599 ? status : 502, headers: { "Cache-Control": "no-store" } });
+    }
+  }
   const perf = startServerPerf("GET /api/sessions/[id]");
   try {
     perf?.span("resolve");
@@ -53,15 +65,26 @@ export async function GET(
       wrapperRebuilt = true;
       liveWrapper = undefined;
     }
-    // A retained idle wrapper has finished writing. Read disk so its history
-    // can receive a stable revision while the runtime remains available.
+    // Persisted idle wrappers read stable disk. A new SDK session has no file
+    // until its first conversation message and must retain its memory source.
     const liveRpc = selectSessionReadRuntime(liveWrapper);
     const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
     if (!liveRpc && !resolvedPath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      return NextResponse.json({ error: "Session not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
     }
 
     const filePath = liveRpc?.sessionFile || resolvedPath || "";
+    if (searchParams.get("lookup") === "1") {
+      // A search click needs only current identity, never a full history parse.
+      let exists = Boolean(liveRpc);
+      if (!exists) {
+        try { exists = getSessionFileFingerprint(filePath) !== null && readSessionHeader(filePath)?.id === id; }
+        catch { /* A concurrent removal is an unavailable result. */ }
+      }
+      return NextResponse.json(exists ? { sessionId: id, exists: true } : { error: "Session not found" }, {
+        status: exists ? 200 : 404, headers: { "Cache-Control": "no-store" },
+      });
+    }
     const summaryTree = searchParams.get("tree") === "summary";
     const deferToolResults = searchParams.get("deferTools") === "1";
     const deferThinking = searchParams.has("deferThinking");
@@ -84,6 +107,7 @@ export async function GET(
           sessionId: id,
           sourceId: `runtime:${String(liveRpc.inner.sessionId)}`,
           summaryTree,
+          unstable: Boolean(liveRpc.hasUnpersistedSession?.()),
           deferThinking,
           deferToolResults,
           deferToolResultImages,
@@ -92,7 +116,7 @@ export async function GET(
         // The live writer remains the authoritative source; reject a snapshot
         // if that wrapper was replaced or stopped while its data was projected.
         const currentRpc = getRpcSession(id);
-        if (currentRpc !== liveRpc || !liveRpc.isAlive() || !liveRpc.isRunning()) {
+        if (currentRpc !== liveRpc || selectSessionReadRuntime(liveRpc) !== liveRpc) {
           throw sessionSnapshotChanged("构建会话详情期间，运行中的写入状态发生变化，请重试。");
         }
       } else {
@@ -152,7 +176,7 @@ export async function GET(
       // metadata is being resolved even when the initial snapshot was stable.
       const finalRpc = getRpcSession(id);
       if (liveRpc) {
-        if (finalRpc !== liveRpc || !liveRpc.isAlive() || !liveRpc.isRunning()) {
+        if (finalRpc !== liveRpc || selectSessionReadRuntime(liveRpc) !== liveRpc) {
           throw sessionSnapshotChanged("读取会话详情期间，运行中的写入状态发生变化，请重试。");
         }
       } else {
@@ -166,6 +190,7 @@ export async function GET(
 
       return {
         sessionId: id,
+        promptEntryIds: Object.fromEntries(Object.entries(getPromptEntryIds(id)).filter(([, entryId]) => context.entryIds.includes(entryId))),
         filePath: actualFilePath,
         info,
         leafId,
@@ -239,6 +264,10 @@ export async function PATCH(
     if (typeof name !== "string") {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
+    if (isCodexSessionId(id)) {
+      await (await import("@/lib/execution-engines/codex-bridge-client")).codexBridgeJson(`/api/sessions/${id.slice(6)}/rename`, { title: name });
+      return NextResponse.json({ ok: true });
+    }
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
@@ -258,12 +287,13 @@ export async function PATCH(
 // DELETE /api/sessions/[id] uses the same guarded deletion owner as batch requests.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  if (isCodexSessionId(id)) return NextResponse.json({ error: "请在 Codex 执行端管理会话删除" }, { status: 409 });
   try {
-    const { results } = await deleteSessions([id]);
+    const { results, auditWarning } = await deleteSessions([id], { origin: "api-single" });
     const result = results[0];
     if (result.missing) return NextResponse.json({ error: "Session not found" }, { status: 404 });
     if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...(auditWarning ? { auditWarning } : {}) });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

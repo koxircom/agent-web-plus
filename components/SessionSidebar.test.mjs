@@ -62,7 +62,7 @@ test("does not register row-level session deletion shortcuts", () => {
 
 test("polls running sessions only while the tab is visible", () => {
   assert.doesNotMatch(source, /new EventSource\("\/api\/agent\/running\/events"\)/);
-  assert.match(source, /fetch\("\/api\/agent\/running"/);
+  assert.ok(source.includes("fetch(`/api/agent/running?engine=${executionEngine}`"));
   assert.match(source, /document\.visibilityState !== "visible"/);
   assert.match(source, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
 });
@@ -104,6 +104,13 @@ test("includes project activity counts in accessible labels", () => {
   );
 });
 
+test("shows the interrupted state on the exact session row", () => {
+  assert.match(
+    sessionItemSource,
+    /rowStatus === "interrupted"[\s\S]*?title="本轮任务异常停止，点击会话查看具体错误"[\s\S]*?>异常停止<\/span>/,
+  );
+});
+
 test("formats session timestamps with the active locale", () => {
   assert.match(source, /import \{ formatRelativeTime \} from "@\/lib\/i18n\/format"/);
   assert.match(sessionItemSource, /const \{ locale, t \} = useI18n\(\)/);
@@ -118,7 +125,7 @@ test("does not persist an unchanged fallback title ending in whitespace", () => 
 });
 
 test("offers the downstream context-menu hook only on a normal session row", () => {
-  assert.match(sessionItemSource, /const handleContextMenu[\s\S]*?dispatchSessionRowContextMenu\(\{/);
+  assert.match(sessionItemSource, /const openContextMenu[\s\S]*?dispatchSessionRowContextMenu\(\{/);
   assert.match(
     sessionItemSource,
     /onContextMenu=\{renaming \? undefined : handleContextMenu\}/,
@@ -126,9 +133,9 @@ test("offers the downstream context-menu hook only on a normal session row", () 
 });
 
 test("lifecycle refreshes bypass the cache while cross-window polling reuses it", () => {
-  assert.match(source, /function sessionListUrl\(summary: boolean, force: boolean\)/);
-  assert.match(source, /if \(summary\) return "\/api\/sessions\?summary=1"/);
-  assert.match(source, /if \(force\) return "\/api\/sessions\?force=1"/);
+  assert.match(source, /function sessionListUrl\(summary: boolean, force: boolean, engine: "pi" \| "codex"\)/);
+  assert.ok(source.includes("if (summary) return `/api/sessions?engine=${engine}&summary=1`"));
+  assert.ok(source.includes("if (force) return `/api/sessions?engine=${engine}&force=1`"));
   assert.match(source, /cache: "no-store"/);
   // First paint uses the cheap summary listing, then hydrates after a delay.
   assert.match(source, /loadSessions\(true, false, true\)/);

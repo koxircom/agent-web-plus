@@ -14,7 +14,9 @@ export async function GET(req: Request) {
     // waiting for every session transcript to be parsed.
     const summary = searchParams.get("summary") === "1";
     perf?.span("start");
-    const data = await readSessionList({ summary, force });
+    const requestedEngine = searchParams.get("engine");
+    const engine = requestedEngine === "pi" || requestedEngine === "codex" ? requestedEngine : undefined;
+    const data = await readSessionList({ summary, force, engine });
     perf?.span("scan+projects");
     return perf?.attach(jsonResponse(
       req,

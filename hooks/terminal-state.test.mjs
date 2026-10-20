@@ -8,7 +8,7 @@ function evaluate(node){return new Function('scope',`with(scope){return ${ts.tra
 function callback(name){let found;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(file)===name)found=n.initializer.arguments[0];ts.forEachChild(n,visit);}visit(file);assert.ok(found,name);return evaluate(found);}
 function harness(){const ref=current=>({current});let resolve;const response=new Promise(r=>resolve=r);const ui={running:true,phase:{kind:'waiting_model'},notifications:0};const noop=()=>{};
  const scope={agentRunningRef:ref(true),sdkAgentActiveRef:ref(true),rpcPromptPendingRef:ref(true),promptRunIdRef:ref(1),agentStateRevisionRef:ref(0),notifiedPromptRunIdRef:ref(0),sessionIdRef:ref('s'),optimisticUserMessageRef:ref(null),preparationRef:ref(null),getPendingPromptSubmissions:()=>[],
- invalidatesSessionHistory:()=>false,bumpSessionEpoch:noop,cancelEventStreamGrace:noop,setAgentRunning:v=>ui.running=v,setAgentPhase:v=>ui.phase=v,setRetryInfo:noop,setActiveToolResults:noop,dispatch:noop,setIsCompacting:noop,setAutoCompactionEnabled:noop,setQueuedMessages:noop,normalizeQueuedMessages:x=>x,syncLiveModel:noop,loadSession:noop,scheduleEventStreamClose:noop,fetch:()=>response,
+ invalidatesSessionHistory:()=>false,bumpSessionEpoch:noop,cancelEventStreamGrace:noop,setAgentRunning:v=>ui.running=v,setAgentPhase:v=>ui.phase=v,setRetryInfo:noop,setActiveToolResults:noop,dispatch:noop,setIsCompacting:noop,setAutoCompactionEnabled:noop,setQueuedMessages:noop,normalizeQueuedMessages:x=>x,syncLiveModel:noop,reconcileSelectedHistory:noop,loadSession:noop,scheduleEventStreamClose:noop,fetch:()=>response,
  setMessages:noop,normalizeToolCalls:x=>x,isSystemMessageEvent:()=>false,setContextUsage:noop,setSystemPrompt:noop,setExtensionStatuses:noop,setExtensionWidgets:noop,
  notifyPromptStage:id=>{if(scope.notifiedPromptRunIdRef.current!==id){scope.notifiedPromptRunIdRef.current=id;ui.notifications++;}},
  settleUiStage:()=>{const was=scope.agentRunningRef.current;scope.agentRunningRef.current=false;ui.running=false;ui.phase=null;return was;}};
@@ -79,6 +79,7 @@ test('metadata callback changes cannot postpone the missed-event recovery clock'
  const listeners=new Map();const events={addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name,fn)=>{if(listeners.get(name)===fn)listeners.delete(name);}};
  const scope={agentRunning:true,sessionIdRef:{current:'s'},AGENT_STATE_RECONCILE_MS:15000,setInterval,clearInterval,
   document:{...events,visibilityState:'visible'},window:events};
+ scope.reconcileSelectedHistory=()=>scope.reconcileAgentState('s');
  scope.reconcileRunningAgent=()=>scope.reconcileAgentState('s');
  const render=version=>{
   scope.reconcileAgentState=()=>{checks++;lastCheckedVersion=version;};
@@ -103,10 +104,25 @@ test('sidebar completion verifies the runtime without clearing local submission 
   &&n.arguments[0]?.getText(file).includes('previousSessionRunningRef.current'))effect=n;ts.forEachChild(n,visit);}
  visit(file);assert.ok(effect);
  let checks=0;
- const scope={opts:{sessionRunning:false},previousSessionRunningRef:{current:false},reconcileRunningAgent:()=>checks++};
+ const scope={opts:{sessionRunning:false},previousSessionRunningRef:{current:false},reconcileSelectedHistory:()=>checks++};
  const apply=evaluate(effect.arguments[0])(scope);
  apply();assert.equal(checks,0,'The initial empty sidebar must not end a local prompt');
  scope.opts.sessionRunning=true;apply();assert.equal(checks,0);
  scope.opts.sessionRunning=false;apply();assert.equal(checks,1,'A server-observed completion should be confirmed immediately');
  apply();assert.equal(checks,1,'Repeated idle snapshots do not duplicate completion checks');
+});
+
+test('native usage updates the shared state only for the currently selected session and clears missing values',()=>{
+ const h=harness();let context=null,data={sessionId:'s'};h.scope.setContextUsage=v=>context=v;h.scope.setData=f=>data=f(data);
+ const usage={contextUsage:{tokens:125000,contextWindow:500000,percent:25},tokens:{input:1,output:2,cacheRead:0,cacheWrite:0,total:3}};
+ h.scope.handleAgentEvent({type:'session_usage',sessionId:'other',usage});assert.equal(context,null);
+ h.scope.handleAgentEvent({type:'session_usage',sessionId:'s',usage});assert.equal(context.tokens,125000);assert.equal(data.usage.tokens.total,3);
+ h.scope.handleAgentEvent({type:'session_usage',sessionId:'s',usage:{contextUsage:null,tokens:null}});assert.equal(context,null);assert.equal(data.usage.tokens,null);
+});
+
+test('late history invalidation forces a fresh shared read without reviving the idle agent',()=>{
+ const h=harness(),calls=[];h.scope.agentRunningRef.current=false;h.scope.ui={};h.ui.running=false;
+ h.scope.loadSession=(...args)=>calls.push(args);
+ h.scope.handleAgentEvent({type:'session_history_changed'});
+ assert.deepEqual(calls,[['s',false,false,{force:true}]]);assert.equal(h.ui.running,false);
 });

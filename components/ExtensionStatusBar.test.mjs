@@ -93,3 +93,10 @@ test("renders widgets and status text in one footer", () => {
   assert.match(html, /usage/);
   assert.match(html, /connected/);
 });
+
+test("shared composer protocol does not reserve a JSON footer or hide other tools", () => {
+ const composer = {key: "composer-modes", text: JSON.stringify({version:1,mode:"goal",goal:"目标正文"})};
+ assert.equal(renderStatusBar({statuses:[composer]}), "");
+ const html = renderStatusBar({statuses:[composer,{key:"lsp",text:"LSP 已就绪"}]});
+ assert.match(html,/LSP 已就绪/); assert.doesNotMatch(html,/目标正文|composer-modes|&quot;version/);
+});

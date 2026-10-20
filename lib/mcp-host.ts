@@ -31,7 +31,7 @@ import { mayReadProjectConfigNow } from "./project-trust";
 
 export { canonicalJson };
 
-// Pi Web decides which MCP servers a session connects (ADR 0006). The SDK's
+// Agent Web Plus decides which MCP servers a session connects (ADR 0006). The SDK's
 // MCP extension is created with a `loadConfig` that returns no servers; this
 // host reads `mcp.json` itself and hands the servers it wants to the extension
 // through `pi.registerMcpServer()`:
@@ -281,7 +281,7 @@ function errorName(error: unknown): string | undefined {
  * up (`McpOAuthAuthorizationRequiredError`), or an OAuth server still answered
  * 401 (`McpAuthRequiredError`). A server with an `Authorization` header gets
  * no auth provider, and its 401 is a failure. Told by name: neither class is
- * among the SDK modules Pi Web loads, and a second module copy would defeat
+ * among the SDK modules Agent Web Plus loads, and a second module copy would defeat
  * `instanceof` anyway.
  */
 function asksForSignIn(error: unknown, usesOAuth: boolean): boolean {
@@ -1040,7 +1040,7 @@ export class McpHost {
       const host = this.current;
       const attempt = host?.attemptFor(entry);
       if (!attempt && host?.refuseAbandoned(entry)) {
-        throw new Error(`MCP server "${entry.name}" was removed before it connected, so Pi Web did not start it`);
+        throw new Error(`MCP server "${entry.name}" was removed before it connected, so Agent Web Plus did not start it`);
       }
       let transport: ReturnType<McpTransportFactory>;
       try {

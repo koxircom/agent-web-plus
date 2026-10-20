@@ -69,7 +69,7 @@ Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端、HTML
 
 项目显示名为 Agent Web Plus，仓库地址继续沿用 `koxircom/pi-web-plus`。本文介绍面向 **1.4.0**（Pi SDK **1.3.0**）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
 
-> **发布状态：1.4.0 安装包尚未公开。** 本页先更新双引擎介绍；旧版 Pi Web Plus 不包含全部 Codex 功能。以下 Release 安装命令需等 v1.4.0 发布后使用，发布前下载地址不可用。源码与安装包是否可用，以仓库提交和 Releases 实际内容为准。
+> 本页介绍 **1.4.0 双引擎功能**，旧版 Pi Web Plus 不包含全部 Codex 能力。请从本仓库正式 Releases 下载对应版本，并保留原数据目录；实际可用安装包以 Releases 页面为准。
 
 ```bash
 npm install -g https://github.com/koxircom/pi-web-plus/releases/download/v1.4.0/pi-web-plus-1.4.0.tgz

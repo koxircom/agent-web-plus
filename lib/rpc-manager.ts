@@ -1,5 +1,7 @@
 import { createLearningRecallExtension, reviewCompletedLearning } from "./learning-runtime";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { clampModelThinkingLevel, type ModelThinkingLevel } from "./model-thinking-level";
 import { getPromptReceipt, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery } from "./prompt-delivery";
 import { ProjectStatusLedger } from "./project-status-ledger";
 import { createProgressCommentaryExtension } from "./progress-commentary";
@@ -63,6 +65,7 @@ import {
 } from "./session-tool-selection";
 import {
   deleteQueued,
+  extractMessageText,
   getQueuedMessage,
   promote,
   recall,
@@ -315,6 +318,7 @@ export class AgentSessionWrapper {
   private extensionWidgetGenerations = new Map<string, number>();
   private extensionWidgetsResetting = false;
   private pendingPromptCount = 0;
+  private pendingNativePrompts = new Set<Promise<void>>();
   private promptStopEpoch = 0;
   private activeMutatingCommands = 0;
   private sessionReplacement: "fork" | "clone" | null = null;
@@ -333,6 +337,9 @@ export class AgentSessionWrapper {
   private mcpPromptWait: { controller: AbortController; done: Promise<void> } | null = null;
   // Owns Stop cleanup until the MCP wait and SDK abort have both settled.
   private abortCleanupPromise: Promise<void> | null = null;
+  // Stop pauses queue execution, including submissions still in transit. Only
+  // an explicit ordinary prompt resumes it; queued intents keep SDK ownership.
+  private queuePausedByStop = false;
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
@@ -445,6 +452,14 @@ export class AgentSessionWrapper {
     return this._alive && !this.closing;
   }
 
+  /** SDK bootstrap entries stay in memory until the first conversation message. */
+  hasUnpersistedSession(): boolean {
+    const file = this.inner.sessionManager.getSessionFile();
+    if (!file || existsSync(file)) return false;
+    return !this.inner.sessionManager.getEntries().some((entry) => entry.type === "message"
+      && (entry.message.role === "user" || entry.message.role === "assistant"));
+  }
+
   isRunning(): boolean {
     return this._alive && (this.pendingPromptCount > 0 || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning);
   }
@@ -487,11 +502,49 @@ export class AgentSessionWrapper {
 
   private startedPromptRequestId: string | null = null;
   private promptReceiptMessages = new WeakMap<object, string>();
+  // References to accepted SDK queue objects bridge dequeue -> public user
+  // delivery. They never enqueue, execute, or replay a task independently.
+  private queuedDeliveries = new Map<object, "steering" | "followUp">();
+  private queueUpdateScheduled = false;
+  private mutatingPromptQueue = false;
+
+  private clientQueuedMessages(): { steering: string[]; followUp: string[]; requestIds?: { steering: (string | null)[]; followUp: (string | null)[] } } {
+    const queues = this.inner.agent as unknown as { steeringQueue?: { messages: object[] }; followUpQueue?: { messages: object[] } };
+    if (!queues.steeringQueue || !queues.followUpQueue) return {
+      steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()],
+    };
+    const raw = { steering: queues.steeringQueue.messages, followUp: queues.followUpQueue.messages };
+    const active = new Set([...raw.steering, ...raw.followUp]);
+    for (const kind of ["steering", "followUp"] as const) {
+      for (const message of raw[kind]) if (this.queuedDeliveries.has(message)) {
+        // Preserve the SDK's latest reorder/promotion when a batch is drained.
+        this.queuedDeliveries.delete(message);
+        this.queuedDeliveries.set(message, kind);
+      }
+    }
+    const pending = { steering: [] as object[], followUp: [] as object[] };
+    for (const [message, kind] of this.queuedDeliveries) if (!active.has(message)) pending[kind].push(message);
+    return {
+      steering: [...pending.steering, ...raw.steering].map(extractMessageText),
+      followUp: [...pending.followUp, ...raw.followUp].map(extractMessageText),
+      ...([...pending.steering, ...raw.steering, ...pending.followUp, ...raw.followUp].length ? { requestIds: {
+        steering: [...pending.steering, ...raw.steering].map(message => this.promptReceiptMessages.get(message) ?? null),
+        followUp: [...pending.followUp, ...raw.followUp].map(message => this.promptReceiptMessages.get(message) ?? null),
+      } } : {}),
+    };
+  }
+
+  private publishQueueUpdate(): void {
+    this.emit({ type: "queue_update", ...this.clientQueuedMessages() });
+  }
   private activePromptRequestIds = new Set<string>();
 
   isPromptRequestActive(requestId: string): boolean {
     if (!this.isAlive()) return false;
     if (this.activePromptRequestIds.has(requestId)) return true;
+    for (const message of this.queuedDeliveries.keys()) {
+      if (this.promptReceiptMessages.get(message) === requestId) return true;
+    }
     const queues = this.inner.agent as unknown as { steeringQueue?: { messages: object[] }; followUpQueue?: { messages: object[] } };
     for (const queue of [queues.steeringQueue, queues.followUpQueue]) {
       for (const message of queue?.messages ?? []) if (this.promptReceiptMessages.get(message) === requestId) return true;
@@ -520,7 +573,10 @@ export class AgentSessionWrapper {
   private mutatePromptQueue<T extends object>(action: () => T, recalling = false): T & { cancelledPromptRequestIds: string[]; recalledPromptRequestIds?: string[] } {
     const queues = this.inner.agent as unknown as { steeringQueue: { messages: object[] }; followUpQueue: { messages: object[] } };
     const before = [...queues.steeringQueue.messages, ...queues.followUpQueue.messages];
-    const result = action();
+    let result: T;
+    this.mutatingPromptQueue = true;
+    try { result = action(); }
+    finally { this.mutatingPromptQueue = false; }
     const remaining = new Set([...queues.steeringQueue.messages, ...queues.followUpQueue.messages]);
     const cancelledPromptRequestIds: string[] = [];
     const recalledPromptRequestIds: string[] = [];
@@ -532,13 +588,29 @@ export class AgentSessionWrapper {
       if (recalling) recallPromptDelivery(this.sessionId, requestId);
       else cancelPromptDelivery(this.sessionId, requestId);
       this.promptReceiptMessages.delete(message);
+      this.queuedDeliveries.delete(message);
       (recalling ? recalledPromptRequestIds : cancelledPromptRequestIds).push(requestId);
     }
+    this.publishQueueUpdate();
     return { ...result, cancelledPromptRequestIds, ...(recalling ? { recalledPromptRequestIds } : {}) };
   }
 
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+      if (event.type === "queue_update") {
+        // The SDK publishes additions before inserting the raw object and
+        // removals before awaiting message_start extensions. Project after its
+        // synchronous mutation, retaining dequeued objects until message_end.
+        if (!this.mutatingPromptQueue && !this.queueUpdateScheduled) {
+          this.queueUpdateScheduled = true;
+          queueMicrotask(() => {
+            this.queueUpdateScheduled = false;
+            if (this.isAlive()) this.publishQueueUpdate();
+          });
+        }
+        return;
+      }
+      let deliveredRequestId: string | undefined;
       if (event.type === "message_start") {
         reconcileDeliveredImageOnlyMessage(this.inner, event.message);
         if ((event.message as { role?: string } | undefined)?.role === "user" && this.startedPromptRequestId) {
@@ -547,7 +619,9 @@ export class AgentSessionWrapper {
         }
       }
       if (event.type === "message_end" && event.message && typeof event.message === "object") {
+        this.queuedDeliveries.delete(event.message);
         const requestId = this.promptReceiptMessages.get(event.message);
+        deliveredRequestId = requestId;
         if (requestId) {
           this.promptReceiptMessages.delete(event.message);
           const message = event.message;
@@ -580,10 +654,7 @@ export class AgentSessionWrapper {
       // Deliver the user bubble and current queue as one wire event. A consumer
       // need not wait for a DOM mirror or another state request to remove it.
       if (event.type === "message_end" && (event.message as { role?: string } | undefined)?.role === "user") {
-        this.emit({ ...event, queuedMessages: {
-          steering: [...this.inner.getSteeringMessages()],
-          followUp: [...this.inner.getFollowUpMessages()],
-        } } as AgentEvent);
+        this.emit({ ...event, ...(deliveredRequestId ? { requestId: deliveredRequestId } : {}), queuedMessages: this.clientQueuedMessages() } as AgentEvent);
       } else {
         this.emit(event);
       }
@@ -663,7 +734,7 @@ export class AgentSessionWrapper {
             id: randomUUID(),
             method: "notify",
             notifyType: "warning",
-            message: "Extension requested shutdown, but shutdown is not supported in Pi Web.",
+            message: "Extension requested shutdown, but shutdown is not supported in Agent Web Plus.",
           } as ExtensionUiRequest as AgentEvent),
           onError: (error) => this.emit({
             type: "extension_error",
@@ -847,7 +918,7 @@ export class AgentSessionWrapper {
     if (requestId && this.inner.sessionFile) this.confirmPromptDelivery(requestId, { sessionFile: this.inner.sessionFile, entryId });
     if (this.inner.sessionFile) cacheSessionPath(this.inner.sessionId, this.inner.sessionFile);
     invalidateSessionListCache();
-    this.emit({ type: "message_end", message, entryId });
+    this.emit({ type: "message_end", message, entryId, ...(requestId ? { requestId } : {}) });
     return { stopped: true, entryId };
   }
 
@@ -977,6 +1048,14 @@ export class AgentSessionWrapper {
         // this submission starts a run or joins its streaming queue.
         const releaseAdmission = await this.acquirePromptAdmission();
         try {
+          // During agent_settled the SDK is no longer streaming, but prompt()
+          // defers input and returns before preflight. Finish that native run
+          // before admitting another prompt so its early return cannot become
+          // a false queue acknowledgement. Streaming admission stays immediate.
+          if (!this.inner.isStreaming && this.pendingNativePrompts.size) {
+            await Promise.allSettled([...this.pendingNativePrompts]);
+            if (!this.isAlive()) throw new Error("Session closed before prompt admission");
+          }
           if (this.inner.isBashRunning) {
             throw new Error("Cannot send a prompt while a shell command is running");
           }
@@ -986,11 +1065,12 @@ export class AgentSessionWrapper {
           }
           const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
           const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+          const promptText = typeof command.message === "string" ? command.message : "";
+          const isExtensionCommand = promptText.startsWith("/") && this.extensionCommandCandidates().some(
+            candidate => candidate.name === promptText.slice(1).split(" ")[0],
+          );
           const requestId = typeof command.requestId === "string" ? command.requestId : null;
           const stopEpoch = this.promptStopEpoch;
-          let stoppedBeforeRun = false;
-          let stoppedResult: { stopped: true; entryId: string } | undefined;
-          let settleStoppedPreflight!: () => void;
           let preflightAccepted = false;
           let promptDisposition: "handled" | "queued" | "started" | undefined;
           let preflightSettled = false;
@@ -998,11 +1078,6 @@ export class AgentSessionWrapper {
           let acceptPreflight!: () => void;
           let rejectPreflight!: (error: unknown) => void;
           const preflight = new Promise<void>((resolve, reject) => {
-            settleStoppedPreflight = () => {
-              if (preflightSettled) return;
-              preflightSettled = true;
-              resolve();
-            };
             acceptPreflight = () => {
               preflightAccepted = true;
               this.agentRunNeedsCompletion = true;
@@ -1035,7 +1110,7 @@ export class AgentSessionWrapper {
           // extension command before anything else and starts no run for it: another
           // extension's command skips this, and the built-in `/mcp`, which acts on the
           // registered servers, registers them without waiting (`mcpPromptPreparation()`).
-          const mcpPreparation = this.mcpHost && !this.inner.isStreaming
+          const mcpPreparation = this.mcpHost && !this.inner.isStreaming && !(streamingBehavior && this.queuePausedByStop && !isExtensionCommand)
             ? mcpPromptPreparation(typeof command.message === "string" ? command.message : "", this.extensionCommandCandidates())
             : "none";
           if (this.mcpHost && mcpPreparation !== "none") {
@@ -1048,7 +1123,7 @@ export class AgentSessionWrapper {
             this.mcpPromptWait = wait;
             try {
               await waited;
-              if (controller.signal.aborted) {
+              if (controller.signal.aborted && !streamingBehavior) {
                 try { return this.retainStoppedPrompt(command); }
                 finally { finishPrompt(); }
               }
@@ -1060,42 +1135,60 @@ export class AgentSessionWrapper {
           // edit/reorder keeps object identity; ambiguous additions stay unconfirmed.
           const queues = this.inner.agent as unknown as { steeringQueue?: { messages: object[] }; followUpQueue?: { messages: object[] } };
           const queueBefore = new Set([...(queues.steeringQueue?.messages ?? []), ...(queues.followUpQueue?.messages ?? [])]);
+          const onPreflightResult = (disposition: "handled" | "queued" | "started") => {
+            if (disposition === "started" && stopEpoch !== this.promptStopEpoch) {
+              // The SDK has entered its run lifecycle here. Throwing would skip
+              // its cleanup and leave isStreaming stuck. Use its native abort;
+              // the admitted user message is delivered and persisted normally.
+              void this.inner.abort().catch(error => console.error("[pi-web] preflight Stop failed:", error));
+            }
+            else if (disposition === "started" && !streamingBehavior) this.queuePausedByStop = false;
+            promptDisposition = disposition;
+            if (requestId) {
+              if (disposition === "started") this.startedPromptRequestId = requestId;
+              else if (disposition === "queued") {
+                const added = [...(queues.steeringQueue?.messages ?? []), ...(queues.followUpQueue?.messages ?? [])].filter(message => !queueBefore.has(message));
+                if (added.length === 1) {
+                  this.promptReceiptMessages.set(added[0], requestId);
+                  this.queuedDeliveries.set(added[0], queues.steeringQueue?.messages.includes(added[0]) ? "steering" : "followUp");
+                }
+              } else {
+                // Extension commands can intentionally produce no user bubble.
+                // Their original input is already in the durable inbox.
+                this.confirmPromptDelivery(requestId, { handled: true });
+              }
+            }
+            acceptPreflight();
+          };
           let prompt: Promise<void>;
           try {
-            prompt = this.inner.prompt(command.message as string, {
-              ...(promptImages?.length ? { images: promptImages } : {}),
-              ...(streamingBehavior ? { streamingBehavior } : {}),
-              source: "rpc",
-              // Match pi's RPC contract: acknowledge only after synchronous prompt
-              // validation and extension preflight have accepted the submission.
-              // Every disposition (handled, queued, started) is an acceptance; a
-              // rejected prompt never calls this and rejects `prompt` instead.
-              preflightResult: (disposition) => {
-                if (disposition === "started" && stopEpoch !== this.promptStopEpoch) {
-                  stoppedBeforeRun = true;
-                  throw new Error(MCP_WAIT_STOPPED_MESSAGE);
-                }
-                promptDisposition = disposition;
-                if (requestId) {
-                  if (disposition === "started") this.startedPromptRequestId = requestId;
-                  else if (disposition === "queued") {
-                    const added = [...(queues.steeringQueue?.messages ?? []), ...(queues.followUpQueue?.messages ?? [])].filter(message => !queueBefore.has(message));
-                    if (added.length === 1) this.promptReceiptMessages.set(added[0], requestId);
-                  } else {
-                    // Extension commands can intentionally produce no user bubble.
-                    // Their original input is already in the durable inbox.
-                    this.confirmPromptDelivery(requestId, { handled: true });
-                  }
-                }
-                acceptPreflight();
-              },
-            });
+            if (streamingBehavior && this.queuePausedByStop && !this.inner.isStreaming && !isExtensionCommand) {
+              // Stop may arrive before this queued HTTP request. Keep its exact
+              // text/images in the SDK queue instead of starting a fresh run.
+              const enqueue = streamingBehavior === "steer"
+                ? this.inner.steer(command.message as string, promptImages?.length ? promptImages : undefined, { source: "rpc" })
+                : this.inner.followUp(command.message as string, promptImages?.length ? promptImages : undefined, { source: "rpc" });
+              prompt = enqueue.then(disposition => { onPreflightResult(disposition); });
+            } else {
+              prompt = this.inner.prompt(command.message as string, {
+                ...(promptImages?.length ? { images: promptImages } : {}),
+                ...(streamingBehavior ? { streamingBehavior } : {}),
+                source: "rpc",
+                // Match pi's RPC contract: acknowledge only after synchronous prompt
+                // validation and extension preflight have accepted the submission.
+                // Every disposition (handled, queued, started) is an acceptance; a
+                // rejected prompt never calls this and rejects `prompt` instead.
+                preflightResult: onPreflightResult,
+              });
+            }
           } catch (error) {
             finishPrompt();
             throw error;
           }
 
+          this.pendingNativePrompts.add(prompt);
           void prompt.then(() => {
+            this.pendingNativePrompts.delete(prompt);
             // Compatibility fallback if a future SDK resolves without invoking
             // the internal callback. This waits for the run, but never acks early.
             acceptPreflight();
@@ -1105,14 +1198,7 @@ export class AgentSessionWrapper {
             // run; started/handled requests still need wrapper completion.
             if (promptDisposition !== "queued") this.emit({ type: "prompt_done" });
           }, (error) => {
-            if (stoppedBeforeRun) {
-              try {
-                stoppedResult = this.retainStoppedPrompt(command);
-                settleStoppedPreflight();
-              } catch (saveError) { rejectPreflight(saveError); }
-              finishPrompt();
-              return;
-            }
+            this.pendingNativePrompts.delete(prompt);
             rejectPreflight(error);
             finishPrompt();
             invalidateSessionListCache();
@@ -1133,13 +1219,14 @@ export class AgentSessionWrapper {
           });
 
           await preflight;
-          return stoppedResult ?? null;
+          return null;
         } finally {
           releaseAdmission();
         }
       }
 
       case "abort": {
+        this.queuePausedByStop = true;
         this.promptStopEpoch += 1;
         if (this.abortCleanupPromise) return { accepted: true };
 
@@ -1208,6 +1295,7 @@ export class AgentSessionWrapper {
       case "get_state": {
         const model = this.inner.model;
         const contextUsage = this.inner.getContextUsage();
+        const queuedMessages = this.clientQueuedMessages();
         return {
           sessionId: this.inner.sessionId,
           sessionFile: this.inner.sessionFile ?? "",
@@ -1221,11 +1309,8 @@ export class AgentSessionWrapper {
           activeModel: model ? { id: model.id, provider: model.provider } : undefined,
           nextTurnSettings: this.nextTurnSettings,
           messageCount: 0,
-          pendingMessageCount: this.inner.pendingMessageCount,
-          queuedMessages: {
-            steering: [...this.inner.getSteeringMessages()],
-            followUp: [...this.inner.getFollowUpMessages()],
-          },
+          pendingMessageCount: queuedMessages.steering.length + queuedMessages.followUp.length,
+          queuedMessages,
           contextUsage: contextUsage
             ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
             : null,
@@ -1250,14 +1335,20 @@ export class AgentSessionWrapper {
           if (this.inner.modelRuntime.checkAuth && !await this.inner.modelRuntime.checkAuth(provider)) {
             throw new Error("所选模型认证失败，请检查该模型的认证配置。");
           }
-          this.saveNextTurnSettings({ ...this.nextTurnSettings, model: { id: model.id, provider: model.provider } });
+          const requestedThinking = this.nextTurnSettings.thinkingLevel
+            ?? this.inner.settingsManager?.getModelThinkingLevel(model.provider, model.id)
+            ?? this.inner.settingsManager?.getDefaultThinkingLevel()
+            ?? this.inner.agent.state?.thinkingLevel ?? "off";
+          const thinkingLevel = clampModelThinkingLevel(requestedThinking as ModelThinkingLevel,
+            getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]))!;
+          this.saveNextTurnSettings({ ...this.nextTurnSettings, model: { id: model.id, provider: model.provider }, thinkingLevel });
         } else {
           await this.inner.setModel(model);
           if (this.nextTurnSettings.model) this.saveNextTurnSettings({ ...this.nextTurnSettings, model: undefined });
         }
         invalidateModelsCache();
         invalidateSessionListCache();
-        return { id: model.id, provider: model.provider };
+        return { id: model.id, provider: model.provider, thinkingLevel: this.nextTurnSettings.thinkingLevel ?? this.inner.agent.state?.thinkingLevel ?? "off" };
       }
 
       case "fork": {
@@ -1378,13 +1469,19 @@ export class AgentSessionWrapper {
         if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level)) {
           throw new Error("思考深度参数无效，请重新选择。");
         }
-        if (this.isRunning()) this.saveNextTurnSettings({ ...this.nextTurnSettings, thinkingLevel: level });
+        if (this.isRunning()) {
+          const selected = this.nextTurnSettings.model ?? this.inner.model;
+          const model = selected && this.inner.modelRuntime.getModel(selected.provider, selected.id);
+          const thinkingLevel = clampModelThinkingLevel(level as ModelThinkingLevel, model
+            ? getSupportedThinkingLevels(model as Parameters<typeof getSupportedThinkingLevels>[0]) : null)!;
+          this.saveNextTurnSettings({ ...this.nextTurnSettings, thinkingLevel });
+        }
         else {
           this.setThinkingLevel(level);
           if (this.nextTurnSettings.thinkingLevel !== undefined) this.saveNextTurnSettings({ ...this.nextTurnSettings, thinkingLevel: undefined });
         }
         invalidateSessionListCache();
-        return null;
+        return { thinkingLevel: this.nextTurnSettings.thinkingLevel ?? this.inner.agent.state?.thinkingLevel ?? "off" };
       }
 
       case "compact": {
@@ -1641,6 +1738,7 @@ export class AgentSessionWrapper {
     this.startedPromptRequestId = null;
     this.activePromptRequestIds.clear();
     this.promptReceiptMessages = new WeakMap();
+    this.queuedDeliveries.clear();
     this.disposeMcpHost();
     // Tell attached SSE listeners to drop this instance so the browser
     // EventSource errors and reconnects instead of staying OPEN on a dead wrapper.
@@ -2288,7 +2386,7 @@ export class AgentSessionWrapper {
       get theme() { return PLAIN_TEXT_THEME; },
       getAllThemes: () => [],
       getTheme: () => undefined,
-      setTheme: () => ({ success: false, error: "Theme switching is not supported in Pi Web extension UI yet" }),
+      setTheme: () => ({ success: false, error: "Theme switching is not supported in Agent Web Plus extension UI yet" }),
       getToolsExpanded: () => false,
       setToolsExpanded: () => {},
     };
@@ -2754,7 +2852,7 @@ export async function startRpcSession(
       // Otherwise DO NOT pass a builtin-only allow-list: passing CODING_TOOL_NAMES
       // set allowedToolNames to coding builtins only, which filtered every
       // extension/package-provided tool (e.g. subagents, web access) out of the
-      // tool registry — so they were unavailable in Pi Web sessions even though the
+      // tool registry — so they were unavailable in Agent Web Plus sessions even though the
       // `pi` CLI keeps them. Leaving the allow-list unset lets the SDK register all
       // tools (and activate extension tools); we narrow the ACTIVE set below.
       toolsOption = selectedToolNames.length === 0 ? [] : undefined;
@@ -2912,7 +3010,7 @@ export async function startRpcSession(
 
     // If specific tool names were requested (non-empty), set the active tools to the
     // requested builtin coding tools PLUS all extension/package tools, so installed
-    // extensions stay usable in Pi Web just like in the `pi` CLI.
+    // extensions stay usable in Agent Web Plus just like in the `pi` CLI.
     if (!subagentResources && !chatOnly) {
       const initialToolNames = inner.getActiveToolNames();
       inner.setActiveToolsByName(

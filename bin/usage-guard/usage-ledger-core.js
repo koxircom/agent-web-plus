@@ -20,6 +20,7 @@
     "gemini-2.0-flash": { key: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
     "gemini-1.5-pro": { key: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
     "gpt-6-astra": { key: "gpt-6-astra", name: "GPT-6 Astra" },
+    "gpt-6.1-sol": { key: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
     "gpt-6-sol": { key: "gpt-6-sol", name: "GPT-6 Sol" },
     "gpt-6-luna": { key: "gpt-6-luna", name: "GPT-6 Luna" },
     "gpt-5.6-sol": { key: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
@@ -48,16 +49,17 @@
 
   // Pi SDK 模型目录参考价/基准价，非账单 (USD / 1M Tokens: [input, output, cacheRead, cacheWrite])
   const STANDARD_RATES = {
-    "gemini-3.8-flash-high": [0.10, 0.40, 0.025, 0.025],
+    "gemini-3.8-flash-high": [0.10, 0.40, 0.025, 0.025], // Google 官方 Gemini 3.8 Flash High 定价
     "gemini-3.8-flash": [0.10, 0.40, 0.025, 0.025],
     "gemini-3.8-flash-exp-a": [0.10, 0.40, 0.025, 0.025],
     "gemini-3.8-flash-exp": [0.10, 0.40, 0.025, 0.025],
     "gemini-2.0-flash": [0.10, 0.40, 0.025, 0.025],
     "gemini-1.5-pro": [1.25, 5.00, 0.3125, 0.3125],
     "gpt-6-astra": [10.00, 50.00, 1.00, 12.50],
+    "gpt-6.1-sol": [2.00, 10.00, 0.10, 2.50], // OpenAI 官方 Standard 定价 (https://developers.openai.com/api/docs/pricing)
     "gpt-6-sol": [2.00, 10.00, 0.20, 2.50],
     "gpt-6-luna": [0.10, 0.50, 0.01, 0.125],
-    "gpt-5.6-sol": [4.00, 20.00, 0.40, 5.00],
+    "gpt-5.6-sol": [4.00, 20.00, 0.40, 5.00], // 最新官方调整下调 20%
     "gpt-5.6-terra": [2.00, 12.00, 0.20, 2.50],
     "gpt-5.6-luna": [0.20, 1.20, 0.02, 0.25],
     "gpt-5.5": [5.00, 30.00, 0.50, 0.00],
@@ -76,11 +78,12 @@
     "o1": [15.00, 60.00, 7.50, 0.00],
     "claude-3.7-sonnet": [3.00, 15.00, 0.30, 0.30],
     "claude-3.5-sonnet": [3.00, 15.00, 0.30, 0.30],
-    "deepseek-flash": [0.30, 1.20, 0.006, 0.006],
-    "deepseek-v4-pro": [1.32, 3.96, 0.044, 0.044],
+    "deepseek-flash": [0.30, 1.20, 0.006, 0.006], // DeepSeek 官网最新标准高峰价 (空闲5折为 [0.15, 0.60, 0.003, 0.003])
+    "deepseek-v4-pro": [1.32, 3.96, 0.044, 0.044], // DeepSeek 官网最新 Pro 高峰价 (空闲5折为 [0.66, 1.98, 0.022, 0.022])
     "system-summaries": [2.50, 10.00, 1.25, 1.25],
   };
 
+  // 规范模型归一化映射：仅显式完整别名白名单，未知保持原样，system仅无模型时归为system-summaries
   function canonicalModel(model, provider, role) {
     const raw = String(model || "").trim();
     const m = raw.toLowerCase();
@@ -105,9 +108,23 @@
     return canonicalModel(id, null, null).name;
   }
 
+  // Only validated Codex lineage changes the conversation dimension. Physical
+  // execution buckets, dates, roles and Pi's existing ownership stay intact.
+  function conversationId(ledger, id) {
+    const seen = new Set([id]);
+    let current = id;
+    while (true) {
+      const parent = ledger.sessions?.[current]?.parentSessionId;
+      if (typeof parent !== "string" || !parent.startsWith("codex:") || !ledger.sessions?.[parent]) return current;
+      if (seen.has(parent)) return id;
+      seen.add(parent);
+      current = parent;
+    }
+  }
+
   function aggregate(ledger, options = {}) {
     const total = empty(), roles = { main: empty(), subagent: empty(), system: empty() };
-    const models = new Map(), sessions = new Map(), allModels = new Map();
+    const models = new Map(), sessions = new Map(), allModels = new Map(), physicalSessions = new Set();
     const now = options.now ?? Date.now(), range = options.timeRange || "all";
 
     const validRanges = ["all", "today", "yesterday", "24h", "7d", "30d", "custom"];
@@ -118,6 +135,11 @@
     if (options.role && !validRoles.includes(options.role)) {
       throw new Error(`Invalid role: ${options.role}`);
     }
+    const validEngines = ["all", "pi", "codex"];
+    if (options.engine !== undefined && !validEngines.includes(options.engine)) {
+      throw new Error(`Invalid engine: ${options.engine}`);
+    }
+    const selectedEngine = options.engine === undefined ? "all" : options.engine;
     if (options.now !== undefined && (typeof options.now !== "number" || !Number.isFinite(options.now))) {
       throw new Error("Invalid now timestamp");
     }
@@ -168,6 +190,12 @@
     let excludedTokens = 0, excludedRecords = 0;
 
     for (const b of ledger.buckets || []) {
+      const bucketEngine = b.engine === undefined ? "pi" : b.engine;
+      if (bucketEngine !== "pi" && bucketEngine !== "codex") {
+        throw new Error(`Invalid bucket engine: ${bucketEngine}`);
+      }
+      if (selectedEngine !== "all" && bucketEngine !== selectedEngine) continue;
+
       const c = canonicalModel(b.model, b.provider, b.role);
       const cKey = c.key;
       allModels.set(cKey, c.name);
@@ -198,6 +226,7 @@
         }
       }
 
+      // 如果既非目标执行模型，也非目标 controller 的调度子任务，则跳过
       if (!matchExecutionCandidate && !matchControllerCandidate) continue;
 
       let item;
@@ -250,9 +279,10 @@
         item = { ...b };
       }
 
-      let effectiveCostNano = item.costNano || 0;
+      // 智能价格核算：有原生上报优先原值；旧桶整个桶 cost=0 时全桶补价；不得对 cost>0 且部分 unpriced 用比例近似冒充精确
+      let effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
       let effectiveUnpriced = item.unpricedTokens || 0;
-      if (item.totalTokens > 0) {
+      if (bucketEngine !== "codex" && item.totalTokens > 0) {
         const rate = STANDARD_RATES[cKey];
         if (rate) {
           if (effectiveCostNano <= 0) {
@@ -267,9 +297,14 @@
 
       const matchRole = !options.role || options.role === "all" || b.role === options.role;
 
+      // 1. 物理执行维度：必须匹配执行模型筛选与角色筛选
       if (matchExecutionCandidate && matchRole) {
         add(total, item);
         add(roles[item.role], item);
+        if (bucketEngine === "codex") {
+          total.codexTokens = (total.codexTokens || 0) + item.totalTokens;
+          roles[item.role].codexTokens = (roles[item.role].codexTokens || 0) + item.totalTokens;
+        }
 
         if (!models.has(cKey)) {
           models.set(cKey, {
@@ -286,7 +321,13 @@
         const m = models.get(cKey);
         add(m, item);
         add(m.roles[item.role], item);
-        m.sessionIds.add(item.sessionId);
+        if (bucketEngine === "codex") {
+          m.codexTokens = (m.codexTokens || 0) + item.totalTokens;
+          m.roles[item.role].codexTokens = (m.roles[item.role].codexTokens || 0) + item.totalTokens;
+        }
+        const groupId = bucketEngine === "codex" ? conversationId(ledger, item.sessionId) : item.sessionId;
+        physicalSessions.add(item.sessionId);
+        m.sessionIds.add(groupId);
         if (b.provider && b.provider !== "unknown") m.providerList.add(b.provider);
 
         if (b.role === "subagent") {
@@ -295,12 +336,41 @@
           m.workerSubagents.messages += item.messageCount;
         }
 
-        if (!sessions.has(item.sessionId)) {
-          sessions.set(item.sessionId, { ...(ledger.sessions?.[item.sessionId] || {}), ...empty(), id: item.sessionId });
+        if (!sessions.has(groupId)) {
+          sessions.set(groupId, { ...(ledger.sessions?.[groupId] || {}), ...empty(), id: groupId,
+            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map() });
         }
-        add(sessions.get(item.sessionId), item);
+        const group = sessions.get(groupId);
+        add(group, item);
+        if (bucketEngine === "codex") {
+          group.codexTokens = (group.codexTokens || 0) + item.totalTokens;
+          if (item.role === "subagent") {
+            group.subagentTokens += item.totalTokens;
+            group.subagentIds.add(item.sessionId);
+          } else group.mainTokens += item.totalTokens;
+        }
+        // These rows explain already-counted Codex physical usage. They never
+        // flow back into aggregate totals, and require a validated parent link.
+        if (bucketEngine === "codex" && item.role === "subagent" && groupId !== item.sessionId) {
+          const detailDay = typeof b.day === "string" ? b.day : "unknown";
+          const detailKey = JSON.stringify([item.sessionId, detailDay]);
+          let detail = group.subtaskDetails.get(detailKey);
+          if (!detail) {
+            const childSession = ledger.sessions?.[item.sessionId] || {};
+            detail = {
+              ...empty(), sessionId: item.sessionId,
+              name: childSession.name || childSession.title || item.sessionId,
+              day: detailDay, codexTokens: 0,
+            };
+            group.subtaskDetails.set(detailKey, detail);
+          }
+          add(detail, item);
+          detail.codexTokens += item.totalTokens;
+        }
       }
 
+      // 2. 调度归属维度：双向子代理归属，仅记录发起调用的主控模型（非加和信息，不计入物理总量）
+      // controller dispatch 必须遵守执行角色筛选：role=main 时不展示来自 role=subagent 的 dispatch/savings；role=all 或 role=subagent 时可展示
       if (matchControllerCandidate && ctrlCanonical && matchRole) {
         const ctrl = ctrlCanonical;
         if (!models.has(ctrl.key)) {
@@ -322,10 +392,14 @@
         cm.dispatchedSubagents.tokens += item.totalTokens;
         cm.dispatchedSubagents.calls += item.calls;
         cm.dispatchedSubagents.messages += item.messageCount;
+        if (bucketEngine === "codex") cm.dispatchedSubagents.codexTokens = (cm.dispatchedSubagents.codexTokens || 0) + item.totalTokens;
 
+        // 子 Agent 实际费用：优先使用已按事件精确聚合的 item.costNano（item.costNano 是唯一实际费用入口）
+        // 只有 unpricedTokens === 0 才算该子桶完整定价。
+        // 若任何选中调度子桶未完整定价，整个 controller 的 savings 标记为 pricingComplete=false
         const mainRate = STANDARD_RATES[ctrl.key];
-        const isSubPriced = (item.unpricedTokens || 0) === 0;
-        const hasHypMainCost = Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+        const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
+        const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
 
         if (isSubPriced && hasHypMainCost) {
           const actualSubCost = (item.costNano || 0) / 1e9;
@@ -362,7 +436,7 @@
       }
       return {
         ...m,
-        provider: m.providerList.size > 0 ? [...m.providerList].join(" · ") : "未记录渠道",
+        provider: m.providerList.size > 0 ? [...m.providerList].join(" · ") : "未记录渠道", 
         providerList: undefined,
         sessionCount: m.sessionIds.size,
         sessionIds: undefined,
@@ -376,7 +450,13 @@
       modelBreakdowns,
       allModels: [...allModels],
       sessionCount: sessions.size,
-      topSessions: [...sessions.values()].sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
+      physicalSessionCount: physicalSessions.size,
+      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => ({
+        ...session,
+        subagentCount: subagentIds.size,
+        subtasks: [...subtaskDetails.values()].sort((a, b) =>
+          b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
+      })).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
       timeCoverage: { excludedTokens, excludedRecords },
     };
   }
@@ -384,6 +464,7 @@
   function validate(ledger) {
     if (ledger.version !== 2 || !Array.isArray(ledger.buckets)) throw new Error("Unsupported Usage ledger schema");
     for (const b of ledger.buckets) {
+      if (b.engine !== undefined && b.engine !== "pi" && b.engine !== "codex") throw new Error(`Invalid bucket engine: ${b.engine}`);
       if (!["main", "subagent", "system"].includes(b.role)) throw new Error("Invalid execution role");
       if (b.day !== "unknown") {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(b.day)) throw new Error(`Invalid day format: ${b.day}`);
@@ -419,7 +500,7 @@
             tlSum[k] += v;
             if (!Number.isSafeInteger(tlSum[k])) throw new Error(`Timeline integer overflow for ${k}`);
           }
-          const entryTotal = entry[1 + 4];
+          const entryTotal = entry[1 + 4]; // totalTokens
           const entryComp = entry[1 + 0] + entry[1 + 1] + entry[1 + 2] + entry[1 + 3];
           if (entryTotal !== entryComp) throw new Error("Timeline entry token components do not reconcile");
         }
@@ -436,6 +517,8 @@
       if (a[k] !== a.modelBreakdowns.reduce((s, m) => s + m[k], 0)) throw new Error(`Model mismatch: ${k}`);
       if (a[k] !== Object.values(a.roles).reduce((s, r) => s + r[k], 0)) throw new Error(`Role mismatch: ${k}`);
       if (ledger.totals && a[k] !== ledger.totals[k]) {
+        // 成本与未定价属于派生核算字段（受 STANDARD_RATES 费率基准表与智能补价规则控制）
+        // 只要底层物理 token 与记录计数量完全一致，允许平滑自愈对齐快照 totals，杜绝费率基准演进导致面板报错
         if (k === "costNano" || k === "unpricedTokens") {
           const tokensMatch = ledger.totals.totalTokens === a.totalTokens &&
                               ledger.totals.inputTokens === a.inputTokens &&

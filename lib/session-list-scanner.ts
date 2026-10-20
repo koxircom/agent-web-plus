@@ -44,6 +44,15 @@ function isRecord(value: unknown): value is RawEntry {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function errorCode(error: unknown): string | undefined {
+	return (error as NodeJS.ErrnoException | undefined)?.code;
+}
+
+/** A file/project can disappear between enumeration and its read. */
+function isExpectedCandidateDisappearance(error: unknown): boolean {
+	return ["ENOENT", "ENOTDIR", "EISDIR"].includes(errorCode(error) ?? "");
+}
+
 const INDEX_FORMAT_VERSION = 1;
 
 declare global {
@@ -64,8 +73,9 @@ function parseLine(line: string): RawEntry | null {
 
 /** Read only the first physical line needed to identify a session file. */
 function readSessionHeaderSummary(filePath: string): RawEntry | null {
-	const fd = openSync(filePath, "r");
+	let fd: number | undefined;
 	try {
+		fd = openSync(filePath, "r");
 		const buffer = Buffer.allocUnsafe(SUMMARY_HEADER_MAX_BYTES);
 		const bytesRead = readSync(fd, buffer, 0, buffer.length, 0);
 		if (bytesRead <= 0) return null;
@@ -76,10 +86,11 @@ function readSessionHeaderSummary(filePath: string): RawEntry | null {
 			return entry.type === "session" ? entry : null;
 		}
 		return null;
-	} catch {
-		return null;
+	} catch (error) {
+		if (isExpectedCandidateDisappearance(error)) return null;
+		throw error;
 	} finally {
-		closeSync(fd);
+		if (fd !== undefined) closeSync(fd);
 	}
 }
 
@@ -103,7 +114,6 @@ function deferredSessionInfo(
 	if (
 		!header
 		|| typeof header.id !== "string"
-		|| typeof header.cwd !== "string"
 		|| typeof header.timestamp !== "string"
 	) return null;
 
@@ -113,7 +123,7 @@ function deferredSessionInfo(
 	return {
 		path: filePath,
 		id: header.id,
-		cwd: header.cwd,
+		cwd: typeof header.cwd === "string" ? header.cwd : "",
 		created,
 		modified: new Date(fingerprint.mtimeMs),
 		messageCount: 0,
@@ -230,7 +240,7 @@ export async function scanSessionFileInfo(
 		return {
 			path: filePath,
 			id: header.id as string,
-			cwd,
+			cwd: typeof header.cwd === "string" ? header.cwd : "",
 			name,
 			parentSessionPath,
 			created: new Date(header.timestamp as string),
@@ -238,8 +248,9 @@ export async function scanSessionFileInfo(
 			messageCount,
 			firstMessage: firstMessage || "(no messages)",
 		};
-	} catch {
-		return null;
+	} catch (error) {
+		if (isExpectedCandidateDisappearance(error)) return null;
+		throw error;
 	}
 }
 
@@ -250,8 +261,12 @@ async function enumerateSessionFiles(sessionsDir: string): Promise<string[]> {
 		dirs = entries.filter(
 			(entry) => entry.isDirectory() || entry.isSymbolicLink(),
 		);
-	} catch {
-		return [];
+	} catch (error) {
+		// A brand-new agent has no sessions directory yet. Once an index exists,
+		// ENOENT means the previously readable root disappeared; preserve the old
+		// catalogue by surfacing the read failure instead of returning [] as truth.
+		if (errorCode(error) === "ENOENT" && getIndex().size === 0) return [];
+		throw error;
 	}
 
 	const files: string[] = [];
@@ -261,8 +276,11 @@ async function enumerateSessionFiles(sessionsDir: string): Promise<string[]> {
 			for (const f of await readdir(dirPath)) {
 				if (f.endsWith(".jsonl")) files.push(join(dirPath, f));
 			}
-		} catch {
-			// unreadable project dir: same skip-as-absent semantics as the SDK
+		} catch (error) {
+			// A concurrently removed project or a symlink to a non-directory is a
+			// normal enumeration race. Permission, I/O, and mount failures are not.
+			if (isExpectedCandidateDisappearance(error)) continue;
+			throw error;
 		}
 	}
 	return files;
@@ -273,13 +291,28 @@ const MAX_CONCURRENT_SCANS = 10;
 async function runPool<T>(items: T[], worker: (item: T) => Promise<void>) {
 	let next = 0;
 	const inFlight = new Set<Promise<void>>();
+	const failures: unknown[] = [];
+	// Keep every started read settled before surfacing the first failure. A
+	// rejected Promise.race alone would leave sibling file reads running and
+	// could turn their later failures into unhandled rejections.
+	const start = (item: T) => {
+		let task!: Promise<void>;
+		task = Promise.resolve()
+			.then(() => worker(item))
+			.catch((error) => { failures.push(error); })
+			.finally(() => inFlight.delete(task));
+		inFlight.add(task);
+	};
+
 	while (next < items.length || inFlight.size > 0) {
-		while (next < items.length && inFlight.size < MAX_CONCURRENT_SCANS) {
-			const item = items[next++];
-			const task = worker(item).finally(() => inFlight.delete(task));
-			inFlight.add(task);
+		while (failures.length === 0 && next < items.length && inFlight.size < MAX_CONCURRENT_SCANS) {
+			start(items[next++]);
 		}
 		if (inFlight.size > 0) await Promise.race(inFlight);
+		if (failures.length > 0) {
+			await Promise.all(inFlight);
+			throw failures[0];
+		}
 	}
 }
 
@@ -387,7 +420,8 @@ export async function listSessionsIncremental(
 					filePath,
 					fp: { size: s.size, mtimeMs: s.mtimeMs } as Fingerprint,
 				};
-			} catch {
+			} catch (error) {
+				if (!isExpectedCandidateDisappearance(error)) throw error;
 				return { filePath, fp: null as Fingerprint | null };
 			}
 		}),

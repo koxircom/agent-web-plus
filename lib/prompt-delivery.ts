@@ -10,19 +10,19 @@ export type PromptReceipt =
   | { status: "pending" | "accepted" | "unconfirmed" | "unknown" }
   | { status: "committed"; entryId?: string }
   | { status: "cancelled" }
-  | { status: "recalled" }
+  | { status: "recalled"; reason?: "runtime_exit" }
   | { status: "rejected"; error: string };
-type RecordEntry = { fingerprint: string; receipt: PromptReceipt; at: number; command?: Record<string, unknown> };
+type RecordEntry = { fingerprint: string; receipt: PromptReceipt; at: number; command?: Record<string, unknown>; entryId?: string };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
-const RETENTION_MS = 24 * 60 * 60 * 1000;
 const isTerminal = (status: PromptReceipt["status"]) => ["committed", "rejected", "cancelled", "recalled"].includes(status);
-const canExpire = (status: PromptReceipt["status"]) => isTerminal(status) && status !== "recalled";
 
 /** Most acknowledgements concern the just-appended user entry. Read its tail
  * first; oversized/older entries fall back to a streaming read, never a
  * synchronous allocation and parse of the entire transcript on the server. */
 async function syncNativeUserEntry(filePath: string, entryId: string): Promise<void> {
-  const file = await open(filePath, "r");
+  // Windows FlushFileBuffers requires a writable handle. r+ never creates,
+  // truncates or changes content; Linux keeps its existing read-only handle.
+  const file = await open(filePath, process.platform === "win32" ? "r+" : "r");
   const matches = (line: string) => {
     try {
       const entry = JSON.parse(line);
@@ -69,6 +69,7 @@ export function createPromptDeliveryStore(agentDir: string) {
   const records = new Map<string, Map<string, RecordEntry>>();
   const flights = new Map<string, Promise<unknown>>();
   const committing = new Set<string>();
+  const listeners = new Map<string, Set<(requestId: string, receipt: PromptReceipt) => void>>();
   const directory = (sid: string) => join(root, digest(sid));
   const filename = (sid: string, requestId: string) => join(directory(sid), `${digest(requestId)}.json`);
   function session(sid: string) {
@@ -80,9 +81,9 @@ export function createPromptDeliveryStore(agentDir: string) {
       if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
       const saved = JSON.parse(readFileSync(join(dir, file), "utf8")) as RecordEntry & { requestId: string };
       if (!validPromptRequestId(saved.requestId) || !saved.receipt || typeof saved.fingerprint !== "string") throw new Error("Invalid saved prompt receipt");
-      // Only confirmed/rejected receipts can expire; unresolved original contents stay.
-      if (canExpire(saved.receipt.status) && Date.now() - saved.at > RETENTION_MS) unlinkSync(join(dir, file));
-      else rows.set(saved.requestId, saved);
+      // Terminal records contain only identity/fingerprint/receipt. Keep these
+      // small tombstones so a delayed offline client can never replay a prompt.
+      rows.set(saved.requestId, saved);
     }
     records.set(sid, rows);
     return rows;
@@ -108,6 +109,9 @@ export function createPromptDeliveryStore(agentDir: string) {
       if (process.platform !== "win32") { const d = openSync(dir, "r"); try { fsyncSync(d); } finally { closeSync(d); } }
     } finally { if (existsSync(temp)) unlinkSync(temp); }
     session(sid).set(requestId, row);
+    for (const listener of listeners.get(sid) ?? []) {
+      try { listener(requestId, row.receipt); } catch { /* Delivery observers cannot roll back a durable write. */ }
+    }
   }
   const receipt = (sid: string, requestId: string): PromptReceipt => session(sid).get(requestId)?.receipt ?? { status: "unknown" };
   async function commit(sid: string, requestId: string, evidence: { sessionFile: string; entryId: string } | { handled: true }) {
@@ -119,12 +123,19 @@ export function createPromptDeliveryStore(agentDir: string) {
       let entryId: string | undefined;
       if ("entryId" in evidence) {
         entryId = evidence.entryId;
+        // Presentation identity is known after the SDK append. This is not a
+        // committed acknowledgement: the existing fsync gate below still owns it.
+        row.entryId = entryId;
         // Identity comes from the live SDK's persisted entry, never matching text.
         await syncNativeUserEntry(evidence.sessionFile, entryId);
       }
       if (isTerminal(session(sid).get(requestId)!.receipt.status)) return;
       save(sid, requestId, { fingerprint: row.fingerprint, at: row.at, receipt: { status: "committed", ...(entryId ? { entryId } : {}) } });
     } finally { committing.delete(id); }
+  }
+  function accept(sid: string, requestId: string) {
+    const row = session(sid).get(requestId);
+    if (row?.receipt.status === "pending") save(sid, requestId, { ...row, receipt: { status: "accepted" } });
   }
   function unconfirmed(sid: string, requestId: string) {
     const row = session(sid).get(requestId);
@@ -137,17 +148,31 @@ export function createPromptDeliveryStore(agentDir: string) {
     save(sid, requestId, { fingerprint: row.fingerprint, at: row.at, receipt: { status: "cancelled" } });
   }
   function pending(sid: string): PendingPromptSubmission[] {
-    return [...session(sid)].flatMap(([requestId, row]) => row.command && (!isTerminal(row.receipt.status) || row.receipt.status === "recalled")
+    return [...session(sid)].flatMap<PendingPromptSubmission>(([requestId, row]) => row.command && (!isTerminal(row.receipt.status) || row.receipt.status === "recalled")
       ? [{ requestId, sessionId: sid, message: String(row.command.message ?? ""),
         images: row.command.images as PendingPromptSubmission["images"], createdAt: row.at,
+        ...(row.receipt.status === "recalled" && row.receipt.reason ? { recoveryReason: row.receipt.reason } : {}),
         status: row.receipt.status === "recalled" ? "recalled" as const : row.receipt.status === "accepted" ? "accepted" as const : row.receipt.status === "unconfirmed" ? "unconfirmed" as const : "sending" as const,
         ...(row.command.streamingBehavior === "steer" || row.command.streamingBehavior === "followUp" ? { streamingBehavior: row.command.streamingBehavior } : {}),
-      }] : []);
+      }] : []).sort((a, b) => a.createdAt - b.createdAt);
   }
-  function recall(sid: string, requestId: string) {
+  function recall(sid: string, requestId: string, reason?: "runtime_exit") {
     const row = session(sid).get(requestId);
     if (!row || isTerminal(row.receipt.status)) return;
-    save(sid, requestId, { ...row, receipt: { status: "recalled" } });
+    save(sid, requestId, { ...row, receipt: { status: "recalled", ...(reason ? { reason } : {}) } });
+  }
+  /** A dead SDK queue cannot progress. Transfer its original to the existing
+   * recall/durable-draft handshake, never back to execute(). Flight and fsync
+   * ownership cover admission and the gap before the native user receipt.
+   * No age timeout: even an old live request retains its owner. */
+  function recoverInterrupted(sid: string, isActive: (requestId: string) => boolean) {
+    for (const [requestId, row] of session(sid)) {
+      if (isTerminal(row.receipt.status)
+        || !["steer", "followUp"].includes(String(row.command?.streamingBehavior))) continue;
+      const id = JSON.stringify([sid, requestId]);
+      if (flights.has(id) || committing.has(id) || isActive(requestId)) continue;
+      recall(sid, requestId, "runtime_exit");
+    }
   }
   function acknowledgeRecall(sid: string, requestId: string) {
     const row = session(sid).get(requestId);
@@ -160,14 +185,11 @@ export function createPromptDeliveryStore(agentDir: string) {
     if (existing) {
       if (existing.fingerprint !== fingerprint) return Promise.reject(new Error("Prompt request ID already belongs to another submission"));
       if (flights.has(id)) return flights.get(id)!;
-      // A previous process may have executed it. No second execution, even if
-      // it stopped between writing the inbox and beginning preflight.
-      return Promise.reject(new Error("Submission already recorded; check its receipt without resending"));
+      // HTTP retries acknowledge the durable admission, never execute again.
+      if (existing.receipt.status === "rejected") return Promise.reject(new Error(existing.receipt.error));
+      return Promise.resolve(null);
     }
-    for (const [key, row] of rows) if (canExpire(row.receipt.status) && Date.now() - row.at > RETENTION_MS) {
-      unlinkSync(filename(sid, key)); rows.delete(key); flights.delete(JSON.stringify([sid, key]));
-    }
-    if (rows.size >= 512) return Promise.reject(new Error("Too many retained prompt receipts; submission was not sent"));
+    if ([...rows.values()].filter(row => row.command).length >= 512) return Promise.reject(new Error("Too many pending prompts; submission was not sent"));
     const row: RecordEntry = { fingerprint, receipt: { status: "pending" }, at: Date.now(), command };
     // This failure is before execution and can safely restore the draft.
     save(sid, requestId, row);
@@ -177,24 +199,45 @@ export function createPromptDeliveryStore(agentDir: string) {
       return value;
     }, error => {
       const latest = rows.get(requestId)!;
-      if (!isTerminal(latest.receipt.status)) save(sid, requestId, { ...latest, receipt: { status: "rejected", error: error instanceof Error ? error.message : String(error) }, command: undefined });
+      if (!isTerminal(latest.receipt.status)) {
+        const uncertain = error && typeof error === "object" && "deliveryUncertain" in error && error.deliveryUncertain === true;
+        save(sid, requestId, uncertain
+          ? { ...latest, receipt: { status: "unconfirmed" } }
+          : { ...latest, receipt: { status: "rejected", error: error instanceof Error ? error.message : String(error) }, command: undefined });
+      }
       throw error;
-    });
+    }).finally(() => { flights.delete(id); });
     flights.set(id, result);
     return result;
   }
   const isCommitting = (sid: string, requestId: string) => committing.has(JSON.stringify([sid, requestId]));
-  return { run, receipt, commit, isCommitting, unconfirmed, cancel, recall, acknowledgeRecall, pending };
+  const entryIds = (sid: string): Record<string, string> => Object.fromEntries([...session(sid)].flatMap(([requestId, row]) => {
+    const entryId = row.receipt.status === "committed" ? row.receipt.entryId : row.entryId;
+    return entryId && !["cancelled", "recalled", "rejected"].includes(row.receipt.status) ? [[requestId, entryId]] : [];
+  }));
+  function subscribe(sid: string, listener: (requestId: string, receipt: PromptReceipt) => void) {
+    let group = listeners.get(sid);
+    if (!group) listeners.set(sid, group = new Set());
+    group.add(listener);
+    return () => { group.delete(listener); if (!group.size) listeners.delete(sid); };
+  }
+  return { run, receipt, commit, accept, isCommitting, unconfirmed, cancel, recall, acknowledgeRecall, pending, entryIds, subscribe, recoverInterrupted };
 }
 const key = Symbol.for("pi-web:durable-prompt-delivery-v1");
 const registry = globalThis as typeof globalThis & { [key]?: ReturnType<typeof createPromptDeliveryStore> };
 function store() { return registry[key] ??= createPromptDeliveryStore(getAgentDir()); }
 export const getPromptReceipt = (sid: string, requestId: string) => store().receipt(sid, requestId);
+export const getPromptEntryIds = (sid: string) => store().entryIds(sid);
 export const isPromptDeliveryCommitting = (sid: string, requestId: string) => store().isCommitting(sid, requestId);
 export const getUncommittedPromptSubmissions = (sid: string) => store().pending(sid);
+export const acceptPromptDelivery = (sid: string, requestId: string) => store().accept(sid, requestId);
 export const markPromptDeliveryUnconfirmed = (sid: string, requestId: string) => store().unconfirmed(sid, requestId);
 export const cancelPromptDelivery = (sid: string, requestId: string) => store().cancel(sid, requestId);
 export const recallPromptDelivery = (sid: string, requestId: string) => store().recall(sid, requestId);
 export const acknowledgeRecalledPromptDelivery = (sid: string, requestId: string) => store().acknowledgeRecall(sid, requestId);
 export const commitPromptDelivery = (sid: string, requestId: string, evidence: Parameters<ReturnType<typeof createPromptDeliveryStore>["commit"]>[2]) => store().commit(sid, requestId, evidence);
 export const runPromptDelivery = (sid: string, requestId: string, command: Record<string, unknown>, execute: () => Promise<unknown>) => store().run(sid, requestId, command, execute);
+
+export const subscribePromptDeliveries = (sid: string, listener: (requestId: string, receipt: PromptReceipt) => void) => store().subscribe(sid, listener);
+
+export const recoverInterruptedPiPrompts = (sid: string, isActive: (requestId: string) => boolean) => store().recoverInterrupted(sid, isActive);

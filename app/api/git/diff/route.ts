@@ -1,3 +1,4 @@
+import { codexGitDiff, shouldUseCodexWorkspace } from "@/lib/execution-engines/codex-files";
 import { NextRequest, NextResponse } from "next/server";
 import { getAllowedFileRoots, isExistingFilePathAllowed, isFilePathAllowed, isWindowsAbsolutePath } from "@/lib/file-access";
 import { getGitFileDiff } from "@/lib/git-changes";
@@ -13,6 +14,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "path must be an absolute path" }, { status: 400 });
     }
 
+    if (await shouldUseCodexWorkspace(request.nextUrl.searchParams.get("sessionId"))) return NextResponse.json(await codexGitDiff(cwd, filePath));
     const allowedRoots = await getAllowedFileRoots();
     if (!isFilePathAllowed(cwd, allowedRoots) || !isFilePathAllowed(filePath, allowedRoots)) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });

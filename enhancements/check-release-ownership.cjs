@@ -23,6 +23,7 @@ const NATIVE_SETTINGS_SECTIONS = Object.freeze([
   "agents",
   "plugins",
   "mcp",
+  "execution-engine",
   "learning",
 ]);
 
@@ -161,9 +162,7 @@ function checkReleaseOwnership(sources) {
     mutationGate.includes('[role="menu"]') &&
     module07.includes("if (isEditorLocalTextOrNodeMutation(m)) continue;");
 
-  const wordmarkParts = ["Pi", "Web", "Plus"].every((part) =>
-    new RegExp(`<tspan\\b[^>]*>\\s*${part}\\s*</tspan>`).test(brand),
-  );
+  const wordmarkParts = /<tspan\b[^>]*>Agent Web <\/tspan>\s*<tspan\b[^>]*>Plus<\/tspan>/.test(brand);
   const inlineBrandOk =
     countMatches(brand, /<svg\b/g) === 2 &&
     /data-pi-brand-part="wordmark"/.test(brand) &&
@@ -217,8 +216,8 @@ function checkReleaseOwnership(sources) {
       "settings-single-navigation",
       "设置由单一原生导航承载",
       settingsNavOk,
-      "五个原生设置区与启用的 legacy 扩展共用一个对话框导航。",
-      "SettingsPanel 必须保留 general/models/skills/agents/plugins/mcp 六个原生区，将启用的 legacy 扩展显式追加到同一导航，并只声明一个对话框根节点。",
+      "原生设置区与启用的 legacy 扩展共用一个对话框导航。",
+      "SettingsPanel 必须保留 general/models/skills/agents/plugins/mcp/execution-engine/learning 原生区，将启用的 legacy 扩展显式追加到同一导航，并只声明一个对话框根节点。",
       [SOURCE_FILES.settingsPanel],
     ),
     createCheck(
@@ -249,8 +248,8 @@ function checkReleaseOwnership(sources) {
       "brand-inline-vector",
       "品牌标识保留原生矢量字标",
       inlineBrandOk,
-      "PiWebBrand 保留 π+ Pi Web Plus inline SVG 字标，不引入图片叠层。",
-      "PiWebBrand 必须保留 inline SVG 字标 Pi/Web/Plus 和 wordmark 锚点，不能改为 img/image 叠层。",
+      "PiWebBrand 保留 Agent Web Plus inline SVG 字标，不引入图片叠层。",
+      "PiWebBrand 必须保留 inline SVG 字标 Agent Web Plus 和 wordmark 锚点，不能改为 img/image 叠层。",
       [SOURCE_FILES.brand],
     ),
     createCheck(

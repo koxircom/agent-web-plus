@@ -190,7 +190,7 @@ async function overviewResponse(agentDir: string, project: Project | undefined, 
   }
 }
 
-/** Turning on an entry that references PI_WEB_PASSWORD is refused: Pi Web would not connect it, and the pi CLI would send the password. */
+/** Turning on an entry that references PI_WEB_PASSWORD is refused: Agent Web Plus would not connect it, and the pi CLI would send the password. */
 function webPasswordRefusal(internals: PiSdkInternals) {
   return (_name: string, entry: Record<string, unknown>) => (findWebPasswordField(entry, internals) ? "web-password" as const : undefined);
 }
@@ -204,7 +204,7 @@ function outcomeRefusal(outcome: McpEnabledOutcome<"web-password">, path: string
     case "not-an-object":
       return new Refusal(409, "entry-not-object", `${path} defines MCP server "${name}" as something other than an object, so it has nothing to switch`, { path, name });
     case "refused":
-      return new Refusal(409, "web-password", `"${name}" references PI_WEB_PASSWORD, so Pi Web does not turn it on`, { name });
+      return new Refusal(409, "web-password", `"${name}" references PI_WEB_PASSWORD, so Agent Web Plus does not turn it on`, { name });
     default:
       return undefined;
   }

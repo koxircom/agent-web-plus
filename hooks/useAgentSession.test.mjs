@@ -37,34 +37,36 @@ function callback(name, scope, file = hookFile) {
 function messageViewProp(name, scope) {
   const attr = findNode(chatFile, (node) => ts.isJsxAttribute(node)
     && node.name.text === name && node.parent.parent.tagName?.getText(chatFile) === "MessageView");
-  return evaluate(attr.initializer.expression, chatFile, scope);
+  return evaluate(attr.initializer.expression, chatFile, { isCodexSession: false, ...scope });
 }
 const jiti = createJiti(import.meta.url);
 const { getToolExecutionProgress } = await jiti.import("../lib/tool-execution-progress.ts");
 const { completeActiveToolResult, getToolPublicStatus } = await jiti.import("../lib/tool-public-status.ts");
 const { isNestedToolExecutionEvent, isSystemMessageEvent } = await jiti.import("../lib/agent-event-wire.ts");
+const { markLatestAssistantRetryAttempt } = await jiti.import("../lib/message-display.ts");
 const queueHelpers = await jiti.import("../lib/extension-ui-queue.ts");
+const promptRecovery = await jiti.import("../lib/prompt-recovery.ts");
 const ref = (current) => ({ current });
 const noop = () => {};
 function hookHarness() {
-  const state = { messages: [], activeToolResults: new Map(), phase: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0 };
+  const state = { messages: [], activeToolResults: new Map(), phase: null, retryInfo: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0 };
   const setter = (key) => (value) => { state[key] = typeof value === "function" ? value(state[key]) : value; };
   const scope = {
-    ...queueHelpers, sessionIdRef: ref("session"), session: { id: "session" },
+    ...queueHelpers, ...promptRecovery, sessionIdRef: ref("session"), session: { id: "session" },
     agentRunningRef: ref(false), bashRunningRef: ref(false), promptRunIdRef: ref(0), agentStateRevisionRef: ref(0), extensionUiRevisionRef: ref(0),
     rpcPromptPendingRef: ref(false), optimisticUserMessageRef: ref(null), preparationRef: ref(null),
     entryIdsRef: ref([]), pendingScrollToUserRef: ref(false), ensuringNewSessionRef: ref(null),
     isNew: false, newSessionCwd: null, composerDraftKey: "draft", newSessionDraftKey: null,
-    setMessages: setter("messages"), setAgentPhase: setter("phase"), setActiveToolResults: setter("activeToolResults"),
+    setMessages: setter("messages"), setAgentPhase: setter("phase"), setRetryInfo: setter("retryInfo"), setActiveToolResults: setter("activeToolResults"),
     setExtensionDialogs: setter("dialogs"), setExtensionCustomUis: setter("custom"),
     setAgentRunning: noop, setPromptAnchorActive: noop, setPromptScrollRevision: noop, setStopRequested: noop, dispatch: noop,
     markOptimisticUserMessage: noop, bumpSessionEpoch: noop, cancelEventStreamGrace: noop, addNotice: noop,
     invalidatesSessionHistory: () => false, normalizeToolCalls: (value) => value,
     isSystemMessageEvent, isNestedToolExecutionEvent, CODEMODE_TOOL_NAME: "codemode",
-    getToolExecutionProgress, completeActiveToolResult,
+    getToolExecutionProgress, completeActiveToolResult, markLatestAssistantRetryAttempt,
     isPromptRejectedError: (error) => error.code === "rejected",
     waitForPromptPreparation: (operation) => operation,
-    ensureEventsConnected: async () => {}, loadSession: async () => {},
+    maintainEventsConnected: noop, refreshPromptInbox: async () => {}, loadSession: async () => {},
     closeEvents: () => { state.closes++; },
     restoreSubmission: (...args) => state.restores.push(args),
     reconcileAgentState: async (...args) => { state.reconciles.push(args); },
@@ -76,6 +78,35 @@ function hookHarness() {
   scope.handleAgentEvent = callback("handleAgentEvent", scope);
   return { state, scope };
 }
+
+test("auto retry turns the completed provider failure into a non-terminal attempt", () => {
+  const { scope, state } = hookHarness();
+  state.messages = [{
+    role: "assistant",
+    provider: "openai-codex-responses",
+    model: "gpt-6.1-sol",
+    content: [],
+    stopReason: "error",
+    errorMessage: "Codex error: temporary upstream failure",
+  }];
+
+  scope.handleAgentEvent({
+    type: "auto_retry_start",
+    attempt: 1,
+    maxAttempts: 3,
+    errorMessage: "temporary upstream failure",
+  });
+
+  assert.equal(state.messages[0].retryAttempt, true);
+  assert.deepEqual(state.retryInfo, {
+    attempt: 1,
+    maxAttempts: 3,
+    errorMessage: "temporary upstream failure",
+  });
+
+  scope.handleAgentEvent({ type: "auto_retry_end" });
+  assert.equal(state.retryInfo, null);
+});
 
 test("only an authoritative pending-ID snapshot supersedes the fast interaction read", () => {
   const { scope } = hookHarness();
@@ -135,16 +166,11 @@ test("keeps the session event stream open through the idle grace window", async 
   assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
   t.mock.method(console, "error", noop);
   // Rejection describes this submission, not an unrelated run in this session.
-  for (const outcome of ["rejected", "ambiguous", "before-dispatch", "no-session", "cancelled"]) {
+  for (const outcome of ["rejected", "ambiguous", "no-session"]) {
     const { scope, state } = hookHarness();
     const error = Object.assign(new Error(outcome), { code: outcome });
     if (outcome === "no-session") scope.session = null;
-    if (["before-dispatch", "cancelled"].includes(outcome)) {
-      scope.ensureEventsConnected = async () => {
-        if (outcome === "cancelled") scope.preparationRef.current.abort();
-        throw error;
-      };
-    } else scope.sendAgentCommand = async () => { throw error; };
+    scope.sendAgentCommand = async () => { throw error; };
     await callback("handleSend", scope)("message");
     assert.equal(state.restores.length, outcome === "ambiguous" || outcome === "cancelled" ? 0 : 1, outcome);
     assert.equal(state.closes, outcome === "no-session" || outcome === "cancelled" ? 1 : 0, outcome);
@@ -289,7 +315,8 @@ test("session mount probes external appends and interrupted hydration retries on
   assert.match(loadSessionSource, /d\.wrapperRebuilt[\s\S]*?eventConnectionRef\.current\?\.close\(\)[\s\S]*?maintain\(sid\)/);
   assert.match(mountSource, /loadSession\(session\.id, !cached, true, \{ resident: true \}\)/);
   assert.match(source, /await loadSession\(sid\)/);
-  assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 1);
+  assert.match(source, /if \(sid\) void loadSession\(sid, false, false, \{ force: true \}\)/);
+  assert.match(source, /void loadSession\(sid, true, true, \{ force: true \}\)/);
 });
 
 test("forking stays available during a run while in-session branch switches wait for it", () => {
@@ -304,7 +331,7 @@ test("forking stays available during a run while in-session branch switches wait
 
   // Fork copies into a new file, so only a shell command blocks it; the
   // in-session edit still waits because pi refuses navigate_tree mid-run.
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
+  assert.match(chatWindowSource, /onFork=\{isCodexSession \|\| bashRunning \|\| isNew \? undefined : handleFork\}/);
   const handleFork = noop;
   const handleNavigate = noop;
   // Editing is gated by navigation; its content callback need not disappear.
@@ -313,7 +340,7 @@ test("forking stays available during a run while in-session branch switches wait
     assert.equal(messageViewProp("onFork", scope), handleFork);
     assert.equal(messageViewProp("onNavigate", scope), busy ? undefined : handleNavigate);
   }
-  for (const blocked of [{ bashRunning: true, isNew: false }, { bashRunning: false, isNew: true }]) {
+  for (const blocked of [{ isCodexSession: true, bashRunning: false, isNew: false }, { bashRunning: true, isNew: false }, { bashRunning: false, isNew: true }]) {
     assert.equal(messageViewProp("onFork", { ...blocked, handleFork }), undefined);
   }
   assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
@@ -332,7 +359,7 @@ test("first user messages expose both branch actions and edit before their own e
     source.indexOf("  const handleLeafChange = useCallback"),
   );
 
-  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
+  assert.match(chatWindowSource, /onFork=\{isCodexSession \|\| bashRunning \|\| isNew \? undefined : handleFork\}/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user"/);
   assert.doesNotMatch(chatWindowSource, /prevAssistantEntryId/);
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
@@ -434,19 +461,18 @@ test("streaming submissions cannot be stranded in an idle direct queue", async (
   t.mock.method(console, "error", noop);
   const images = [{ mimeType: "image/png", data: "image" }];
   for (const behavior of ["steer", "followUp"]) {
-    for (const outcome of ["accepted", "rejected", "ambiguous", "before-dispatch", "no-session"]) {
+    for (const outcome of ["accepted", "rejected", "ambiguous", "no-session"]) {
       const { scope, state } = hookHarness();
       const order = [];
       const error = Object.assign(new Error(outcome), { code: outcome });
-      scope.ensureEventsConnected = async () => {
-        order.push("connect");
-        if (outcome === "before-dispatch") throw error;
-      };
+      scope.maintainEventsConnected = () => { order.push("maintain"); };
       scope.sendAgentCommand = async (...args) => {
+        args[2].onPromptIdentified({ sessionId: "session", requestId: "request" });
+        args[2].onPromptRegistered({ sessionId: "session", requestId: "request" });
+        assert.equal(args[2].beforeDispatch, undefined, "SSE is not a submission prerequisite");
         order.push("prompt");
         state.commands.push(args);
         if (outcome !== "accepted") throw error;
-        args[2].onPromptRegistered({ sessionId: "session", requestId: "request" });
       };
       if (outcome === "no-session") scope.sessionIdRef.current = null;
       let registered;
@@ -454,15 +480,15 @@ test("streaming submissions cannot be stranded in an idle direct queue", async (
       const dispatched = ["accepted", "rejected", "ambiguous"].includes(outcome);
       assert.equal(state.commands.length, dispatched ? 1 : 0, outcome);
       if (dispatched) {
-        assert.deepEqual(order, ["connect", "prompt"]);
+        assert.deepEqual(order, ["maintain", "prompt"]);
         assert.deepEqual(state.commands[0].slice(0, 2), ["session", {
           type: "prompt", message: "queued", streamingBehavior: behavior,
           images: [{ type: "image", mimeType: "image/png", data: "image" }],
         }]);
       }
-      assert.deepEqual(state.restores, ["rejected", "before-dispatch", "no-session"].includes(outcome)
+      assert.deepEqual(state.restores, ["rejected"].includes(outcome)
         ? [["queued", images, "draft"]] : [], outcome);
-      assert.deepEqual(registered, outcome === "accepted" ? { sessionId: "session", requestId: "request", draftKey: "draft" } : undefined);
+      assert.deepEqual(registered, outcome !== "no-session" ? { sessionId: "session", requestId: "request", draftKey: "draft", durable: true } : undefined);
     }
   }
 });
@@ -491,13 +517,12 @@ test("post-accept prompt errors do not duplicate the user submission", () => {
 
 test("delegates event stream readiness and keeps one running status row", () => {
   const ensureSource = source.slice(
-    source.indexOf("const ensureEventsConnected"),
+    source.indexOf("const maintainEventsConnected"),
     source.indexOf("const respondToExtensionUi"),
   );
 
   assert.match(source, /new AgentEventConnection\(\{/);
   assert.match(source, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
-  assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
   assert.match(chatWindowSource, /const hasStreamingContent = Boolean\(streamState\.streamingMessage\?\.content\.length\)/);
   assert.match(chatWindowSource, /streamState\.isStreaming && hasStreamingContent && streamState\.streamingMessage/);
@@ -531,7 +556,7 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   assert.match(source, /sessionRunning\?: boolean/);
   assert.match(
     source,
-    /const sid = session\?\.id;[\s\S]*?if \(!sid\) return;[\s\S]*?maintainEventsConnected\(sid\)/,
+    /const sid = session\?\.id;[\s\S]*?if \(!sid \|\| data\?\.sessionId !== sid\) return;[\s\S]*?maintainEventsConnected\(sid\)/,
   );
   assert.match(source, /sessionPropIdRef\.current === sid/);
   assert.match(source, /SESSION_LEASE_RENEW_INTERVAL_MS = 30_000/);
@@ -873,7 +898,7 @@ test("restores an in-page session viewport without the default tail jump", () =>
   assert.match(chatWindowSource, /findChatScrollAnchor\(/);
   assert.match(chatWindowSource, /while \(hasMore && before && !controller\.signal\.aborted\)/);
   assert.match(chatWindowSource, /context\.oldestEntryId === position\.oldestEntryId/);
-  assert.match(chatWindowSource, /if \(!context\) \{\s*scrollToBottom\("instant"\);\s*setPendingScrollRestore\(null\);/);
+  assert.match(chatWindowSource, /if \(!context\) \{\s*outcome = "error";\s*scrollToBottom\("instant"\);\s*setPendingScrollRestore\(null\);/);
   assert.match(chatWindowSource, /scrollToMessage\(element, position\.anchorOffset\)/);
   assert.match(chatWindowSource, /visibility: pendingScrollRestore \? "hidden" : undefined/);
 });
@@ -997,8 +1022,13 @@ test("loadSession suppresses AbortError from polluting UI error and conducts bou
     source.indexOf("  const loadContext = useCallback"),
   );
 
-  // 1. fetch signal pass-through verification
-  assert.match(loadSessionSource, /const res = await fetch\(url, options\?\.signal \? \{ signal: options\.signal \} : undefined\);/);
+  // 1. Evaluate the actual request options: fresh reads preserve caller aborts.
+  const loadDeclaration = findNode(hookFile, node => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === "loadSession");
+  const historyFetch = findNode(loadDeclaration, node => ts.isCallExpression(node)
+    && node.expression.getText(hookFile) === "fetch" && node.arguments[0]?.getText(hookFile) === "url");
+  const signal = new AbortController().signal;
+  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: { signal } }), { cache: "no-store", signal });
+  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: undefined }), { cache: "no-store" });
   assert.match(loadSessionSource, /const stateRes = await fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(sid\)\}\/state`, options\?\.signal \? \{ signal: options\.signal \} : undefined\);/);
 
   // 2. AbortError detection & UI error suppression (positive & negative cases)
@@ -1050,8 +1080,6 @@ test("queued user delivery acquires a fresh native scroll intent without duplica
   let revision = 0;
   scope.agentRunningRef.current = true;
   scope.setPromptScrollRevision = (update) => { revision = update(revision); };
-  scope.userMessageKey = (message) => JSON.stringify(message.content);
-  scope.reconcileDeliveredUserMessage = (_prev, _message, options) => options.fallback();
   const initial = { role: "user", content: "initial", timestamp: 1 };
   state.messages = [initial];
   scope.optimisticUserMessageRef.current = { message: initial };
@@ -1076,6 +1104,8 @@ test("new user turns cancel a stale history restore while ordinary pagination ke
       prevScrollDistanceRef: ref(1500), pendingHistoryVisibleCountRef: ref(null),
       loadingOlderRef: ref(true), visibleCount: 50, scrollContainerRef: ref(container),
       restoreScrollTop: (height, distance) => height - distance };
+    scope.activeHistoryLoadRef = ref({ kind: revision === 1 ? "local" : "network" });
+    scope.clearHistoryLoadGuard = operation => { if (operation.kind === "local") scope.loadingOlderRef.current = false; };
     evaluate(effect.arguments[0], chatFile, scope)();
     assert.equal(container.scrollTop, revision === 1 ? 500 : 100);
     assert.equal(scope.prevScrollDistanceRef.current, null);
@@ -1093,6 +1123,8 @@ test("cancelled local history restoration releases its page guard after the rend
     prevScrollDistanceRef: ref(1500), pendingHistoryVisibleCountRef: ref(100),
     loadingOlderRef: ref(true), visibleCount: 50, scrollContainerRef: ref(container),
     restoreScrollTop: () => { throw Error("old anchor must not be restored"); } };
+  scope.activeHistoryLoadRef = ref({ kind: "local" });
+  scope.clearHistoryLoadGuard = () => { scope.loadingOlderRef.current = false; };
   const run = evaluate(effect.arguments[0], chatFile, scope);
   run();
   assert.equal(scope.loadingOlderRef.current, true);
@@ -1106,9 +1138,9 @@ test("cancelled local history restoration releases its page guard after the rend
 
 test("receipt recovery clock survives changing UI callbacks without losing their latest owner", async () => {
   const effect = findNode(hookFile,node=>ts.isCallExpression(node) && node.expression.getText(hookFile)==="useEffect"
-    && node.arguments[0]?.getText(hookFile).includes("const uncertain = unconfirmedSubmissions"));
+    && node.arguments[0]?.getText(hookFile).includes("const pending = unconfirmedSubmissions"));
   const row={requestId:"r",sessionId:"s",status:"uncertain"};
-  const scope={unconfirmedSubmissions:[row],confirmPendingSubmission:async()=>{},document:{visibilityState:"visible",addEventListener(){},removeEventListener(){}},window:{addEventListener(){},removeEventListener(){}},setInterval(fn,ms){assert.equal(ms,8000);scope.tick=fn;return 1;},clearInterval(){},};
+  const scope={unconfirmedSubmissions:[row],isPromptSubmissionDispatching:()=>false,confirmPendingSubmission:async()=>{},document:{visibilityState:"visible",addEventListener(){},removeEventListener(){}},window:{addEventListener(){},removeEventListener(){}},setInterval(fn,ms){assert.equal(ms,8000);scope.tick=fn;return 1;},clearInterval(){},};
   let owner=0,reads=[];scope.confirmPendingSubmission=async()=>{reads.push(owner);};
   // Model React's event function: stable scheduling, current callback on dispatch.
   scope.confirmUncertainSubmission=async row=>scope.confirmPendingSubmission(row);
@@ -1122,4 +1154,78 @@ test("receipt recovery clock survives changing UI callbacks without losing their
   }
   scope.tick();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(reads,[0,31]);
   cleanup();scope.tick();await new Promise(resolve=>setImmediate(resolve));assert.equal(reads.length,2);
+});
+
+
+test("a running reconnect reads missed history while retaining the active run", () => {
+  const { scope } = hookHarness();
+  const reads = [];
+  scope.sdkAgentActiveRef = ref(false);
+  scope.loadSession = async (sid) => { reads.push(sid); };
+  scope.handleAgentEvent({ type: "connected", isStreaming: true });
+  assert.deepEqual(reads, ["session"]);
+  assert.equal(scope.agentRunningRef.current, true);
+  assert.equal(scope.sdkAgentActiveRef.current, true);
+});
+
+
+test("a cold session hydrates before SSE while cached and Strict Mode mounts still subscribe immediately", () => {
+  const start = source.indexOf("  // Keep the selected session warm even while its agent is idle.");
+  const effect = findNode(hookFile, node => ts.isCallExpression(node)
+    && node.expression.getText(hookFile) === "useEffect" && node.getStart(hookFile) > start
+    && node.arguments[0]?.getText(hookFile).includes("data?.sessionId !== sid"));
+  const subscribed = [], closed = [];
+  const scope = { session: { id: "session" }, data: null, sessionHookMountedRef: ref(true),
+    sessionIdRef: ref("session"), maintainEventsConnected: sid => subscribed.push(sid),
+    eventConnectionRef: ref({ close: () => closed.push(true) }) };
+  const mount = evaluate(effect.arguments[0], hookFile, scope);
+  assert.equal(mount(), undefined);
+  assert.equal(subscribed.length, 0, "message_end and connected cannot starve the initial HTTP snapshot");
+  scope.data = { sessionId: "other" };
+  mount(); assert.equal(subscribed.length, 0, "a prior session's resident data is not hydration");
+  scope.data = { sessionId: "session", context: { messages: [] } };
+  const cleanup = mount(); assert.deepEqual(subscribed, ["session"]);
+  cleanup(); assert.equal(closed.length, 1);
+  scope.sessionHookMountedRef.current = false;
+  mount(); assert.equal(scope.sessionHookMountedRef.current, true);
+  assert.deepEqual(subscribed, ["session", "session"], "Strict Mode reopens the hydrated view");
+});
+
+test("lease recovery cannot subscribe to a cold session before history hydration", async () => {
+  const declaration = findNode(hookFile, node => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === "renewLease");
+  const calls = [];
+  const scope = { disposed: false, renewing: false, sid: "session", sessionIdRef: ref("session"), sessionPropIdRef: ref("session"),
+    dataRef: ref(null), fetch: async () => ({ ok: true, json: async () => ({ renewed: 0 }) }),
+    closeEvents: () => calls.push("close"), maintainEventsConnected: sid => calls.push(sid) };
+  const renew = evaluate(declaration.initializer, hookFile, scope);
+  await renew(); assert.deepEqual(calls, []);
+  scope.dataRef.current = { sessionId: "session" };
+  await renew(); assert.deepEqual(calls, ["close", "session"]);
+});
+
+test("late queued user delivery updates chat and queue together without resurrecting waiting", () => {
+  const { state, scope } = hookHarness();
+  state.queue = { steering: ['delayed queued task'], followUp: [] };
+  scope.setQueuedMessages = value => { state.queue = value; };
+  scope.reconcilePromptSubmission = noop;
+  scope.normalizeQueuedMessages = evaluate(findNode(hookFile,node=>ts.isFunctionDeclaration(node)&&node.name?.text==='normalizeQueuedMessages'),hookFile,{});
+  const delivered = { role: 'user', content: 'delayed queued task', timestamp: 10 };
+  const event = { type: 'message_end', message: delivered, requestId: 'queue-request-id-0001', queuedMessages: { steering: [], followUp: [] } };
+  scope.agentRunningRef.current = false;
+  scope.handleAgentEvent(event);
+  assert.equal(state.messages.length,1,'committed user delivery must not wait for a history round trip');
+  assert.equal(state.messages[0],delivered);
+  assert.deepEqual(state.queue,{steering:[],followUp:[]});
+  assert.equal(state.phase,null,'a late user entry does not restart waiting or Stop');
+  scope.handleAgentEvent(event);
+  assert.equal(state.messages.length,1,'same request identity is idempotent');
+});
+
+test('queue snapshots invalidate state reads started before their SSE revision',()=>{
+ const {scope}=hookHarness();scope.normalizeQueuedMessages=q=>q;scope.setQueuedMessages=()=>{};
+ const before=scope.agentStateRevisionRef.current;
+ scope.handleAgentEvent({type:'queue_update',steering:['same'],followUp:[]});
+ assert.equal(scope.agentStateRevisionRef.current,before+1);
+ scope.handleAgentEvent({type:'message_end',entryId:'e',requestId:'r',message:{role:'user',content:'same'},queuedMessages:{steering:[],followUp:[]}});
+ assert.equal(scope.agentStateRevisionRef.current,before+2);
 });

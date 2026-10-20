@@ -65,7 +65,7 @@ export { guardedCredentialStore, mcpOAuthUrl, McpSignedOutError, mcpSignInKey, t
 //   A cancel that arrives before the prompt is asked is kept and applied the
 //   moment it is; before the sign-in started at all, it never starts. A flow
 //   that already has its code when the limit comes gets one grace period to
-//   finish, since the SDK exchanges the code whatever Pi Web does.
+//   finish, since the SDK exchanges the code whatever Agent Web Plus does.
 // - **A pasted address is checked first.** The SDK ends the whole sign-in on
 //   a paste that is not a URL, carries another sign-in's `state`, or has no
 //   `code`. `pasteMcpSignInRedirect()` refuses those (and an `error` answer)
@@ -92,7 +92,7 @@ export const MCP_SIGN_IN_TTL_MS = 5 * 60_000;
 export const MCP_SIGN_IN_KEEP_MS = 60_000;
 /**
  * How much longer a flow that has its code when the limit comes gets to
- * finish: the SDK exchanges it whatever Pi Web does, so expiring then would
+ * finish: the SDK exchanges it whatever Agent Web Plus does, so expiring then would
  * call a sign-in that is about to work "expired". Once, then it expires.
  */
 export const MCP_SIGN_IN_FINISH_GRACE_MS = 60_000;
@@ -234,7 +234,7 @@ export function openMcpSignInConnection(
   };
 }
 
-/** The SDK's own pieces: its connection (through Pi Web's transport factory), sign-in and credential store. */
+/** The SDK's own pieces: its connection (through Agent Web Plus's transport factory), sign-in and credential store. */
 export function createMcpSignInDeps(internals: McpSignInInternals): McpSignInDeps {
   return {
     open: (target, guard) => openMcpSignInConnection(target, internals, { guard }),
@@ -609,7 +609,7 @@ export type McpSignInPasteResult =
  */
 export function pasteMcpSignInRedirect(flowId: string, input: unknown): McpSignInPasteResult {
   const flow = registry().flows.get(flowId);
-  if (!flow) return { ok: false, status: 404, reason: "sign-in-unknown", error: "No sign-in has that id: it ended over a minute ago, or Pi Web restarted" };
+  if (!flow) return { ok: false, status: 404, reason: "sign-in-unknown", error: "No sign-in has that id: it ended over a minute ago, or Agent Web Plus restarted" };
   const refuse = (status: number, reason: McpRefusalReason, error: string): McpSignInPasteResult => ({ ok: false, status, reason, error, flow: describeFlow(flow) });
   if (typeof input !== "string" || !input.trim() || input.length > MCP_SIGN_IN_MAX_PASTE_CHARS) {
     return refuse(400, "invalid-request", `redirectUrl must be the redirected address, at most ${MCP_SIGN_IN_MAX_PASTE_CHARS} characters`);

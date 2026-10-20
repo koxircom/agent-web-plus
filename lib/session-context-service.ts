@@ -81,7 +81,7 @@ export async function handleSessionContextRequest(
         sessionId: id,
       });
       const currentRpc = getRpc(id);
-      if (currentRpc !== liveRpc || !liveRpc.isAlive() || !liveRpc.isRunning()) {
+      if (currentRpc !== liveRpc || selectSessionReadRuntime(liveRpc) !== liveRpc) {
         const error = new Error("读取会话历史时运行中的写入状态发生变化，请重试。") as Error & { statusCode?: number };
         error.statusCode = 409;
         throw error;

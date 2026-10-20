@@ -32,7 +32,7 @@ function setup(fetchImpl) {
   const writes = [];
   const delays = [];
   const context = {
-    Error, DOMException, AbortSignal,
+    Error, DOMException, AbortSignal, URLSearchParams,
     controller: new AbortController(),
     newSessionCwd: "/project", session: null, isNew: true,
     sessionIdRef: { current: null }, thinkingLevelOverrideRef: { current: null },

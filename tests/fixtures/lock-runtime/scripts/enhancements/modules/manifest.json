@@ -38,8 +38,8 @@
         16428
       ],
       "lineRangeText": "9424-16428",
-      "bytes": 295540,
-      "sha256": "b58fab999156f955bceb5c388dc121862e15d1940fd2a8e6b9ef864be2d31b7b",
+      "bytes": 295542,
+      "sha256": "a253e376174080197650e7ba7f294aaea2b8a018e49382c48be0cd6bb39b3b38",
       "responsibility": "ENHANCEMENT_PLUGINS (76 个插件) 注册表与默认配置 Schema、模块与插件启闭持久化、用户消息状态对齐与大图去重、会话置顶/归档/背景色/多维彩色标签/Odoo 插件更新状态胶囊与分组保留策略。"
     },
     {
@@ -55,8 +55,8 @@
         23249
       ],
       "lineRangeText": "16429-23249",
-      "bytes": 297014,
-      "sha256": "2417d2b271a9f1b333eb30be4c173ba41d54edc5cb165255ba8e8f5dc4151d05",
+      "bytes": 297020,
+      "sha256": "b854f2a1855ca063d942c7d260c4fd5570e1ba7e0219714708204c76301306fe",
       "responsibility": "会话内存秒开缓存 (Session Memory Cache)、CacheStorage/IndexedDB 统一持久化存储抽象、会话历史顺序防回退守卫 (session-history-order-guard)、高性能会话搜索 LRU 缓存与归档折叠管理、权威终态核验引擎 (Terminal Reconcile Engine)、DOM 快照秒开与跨端多标签页同步。"
     },
     {
@@ -89,8 +89,8 @@
         46634
       ],
       "lineRangeText": "29941-46634",
-      "bytes": 705465,
-      "sha256": "3ef0c3b1ded546e1af22a5fad8efb2fe47bc4ddab94eca3e509724b73734e0ee",
+      "bytes": 705467,
+      "sha256": "3e40625594dfb8b2c166d91c37da66f657ee52b67a31d6cb69f96435a328418d",
       "responsibility": "AI 快捷操作建议、空输入发送继续、输入框草稿与图片本地记忆、文件直接粘贴与拖放胶囊卡片、输入框图片点击放大、流式思考聚合守卫、运行中切换后续模型、Cursor/Codex 风格统一输入框与模型思考胶囊、Markdown 格式化粘贴、Goal/Plan 模式、@ 提及聚焦插件、全站图片双击预览、右侧面板会话绑定、移动端软键盘与手势守护、会话批量管理与删除。"
     },
     {
@@ -100,14 +100,14 @@
       "file": "06-chat-view-and-tool-cards.js",
       "startLine": 46635,
       "endLine": 56466,
-      "lineCount": 9832,
+      "lineCount": 9831,
       "lineRange": [
         46635,
         56466
       ],
       "lineRangeText": "46635-56466",
-      "bytes": 684220,
-      "sha256": "d3d5d733bcdbabf39222d1ed11ff1acdb0b45b3bfe2753ea5b907a24521269c8",
+      "bytes": 684222,
+      "sha256": "a48c5cba65b09a4071af7cf81b3c38a2dd6320b38dd29ddf32c40f5e2b34d589",
       "responsibility": "回合耗时拆解与消耗明细气泡、工具调用自动折叠与子代理派发卡片增强、孤立过程消息吸附聚合器、会话压缩摘要自动折叠、runAllSyncOperations 全量同步步骤编排、原生消息字体与滚动条增强、目录选择器悬停与新建文件夹、Minimap 全导航、回到底部按钮、会话阅读位置记忆与恢复、代码块免扫描保护、本地路径快捷唤起与 Obsidian/Markdown 预览增强。"
     },
     {
@@ -140,8 +140,8 @@
         65126
       ],
       "lineRangeText": "58187-65126",
-      "bytes": 338666,
-      "sha256": "8b4b0bae1159e82988a59f72f4b1c347938c59fd9b849c7257a12c5a977b4c6e",
+      "bytes": 338700,
+      "sha256": "789ab6b69f9e4084f603d1d983679f49aec97934841773c8040aa3b8f317e562",
       "responsibility": "设置对话框尺寸与侧边栏宽度拖拽调节、设置侧边栏折叠控制器、设置弹窗增强插件面板与归档管理标签页、设置项双击快捷入口与底部快捷栏、全局用量与成本大盘 (Usage & Cost Dashboard)、静默热载探针、零泄漏清理钩子 (__PI_WEB_ENHANCEMENTS_CLEANUP__)、Plugin Micro-Kernel 异常隔离沙箱与首屏 0ms 同步立即执行挂载。"
     }
   ]

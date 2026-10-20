@@ -44,3 +44,22 @@ yarn-error.log*
 next-env.d.ts
 .factory
 e2e_*.mjs
+
+# Private agent/runtime data and release acceptance artifacts
+**/__pycache__/
+*.pyc
+*.tgz
+*.log
+/runtime/
+/acceptance/
+/.codex/
+/.pi/
+/sessions/
+/state/
+/auth.json
+/config.toml
+/execution-engines.json
+/connector.json
+/public/pi-*-manifest.json
+/public/pi-usage-ledger.json
+/public/*.before-*

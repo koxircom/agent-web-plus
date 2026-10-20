@@ -36,8 +36,16 @@ try {
 }
 
 if (launchOptions.help) {
-  fs.writeSync(process.stdout.fd, getHelpText());
+  fs.writeSync(process.stdout.fd, getHelpText(path.basename(process.argv[1] || "pi-web.js").startsWith("agent-web") ? "agent-web" : "pi-web"));
   process.exit(0);
+}
+
+// Resolve compatibility before any server/SDK process can open a data store.
+try {
+  require("./agent-web-compat").prepareAgentWebEnvironment();
+} catch (error) {
+  fs.writeSync(process.stderr.fd, `${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
 }
 
 const { port, hostname, openBrowser } = launchOptions;

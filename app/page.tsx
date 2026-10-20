@@ -1,3 +1,4 @@
+import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { Suspense } from "react";
 import { AppShell } from "@/components/AppShell";
 import { PiWebEnhancementsRuntime } from "@/components/PiWebEnhancementsRuntime";
@@ -11,7 +12,7 @@ export const revalidate = 0;
 
 export default async function Home() {
   const [catalog, decorations] = await Promise.all([
-    readSessionList({ summary: true }).catch(() => null),
+    readExecutionEngineSettings().then(settings => settings.defaultEngine === "codex" ? null : readSessionList({ summary: true })).catch(() => null),
     Promise.resolve().then(() => readEnhancementState()).catch(() => null),
   ]);
   const bootstrap = catalog ? { ...catalog, decorations, renderedAt: Date.now() } : undefined;

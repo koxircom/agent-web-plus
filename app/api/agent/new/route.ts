@@ -1,3 +1,5 @@
+import { resolveExecutionEngine } from "@/lib/execution-engine-context";
+import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { NextResponse } from "next/server";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { existsSync } from "fs";
@@ -27,7 +29,11 @@ export async function POST(req: Request) {
   let createdSessionId: string | undefined;
   try {
     const body = await req.json() as { cwd?: string; [key: string]: unknown };
-    const { cwd, ...command } = body;
+    const { cwd, engine: requestedEngine, ...command } = body;
+    const engine = resolveExecutionEngine(requestedEngine, (await readExecutionEngineSettings()).defaultEngine);
+    if (engine === "codex") {
+      return Response.json(await (await import("@/lib/execution-engines/codex-engine")).createCodexSession(String(cwd || ""), command));
+    }
     commandType = typeof command.type === "string" ? command.type : undefined;
     if (commandType === "prompt") {
       if (command.requestId !== undefined && !validPromptRequestId(command.requestId)) throw new Error("Invalid prompt request ID");
@@ -113,6 +119,7 @@ export async function POST(req: Request) {
       thinkingLevel: state.thinkingLevel,
     });
   } catch (error) {
+    if (error instanceof RangeError) return NextResponse.json({ error: error.message, code: "engine_invalid" }, { status: 400 });
     const receipt = createdSessionId && promptRequestId ? getPromptReceipt(createdSessionId, promptRequestId) : null;
     const uncertain = receipt && !["unknown", "rejected"].includes(receipt.status);
     return NextResponse.json({

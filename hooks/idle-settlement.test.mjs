@@ -12,9 +12,9 @@ function setup(){
  vm.createContext(ctx);vm.runInContext(callback+'\nthis.finish=finishPromptWithoutStream;',ctx);
  return {ctx,refs,calls,resolve};
 }
-test('server idle clears Stop and pending state while history is unresolved',async()=>{
+test('server idle clears Stop but preserves unconfirmed user content while history is unresolved',async()=>{
  const {ctx,refs,calls,resolve}=setup();await ctx.finish('A',3);
- assert.equal(refs.rpcPromptPendingRef.current,false);assert.equal(refs.sdkAgentActiveRef.current,false);assert.equal(refs.optimisticUserMessageRef.current,null);
+ assert.equal(refs.rpcPromptPendingRef.current,false);assert.equal(refs.sdkAgentActiveRef.current,false);assert.deepEqual(refs.optimisticUserMessageRef.current,{sessionId:'A',message:'draft'});
  assert.deepEqual(calls,[['idle'],['notify',3],['history','A'],['grace','A']]);resolve();
 });
 test('late settlement cannot clear another session or a newer run',async()=>{

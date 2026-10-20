@@ -1,5 +1,7 @@
 "use client";
 
+import { userMessageRenderKey, userMessageRequestId } from "@/lib/prompt-recovery";
+
 import { createToolProcessSummary, getToolProcessSummaryLabel, includeToolInProcessSummary, type ToolProcessSummary } from "@/lib/tool-public-status";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
@@ -13,6 +15,7 @@ import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView } from "./MessageView";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
+import { getInlineSuggestion } from "@/lib/inline-suggestion";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
@@ -25,6 +28,7 @@ import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile, allowsAutomaticEditableFocus, focusEditable } from "@/hooks/useIsMobile";
 import { useChatColumnInset } from "@/hooks/useChatColumnInset";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
+import { useMobileHorizontalSwipe } from "@/hooks/useMobileHorizontalSwipe";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { ToolEntry } from "@/lib/tool-presets";
 import type { SettingsSection } from "@/lib/settings-navigation";
@@ -51,6 +55,7 @@ import {
 
 interface Props {
   session: SessionInfo | null;
+  executionEngine?: "pi" | "codex";
   mobileNavigationOpen?: boolean;
   onMobileNavigationOpenChange?: (open: boolean) => void;
   searchTarget?: { sessionId: string; entryId: string; blockIndex?: number } | null;
@@ -166,9 +171,10 @@ function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = f
   );
 }
 
-export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, executionEngine = "pi", searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  const isCodexSession = executionEngine === "codex" || session?.id.startsWith("codex:") === true;
   // Only structural whitespace is a navigation shortcut. Text and controls keep
   // native selection, zoom, horizontal scrolling and click behavior.
   const closeMobileNavigation = useCallback(() => onMobileNavigationOpenChange?.(false), [onMobileNavigationOpenChange]);
@@ -249,8 +255,8 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelsLoading, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
-    isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages, unconfirmedSubmissions, confirmPendingSubmission,
+    isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats, navigationTotalTurns,
+    slashCommands, slashCommandsLoading, queuedMessages, queueSyncStatus, unconfirmedSubmissions,
     notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     isAutoModelSelection,
     isAutoThinkingSelection,
@@ -267,9 +273,15 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     loadContext, activeLeafId, scrollToBottom, scrollToMessage,
     retryLoadSession,
   } = useAgentSession({
+    executionEngine: isCodexSession ? "codex" : "pi",
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked,
-    modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
-    onOpenSettings,
+    modelsRefreshKey, chatInputRef,
+    onBranchDataChange: isCodexSession ? undefined : onBranchDataChange,
+    onSystemPromptChange: isCodexSession ? undefined : onSystemPromptChange,
+    onSystemToolsChange: isCodexSession ? undefined : onSystemToolsChange,
+    onSystemInfoLoaderChange: isCodexSession ? undefined : onSystemInfoLoaderChange,
+    onSessionStatsPanelOpen,
+    onOpenSettings: isCodexSession ? undefined : onOpenSettings,
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
   const sessionBusy = agentRunning || bashRunning;
@@ -1004,6 +1016,8 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       sessionStats.tokens.cacheRead,
       sessionStats.tokens.cacheWrite,
       sessionStats.tokens.total,
+      sessionStats.tokenUsageAvailable ?? "native",
+      sessionStats.messageCountsScope ?? "complete",
       sessionStats.cost ?? 0,
       sessionStats.totalActiveMs ?? 0,
     ].join("|")
@@ -1046,6 +1060,9 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     }
     return map;
   }, [activeToolResults, messages]);
+  const inlineSuggestion = useMemo(() => loading || error || sessionBusy || !sessionIdRef.current
+    ? null : getInlineSuggestion(messages, entryIds, sessionIdRef.current),
+  [loading, error, sessionBusy, messages, entryIds, sessionIdRef]);
   const inputHistory = useMemo(() => {
     const seen = new Set<string>();
     const history: string[] = [];
@@ -1065,7 +1082,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
 
   const historyBridgeRef = useRef({
     sessionId: session?.id ?? sessionIdRef.current ?? null,
-    totalTurns: sessionStats?.userMessages ?? 0,
+    totalTurns: navigationTotalTurns,
     hasEarlierMessages,
     entryIds,
     oldestEntryId: historyCursor,
@@ -1075,7 +1092,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   });
   historyBridgeRef.current = {
     sessionId: session?.id ?? sessionIdRef.current ?? null,
-    totalTurns: sessionStats?.userMessages ?? 0,
+    totalTurns: navigationTotalTurns,
     hasEarlierMessages,
     entryIds,
     oldestEntryId: historyCursor,
@@ -1165,8 +1182,23 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   }, [beginHistoryLoad, clearHistoryLoadGuard, isCurrentHistoryLoad, scrollContainerRef, session?.id, sessionIdRef, setHistoryLoadOutcome]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+  const isScrollAvailable = !isEmptyNew && (!loading || messages.length > 0) && !(error && messages.length === 0);
+  const swipeEnabled = isMobile && !mobileNavigationOpen && isScrollAvailable;
   const columnEndInset = useChatColumnInset(scrollContainerRef, !loading && !error && !isEmptyNew, isMobile ? 0 : CHAT_MINIMAP_WIDTH);
   useScrollbarVisibility(scrollContainerRef, Boolean(session?.id) || !isEmptyNew);
+
+  // 原生实现手机竖屏聊天左滑打开会话导航（不限边缘，正文可滑；enabled严格映射渲染分支，有缓存不解绑）
+  useMobileHorizontalSwipe({
+    containerRef: scrollContainerRef,
+    direction: "left",
+    enabled: swipeEnabled,
+    threshold: 40,
+    dominantRatio: 1.3,
+    allowOnButtons: false,
+    onSwipe: () => {
+      onMobileNavigationOpenChange?.(true);
+    },
+  });
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const promptAnchorSpacerRef = useRef<HTMLDivElement | null>(null);
@@ -1286,6 +1318,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     <Fragment key="chat-input-element">
     <ChatInput
       ref={chatInputRef}
+      executionEngine={isCodexSession ? "codex" : "pi"}
       columnEndInset={columnEndInset}
       extensionPanel={(extensionDialog || extensionCustomUi) && (
           <div className="pi-native-extension-dock">
@@ -1303,6 +1336,8 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       onFollowUp={agentRunning ? handleFollowUp : undefined}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       isStreaming={sessionBusy}
+      inlineSuggestion={inlineSuggestion}
+      hasConversation={!isNew && messages.length > 0}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}
@@ -1311,13 +1346,13 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
           modelsLoading={modelsLoading}
       onModelChange={handleModelChange}
       modelSwitching={modelSwitching}
-      onCompact={session || isNew ? handleCompact : undefined}
-      onAbortCompaction={handleAbortCompaction}
-      isCompacting={isCompacting}
-      compactError={compactError}
-      compactResult={compactResult}
-      toolPreset={toolPreset}
-      onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
+      onCompact={!isCodexSession && (session || isNew) ? handleCompact : undefined}
+      onAbortCompaction={!isCodexSession ? handleAbortCompaction : undefined}
+      isCompacting={!isCodexSession && isCompacting}
+      compactError={isCodexSession ? null : compactError}
+      compactResult={isCodexSession ? null : compactResult}
+      toolPreset={!isCodexSession ? toolPreset : undefined}
+      onToolPresetChange={!isCodexSession && (session || isNew) ? handleToolPresetChange : undefined}
       thinkingLevel={thinkingLevel}
       isAutoThinkingSelection={isAutoThinkingSelection}
       onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
@@ -1325,14 +1360,15 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       thinkingLevelMap={currentThinkingLevelMap}
       retryInfo={retryInfo}
       queuedMessages={queuedMessages}
+      queueSyncStatus={queueSyncStatus}
       inputHistory={inputHistory}
       retainedSubmissions={unconfirmedSubmissions}
-      onConfirmSubmission={confirmPendingSubmission}
+      deliveredRequestIds={messages.map(userMessageRequestId).filter((id): id is string => Boolean(id))}
       onRecallQueue={handleRecallQueue}
-      slashCommands={slashCommands}
-      slashCommandsLoading={slashCommandsLoading}
-      onLoadSlashCommands={loadSlashCommands}
-      onBuiltinCommand={handleBuiltinSlashCommand}
+      slashCommands={isCodexSession ? [] : slashCommands}
+      slashCommandsLoading={!isCodexSession && slashCommandsLoading}
+      onLoadSlashCommands={!isCodexSession ? loadSlashCommands : undefined}
+      onBuiltinCommand={!isCodexSession ? handleBuiltinSlashCommand : undefined}
       soundEnabled={soundEnabled}
       onSoundToggle={onSoundToggle}
       onAudioUnlock={unlockAudio}
@@ -1342,7 +1378,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     </Fragment>
   );
 
-  if (loading) {
+  if (loading && messages.length === 0) {
     return (
       <div
         data-pi-enh-native-minimap="true"
@@ -1354,7 +1390,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
         </div>
         <div className="chat-composer-footer relative shrink-0" key="chat-input-container">
           {chatInputElement}
-          {!isNew && (
+          {!isNew && !isCodexSession && (
             <div className="chat-composer-status-slot" aria-hidden="true" />
           )}
         </div>
@@ -1441,7 +1477,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
         </div>
         <div className="chat-composer-footer relative shrink-0" key="chat-input-container">
           {chatInputElement}
-          {!isNew && (
+          {!isNew && !isCodexSession && (
             <div className="chat-composer-status-slot" aria-hidden="true" />
           )}
         </div>
@@ -1643,7 +1679,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
                 plans.push(processPlan);
                 processPlan = null;
               };
-              const messageKeyFor = (idx: number) => entryIds[idx] ?? idx;
+              const messageKeyFor = (idx: number) => userMessageRenderKey(displayMessages[idx]) ?? entryIds[idx] ?? idx;
               const makeMessagePlan = (idx: number, options: Partial<Omit<MessagePlan, "kind" | "key" | "idx">> = {}): MessagePlan => {
                 const keyPrefix = options.keyPrefix ?? "message";
                 const messageKey = messageKeyFor(idx);
@@ -1735,7 +1771,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
                     onOpenSession={onOpenSession}
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
-                    onFork={bashRunning || isNew ? undefined : handleFork}
+                    onFork={isCodexSession || bashRunning || isNew ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
                     onNavigate={sessionBusy ? undefined : handleNavigate}
                     onEditContent={handleEditContent}
@@ -2011,13 +2047,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
         )}
         {isEmptyNew && (
           <NewSessionBrandHeader
+            executionEngine={executionEngine}
             isMobile={isMobile}
             releaseNotesLabel={(version) => t("appUpdate.releaseNotes", { version })}
           />
         )}
         {chatInputElement}
         <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
-        {!isEmptyNew && extensionStatuses.length === 0 && extensionWidgets.length === 0 && (
+        {!isEmptyNew && !isCodexSession && extensionStatuses.length === 0 && extensionWidgets.length === 0 && (
           <div className="chat-composer-status-slot" aria-hidden="true" />
         )}
       </div>

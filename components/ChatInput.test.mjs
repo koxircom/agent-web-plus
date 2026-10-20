@@ -453,7 +453,7 @@ test("file mention menu remeasures when its layout container shifts the anchor",
   assert.match(block, /anchorObserver\?\.observe\(layoutContainer\)/);
 });
 
-test("compresses large images while preserving small images and GIFs", async () => {
+test("keeps large PNG screenshots as PNG at 2048px and uses JPEG compression only for photos", async () => {
   assert.equal(shouldCompressImageFile({ size: 1024 * 1024, type: "image/png" }), false);
   assert.equal(shouldCompressImageFile({ size: 1024 * 1024 + 1, type: "image/png" }), true);
   assert.equal(shouldCompressImageFile({ size: 2 * 1024 * 1024, type: "image/gif" }), false);
@@ -464,13 +464,8 @@ test("compresses large images while preserving small images and GIFs", async () 
     document: globalThis.document,
   };
   let bitmapCalls = 0;
-  let closed = false;
-  const canvas = {
-    width: 0,
-    height: 0,
-    getContext: () => ({ fillStyle: "", fillRect() {}, drawImage() {} }),
-    toDataURL: () => "data:image/jpeg;base64,COMPRESSED",
-  };
+  let closeCalls = 0;
+  const canvases = [];
 
   globalThis.FileReader = class {
     readAsDataURL() {
@@ -480,23 +475,51 @@ test("compresses large images while preserving small images and GIFs", async () 
   };
   globalThis.createImageBitmap = async () => {
     bitmapCalls += 1;
-    return { width: 2048, height: 1024, close() { closed = true; } };
+    return { width: 4096, height: 2048, close() { closeCalls += 1; } };
   };
-  globalThis.document = { createElement: () => canvas };
+  globalThis.document = {
+    createElement: () => {
+      const context = { fillStyle: "", fillRectCalls: 0, fillRect() { this.fillRectCalls += 1; }, drawImage() {} };
+      const canvas = {
+        width: 0,
+        height: 0,
+        context,
+        toDataURLCalls: [],
+        getContext: () => context,
+        toDataURL(...args) {
+          this.toDataURLCalls.push(args);
+          return args[0] === "image/png"
+            ? "data:image/png;base64,PNG_COMPRESSED"
+            : "data:image/jpeg;base64,JPEG_COMPRESSED";
+        },
+      };
+      canvases.push(canvas);
+      return canvas;
+    },
+  };
 
   try {
     assert.deepEqual(await compressImageFile({ size: 1024, type: "image/png" }), {
       data: "ORIGINAL",
       mimeType: "image/png",
     });
-    assert.deepEqual(await compressImageFile({ size: 2 * 1024 * 1024, type: "image/png" }), {
-      data: "COMPRESSED",
+    assert.deepEqual(await compressImageFile({ size: 3 * 1024 * 1024, type: "image/png" }), {
+      data: "PNG_COMPRESSED",
+      mimeType: "image/png",
+    });
+    assert.deepEqual(await compressImageFile({ size: 3 * 1024 * 1024, type: "image/jpeg" }), {
+      data: "JPEG_COMPRESSED",
       mimeType: "image/jpeg",
     });
-    assert.equal(bitmapCalls, 1);
-    assert.equal(canvas.width, 1024);
-    assert.equal(canvas.height, 512);
-    assert.equal(closed, true);
+    assert.equal(bitmapCalls, 2);
+    assert.deepEqual(
+      canvases.map(({ width, height, toDataURLCalls, context }) => ({ width, height, toDataURLCalls, fillRectCalls: context.fillRectCalls })),
+      [
+        { width: 2048, height: 1024, toDataURLCalls: [["image/png"]], fillRectCalls: 0 },
+        { width: 1024, height: 512, toDataURLCalls: [["image/jpeg", 0.85]], fillRectCalls: 1 },
+      ],
+    );
+    assert.equal(closeCalls, 2);
   } finally {
     globalThis.FileReader = originals.FileReader;
     globalThis.createImageBitmap = originals.createImageBitmap;
@@ -530,7 +553,7 @@ test("locks built-in command submission until it settles", async () => {
   }
   const callback = new Script(ts.transpileModule(findCallback(source).getText(source), {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
-  }).outputText).runInNewContext({
+  }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
     attachedImages: [],
     attachedImagesRef: { current: [] },
     builtinCommandPendingRef: { current: false },
@@ -603,9 +626,11 @@ function chatInputCallback(name, context) {
   }
   return new Script(ts.transpileModule(findCallback(source).getText(source), {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
-  }).outputText).runInNewContext({
+  }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
+    allowEmptyContinue: false,
     attachedImagesRef: {current: context.attachedImages ?? []},
-    queuedSubmissionPendingRef: {current: false},
+    valueRef: {current: context.value},
+    queuedSubmissionPendingRef: {current: false}, queuedPreviewVisible:false,
     draftKeyRef: {current: 'fixture'}, queuedMessages: {steering: [], followUp: []}, setQueuedSubmissionPreview(){},
     setQueuedSubmissionPending(){}, MAX_ATTACHED_IMAGES: 10,
     offersBuiltinSlashCommandWhileStreaming,
@@ -625,7 +650,7 @@ test("while a run streams, a bare /mcp opens Settings or is queued as before", a
       canRunBuiltinSlashCommandWhileStreaming,
       isBareMcpCommand,
       runBuiltinCommand: async (message) => { calls.builtin.push(message); return handled; },
-      onPromptWithStreamingBehavior: (message, behavior, attached) => calls.prompts.push([message, behavior, attached?.length ?? 0]),
+      onPromptWithStreamingBehavior: (message, behavior, attached, onRegistered) => { calls.prompts.push([message, behavior, attached?.length ?? 0]); onRegistered({requestId:"synthetic-request"}); },
       onSteer() { throw new Error("slash messages are prompts"); },
       onFollowUp() { throw new Error("slash messages are prompts"); },
     });
@@ -1136,8 +1161,8 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
     const attachedEleven = draftImagesToAttachedImages(elevenImages);
     const handleSendFn = new Script(ts.transpileModule(findCallback("handleSend").getText(source), {
       compilerOptions: { target: ts.ScriptTarget.ES2020 },
-    }).outputText).runInNewContext({
-      queuedSubmissionPendingRef: { current: false },
+    }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
+      queuedSubmissionPendingRef: { current: false }, queuedPreviewVisible:false,
       setQueuedSubmissionPending() {},
       value: "preserve this text and 11 images",
       attachedImages: attachedEleven,
@@ -1158,8 +1183,8 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
 
     const sendQueuedFn = new Script(ts.transpileModule(findCallback("sendQueued").getText(source), {
       compilerOptions: { target: ts.ScriptTarget.ES2020 },
-    }).outputText).runInNewContext({
-      queuedSubmissionPendingRef: { current: false },
+    }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
+      queuedSubmissionPendingRef: { current: false }, queuedPreviewVisible:false,
       setQueuedSubmissionPending() {},
       value: "preserve this text and 11 images",
       attachedImages: attachedEleven,
@@ -1196,7 +1221,7 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
     const attachedTen = attachedEleven.slice(0, 10);
     const handleSendTenFn = new Script(ts.transpileModule(findCallback("handleSend").getText(source), {
       compilerOptions: { target: ts.ScriptTarget.ES2020 },
-    }).outputText).runInNewContext({
+    }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
       value: "preserve this text and 11 images",
       attachedImages: attachedTen,
       attachedImagesRef: { current: attachedTen },
@@ -1223,7 +1248,7 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
     const pendingImageCountRef = { current: 0 };
     const processImageFilesFn = new Script(ts.transpileModule(findCallback("processImageFiles").getText(source), {
       compilerOptions: { target: ts.ScriptTarget.ES2020 },
-    }).outputText).runInNewContext({
+    }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
       compact: false,
       MAX_ATTACHED_IMAGES,
       MAX_ATTACHED_IMAGE_BYTES,
@@ -1255,10 +1280,10 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
 test("queued submission immediately shows pending, clears once and blocks duplicate until acknowledgement", async () => {
  const source=ts.createSourceFile("ChatInput.tsx",readFileSync(new URL("./ChatInput.tsx",import.meta.url),"utf8"),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
  let callback;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(source)==="sendQueued")callback=n.initializer.arguments[0];ts.forEachChild(n,visit);}visit(source);assert(callback);
- let release;const held=new Promise(r=>release=r),pending=[],ref={current:false};let cleared=0,sends=0,preview=null;
- const run=new Script(ts.transpileModule(callback.getText(source),{compilerOptions:{target:ts.ScriptTarget.ES2020}}).outputText).runInNewContext({draftKeyRef:{current:'fixture'},queuedMessages:{steering:[],followUp:[]},setQueuedSubmissionPreview:value=>preview=typeof value==='function'?value(preview):value,value:"引导内容",attachedImages:[],attachedImagesRef:{current:[]},MAX_ATTACHED_IMAGES:10,queuedSubmissionPendingRef:ref,setQueuedSubmissionPending:v=>pending.push(v),onAudioUnlock:undefined,onBuiltinCommand:undefined,onPromptWithStreamingBehavior:undefined,clearInput:()=>cleared++,onSteer:()=>{sends++;return held;},onFollowUp:undefined});
- const first=run("steer");assert.equal(preview.text,'引导内容');assert.equal(preview.draftKey,'fixture');assert.equal(preview.kind,'steering');assert.deepEqual(pending,[true]);assert.equal(cleared,1);assert.equal(sends,1);
- await run("steer");assert.equal(sends,1);release();await first;assert.deepEqual(pending,[true,false]);assert.equal(ref.current,false);assert.equal(preview,null);
+ let release;const held=new Promise(r=>release=r),pending=[],ref={current:false};let cleared=0,sends=0,preview=null,registered;
+ const run=new Script(ts.transpileModule(callback.getText(source),{compilerOptions:{target:ts.ScriptTarget.ES2020}}).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,valueRef:{current:"引导内容"},draftKeyRef:{current:'fixture'},queuedMessages:{steering:[],followUp:[]},setQueuedSubmissionPreview:value=>preview=typeof value==='function'?value(preview):value,value:"引导内容",attachedImages:[],attachedImagesRef:{current:[]},MAX_ATTACHED_IMAGES:10,queuedPreviewVisible:false,queuedSubmissionPendingRef:ref,setQueuedSubmissionPending:v=>pending.push(v),onAudioUnlock:undefined,onBuiltinCommand:undefined,onPromptWithStreamingBehavior:undefined,clearInput:()=>cleared++,onSteer:(_text,_images,onRegistered)=>{sends++;registered=onRegistered;return held;},onFollowUp:undefined});
+ const first=run("steer");assert.equal(preview.text,'引导内容');assert.equal(preview.draftKey,'fixture');assert.equal(preview.kind,'steering');assert.deepEqual(pending,[true]);assert.equal(cleared,0,'draft remains until durable outbox registration');assert.equal(sends,1);registered({requestId:'synthetic-request',durable:false});assert.equal(cleared,0,'identity alone does not clear the draft');registered({requestId:'synthetic-request',durable:true});assert.equal(cleared,1);
+ await run("steer");assert.equal(sends,1);release();await first;assert.deepEqual(pending,[true,false]);assert.equal(ref.current,false);assert.equal(preview.text,"引导内容","HTTP acknowledgement alone must not retire the only visible queue copy");
 });
 
 
@@ -1293,12 +1318,13 @@ test("goal and plan controls share neutral mode icons and expose an accessible e
   assert.match(input, /switchMode\("normal", snapshot\.sessionId \?\? undefined\)/);
   assert.match(input, /aria-label=\{`退出\$\{modeLabel\}模式`\}/);
   assert.match(input, /title=\{`退出\$\{modeLabel\}模式`\}/);
-  assert.match(module, /composer-mode-icons\.svg#goal/);
-  assert.match(module, /composer-mode-icons\.svg#plan/);
+  assert.match(module, /SVG_GOAL_ICON/);
+  assert.match(module, /SVG_PLAN_ICON/);
+  assert.doesNotMatch(module, /composer-mode-icons\.svg#(?:goal|plan)/);
   assert.match(module, /goalItem\.title = "设置要持续追求的目标"/);
   assert.match(module, /planItem\.title = "开启计划模式/);
-  assert.match(sprite, /<symbol id="goal"[^>]*stroke-width="1\.7"/);
-  assert.match(sprite, /<symbol id="plan"[^>]*stroke-width="1\.7"/);
+  assert.match(sprite, /<symbol id="goal"[^>]*><g[^>]*stroke-width="1\.7"/);
+  assert.match(sprite, /<symbol id="plan"[^>]*><g[^>]*stroke-width="1\.7"/);
   const chip = styles.match(/\.chat-composer-card \.chat-composer-mode-chip\s*\{([^}]+)\}/)?.[1];
   assert.ok(chip);
   const capsule = styles.match(/\.chat-composer-card \.chat-composer-control-capsule\s*\{([^}]+)\}/)?.[1];
@@ -1322,4 +1348,51 @@ test("streaming steer stays an accessible icon-only queue action in both layouts
   assert.match(steer, /background: transparent/);
   assert.doesNotMatch(steer, /#eab308|234, 179, 8/);
   assert.match(styles, /\.chat-composer-steer:disabled\s*\{[^}]*opacity: \.45/);
+});
+
+
+test("Send-to-Stop pointer gesture cannot abort, while keyboard and a later deliberate Stop still work", () => {
+  let now = 1000, calls = 0;
+  const lastSubmissionAtRef = {current: now};
+  const stop = chatInputCallback("handleStopClick", {lastSubmissionAtRef, performance: {now: () => now}, onAbort: () => calls++});
+  for (const detail of [1, 2]) { now = 1100; stop({detail}); }
+  assert.equal(calls, 0, "rapid second mouse click or touch tap must not become Stop");
+  stop({detail: 0});
+  assert.equal(calls, 1, "keyboard Stop stays immediate");
+  now = 1500; stop({detail: 1});
+  assert.equal(calls, 2, "a separate deliberate pointer Stop still works");
+});
+
+test('inline suggestion is gray placeholder content, never draft data or an enabled Send payload',()=>{
+ const suggestion={id:'assistant',sessionId:'sid',text:'帮我检查模型配置的写入路径。'};
+ const render=props=>renderToStaticMarkup(React.createElement(I18nProvider,null,React.createElement(ChatInput,{onSend(){throw Error('must not send')},onAbort(){},isStreaming:false,draftKey:'sid',inlineSuggestion:suggestion,...props})));
+ const empty=render({});assert.match(empty,/placeholder="帮我检查模型配置的写入路径。"/);assert.match(empty,/data-pi-inline-suggestion=/);assert.match(empty,/<textarea[^>]*><\/textarea>/);
+ for(const props of [{isStreaming:true},{draftKey:'other'},{compact:true},{extensionPanel:React.createElement('div',null,'Ask User')},{queuedMessages:{steering:[],followUp:['queued']}}])assert.doesNotMatch(render(props),/data-pi-inline-suggestion=/);
+});
+test('accepting a suggestion only updates the current empty draft and cannot overwrite later typing',()=>{
+ const state={value:'',consumed:null};const ta={value:'',isConnected:true,setSelectionRange(){},style:{height:'auto'},closest(){return null}};const valueRef={current:''},draftKeyRef={current:'sid'};
+ const accept=chatInputCallback('acceptInlineSuggestion',{visibleSuggestion:{text:'suggestion'},suggestionKey:'sid:a',draftKey:'sid',draftKeyRef,valueRef,textareaRef:{current:ta},isComposingRef:{current:false},setValue:v=>state.value=v,setConsumedSuggestionKey:k=>state.consumed=k,lastSuggestionTapRef:{current:null},requestAnimationFrame(){},onSend(){throw Error('must not send')}});
+ assert.equal(accept(),true);assert.equal(valueRef.current,'suggestion');assert.equal(state.value,'suggestion');assert.equal(state.consumed,'sid:a');assert.equal(accept(),false);
+ valueRef.current='user typing';assert.equal(accept(),false);valueRef.current='';draftKeyRef.current='other';assert.equal(accept(),false);
+});
+
+test('Tab accepts only a visible suggestion after native menus; modifiers and IME retain their behavior',()=>{
+ const calls=[];const base={Date:{now:()=>1000},COMPOSITION_END_ENTER_GRACE_MS:100,isMobile:false,isStreaming:false,isComposingRef:{current:false},lastCompositionEndAtRef:{current:0},historyMenuOpen:false,inputHistory:[],slashMenuOpen:false,slashQuery:null,atMenuOpen:false,atQuery:null,value:'',onAbort(){calls.push('abort')},onSteer:undefined,onFollowUp:undefined,visibleSuggestion:{text:'suggestion'},suggestionKey:'sid:a',setConsumedSuggestionKey(){calls.push('dismiss')},cancelSuggestionTouch(){},acceptInlineSuggestion(){calls.push('accept');return true}};
+ const event=extra=>({key:'Tab',shiftKey:false,ctrlKey:false,metaKey:false,altKey:false,nativeEvent:{},preventDefault(){calls.push('prevent')},...extra});
+ chatInputCallback('handleKeyDown',base)(event({}));assert.deepEqual(calls,['accept','prevent']);
+ for(const extra of [{shiftKey:true},{ctrlKey:true},{metaKey:true},{altKey:true},{nativeEvent:{isComposing:true}}]){calls.length=0;chatInputCallback('handleKeyDown',base)(event(extra));assert.deepEqual(calls,[])}
+ calls.length=0;chatInputCallback('handleKeyDown',base)(event({key:'Escape'}));assert.deepEqual(calls,['prevent','dismiss']);
+});
+
+test('native empty-send continuation preserves the old action without substituting enhanced payloads',async()=>{
+ for(const [allowed,payload,expected] of [[true,null,'继续'],[false,null,null],[true,'annotation payload','annotation payload']]){
+  const calls=[];const send=chatInputCallback('handleSend',{value:'',attachedImages:[],allowEmptyContinue:allowed,isStreaming:false,runBuiltinCommand:async()=>false,window:{__PI_ENH_PREPARE_COMPOSER_SUBMISSION__:()=>payload?{text:payload,commit(){}}:null},onAudioUnlock(){},clearInput(){},onSend(text){calls.push(text)}});await send({type:'click'});assert.deepEqual(calls,expected?[expected]:[]);
+  if(!payload){calls.length=0;await send();assert.deepEqual(calls,[],'an empty textarea Enter must not become an implicit continuation');}
+ }
+});
+
+test('explicit rejected queue callback does not commit the quote payload',async()=>{
+ let commits=0,preview;const window={__PI_ENH_PREPARE_COMPOSER_SUBMISSION__:()=>({text:'引用正文',commit(){commits++;}})};
+ const run=chatInputCallback('sendQueued',{window,value:'',attachedImages:[],queuedPreviewVisible:false,onFollowUp:async()=>false,onAudioUnlock(){},onBuiltinCommand:null,onPromptWithStreamingBehavior:undefined,onSteer:undefined,clearInput(){},setQueuedSubmissionPreview:v=>preview=typeof v==='function'?v(preview):v});
+ await run('followup');assert.equal(commits,0);assert.equal(preview,null);
 });

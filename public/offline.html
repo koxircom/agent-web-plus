@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#1a1a1a" />
-    <title>Pi Web is offline</title>
+    <title>Agent Web Plus 离线</title>
     <style>
       :root {
         color-scheme: dark;
@@ -27,12 +27,15 @@
 
       main {
         width: min(100%, 420px);
+        display: grid;
+        justify-items: center;
         text-align: center;
       }
 
-      img {
-        width: 88px;
-        height: 88px;
+      .brand {
+        display: block;
+        width: min(100%, 215px);
+        height: auto;
         margin-bottom: 24px;
       }
 
@@ -54,30 +57,76 @@
         margin-top: 24px;
         min-height: 40px;
         padding: 0 18px;
-        border: 1px solid #3a3a3a;
+        border: 1px solid #514a70;
         border-radius: 6px;
-        background: #242424;
+        background: #292633;
         color: #e8e8e8;
         font: inherit;
         cursor: pointer;
       }
 
       button:hover {
-        background: #2e2e2e;
+        background: #363246;
       }
 
       button:focus-visible {
-        outline: 2px solid #60a5fa;
+        outline: 2px solid #8b7bf6;
         outline-offset: 3px;
       }
     </style>
   </head>
   <body>
     <main>
-      <img src="/icons/icon-192.png" alt="" />
-      <h1>Pi Web is offline</h1>
-      <p>Reconnect to the local Pi Web server, then try again.</p>
-      <button type="button" onclick="location.reload()">Try again</button>
+      <svg
+        class="brand"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 816 186"
+        width="215"
+        height="49"
+        fill="none"
+        role="img"
+        aria-label="π+ Agent Web Plus"
+      >
+        <title>π+ Agent Web Plus</title>
+        <defs>
+          <style>
+            .brand-wordmark-text {
+              fill: #ffffff;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+              font-size: 94px;
+              font-weight: 700;
+              letter-spacing: -1.5px;
+            }
+          </style>
+          <linearGradient id="flatBlueViolet" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#4f5ae8" />
+            <stop offset="100%" stop-color="#7850e8" />
+          </linearGradient>
+          <linearGradient id="plusGradient" gradientUnits="userSpaceOnUse" x1="591" y1="56" x2="785" y2="140">
+            <stop offset="0%" stop-color="#6e67f8" />
+            <stop offset="25%" stop-color="#585bf9" />
+            <stop offset="52%" stop-color="#3b4ffb" />
+            <stop offset="78%" stop-color="#2563eb" />
+            <stop offset="100%" stop-color="#1d4ed8" />
+          </linearGradient>
+        </defs>
+        <g id="brand-graphic">
+          <circle id="flat-main-disc" cx="91.2" cy="96" r="87.5" fill="url(#flatBlueViolet)" />
+          <path id="symbol-pi" fill="#ffffff" d="M67.7,59.5H132.7C135.9,59.5 136.1,62.9 135.4,67.2C134.8,71.3 133.9,73.5 130.4,73.5H114.1L107.7,107.5C106.3,114.4 106.7,118.8 110.8,121.2C114.6,123.3 121.1,123.8 124.9,119.8C126.7,117.9 128.6,120 129.5,123C131.7,130.9 122.2,137.5 113.8,137.5C101.1,137.5 92.2,131.4 93.7,114.9C94.1,105.5 97.7,86.3 100.5,73.5H82.1L75.5,108.4C72.9,122.1 66.6,137.5 55.6,137.5C49.5,137.5 45.8,132.7 48,127.2C49.6,123.8 54.5,122 57.5,116C62.4,106.5 65.3,89.4 68.7,73.7H60.2C56.7,73.7 55.3,75.4 53.1,78.4C50.5,82.3 43.5,82.9 44.9,77.2C47.2,67.1 56.2,59.5 67.7,59.5Z" />
+          <circle id="flat-plus-disc" cx="167" cy="38" r="34" fill="#6250e9" stroke="#ffffff" stroke-width="1.6" />
+          <path id="symbol-plus" fill="#ffffff" d="M162.7,19.5L169.7,19.5L169.7,20.5L170.7,20.5L170.7,33.5L182.7,33.5L182.7,40.5L171.7,40.5L171.7,41.5L170.7,41.5L170.7,54.5L162.7,54.5L162.7,41.5L150.7,41.5L150.7,40.5L149.7,40.5L149.7,33.5L162.7,33.5Z" />
+        </g>
+        <g id="brand-typography">
+          <text data-pi-brand-part="wordmark" class="brand-wordmark-text">
+            <tspan x="230" y="138">Pi</tspan>
+            <tspan x="346" y="138">Web</tspan>
+            <tspan x="591" y="138" fill="url(#plusGradient)">Plus</tspan>
+          </text>
+        </g>
+      </svg>
+      <h1>Agent Web Plus 暂时离线</h1>
+      <p>无法连接到本地 Agent Web Plus 服务。请恢复连接后重试。</p>
+      <button type="button" onclick="window.location.reload()">重试连接</button>
     </main>
   </body>
 </html>

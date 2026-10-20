@@ -23,19 +23,6 @@ export interface EnhancementHistoryState {
   oldestEntryId: string | null;
 }
 
-export interface UserMessageReconcileOptions<TMessage = AgentMessage> {
-  lastFingerprint: string | null;
-  serverFingerprint: string;
-  fingerprintFn: (message: TMessage) => string;
-  fallback: () => TMessage[];
-}
-
-export type UserMessageReconcileHook<TMessage = AgentMessage> = (
-  prevMessages: TMessage[],
-  serverMessage: TMessage,
-  options: UserMessageReconcileOptions<TMessage>,
-) => TMessage[];
-
 export interface SessionReloadController {
   getSessionId: () => string | null;
   getSessionData?: () => SessionData | null;
@@ -63,7 +50,6 @@ export interface EnhancementWindowLike {
   ) => unknown;
   __PI_WEB_NATIVE_RELOAD_CURRENT_SESSION__?: (showLoading?: boolean) => unknown;
   __PI_ENH_RELOAD_CURRENT_SESSION__?: (showLoading?: boolean) => unknown;
-  __PI_ENH_RECONCILE_USER_MESSAGE__?: UserMessageReconcileHook<any>;
   localStorage?: Pick<Storage, "getItem"> | null;
   location?: { search?: string } | null;
   addEventListener?: (type: string, listener: EventListenerOrEventListenerObject) => void;
@@ -140,7 +126,10 @@ export function splitAssistantDisplayRuns(message: AssistantMessage): { kind: "p
     if (previous?.kind === kind) { previous.blocks.push(block); previous.indices.push(originalIndex); }
     else runs.push({ kind, blocks: [block], indices: [originalIndex] });
   }
-  if (runs.at(-1)?.kind !== "public" && (getAssistantErrorMessage(message) || isAssistantTruncated(message))) {
+  if (
+    runs.at(-1)?.kind !== "public"
+    && (message.retryAttempt || getAssistantErrorMessage(message) || isAssistantTruncated(message))
+  ) {
     runs.push({ kind: "public", blocks: [], indices: [] });
   }
   return runs.map((run, index) => {
@@ -450,35 +439,3 @@ export function registerSessionReloadAliases(
   };
 }
 
-export function markOptimisticUserMessage<T extends object>(message: T): T {
-  try {
-    Object.defineProperty(message, "__piEnhOptimistic", {
-      value: true,
-      configurable: true,
-      enumerable: false,
-    });
-  } catch {
-    // Ignore non-extensible objects.
-  }
-  return message;
-}
-
-export function reconcileDeliveredUserMessage<TMessage extends AgentMessage>(
-  prevMessages: TMessage[],
-  deliveredMessage: TMessage,
-  options: UserMessageReconcileOptions<TMessage>,
-  win: EnhancementWindowLike | null = getEnhancementWindow(),
-): TMessage[] {
-  try {
-    const hook = win?.__PI_ENH_RECONCILE_USER_MESSAGE__;
-    if (typeof hook === "function") {
-      const reconciled = hook(prevMessages, deliveredMessage, options);
-      if (Array.isArray(reconciled)) {
-        return reconciled;
-      }
-    }
-  } catch {
-    // Fall back to native user message reconciliation if the enhancement hook throws.
-  }
-  return options.fallback();
-}

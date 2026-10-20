@@ -7,6 +7,7 @@
 // Call sites previously repeated the same 5-line fetch block 13× in
 // hooks/useAgentSession.ts. This helper collapses that down to one line.
 
+import type { PendingPromptSubmission } from "./prompt-submissions";
 import { retainPromptSubmission, markPromptSubmissionUncertain, reconcilePromptSubmission, releasePromptSubmission } from "./prompt-submissions";
 import { markPromptSubmissionsRecalled } from "./prompt-submissions";
 import { persistDraftNow } from "./draft-store";
@@ -36,17 +37,20 @@ export function isPromptRejectedError(error: unknown): error is AgentCommandErro
 export async function sendAgentCommand<T = unknown>(
   sessionId: string,
   command: Record<string, unknown>,
-  options?: { onPromptRegistered?: (identity: { requestId: string; sessionId: string }) => void },
+  options?: { onPromptIdentified?: (identity: { requestId: string; sessionId: string }) => void; onPromptRegistered?: (identity: { requestId: string; sessionId: string }) => void; beforeDispatch?: () => Promise<void>; submission?: PendingPromptSubmission },
 ): Promise<T> {
   const requestId = command.type === "prompt"
-    ? Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")
+    ? options?.submission?.requestId ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")
     : null;
   if (requestId) {
     dispatchingPrompts.add(requestId);
+    // Bind presentation identity before the durable store publishes its row.
+    // This does not authorize clearing the draft; registration still waits for IO.
+    try { options?.onPromptIdentified?.({ requestId, sessionId }); } catch { /* UI-only observer. */ }
     try {
-      retainPromptSubmission({ requestId, sessionId, message: String(command.message ?? ""),
+      if (!options?.submission) await retainPromptSubmission({ requestId, sessionId, message: String(command.message ?? ""),
         images: command.images as Array<{ data: string; mimeType: string }> | undefined,
-        status: "sending", createdAt: Date.now(),
+        status: "sending", createdAt: Date.now(), deliveryProtocol: 2,
         ...(command.streamingBehavior === "steer" || command.streamingBehavior === "followUp" ? { streamingBehavior: command.streamingBehavior } : {}),
       });
     } catch {
@@ -57,7 +61,11 @@ export async function sendAgentCommand<T = unknown>(
   // UI observes the same generated identity as the durable record, never text.
   // A presentation callback must not alter delivery or cause a replay.
   if (requestId) { try { options?.onPromptRegistered?.({ requestId, sessionId }); } catch { /* UI-only observer. */ } }
+  let dispatched = false;
   try {
+  // Admission to the local outbox precedes network preparation (including SSE).
+  await options?.beforeDispatch?.();
+  dispatched = true;
   const res = await fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -93,6 +101,7 @@ export async function sendAgentCommand<T = unknown>(
   return body.data as T;
   } catch (error) {
     if (requestId) {
+      if (!dispatched) { markPromptSubmissionUncertain(requestId); throw error; }
       if (isPromptRejectedError(error)) releasePromptSubmission(requestId);
       else {
         // Read-only recovery: never replay a prompt whose response was lost.
@@ -118,7 +127,20 @@ export async function sendAgentCommand<T = unknown>(
   }
 }
 
-export async function readPromptReceipt(sessionId: string, requestId: string): Promise<{ status: "committed" | "accepted" | "unconfirmed" | "pending" | "unknown" | "rejected" | "cancelled" | "recalled"; error?: string; inFlight?: boolean }> {
+/** Retry only the HTTP handoff with its original ID. The durable server inbox
+ * acknowledges repeats without executing them. Legacy copies older than the
+ * previous receipt retention window cannot prove absence; leave them intact. */
+export async function handoffUnsubmittedPrompt(row: PendingPromptSubmission): Promise<void> {
+  if (dispatchingPrompts.has(row.requestId) || row.status === "recalled"
+    || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+  if (row.deliveryProtocol !== 2 && Date.now() - row.createdAt >= 24 * 60 * 60 * 1000) return;
+  await sendAgentCommand(row.sessionId, { type: "prompt", message: row.message,
+    ...(row.images?.length ? { images: row.images } : {}),
+    ...(row.streamingBehavior ? { streamingBehavior: row.streamingBehavior } : {}),
+  }, { submission: row });
+}
+
+export async function readPromptReceipt(sessionId: string, requestId: string): Promise<{ status: "committed" | "accepted" | "unconfirmed" | "pending" | "unknown" | "rejected" | "cancelled" | "recalled"; error?: string; inFlight?: boolean; reason?: "runtime_exit" }> {
   const response = await fetch(`/api/agent/${encodeURIComponent(sessionId)}?requestId=${encodeURIComponent(requestId)}`, { signal: AbortSignal.timeout(8000), cache: "no-store" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const receipt = await response.json();

@@ -1,5 +1,5 @@
 /**
- * Pi Web Enhancements v4.3.4:
+ * Agent Web Plus Enhancements v4.3.4:
  * 1. Session Row Context Menu (Right-click in sidebar)
  *    - Copy Session ID / Path / Prompt / CWD
  * 2. Quick Action Quote Toolbar (Select text in chat output)
@@ -42,7 +42,7 @@
     try {
       window.__PI_WEB_ENHANCEMENTS_CLEANUP__();
     } catch (err) {
-      console.warn("[Pi Web Enhancements] error cleaning up previous instance:", err);
+      console.warn("[Agent Web Plus Enhancements] error cleaning up previous instance:", err);
     }
   }
   // 立即清除任何可能残留的孤儿 Toast 节点
@@ -178,7 +178,7 @@
       try {
         fn();
       } catch (err) {
-        console.error("[Pi Web Enhancements] Error in managed timeout:", err);
+        console.error("[Agent Web Plus Enhancements] Error in managed timeout:", err);
       }
     }, ms);
     managedTimeoutCleanups.set(id, cleanup);

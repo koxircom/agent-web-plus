@@ -584,7 +584,7 @@ function storedValue(config: McpServerConfig, label: string): string | undefined
 /**
  * One of the paste's own literal secrets, in a value pi resolves (ADR 0006,
  * "Secrets typed in the panel"): saved as written it keeps the server global,
- * so it can be read from a variable of the computer running Pi Web instead,
+ * so it can be read from a variable of the computer running Agent Web Plus instead,
  * stored as `${NAME}` (after a header's `Bearer `), which lets the server go
  * to the project. Its box opens with the name the pane suggests. The secret
  * itself is never shown.

@@ -15,13 +15,13 @@ function harness(isNew=false){
  const newSession=deferred(),events=deferred(),command=deferred(),state={running:false,bash:false,messages:[],restored:[],notices:[],commands:[],stopping:false,sessionSubmissions:[],promptScrollRevision:0},ref=current=>({current});
  const scope={crypto:webcrypto,AbortController,DOMException,Promise,useCallback:f=>f,waitForPromptPreparation:undefined,isNew,newSessionCwd:'/test',newSessionDraftKey:'new:draft:/test',newSessionModel:null,pendingSessionInfo,onSessionSubmissionChange:(...args)=>state.sessionSubmissions.push(args),session:isNew?null:{id:'s'},composerDraftKey:'draft',
   agentRunningRef:ref(false),bashRunningRef:ref(false),sessionIdRef:ref(isNew?null:'s'),ensuringNewSessionRef:ref(null),promptRunIdRef:ref(0),rpcPromptPendingRef:ref(false),optimisticUserMessageRef:ref(null),entryIdsRef:ref([]),pendingScrollToUserRef:ref(false),preparationRef:ref(null),stopInFlightRef:ref(null),executeBashRef:ref(null),
-  ensureNewSession:()=>{const pending=newSession.promise.then(s=>{scope.sessionIdRef.current=s;return s;});scope.ensuringNewSessionRef.current=pending;return pending;},ensureEventsConnected:()=>events.promise,
+  ensureNewSession:()=>{const pending=newSession.promise.then(s=>{scope.sessionIdRef.current=s;return s;});scope.ensuringNewSessionRef.current=pending;return pending;},maintainEventsConnected:()=>{},
   sendAgentCommand:async(s,c)=>{state.commands.push(c);if(c.type==='abort')await command.promise;},
   restoreSubmission:(...args)=>state.restored.push(args),setMessages:f=>state.messages=f(state.messages),setAgentRunning:v=>state.running=v,setBashRunning:v=>state.bash=v,setPendingBash:()=>{},setStopRequested:v=>state.stopping=v,
   setAgentPhase:()=>{},setPromptAnchorActive:()=>{},setPromptScrollRevision:update=>{state.promptScrollRevision=update(state.promptScrollRevision);},setPendingModel:()=>{},dispatch:()=>{},bumpSessionEpoch:()=>{},cancelEventStreamGrace:()=>{},markOptimisticUserMessage:()=>{},userMessageKey:()=> 'user',promoteNewSession:()=>{},waitForPromptSettlement:()=>{},reconcileAgentState:()=>{},loadSession:async()=>{},closeEvents:()=>{},addNotice:n=>state.notices.push(n),isPromptRejectedError:()=>false,console};
  const actions=vm.runInNewContext(code,scope);return{...actions,newSession,events,command,state,scope};
 }
-for(const phase of ['create','events'])test(`Stop during ${phase} retains the message without model dispatch`,async()=>{
+for(const phase of ['create'])test(`Stop during ${phase} retains the message without model dispatch`,async()=>{
  const h=harness(phase==='create'),sending=h.handleSend('keep me');await tick();
  assert.equal(h.state.running,true);
  if(phase==='create') assert.equal(h.state.sessionSubmissions[0][1].firstMessage,'keep me');
@@ -54,15 +54,15 @@ test('title and optimistic message appear before session creation and event conn
  h.newSession.resolve('real'); await tick();
  assert.equal(h.state.sessionSubmissions.at(-1)[1].id,'real');
  assert.equal(h.state.sessionSubmissions.at(-1)[1].firstMessage,'即时标题');
- assert.equal(h.state.commands.length,0);
- h.events.resolve(); await sending;
+ assert.equal(h.state.commands.filter(c=>c.type==='prompt').length,1);
+ await sending;
  assert.equal(h.state.commands.filter(c=>c.type==='prompt').length,1);
 });
 
 test('Stop retains image-only submissions and mixed attachment payload intact', async()=>{
  for(const message of ['', '修改这些文件\n\n[附件: @.pi-uploads/example.pdf]']) {
-  const h=harness(), images=[{data:'AQID',mimeType:'image/png'}];
-  const sending=h.handleSend(message,images);await tick();await h.handleAbort();await sending;
+  const h=harness(true), images=[{data:'AQID',mimeType:'image/png'}];
+  const sending=h.handleSend(message,images);await tick();await h.handleAbort();h.newSession.resolve('s');await sending;
   const saved=h.state.commands.find(c=>c.type==='retain_stopped_prompt');
   assert.equal(saved.message,message);assert.equal(saved.images[0].data,'AQID');assert.equal(saved.images[0].mimeType,'image/png');
   assert.equal(h.state.restored.length,0);assert.equal(h.state.commands.some(c=>c.type==='prompt'),false);

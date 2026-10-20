@@ -1336,18 +1336,10 @@
         return true;
       }
       if (!isSessionIngested(sessionId, meta)) {
-        const refreshHost = (typeof window !== "undefined" && window.location?.hostname) ? window.location.hostname : "10.0.0.2";
-        let result;
-        try {
-          result = await request(`http://${refreshHost}:30149/usage/refresh`, { method: "POST" });
-        } catch (fetchErr) {
-          if (refreshHost !== "10.0.0.2") {
-            result = await request("http://10.0.0.2:30149/usage/refresh", { method: "POST" });
-          } else {
-            throw fetchErr;
-          }
+        const result = await request("/api/usage/ledger", { method: "POST" });
+        if (result.version !== 2 || !Array.isArray(result.buckets)) {
+          throw new Error("服务端入账失败，已阻止删除");
         }
-        if (result.ok !== true) throw new Error("服务端入账失败，已阻止删除");
         await window.__PI_ENH_LOAD_OPTIONAL__("usage-panel");
         if (!window.PiUsagePanel?.fetchSnapshotOnce) throw new Error("用量模块不可用，已阻止删除");
         await window.PiUsagePanel.fetchSnapshotOnce(controller.signal);
@@ -2147,17 +2139,24 @@
     return `${(query || "").trim().toLowerCase()}::${tagId || "all"}`;
   }
 
-  function getFromSearchCache(key) {
+  function getNativeSearchCatalog() {
+    try {
+      const snapshot = window.__PI_ENH_GET_SEARCH_CATALOG__?.();
+      return snapshot && Array.isArray(snapshot.sessions) && typeof snapshot.scope === "string" ? snapshot : null;
+    } catch (_) { return null; }
+  }
+
+  function getFromSearchCache(key, catalogScope) {
     const entry = SESSION_SEARCH_CACHE.get(key);
     if (!entry) return null;
-    if (Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
+    if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
       SESSION_SEARCH_CACHE.delete(key);
       return null;
     }
     return entry.data;
   }
 
-  function setToSearchCache(key, data) {
+  function setToSearchCache(key, data, catalogScope) {
     if (!key || !data) return;
     if (SESSION_SEARCH_CACHE.size >= SEARCH_CACHE_MAX_SIZE) {
       const oldestKey = SESSION_SEARCH_CACHE.keys().next().value;
@@ -2166,6 +2165,7 @@
     SESSION_SEARCH_CACHE.set(key, {
       timestamp: Date.now(),
       data,
+      catalogScope,
     });
   }
 
@@ -2173,12 +2173,13 @@
     SESSION_SEARCH_CACHE.clear();
   }
 
-  function findNarrowableParentCache(query) {
+  function findNarrowableParentCache(query, catalogScope) {
     const qClean = (query || "").trim().toLowerCase();
     if (!qClean) return null;
 
     // 1. 尝试找前缀词缓存：例如当前是 "解耦"，检查是否已有 "解" 的完整缓存
     for (const [cacheKey, entry] of SESSION_SEARCH_CACHE.entries()) {
+      if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) continue;
       const [cachedQ, cachedTag] = cacheKey.split("::");
       if (cachedTag !== (activeSessionFilterTagId || "all")) continue;
       if (cachedQ && cachedQ.length < qClean.length && qClean.startsWith(cachedQ)) {
@@ -2464,9 +2465,15 @@
       return realFetch(input, init);
     }
 
+    // Native catalogue ownership is required before local metadata can add hits.
+    // Older tabs without this bridge use the authoritative server search.
+    const catalog = getNativeSearchCatalog();
+    if (!catalog) return realFetch(input, init);
+    const catalogById = new Map(catalog.sessions.filter((s) => s?.id && !s.transient && !s.submissionPending).map((s) => [s.id, s]));
+
     // 1. 优先命中 0ms 闪电 LRU 缓存
     const cacheKey = getSearchCacheKey(query, activeSessionFilterTagId);
-    const cachedData = getFromSearchCache(cacheKey);
+    const cachedData = getFromSearchCache(cacheKey, catalog.scope);
     if (cachedData) {
       scheduleSearchResultsHighlight();
       return createCachedResponse(cachedData, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_CACHE");
@@ -2475,7 +2482,7 @@
     const keywords = query.split(/\s+/).map((k) => k.trim()).filter(Boolean);
 
     // 1.1 前缀或多词子集内存收窄匹配 (0ms 瞬发响应)
-    const narrowableParent = findNarrowableParentCache(query);
+    const narrowableParent = findNarrowableParentCache(query, catalog.scope);
     if (narrowableParent) {
       const parentResults = narrowableParent.data.results || [];
       const filtered = [];
@@ -2483,7 +2490,7 @@
       for (const item of parentResults) {
         const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
         const sid = item.session?.id;
-        const sess = sid ? knownSessionsMap.get(sid) : null;
+        const sess = sid ? catalogById.get(sid) : null;
         const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
         const combined = fullSnippet + " " + sessMeta;
 
@@ -2498,7 +2505,7 @@
           results: filtered,
           truncated: narrowableParent.data.truncated || false,
         };
-        setToSearchCache(cacheKey, narrowedJson);
+        setToSearchCache(cacheKey, narrowedJson, catalog.scope);
         scheduleSearchResultsHighlight();
         return createCachedResponse(narrowedJson, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_NARROWED");
       }
@@ -2510,11 +2517,6 @@
     }
     activeSearchAbortController = new AbortController();
     const currentAbortSignal = activeSearchAbortController.signal;
-
-    // 3. 内存索引预热保证
-    if (knownSessionsMap.size === 0) {
-      await prewarmSessionSearchIndex();
-    }
 
     let nativeResults = [];
     let isTruncated = false;
@@ -2552,7 +2554,7 @@
           for (const item of primaryList) {
             const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
             const sid = item.session?.id;
-            const sess = sid ? knownSessionsMap.get(sid) : null;
+            const sess = sid ? catalogById.get(sid) : null;
             const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
             const combined = fullSnippet + " " + sessMeta;
 
@@ -2572,7 +2574,7 @@
     const titleMatches = [];
 
     // 本地标题/首条消息多关键词 AND 匹配
-    for (const [id, s] of knownSessionsMap.entries()) {
+    for (const [id, s] of catalogById.entries()) {
       if (seenSessionIds.has(id)) continue;
       const name = (s.name || "").trim();
       const firstMsg = (s.firstMessage || "").trim();
@@ -2610,7 +2612,7 @@
       seenSessionIds.add(id);
     }
 
-    let mergedResults = [...titleMatches, ...nativeResults];
+    let mergedResults = [...titleMatches, ...nativeResults].filter((r) => catalogById.has(r.session?.id));
 
     // 结合标签过滤：若选中了具体标签，严格过滤出满足该标签的会话
     if (isPluginEnabled("session-tags") && activeSessionFilterTagId && activeSessionFilterTagId !== "all") {
@@ -2627,7 +2629,7 @@
     };
 
     // 保存至 LRU 高性能缓存
-    setToSearchCache(cacheKey, mergedJson);
+    if (getNativeSearchCatalog()?.scope === catalog.scope) setToSearchCache(cacheKey, mergedJson, catalog.scope);
 
     // 触发搜索关键词全量高亮与导航
     scheduleSearchResultsHighlight();
@@ -3209,54 +3211,6 @@
   ]);
 
   const pendingStopRequests = new Map();
-  const pendingStopRuntimePreparations = new Map();
-
-  async function prepareStopRuntimeForPrompt(target, input, init) {
-    const entry = { cancelled: false };
-    let entries = pendingStopRuntimePreparations.get(target.sessionId);
-    if (!entries) pendingStopRuntimePreparations.set(target.sessionId, entries = new Set());
-    entries.add(entry);
-    const signal = init?.signal || input?.signal;
-    const checkCancelled = () => {
-      if (entry.cancelled || signal?.aborted) throw new DOMException("消息已在启动前停止", "AbortError");
-    };
-    try {
-      checkCancelled();
-      const activeFetch = baseFetch || originalWindowFetch;
-      if (!activeFetch) return true;
-      const headers = new Headers(init?.headers || input?.headers);
-      headers.set("Content-Type", "application/json");
-      const call = (type) => activeFetch.call(window, target.urlStr, {
-        method: "POST", headers, credentials: init?.credentials || input?.credentials || "same-origin",
-        signal, body: JSON.stringify({ type })
-      });
-      const response = await call("get_state");
-      checkCancelled();
-      if (!response.ok) return;
-      const result = await response.json();
-      const state = result?.data || result;
-      checkCancelled();
-      // Never reload a running session or consume its user queue. Fresh SDK
-      // resources are loaded only at the existing idle command boundary.
-      if (state?.isStreaming || state?.isPromptRunning || state?.isBashRunning || state?.isCompacting) return true;
-      if (!(state?.stopRuntimeVersion === "1.0.0" && ["1.0.0", "not-applicable"].includes(state?.subagentCancellationVersion))) {
-        const reload = await call("reload");
-        checkCancelled();
-        if (!reload.ok) throw new Error("停止保护更新失败，消息未启动");
-      }
-      // Keep Stop ownership through the lazy SSE upgrade, before dispatch.
-      const lazyEs = dormantSessionEventSources.get(target.sessionId);
-      if (lazyEs && typeof lazyEs.upgradeToReal === "function") await lazyEs.upgradeToReal();
-      checkCancelled();
-      return true;
-    } catch (error) {
-      if (entry.cancelled && !signal?.aborted) return false;
-      throw error;
-    } finally {
-      entries.delete(entry);
-      if (!entries.size) pendingStopRuntimePreparations.delete(target.sessionId);
-    }
-  }
 
   // 记录每个 DOM 按钮最初的属性以及当前持有反馈的 token 集合
   // 使用 WeakMap 避免持有已销毁 DOM 的引用引起内存泄漏
@@ -3632,9 +3586,6 @@
       throw callerSignal.reason || new DOMException("The user aborted a request.", "AbortError");
     }
 
-    if (abortType === "abort") {
-      for (const entry of pendingStopRuntimePreparations.get(sessionId) || []) entry.cancelled = true;
-    }
     const myEntry = { promise: null, sessionId, abortType };
     applyStopFeedback(sessionId, myEntry);
 
@@ -3716,21 +3667,6 @@
         if (syncAbortType) {
           return dispatchDirectStopFetch.call(this, agentTarget, syncAbortType, input, init);
         }
-        let commandType = null;
-        if (typeof init?.body === "string") {
-          try { commandType = JSON.parse(init.body)?.type; } catch (_) {}
-        }
-        if (commandType === "prompt" && await prepareStopRuntimeForPrompt(agentTarget, input, init) === false) {
-          const command = JSON.parse(init.body);
-          const activeFetch = baseFetch || originalWindowFetch;
-          const response = await activeFetch.call(this, input, { ...init,
-            body: JSON.stringify({ ...command, type: "retain_stopped_prompt" }) });
-          if (response.ok) {
-            markSessionRunning(agentTarget.sessionId, false, { settled: true });
-            void invalidateSessionCache(agentTarget.sessionId);
-          }
-          return response;
-        }
         const asyncAbortType = await resolveAgentAbortType(input, init);
         if (asyncAbortType) {
           return dispatchDirectStopFetch.call(this, agentTarget, asyncAbortType, input, init);
@@ -3765,16 +3701,27 @@
     }
 
     // A new-chat mode is staged locally; establish and verify it BEFORE the first prompt.
-    if (queueRequestBody && pendingNewComposerMode?.sessionId && isPluginEnabled("composer-modes")) {
+    if (queueRequestBody && isPluginEnabled("composer-modes")) {
       const owner = extractSessionIdFromUrl(requestUrl);
-      const payload = await queueRequestBody.then(text => { try { return JSON.parse(text); } catch { return null; } });
-      if (owner === pendingNewComposerMode.sessionId && payload?.type === "prompt" &&
-          !String(payload.message || "").startsWith("/composer-mode")) {
-        const staged = pendingNewComposerMode;
-        if (!await requestSwitchComposerMode(staged.mode, owner)) {
-          return new Response(JSON.stringify({success:false,accepted:false,code:"prompt_rejected",error:"计划/目标模式尚未确认生效，消息未发送，请重试。"}), {status:409,headers:{"Content-Type":"application/json"}});
+      const stagedPending = pendingNewComposerMode;
+      const staged = pendingNewComposerMode?.sessionId ? pendingNewComposerMode : null;
+      // Creation is not a Pi session id; it has no owner until the response.
+      const ownerEngine = owner === "new" ? null : owner?.startsWith("codex:") ? "codex" : owner ? "pi" : null;
+      const stagedEngine = stagedPending?.engine || "pi";
+      if (stagedPending && (
+        (ownerEngine && ownerEngine !== stagedEngine) ||
+        stagedPending.project !== getCurrentProjectStatusKey()
+      )) {
+        pendingNewComposerMode = null;
+      } else if (staged && owner === staged.sessionId && ownerEngine === stagedEngine) {
+        const payload = await queueRequestBody.then(text => { try { return JSON.parse(text); } catch { return null; } });
+        const internalPiModePrompt = stagedEngine === "pi" && String(payload?.message || "").startsWith("/composer-mode");
+        if (payload?.type === "prompt" && !internalPiModePrompt) {
+          if (!await requestSwitchComposerMode(staged.mode, owner)) {
+            return new Response(JSON.stringify({success:false,accepted:false,code:"prompt_rejected",error:"计划/目标模式尚未确认生效，消息未发送，请重试。"}), {status:409,headers:{"Content-Type":"application/json"}});
+          }
+          if (pendingNewComposerMode === staged) pendingNewComposerMode = null;
         }
-        if (pendingNewComposerMode === staged) pendingNewComposerMode = null;
       }
     }
 
@@ -4150,15 +4097,20 @@
     if (response?.ok && requestMethod === "POST" && /\/api\/agent\/new(?:[?#]|$)/.test(requestUrl) && pendingNewComposerMode) {
       const created = await response.clone().json().catch(() => null);
       if (created?.sessionId && pendingNewComposerMode.project === getCurrentProjectStatusKey()) {
-        pendingNewComposerMode.sessionId = created.sessionId;
+        const createdEngine = created.sessionId.startsWith("codex:") ? "codex" : "pi";
+        const stagedEngine = pendingNewComposerMode.engine || "pi";
+        if (createdEngine === stagedEngine) pendingNewComposerMode.sessionId = created.sessionId;
+        else pendingNewComposerMode = null;
       }
     }
     // Keep native GET/poll state authoritative, including changes from another browser.
     if (response?.ok && requestMethod === "GET" && /\/api\/agent\/[^/?#]+(?:[?#]|$)/.test(requestUrl)) {
       const state = await response.clone().json().catch(() => null);
-      const parsedMode = parseExtensionStatus(state?.state, "composer-modes");
+      const parsedMode = parseExtensionStatus(state?.state || state, "composer-modes");
       if (parsedMode?.version === 1 && ["normal", "plan", "goal"].includes(parsedMode.mode)) {
-        composerModesStateMap.set(extractSessionIdFromUrl(requestUrl), parsedMode);
+        const sessionId = extractSessionIdFromUrl(requestUrl);
+        const commitModeState = window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__;
+        if (sessionId && typeof commitModeState === "function") commitModeState(sessionId, parsedMode);
       }
     }
 
@@ -4400,8 +4352,8 @@
     const urlStr = typeof input === "string" ? input : input?.url ? input.url : String(input);
     // HEAD is a read-only validator, never an Agent command or cache mutation.
     if (method === "HEAD") return activeFetch(input, init);
-    // Native versioned envelopes own their exact baseline; directly return activeFetch without caching or rewriting.
-    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?sync=1(?=[&#]|$)/.test(urlStr)) {
+    // Native sync envelopes and current-identity lookups must bypass all history caches.
+    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?(?:sync|lookup)=1(?=[&#]|$)/.test(urlStr)) {
       return activeFetch(input, init);
     }
     // Interaction queues and prompt receipts belong to the live server.
@@ -4520,15 +4472,8 @@
 
     // 场景 0: /api/agent/:id 状态请求（绝不能当作会话详情缓存！）
     if (urlStr.includes("/api/agent/")) {
-      if (
-        isPluginEnabled("session-memory-cache") &&
-        knownSessionsMap.has(sessionId) &&
-        !entry.isRunning &&
-        !entry.hasPendingAgentEnd &&
-        !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sessionId))
-      ) {
-        return createCachedResponse(entry.state?.data || { running: false }, {}, "IDLE_STATE");
-      }
+      // Runtime state is ephemeral: idle sessions can still own paused queues
+      // and pending questions. Only the native service may report it empty.
       const reqGeneration = entry.runGeneration;
       const realResp = await activeFetch(input, { ...init, cache: "no-store" });
       if (realResp && (realResp.ok || realResp.status === 200)) {
@@ -4569,15 +4514,8 @@
     // 场景 2: 会话状态请求 (/api/sessions/:id/state)
     const isStateRequest = urlStr.endsWith("/state") || urlStr.includes("/state?");
     if (isStateRequest) {
-      if (
-        isPluginEnabled("session-memory-cache") &&
-        knownSessionsMap.has(sessionId) &&
-        !entry.isRunning &&
-        !entry.hasPendingAgentEnd &&
-        !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sessionId))
-      ) {
-        return createCachedResponse(entry.state?.data || { running: false }, {}, "IDLE_STATE");
-      }
+      // Runtime state is ephemeral: idle sessions can still own paused queues
+      // and pending questions. Only the native service may report it empty.
       const reqGeneration = entry.runGeneration;
       const realResp = await activeFetch(input, { ...init, cache: "no-store" });
       if (realResp && (realResp.ok || realResp.status === 200)) {
@@ -5647,6 +5585,7 @@
         const sId = extractSessionIdFromUrl(urlStr);
         if (
           sId &&
+          !sId.startsWith("codex:") &&
           urlStr.includes("/events") &&
           urlStr.includes("/api/agent/") &&
           isPluginEnabled("session-memory-cache") &&
@@ -5654,7 +5593,8 @@
           !sessionMemoryCache.get(sId)?.isRunning &&
           !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sId))
         ) {
-          // 休眠历史会话惰性 SSE 代理：浏览历史会话时不向服务端发起 /events 触发 startRpcSession 冷启动阻塞；
+          // Codex 的共享执行端可由电脑启动任务，其只读 SSE 必须真实订阅。
+          // 休眠 Pi 历史会话惰性 SSE 代理：浏览历史会话时不向服务端发起 /events 触发 startRpcSession 冷启动阻塞；
           // 当用户在该会话发送消息（POST /api/agent/:id）时自动升级连接真实 OriginalEventSource。
           const listeners = new Map();
           let realEs = null;

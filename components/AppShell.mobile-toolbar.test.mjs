@@ -3,13 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
+const summarySource = await readFile(new URL("./SessionUsageSummary.tsx", import.meta.url), "utf8");
 const mobileHookSource = await readFile(new URL("../hooks/useIsMobile.ts", import.meta.url), "utf8");
 
-test("keeps action icons inline in medium mobile sidebars", () => {
+test("keeps shared action access beside statistics in the mobile toolbar", () => {
   assert.match(mobileHookSource, /NARROW_MOBILE_QUERY = "\(max-width: 480px\)"/);
   assert.match(source, /const isNarrowMobile = useIsNarrowMobile\(\);/);
-  assert.match(source, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}/);
-  assert.match(source, /\{isNarrowMobile && \([\s\S]*?data-mobile-toolbar-more="true"/);
+  assert.match(source, /data-mobile-toolbar-more="true"/);
+  assert.match(source, /\{renderChatToolbarActions\(true\)\}/);
+  assert.match(source, /\{renderSessionStatsButton\(true\)\}/);
 });
 
 test("uses a compact narrow-mobile toolbar with a floating action layer", () => {
@@ -41,16 +43,16 @@ test("keeps the Agents panel open while switching sessions and positions it at t
 
 test("only renders branch toolbar controls for sessions with branches", () => {
   assert.match(source, /const sessionHasBranches = hasSessionBranches\(branchTree\)/);
-  assert.match(source, /\{sessionHasBranches && \(mobile \? \(/);
-  assert.match(source, /\{isMobile && sessionHasBranches && \(/);
+  assert.match(source, /\{piExecutionReady && sessionHasBranches && \(mobile \? \(/);
+  assert.match(source, /\{isMobile && piExecutionReady && sessionHasBranches && \(/);
   assert.match(source, /panel === "branches" \? null : panel/);
 });
 
-test("keeps covered statistics and file controls out of interaction and focus", () => {
-  assert.match(source, /const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;/);
-  assert.match(source, /disabled=\{!showChat \|\| covered\}[\s\S]*?tabIndex=\{covered \? -1 : undefined\}/);
-  assert.match(source, /data-mobile-toolbar-file=\{mobile \? "true" : undefined\}[\s\S]*?visibility: covered \? "hidden" : "visible"/);
-  assert.match(source, /aria-hidden=\{covered \? true : undefined\}/);
+test("keeps the shared statistics control out of interaction and focus while its mobile layer is covered", () => {
+  assert.match(source, /<SessionUsageSummary mobile=\{mobile\} covered=\{mobile && mobileToolbarMoreOpen\}/);
+  assert.match(summarySource, /disabled=\{disabled\|\|covered\}/);
+  assert.match(summarySource, /tabIndex=\{covered\?-1:undefined\}/);
+  assert.match(summarySource, /aria-hidden=\{covered\|\|undefined\}/);
 });
 
 test("closes the mobile action layer on outside click, Escape, layout changes, and session changes", () => {
@@ -87,11 +89,12 @@ test("keeps theme and language in settings instead of the chat toolbar", () => {
   assert.match(source, /useTheme\(\);/);
 });
 
-test("prioritizes context and cost when the mobile statistics area narrows", () => {
-  assert.match(source, /\.mobile-session-stats \{[\s\S]*?container-type: inline-size/);
-  assert.match(source, /@container \(max-width: 158px\)[\s\S]*?\.mobile-session-stat-io/);
-  assert.match(source, /@container \(max-width: 88px\)[\s\S]*?\.mobile-session-stat-cost/);
-  assert.match(source, /mobileContextText = percent !== null \? `\$\{percent\.toFixed\(0\)\}%` : null/);
+test("shows real context occupancy and capacity alongside cumulative tokens in the same shared summary", () => {
+  assert.match(source, /usage=\{\{contextUsage,tokens:/);
+  assert.match(summarySource, /data-context-usage="true"/);
+  assert.match(summarySource, /上下文 \{used\} \/ \{window\}/);
+  assert.match(summarySource, /data-token-usage="true"/);
+  assert.doesNotMatch(summarySource, /executionEngine|codex:/);
 });
 
 test("places trust warnings below the mobile toolbar and the file toggle in toolbar flow", () => {

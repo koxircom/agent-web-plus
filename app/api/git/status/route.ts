@@ -2,12 +2,17 @@ import fs from "fs";
 import { NextRequest, NextResponse } from "next/server";
 import { getAllowedFileRoots, isExistingFilePathAllowed, isFilePathAllowed, isWindowsAbsolutePath } from "@/lib/file-access";
 import { getGitStatus } from "@/lib/git-changes";
+import { codexGitStatus, shouldUseCodexWorkspace } from "@/lib/execution-engines/codex-files";
 
 export async function GET(request: NextRequest) {
   try {
     const cwd = request.nextUrl.searchParams.get("cwd")?.trim() ?? "";
     if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
+    }
+
+    if (await shouldUseCodexWorkspace(request.nextUrl.searchParams.get("sessionId"))) {
+      return NextResponse.json(await codexGitStatus(cwd));
     }
 
     const allowedRoots = await getAllowedFileRoots();

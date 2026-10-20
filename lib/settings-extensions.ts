@@ -43,7 +43,7 @@ export const LEGACY_SETTINGS_EXTENSIONS: readonly SettingsExtensionDefinition[] 
   },
   {
     id: "usage",
-    label: "Usage",
+    label: "用量统计",
     pluginId: "usage-cost-dashboard",
     legacyTabAttr: "usage",
     requiresProject: false,

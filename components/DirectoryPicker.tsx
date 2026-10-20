@@ -64,16 +64,19 @@ const secondaryActionStyle: CSSProperties = {
   color: "var(--text-muted)",
 };
 
-async function loadDirectories(directory?: string): Promise<BrowseResponse> {
-  const query = directory ? `?path=${encodeURIComponent(directory)}` : "";
+async function loadDirectories(directory?: string, engine?: "pi" | "codex"): Promise<BrowseResponse> {
+  const params = new URLSearchParams();
+  if (directory) params.set("path", directory);
+  if (engine) params.set("engine", engine);
+  const query = params.size ? `?${params}` : "";
   const response = await fetch(`/api/cwd/browse${query}`);
   const data = await response.json() as BrowseResponse;
   if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
 }
 
-async function createDirectory(parentPath: string, name: string): Promise<string> {
-  const response = await fetch("/api/cwd/browse", {
+async function createDirectory(parentPath: string, name: string, engine?: "pi" | "codex"): Promise<string> {
+  const response = await fetch(`/api/cwd/browse${engine ? `?engine=${engine}` : ""}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path: parentPath, name }),
@@ -111,11 +114,12 @@ interface Props {
   onCancel: () => void;
   onSelect: (path: string) => void;
   initialPath?: string;
+  executionEngine?: "pi" | "codex";
   busy?: boolean;
   error?: string | null;
 }
 
-export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false, error }: Props) {
+export function DirectoryPicker({ onCancel, onSelect, initialPath, executionEngine, busy = false, error }: Props) {
   const { t } = useI18n();
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [currentPath, setCurrentPath] = useState("");
@@ -134,7 +138,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await loadDirectories(directory);
+      const data = await loadDirectories(directory, executionEngine);
       const nextPath = data.path ?? directory ?? "/";
       setCurrentPath(nextPath);
       setParentDirectory(data.parentPath ?? null);
@@ -146,7 +150,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [executionEngine]);
 
   useEffect(() => {
     setPortalTarget(document.body);
@@ -175,7 +179,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     setCreating(true);
     setCreateError(null);
     try {
-      const createdPath = await createDirectory(currentPath, name);
+      const createdPath = await createDirectory(currentPath, name, executionEngine);
       setCreateOpen(false);
       setDirectoryName("");
       await navigateTo(createdPath);
@@ -188,7 +192,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
 
   const hasUncommittedPath = pathInput.trim() !== currentPath;
   const canSelect = Boolean(currentPath) && !hasUncommittedPath && !busy;
-  const canCreate = canSelect && !loading;
+  const canCreate = executionEngine !== "codex" && canSelect && !loading;
   const canNavigateUp = Boolean(parentDirectory) || isWindowsDriveRoot(currentPath);
 
   if (!portalTarget) return null;
@@ -207,7 +211,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
       }}
       style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}
     >
-      <div className="directory-picker-panel" style={{ ...panelSurfaceStyle, position: "relative", width: 520, maxWidth: "calc(100vw - 16px)", height: "min(620px, calc(100dvh - 16px))", maxHeight: "calc(100dvh - 16px)", display: "flex", flexDirection: "column" }}>
+      <div className="directory-picker-panel" data-pi-native-directory-picker="true" style={{ ...panelSurfaceStyle, position: "relative", width: 520, maxWidth: "calc(100vw - 16px)", height: "min(620px, calc(100dvh - 16px))", maxHeight: "calc(100dvh - 16px)", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0, padding: "12px 18px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ color: "var(--text)", fontWeight: 700, fontSize: 15 }}>{t("directoryPicker.selectDirectory")}</div>
@@ -238,7 +242,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
             id="directory-path"
             type="text"
             value={pathInput}
-            placeholder="/path/to/project or ~/project"
+            placeholder={executionEngine === "codex" ? "选择已配置的 Codex 工作区" : "输入项目目录，例如 ~/project"}
             autoFocus
             autoComplete="off"
             spellCheck={false}

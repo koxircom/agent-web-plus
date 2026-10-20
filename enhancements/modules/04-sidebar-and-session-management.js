@@ -882,6 +882,7 @@
       document.documentElement.classList.remove("pi-enh-scroll-restoring");
     }
     const pinned = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
+    const canDelete = !sessionId.startsWith("codex:");
     const unread = isSessionUnread(sessionId);
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu pi-enh-session-menu";
@@ -892,7 +893,7 @@
       <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>从磁盘重载 (Alt+R)</span></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-session-action="archive">${sessionArchiveIcon}<span>归档会话</span></div>
-      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" data-stage="init" title="点击一次进入确认，再次点击彻底删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
+      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" aria-disabled="${!canDelete}" data-stage="init" title="${canDelete ? "点击一次进入确认，再次点击彻底删除" : "Codex 原始记录由执行端管理，可使用归档隐藏会话"}" style="${canDelete ? "" : "opacity:.45"}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
     `;
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -950,6 +951,7 @@
       if (!action) return;
       event.stopPropagation();
       if (action === "delete") {
+        if (!canDelete) { showToast("Codex 原始记录由执行端管理，可使用归档隐藏会话"); return; }
         if ((item.getAttribute("data-stage") || "init") !== "confirm") {
           armDeleteMenuItem();
           return;
@@ -1102,7 +1104,7 @@
       }
     } catch (_) {}
 
-    const { id, path, cwd, name, clientX, clientY } = event.detail || {};
+    const { id, path, cwd, name, clientX, clientY, executionEngine } = event.detail || {};
     if (!id) return;
 
     const menu = document.createElement("div");
@@ -1110,7 +1112,7 @@
     const displayName = name || id.slice(0, 18) + "...";
 
     menu.innerHTML = `
-      <div class="pi-enh-menu-header" title="${id}">会话: ${displayName}</div>
+      <div class="pi-enh-menu-header"></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="toggle-unread">
         ${isSessionUnread(id) ? sessionReadIcon : sessionUnreadIcon}
@@ -1164,6 +1166,9 @@
       </div>
       ${renderSessionColorMenuItems(id)}
     `;
+    const header = menu.querySelector(".pi-enh-menu-header");
+    header.textContent = `会话: ${displayName}`;
+    header.title = id;
 
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -1292,7 +1297,7 @@
       } else if (action === "copy-path") {
         copyText(path || "", `已复制会话文件路径`);
       } else if (action === "copy-prompt") {
-        const prompt = `这是我之前的 Pi 会话（ID: ${id}，文件路径: ${path || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
+        const prompt = `这是我之前的 ${executionEngine === "codex" || id.startsWith("codex:") ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${path || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
         copyText(cwd || "", `已复制工作目录`);
@@ -3186,7 +3191,7 @@
   let isApprovalSoundUnlocked = false;
   async function unlockApprovalSound(preview = false) {
     if (isApprovalSoundUnlocked && !preview) return;
-    if (!approvalSoundEnabled()) { if (preview) showToast("请开启审批提示音，并检查 Pi Web 声音总开关"); return; }
+    if (!approvalSoundEnabled()) { if (preview) showToast("请开启审批提示音，并检查 Agent Web Plus 声音总开关"); return; }
     const sound = getApprovalSound();
     if (sound.ready() && !preview) {
       isApprovalSoundUnlocked = true;
@@ -3278,12 +3283,12 @@
           try {
             const registration = await navigator.serviceWorker.getRegistration();
             if (registration) {
-              await registration.showNotification("Pi Web · 待你处理", options);
+              await registration.showNotification("Agent Web Plus · 待你处理", options);
               return () => { void registration.getNotifications({tag:payload.tag}).then(items => items.forEach(item => item.close())).catch(() => {}); };
             }
           } catch { /* Same fallback as native browser-notifications.ts. */ }
         }
-        const notification = new Notification("Pi Web · 待你处理", options);
+        const notification = new Notification("Agent Web Plus · 待你处理", options);
         notification.onclick = () => { notification.close(); window.focus(); openProjectStatusSession(payload.sessionId); };
         return () => { notification.onclick = null; notification.close(); };
       },
@@ -3315,7 +3320,6 @@
   projectStatusState = readProjectStatusState();
   projectStatusCatalog = new Map();
   let projectStatusIntervalId = null;
-  const projectStatusOriginalIcons = new Map();
   let projectTabStatusSnapshot = null;
   let projectInteractionInterval = null;
   let projectInteractionController = null;
@@ -3686,47 +3690,6 @@
     return cleanSessionTitleBase(title);
   }
 
-  function renderProjectStatusFavicon(count, hasAttention) {
-    const favicon = document.head?.querySelector("link[data-pi-enh-attention-favicon]");
-    if (!favicon) return;
-    const color = hasAttention ? "#f59e0b" : "#3b82f6";
-    const badge = count > 9 ? "9+" : String(count);
-    const fontSize = badge.length > 1 ? 22 : 26;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><linearGradient id="flatBlueViolet" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#4F5AE8"/><stop offset="100%" stop-color="#7850E8"/></linearGradient></defs><g transform="translate(13.7 21.6) scale(0.84)"><circle cx="91.2" cy="96" r="87.5" fill="url(#flatBlueViolet)"/><path fill="#FFFFFF" d="M67.7,59.5H132.7C135.9,59.5 136.1,62.9 135.4,67.2C134.8,71.3 133.9,73.5 130.4,73.5H114.1L107.7,107.5C106.3,114.4 106.7,118.8 110.8,121.2C114.6,123.3 121.1,123.8 124.9,119.8C126.7,117.9 128.6,120 129.5,123C131.7,130.9 122.2,137.5 113.8,137.5C101.1,137.5 92.2,131.4 93.7,114.9C94.1,105.5 97.7,86.3 100.5,73.5H82.1L75.5,108.4C72.9,122.1 66.6,137.5 55.6,137.5C49.5,137.5 45.8,132.7 48,127.2C49.6,123.8 54.5,122 57.5,116C62.4,106.5 65.3,89.4 68.7,73.7H60.2C56.7,73.7 55.3,75.4 53.1,78.4C50.5,82.3 43.5,82.9 44.9,77.2C47.2,67.1 56.2,59.5 67.7,59.5Z"/></g><circle cx="167" cy="38" r="34" fill="${color}" stroke="#FFFFFF" stroke-width="3"/><text x="167" y="${badge.length > 1 ? 46 : 47}" text-anchor="middle" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="700" fill="white">${badge}</text></svg>`;
-    const href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
-    if (favicon.getAttribute("href") !== href) favicon.setAttribute("href", href);
-  }
-
-  function restoreProjectStatusFavicon() {
-    document.head?.querySelector("link[data-pi-enh-attention-favicon]")?.remove();
-    for (const [icon, rel] of projectStatusOriginalIcons) {
-      if (rel) icon.setAttribute("rel", rel);
-      else icon.removeAttribute("rel");
-    }
-    projectStatusOriginalIcons.clear();
-  }
-
-  function syncProjectStatusFavicon(snapshot) {
-    if (!snapshot?.count || projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
-      restoreProjectStatusFavicon();
-      return;
-    }
-    for (const icon of document.head.querySelectorAll('link[rel~="icon"]')) {
-      if (icon.hasAttribute("data-pi-enh-attention-favicon")) continue;
-      if (!projectStatusOriginalIcons.has(icon)) projectStatusOriginalIcons.set(icon, icon.getAttribute("rel"));
-      icon.removeAttribute("rel");
-    }
-    let favicon = document.head.querySelector("link[data-pi-enh-attention-favicon]");
-    if (!favicon) {
-      favicon = document.createElement("link");
-      favicon.setAttribute("rel", "icon");
-      favicon.setAttribute("type", "image/svg+xml");
-      favicon.setAttribute("data-pi-enh-attention-favicon", "true");
-      document.head.appendChild(favicon);
-    }
-    renderProjectStatusFavicon(snapshot.hasAttention ? snapshot.attention : snapshot.running, snapshot.hasAttention);
-  }
-
   function getCurrentProjectTabStatusSnapshot() {
     const projectKey = getCurrentProjectStatusKey();
     const counts = { running: 0, attention: 0 };
@@ -3750,7 +3713,7 @@
       ? { projectKey: currentProjectKey, count: 0, hasAttention: false }
       : getCurrentProjectTabStatusSnapshot();
     window.__PI_WEB_PROJECT_TAB_STATUS__ = projectTabStatusSnapshot;
-    syncProjectStatusFavicon(projectTabStatusSnapshot);
+    window.dispatchEvent(new Event("pi-web-project-tab-status-change"));
     return projectTabStatusSnapshot;
   }
 
@@ -3796,7 +3759,7 @@
 
   function composeProjectWindowTitle(base) {
     if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
-      return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Pi Web";
+      return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Agent Web Plus";
     }
     const snapshot = syncProjectTabStatusSnapshot(false);
     return formatProjectTabTitle(base, snapshot);
@@ -4644,7 +4607,7 @@
       question: "优先查看哪类验收证据？",
       context: "单选后自动进入下一题；可使用“上一题”回来修改。",
       options: [
-        { title: "真实浏览器操作", description: "直接在 Pi Web 中点击、填写与提交，最接近实际体验；适合确认布局、动画、焦点和交互路径。" },
+        { title: "真实浏览器操作", description: "直接在 Agent Web Plus 中点击、填写与提交，最接近实际体验；适合确认布局、动画、焦点和交互路径。" },
         { title: "自动化回归结果", description: "可重复执行，适合覆盖状态切换、边界条件和未来改动后的回归保护。" },
         { title: "两者都看", description: "先跑自动测试确认基础行为，再用真实页面验证视觉和最终交互。适合重要的用户可见功能。" },
       ],

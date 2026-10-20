@@ -1478,13 +1478,13 @@
         return true;
       }
       if (!isSessionIngested(sessionId, meta)) {
-        const refreshHost = (typeof window !== "undefined" && window.location?.hostname) ? window.location.hostname : "10.0.0.2";
+        const refreshHost = (typeof window !== "undefined" && window.location?.hostname) ? window.location.hostname : "10.10.0.10";
         let result;
         try {
           result = await request(`http://${refreshHost}:30149/usage/refresh`, { method: "POST" });
         } catch (fetchErr) {
-          if (refreshHost !== "10.0.0.2") {
-            result = await request("http://10.0.0.2:30149/usage/refresh", { method: "POST" });
+          if (refreshHost !== "10.10.0.10") {
+            result = await request("http://10.10.0.10:30149/usage/refresh", { method: "POST" });
           } else {
             throw fetchErr;
           }

@@ -1,6 +1,10 @@
 "use client";
 
+import { useTabFavicon } from "@/hooks/useTabFavicon";
+import {SessionUsageSummary} from "./SessionUsageSummary";
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { getNativeSidebarSwipeStartLimit, useMobileHorizontalSwipe } from "@/hooks/useMobileHorizontalSwipe";
+import { isEnhancementPluginEnabled } from "@/lib/enhancement-chat-bridge";
 import { useSearchParams } from "next/navigation";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
@@ -35,8 +39,9 @@ import {
   showBrowserNotification,
 } from "@/lib/browser-notifications";
 import { setupPushSubscription } from "@/lib/push-client";
-import { replaceSessionUrl } from "@/lib/session-navigation";
-import { getInitialNavigation, withTabOpen } from "@/lib/initial-navigation";
+import { resolveExecutionEngine } from "@/lib/execution-engine-context";
+import { replaceSessionUrl, newSessionUrl } from "@/lib/session-navigation";
+import { getInitialNavigation, withTabOpen, navigationEngine } from "@/lib/initial-navigation";
 import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
 import { mergeCatalogRow } from "./session-catalog-helpers";
 import { rekeyDraft } from "@/lib/draft-store";
@@ -94,6 +99,8 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   const { locale, t: translate } = useI18n();
   const isMobile = useIsMobile();
   const isNarrowMobile = useIsNarrowMobile();
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
   useViewportHeight();
 
   // Once the user has granted notification permission, register a Web Push
@@ -211,6 +218,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<ProjectTrustFailure | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
@@ -287,6 +295,20 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     reclampSidebarWidth();
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+  useMobileHorizontalSwipe({
+    containerRef: shellRef,
+    direction: sidebarOpen ? "left" : "right",
+    allowOnButtons: true,
+    allowWideTouch: true,
+    threshold: 30,
+    getThreshold: () => {
+      const value = (window as unknown as { __PI_ENH_GET_PLUGIN_SETTING__?: (id: string, key: string) => unknown }).__PI_ENH_GET_PLUGIN_SETTING__?.("mobile-swipe-drawer", "swipeDistance");
+      return typeof value === "number" && value > 0 ? value : 30;
+    },
+    shouldStart: (event) => !settingsSection && !rightPanelOpen && isEnhancementPluginEnabled("mobile-swipe-drawer")
+      && (sidebarOpen || event.touches[0].clientX <= getNativeSidebarSwipeStartLimit(window.innerWidth)),
+    onSwipe: () => setSidebarOpen((open) => !open),
+  });
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string } | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
@@ -495,6 +517,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setMobileNavigationOpen(false);
   }, [isMobile, selectedSession?.id, newSessionDraftId]);
 
+
   useEffect(() => {
     if (!activeTopPanel || !topBarRef.current) return;
     const update = () => {
@@ -520,13 +543,6 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [terminalsRestored, setTerminalsRestored] = useState(false);
-  const panelTabs: Tab[] = [...fileTabs, ...terminalTabs.map((tab) => ({
-    id: tab.id,
-    label: getFileName(tab.cwd) || tab.cwd,
-    filePath: tab.cwd,
-    kind: "terminal" as const,
-    closing: Boolean(tab.closing),
-  }))];
 
   useEffect(() => {
     try {
@@ -578,7 +594,55 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   }, [isMobile]);
 
   const initialSessionId = initialNavigation.sessionId;
+  const initialSessionIdRef = useRef(initialSessionId);
+  initialSessionIdRef.current = initialSessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  const activeCwdRef = useRef<string | null>(null);
+  activeCwdRef.current = activeCwd;
+  const selectedSessionCwdRef = useRef<string | null>(null);
+  selectedSessionCwdRef.current = selectedSession?.cwd ?? null;
+  const selectedSessionIdRef = useRef<string | null>(null);
+  selectedSessionIdRef.current = selectedSession?.id ?? null;
+  const newSessionCwdRef = useRef<string | null>(null);
+  newSessionCwdRef.current = newSessionCwd;
+  const [executionEngine, setExecutionEngine] = useState<"pi" | "codex">("pi");
+  const [executionEngineReady, setExecutionEngineReady] = useState(false);
+  const [codexEnabled, setCodexEnabled] = useState(false);
+  const activeExecutionEngine = selectedSession ? (selectedSession.id.startsWith("codex:") ? "codex" : "pi") : executionEngine;
+  useTabFavicon(executionEngineReady ? activeExecutionEngine : navigationEngine(initialNavigation) ?? activeExecutionEngine);
+  const piExecutionReady = executionEngineReady && activeExecutionEngine === "pi";
+  const panelTabs: Tab[] = [...fileTabs, ...(piExecutionReady ? terminalTabs.map((tab) => ({
+    id: tab.id,
+    label: getFileName(tab.cwd) || tab.cwd,
+    filePath: tab.cwd,
+    kind: "terminal" as const,
+    closing: Boolean(tab.closing),
+  })) : [])];
+  const executionEngineRef = useRef<"pi" | "codex">("pi");
+  const codexCwdRef = useRef<string | null>(null);
+  const codexProjectsRef = useRef<string[]>([]);
+  const initialCwdEngineRef = useRef<"pi" | "codex" | null>(null);
+  const lastPiCwdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeExecutionEngine === "codex" && activeCwd && codexProjectsRef.current.includes(activeCwd)) codexCwdRef.current = activeCwd;
+  }, [activeExecutionEngine, activeCwd]);
+  const executionEngineSwitchRef = useRef(0);
+  const executionEngineInitControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (executionEngineRef.current === "pi" && activeCwd && !selectedSessionIdRef.current?.startsWith("codex:")) {
+      lastPiCwdRef.current = activeCwd;
+    }
+  }, [activeCwd, selectedSession?.id]);
+  useEffect(() => {
+    if (
+      executionEngineRef.current === "codex"
+      && selectedSession?.id
+      && !selectedSession.id.startsWith("codex:")
+      && selectedSession.cwd
+    ) {
+      lastPiCwdRef.current = selectedSession.cwd;
+    }
+  }, [selectedSession?.cwd, selectedSession?.id]);
   const activeProjectKeyRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
@@ -591,8 +655,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setInitialNavigation(next);
     if (next.sessionId) setInitialSessionRestored(false);
   }, [initialNavigation]);
-  // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
-  const suppressCwdBumpRef = useRef(false);
+  // Arm this before child effects run: SessionSidebar reports its initial cwd
+  // before the async validator resolves, and that notification must not restore
+  // the workspace's previous session over an explicit ?cwd= new-chat URL.
+  const suppressCwdBumpRef = useRef(initialNavigation.requestedCwd !== null);
   // Guards the async workspace restore so a slow response from an earlier
   // switch cannot resurrect a session into a project the user already left.
   const workspaceRestoreTokenRef = useRef(0);
@@ -629,12 +695,16 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
       setTabOpenSession(selectedSession.id);
       return;
     }
-    if (newSessionCwd) setTabOpenNewSession(newSessionCwd);
-  }, [newSessionCwd, selectedSession]);
+    if (newSessionCwd && executionEngineReady) setTabOpenNewSession(newSessionCwd, undefined, executionEngine);
+  }, [executionEngine, executionEngineReady, newSessionCwd, selectedSession]);
 
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
-    if (!requestedCwd) return;
+    if (!requestedCwd || !executionEngineReady) return;
+    // A late validation must not replace a newer project, Agent or session.
+    const intent = navigationIntentRef.current;
+    const engine = executionEngineRef.current;
+    if (initialCwdEngineRef.current !== engine) return;
 
     const controller = new AbortController();
     setInitialCwdStatus("validating");
@@ -643,7 +713,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     void fetch("/api/cwd/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cwd: requestedCwd }),
+      body: JSON.stringify({ cwd: requestedCwd, engine }),
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -651,6 +721,8 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         if (!response.ok || !data.cwd) {
           throw new Error(data.error ?? `HTTP ${response.status}`);
         }
+
+        if (controller.signal.aborted || navigationIntentRef.current !== intent || executionEngineRef.current !== engine) return;
 
         // The sidebar will notify us when it adopts this cwd. Avoid remounting
         // the just-created empty chat during that initial synchronization.
@@ -660,18 +732,16 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
         setInitialCwdStatus("ready");
-        if (!new URLSearchParams(window.location.search).get("cwd")) {
-          replaceSessionUrl(`?cwd=${encodeURIComponent(data.cwd)}`);
-        }
+        replaceSessionUrl(newSessionUrl(data.cwd, engine));
       })
       .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || navigationIntentRef.current !== intent || executionEngineRef.current !== engine) return;
         setInitialCwdError(error instanceof Error ? error.message : String(error));
         setInitialCwdStatus("error");
       });
 
     return () => controller.abort();
-  }, [initialNavigation]);
+  }, [initialNavigation, executionEngineReady]);
 
   // Restore the workspace's last open session after switching to it. Called
   // from handleCwdChange once the outgoing context has been reset. The session
@@ -715,11 +785,13 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     };
     // Fast path: the sidebar already delivered the catalogue — restore
     // without waiting on a fresh /api/sessions round trip.
-    if (sessionCatalog.length > 0) {
-      adopt({ sessions: sessionCatalog });
+    const engine = executionEngineRef.current;
+    const engineSessions = sessionCatalog.filter(session => (session.id.startsWith("codex:") ? "codex" : "pi") === engine);
+    if (engineSessions.length > 0) {
+      adopt({ sessions: engineSessions });
       return;
     }
-    void fetch("/api/sessions")
+    void fetch(`/api/sessions?engine=${engine}`)
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
       .then(adopt)
       .catch(() => {
@@ -775,10 +847,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setNewSessionDraftId(draftId);
     activeNewSessionDraftKeyRef.current = draftKey;
     setSelectedSession(null);
-    setNewSessionCwd((prev) => {
-      if (prev && prev !== cwd) return null;
-      return prev;
-    });
+    setNewSessionCwd(cwd);
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
@@ -787,6 +856,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setSystemTools(null);
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
+    replaceSessionUrl(newSessionUrl(cwd, executionEngineRef.current));
     if (currentProject !== newProject) {
       // File tabs are keyed by absolute path, so tabs opened in the previous
       // project must not linger. Same-project worktree switches keep them.
@@ -799,10 +869,12 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject, cwd);
     }
-    replaceSessionUrl(typeof window !== "undefined" ? window.location.pathname : "/");
   }, [activeCwd, activeFileTabId, advanceNavigationIntent, invalidateWorkspaceRestore, newSessionCwd, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
+    const engine = resolveExecutionEngine(undefined, executionEngineRef.current, session.id);
+    executionEngineRef.current = engine;
+    setExecutionEngine(engine);
     advanceNavigationIntent();
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     invalidateWorkspaceRestore();
@@ -860,7 +932,15 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     }
   }, [activeCwd, activeFileTabId, advanceNavigationIntent, invalidateWorkspaceRestore, isMobile, newSessionCwd, selectedSession]);
 
-  const handleNewSession = useCallback((sessionId: string, cwd: string) => {
+  const handleNewSession = useCallback((sessionId: string, requestedCwd: string, requestedEngine?: "pi" | "codex") => {
+    // The sidebar owns the selected cwd. Codex validates its workspace on the
+    // server before creating a runtime; pending startup metadata must not turn
+    // a visible project's New action into a no-op or redirect it elsewhere.
+    const cwd = requestedCwd;
+    if (!cwd) return;
+    const engine = requestedEngine ?? resolveExecutionEngine(undefined, executionEngineRef.current, selectedSessionIdRef.current);
+    executionEngineRef.current = engine;
+    setExecutionEngine(engine);
     advanceNavigationIntent();
     invalidateWorkspaceRestore();
     const draftKey = `new:${sessionId}:${cwd}`;
@@ -877,9 +957,197 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setSystemTools(null);
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
-    if (isMobile) setSidebarOpen(false);
-    replaceSessionUrl(`?cwd=${encodeURIComponent(cwd)}`);
-  }, [advanceNavigationIntent, invalidateWorkspaceRestore, isMobile]);
+    if (isMobileRef.current) setSidebarOpen(false);
+    replaceSessionUrl(newSessionUrl(cwd, engine));
+  }, [advanceNavigationIntent, invalidateWorkspaceRestore]);
+
+  const applyExecutionEngine = useCallback((
+    engine: "pi" | "codex",
+    codexCwd: string | null,
+    resetSession: boolean,
+    capturePiCwd = true,
+  ) => {
+    const previousEngine = executionEngineRef.current;
+    if (previousEngine === "pi" && engine === "codex" && capturePiCwd && !selectedSessionIdRef.current?.startsWith("codex:")) {
+      lastPiCwdRef.current = activeCwdRef.current
+        ?? selectedSessionCwdRef.current
+        ?? newSessionCwdRef.current
+        ?? lastPiCwdRef.current;
+    }
+
+    executionEngineRef.current = engine;
+    setExecutionEngine(engine);
+    setExecutionEngineReady(true);
+    const effectiveCodexCwd = codexProjectsRef.current.includes(activeCwdRef.current || "")
+      ? activeCwdRef.current : codexCwd;
+    if (engine === "codex") codexCwdRef.current = effectiveCodexCwd;
+    const cwd = engine === "codex"
+      ? effectiveCodexCwd
+      : previousEngine === "codex"
+        ? lastPiCwdRef.current
+        : activeCwdRef.current ?? selectedSessionCwdRef.current ?? newSessionCwdRef.current;
+    if (engine === "pi" && cwd) lastPiCwdRef.current = cwd;
+    if (!resetSession) return;
+
+    if (cwd) {
+      const draftId = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      handleNewSession(draftId, cwd, engine);
+    } else {
+      advanceNavigationIntent();
+      invalidateWorkspaceRestore();
+      activeNewSessionDraftKeyRef.current = null;
+      setSelectedSession(null);
+      setNewSessionCwd(null);
+      setActiveCwd(null);
+      setSessionKey((key) => key + 1);
+      setSearchTarget(null);
+      setBranchTree([]);
+      setBranchActiveLeafId(null);
+      setBranchSwitchLocked(false);
+      setSystemPrompt(null);
+      setSystemTools(null);
+      setSystemInfoLoading(false);
+      setInitialSessionRestored(true);
+      setActiveTopPanel(null);
+      replaceSessionUrl(`?engine=${engine}`);
+    }
+    setRefreshKey((key) => key + 1);
+  }, [advanceNavigationIntent, handleNewSession, invalidateWorkspaceRestore]);
+
+  useEffect(() => {
+    const handleExecutionEngineChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ engine?: unknown; cwd?: unknown; projects?: Array<{ cwd: string }>; codexEnabled?: boolean }>).detail;
+      const engine = detail?.engine;
+      if (engine !== "pi" && engine !== "codex") return;
+      if (typeof detail.codexEnabled === "boolean") setCodexEnabled(detail.codexEnabled);
+      if (Array.isArray(detail.projects)) codexProjectsRef.current = detail.projects.map(p => p.cwd);
+      executionEngineInitControllerRef.current?.abort();
+      executionEngineInitControllerRef.current = null;
+      executionEngineSwitchRef.current += 1;
+      const cwd = engine === "codex" && typeof detail?.cwd === "string" && detail.cwd
+        ? detail.cwd
+        : null;
+      applyExecutionEngine(engine, cwd, true);
+    };
+
+    window.addEventListener("pi-web:execution-engine-changed", handleExecutionEngineChange);
+    return () => window.removeEventListener("pi-web:execution-engine-changed", handleExecutionEngineChange);
+  }, [applyExecutionEngine]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const generation = ++executionEngineSwitchRef.current;
+    const navigationIntent = navigationIntentRef.current;
+    executionEngineInitControllerRef.current = controller;
+    let savedEngine: "pi" | "codex" | null = null;
+    const shouldResetForStartup = () => (
+      !initialSessionIdRef.current && !initialNavigation.requestedCwd && navigationIntentRef.current === navigationIntent
+    );
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/execution-engines", { cache: "no-store", signal: controller.signal });
+        const settings = await response.json() as { defaultEngine?: unknown; codex?: { enabled?: unknown } };
+        if (!response.ok || (settings.defaultEngine !== "pi" && settings.defaultEngine !== "codex")) return;
+        const navigation = withTabOpen(initialNavigation, getTabOpen());
+        savedEngine = navigationEngine(navigation) ?? settings.defaultEngine;
+        setCodexEnabled(settings.codex?.enabled === true);
+        if (controller.signal.aborted || generation !== executionEngineSwitchRef.current) return;
+
+        // Migrate a legacy cwd-only link only when its default host rejects
+        // the directory and the other configured host positively validates it.
+        // Identical paths on both hosts keep the default; paths alone are not
+        // engine identities. New links and matching tab memory skip this probe.
+        if (navigation.requestedCwd && !navigationEngine(navigation) && settings.codex?.enabled === true) {
+          const validateHost = (engine: "pi" | "codex") => fetch("/api/cwd/validate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cwd: navigation.requestedCwd, engine }), signal: controller.signal,
+          });
+          const preferred = await validateHost(savedEngine).catch(() => null);
+          if (preferred?.status === 400) {
+            const other = savedEngine === "pi" ? "codex" : "pi";
+            if ((await validateHost(other).catch(() => null))?.ok) savedEngine = other;
+          }
+          if (controller.signal.aborted || generation !== executionEngineSwitchRef.current) return;
+        }
+        initialCwdEngineRef.current ??= savedEngine;
+
+        // A Pi default never probes the optional Bridge.
+        if (savedEngine === "pi") {
+          applyExecutionEngine("pi", null, false);
+          return;
+        }
+
+        // Confirm the engine before probing so the sidebar drops any bootstrap
+        // or local catalogue rows belonging to the other engine immediately.
+        applyExecutionEngine("codex", null, false, false);
+        if (settings.codex?.enabled !== true) {
+          applyExecutionEngine("codex", null, shouldResetForStartup(), false);
+          return;
+        }
+
+        const checkResponse = await fetch("/api/execution-engines/check?catalog=0", {
+          method: "POST",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const result = await checkResponse.json() as {
+          connected?: unknown;
+          projects?: Array<{ cwd?: unknown }>;
+        };
+        if (controller.signal.aborted || generation !== executionEngineSwitchRef.current) return;
+        codexProjectsRef.current = (result.projects || []).map(p => p.cwd).filter((p): p is string => typeof p === "string" && Boolean(p));
+        const firstProjectCwd = codexProjectsRef.current.includes(initialNavigation.requestedCwd || "")
+          ? initialNavigation.requestedCwd : codexProjectsRef.current[0];
+        const cwd = checkResponse.ok && result.connected === true
+          && typeof firstProjectCwd === "string" && firstProjectCwd
+          ? firstProjectCwd
+          : null;
+        // Preserve an explicitly requested/restored session and any navigation
+        // the user made while the saved engine and remote project were loading.
+        applyExecutionEngine("codex", cwd, shouldResetForStartup());
+      } catch {
+        // Keep Codex as the default after a failed Bridge check, and never fall
+        // back to a Pi/local cwd for a Codex draft.
+        if (!controller.signal.aborted && generation === executionEngineSwitchRef.current && savedEngine === "codex") {
+          applyExecutionEngine("codex", null, shouldResetForStartup(), false);
+        }
+      }
+    })();
+
+    return () => {
+      controller.abort();
+      if (executionEngineInitControllerRef.current === controller) executionEngineInitControllerRef.current = null;
+      if (generation === executionEngineSwitchRef.current) executionEngineSwitchRef.current += 1;
+    };
+  }, [applyExecutionEngine]);
+
+  const switchExecutionEngine = useCallback(async (engine: "pi" | "codex") => {
+    // Keep the existing draft/navigation until configuration has been saved.
+    const generation = ++executionEngineSwitchRef.current;
+    executionEngineInitControllerRef.current?.abort();
+    const response = await fetch("/api/execution-engines", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultEngine: engine }),
+    });
+    const saved = await response.json();
+    if (!response.ok) throw new Error(saved.error || "切换 Agent 失败");
+    if (generation !== executionEngineSwitchRef.current) return;
+    setCodexEnabled(saved.codex?.enabled === true);
+    let cwd: string | null = null;
+    if (engine === "codex") {
+      const check = await fetch("/api/execution-engines/check?catalog=0", { method: "POST", cache: "no-store" });
+      const result = await check.json();
+      if (generation !== executionEngineSwitchRef.current) return;
+      codexProjectsRef.current = (result.projects || []).map((p: { cwd: string }) => p.cwd);
+      cwd = codexProjectsRef.current.includes(codexCwdRef.current || "")
+        ? codexCwdRef.current : codexProjectsRef.current[0] || null;
+    }
+    if (generation !== executionEngineSwitchRef.current) return;
+    applyExecutionEngine(engine, cwd, true);
+  }, [applyExecutionEngine]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -1175,13 +1443,14 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   }, [handleOpenFile, selectedSession?.id]);
 
   const handleOpenTerminal = useCallback((cwd: string) => {
+    if (!piExecutionReady) return;
     const existing = terminalTabs.find((tab) => tab.cwd === cwd);
     const tab = existing ?? newTerminalTab(cwd);
     if (!existing) setTerminalTabs((tabs) => [...tabs, tab]);
     setActiveFileTabId(tab.id);
     setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
-  }, [terminalTabs, isMobile]);
+  }, [piExecutionReady, terminalTabs, isMobile]);
 
   const handleTerminalClosed = (tab: TerminalTab) => {
     const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
@@ -1209,13 +1478,13 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   }, [fileTabs, terminalTabs]);
 
   const handleViewFullHistory = useCallback(() => {
-    if (!selectedSession) return;
+    if (!piExecutionReady || !selectedSession) return;
     window.open(
       `/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`,
       "_blank",
       "noopener,noreferrer",
     );
-  }, [selectedSession]);
+  }, [piExecutionReady, selectedSession]);
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
@@ -1234,7 +1503,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     setProjectTrust(null);
     setProjectTrustDialogOpen(false);
     setProjectTrustError(null);
-    if (!projectTrustCwd) return;
+    if (!piExecutionReady || !projectTrustCwd) return;
 
     const controller = new AbortController();
     // The answer also lists the project's MCP servers (`mcpFile`, `mcpServers`), unused here: the
@@ -1252,10 +1521,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         console.error("Failed to load project trust:", error);
       });
     return () => controller.abort();
-  }, [projectTrustCwd]);
+  }, [piExecutionReady, projectTrustCwd]);
 
   const handleTrustProject = useCallback(async () => {
-    if (!projectTrustCwd || projectTrustBusy) return;
+    if (!piExecutionReady || !projectTrustCwd || projectTrustBusy) return;
     setProjectTrustBusy(true);
     setProjectTrustError(null);
     try {
@@ -1279,13 +1548,14 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     } finally {
       setProjectTrustBusy(false);
     }
-  }, [projectTrustBusy, projectTrustCwd]);
+  }, [piExecutionReady, projectTrustBusy, projectTrustCwd]);
 
   // The restricted-mode banner and Settings › MCP's trust notice open the same dialog.
   const openProjectTrustDialog = useCallback(() => {
+    if (!piExecutionReady) return;
     setProjectTrustError(null);
     setProjectTrustDialogOpen(true);
-  }, []);
+  }, [piExecutionReady]);
 
   // Settings › MCP added a project server: `.pi/mcp.json` alone makes a folder require trust, and a
   // fresh folder was trusted in the same step. Every mounted section reloads in place on the new
@@ -1335,24 +1605,36 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
 
   const shortcutsHostRef = useRef<HTMLDivElement>(null);
   const resolveSettingsReturnFocus = useCallback((opener: Element) => resolveSettingsShortcutFocus(shortcutsHostRef.current, opener), []);
+  // An explicit link keeps its engine even when the default for new chats changed.
+  const catalogEngine = selectedSession ? activeExecutionEngine
+    : initialSessionId && !initialSessionRestored ? (initialSessionId.startsWith("codex:") ? "codex" : "pi")
+    : executionEngine;
+  const engineLocalSessions = executionEngineReady
+    ? localSessions.filter((session) => (
+      catalogEngine === "codex" ? session.id.startsWith("codex:") : !session.id.startsWith("codex:")
+    ))
+    : [];
 
   const sidebarContent = (
     <>
-      <SessionSidebar
-        bootstrap={bootstrap}
-        initialCwd={initialNavigation.requestedCwd}
+      {executionEngineReady && <SessionSidebar
+        key={catalogEngine}
+        executionEngine={catalogEngine}
+        codexEnabled={codexEnabled}
+        onExecutionEngineChange={switchExecutionEngine}
+        initialCwd={initialCwdEngineRef.current === catalogEngine ? initialNavigation.requestedCwd : null}
         selectedSessionId={selectedSession?.id ?? null}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
-        skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
+        skipInitialProjectSelection={initialCwdEngineRef.current === catalogEngine && initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
-        onSessionDeleted={handleSessionDeleted}
+        onSessionDeleted={piExecutionReady ? handleSessionDeleted : undefined}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
-        onOpenTerminal={handleOpenTerminal}
+        onOpenTerminal={piExecutionReady ? handleOpenTerminal : undefined}
         explorerRefreshKey={explorerRefreshKey}
         onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
@@ -1360,16 +1642,16 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         onBackgroundTaskDone={handleBackgroundTaskDone}
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
-        localSessions={localSessions}
-      />
+        localSessions={engineLocalSessions}
+      />}
       <div ref={shortcutsHostRef} data-pi-enh-shortcuts-host="true" style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
-        <SettingsShortcuts cwd={projectTrustCwd} onOpen={setSettingsSection} />
+        <SettingsShortcuts cwd={piExecutionReady ? projectTrustCwd : null} onOpen={setSettingsSection} />
       </div>
     </>
   );
 
   const renderProjectTrustWarning = (mobileBanner: boolean) => {
-    if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
+    if (!piExecutionReady || !showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
     return (
       <button
         type="button"
@@ -1423,16 +1705,17 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     if (!mobile && !showChat) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <button
-          type="button"
-          onClick={() => {
-            handleViewFullHistory();
-            if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-          }}
-          disabled={!selectedSession}
-          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
-          aria-label={translate("history.full")}
-          style={{
+        {piExecutionReady && (
+          <button
+            type="button"
+            onClick={() => {
+              handleViewFullHistory();
+              if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
+            }}
+            disabled={!selectedSession}
+            title={selectedSession ? translate("history.full") : translate("history.unsaved")}
+            aria-label={translate("history.full")}
+            style={{
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1451,19 +1734,19 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             fontSize: 11,
             whiteSpace: "nowrap",
             transition: "color 0.1s, background 0.1s, opacity 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (!selectedSession) return;
-            event.currentTarget.style.color = "var(--text)";
-            event.currentTarget.style.background = "var(--bg-hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-            event.currentTarget.style.background = "none";
-          }}
-          data-mobile-toolbar-action={mobile ? "history" : undefined}
-        >
-          <svg
+            }}
+            onMouseEnter={(event) => {
+              if (!selectedSession) return;
+              event.currentTarget.style.color = "var(--text)";
+              event.currentTarget.style.background = "var(--bg-hover)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
+              event.currentTarget.style.background = "none";
+            }}
+            data-mobile-toolbar-action={mobile ? "history" : undefined}
+          >
+            <svg
             width="12"
             height="12"
             viewBox="0 0 24 24"
@@ -1481,9 +1764,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
             <path d="M3 3v5h5" />
             <path d="M12 7v5l3 2" />
-          </svg>
-          {!mobile && <span>{translate("history.label")}</span>}
-        </button>
+            </svg>
+            {!mobile && <span>{translate("history.label")}</span>}
+          </button>
+        )}
         {(() => {
           // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
           const hasMessages = Boolean(
@@ -1601,7 +1885,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             </span>
           </button>
         )}
-        {sessionHasBranches && (mobile ? (
+        {piExecutionReady && sessionHasBranches && (mobile ? (
           <button
             type="button"
             onClick={() => toggleTopPanel("branches", true)}
@@ -1640,7 +1924,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             hasSession
           />
         ))}
-        <button
+        {piExecutionReady && <button
           ref={systemBtnRef}
           type="button"
           onClick={() => handleSystemInfoToggle("system", mobile)}
@@ -1677,8 +1961,8 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             <line x1="8" y1="17" x2="13" y2="17" />
           </svg>
           {!mobile && <span>{translate("system.label")}</span>}
-        </button>
-        <button
+        </button>}
+        {piExecutionReady && <button
           type="button"
           onClick={() => handleSystemInfoToggle("tools", mobile)}
           disabled={mobile && !showChat}
@@ -1711,172 +1995,17 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
           </svg>
           {!mobile && <span>{translate("tools.label")}</span>}
-        </button>
+        </button>}
       </div>
     );
   };
 
   const renderSessionStatsButton = (mobile: boolean) => {
-    if (!mobile && (!showChat || (!sessionStats && !contextUsage))) return null;
-
-    const tokens = sessionStats?.tokens;
-    const cost = sessionStats?.cost ?? 0;
-    const formatCompact = (value: number) => value >= 1_000_000
-      ? `${(value / 1_000_000).toFixed(1)}M`
-      : value >= 1000
-        ? `${(value / 1000).toFixed(0)}k`
-        : String(value);
-    const costText = cost > 0 ? (cost >= 0.01 ? `$${cost.toFixed(2)}` : `<$0.01`) : null;
-
-    let contextColor = "var(--text-muted)";
-    let desktopContextText: string | null = null;
-    let mobileContextText: string | null = null;
-    if (contextUsage?.contextWindow) {
-      const percent = contextUsage.percent;
-      if (percent !== null && percent > 90) contextColor = "#ef4444";
-      else if (percent !== null && percent > 70) contextColor = "rgba(234,179,8,0.95)";
-      desktopContextText = percent !== null
-        ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
-        : `? / ${formatCompact(contextUsage.contextWindow)}`;
-      mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
-    }
-
-    const tooltipParts: string[] = [];
-    if (tokens) {
-      tooltipParts.push(`in: ${tokens.input.toLocaleString(locale)}`);
-      tooltipParts.push(`out: ${tokens.output.toLocaleString(locale)}`);
-      tooltipParts.push(`cache read: ${tokens.cacheRead.toLocaleString(locale)}`);
-      tooltipParts.push(`cache write: ${tokens.cacheWrite.toLocaleString(locale)}`);
-      if (cost > 0) tooltipParts.push(`cost: $${cost.toFixed(4)}`);
-    }
-    if (contextUsage?.contextWindow) {
-      const percent = contextUsage.percent;
-      tooltipParts.push(`context: ${percent !== null ? percent.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
-    }
-    const tooltip = tooltipParts.join("  |  ");
-    const covered = mobile && mobileToolbarMoreOpen;
-    const hasMobileValues = Boolean(
-      (tokens && (tokens.input > 0 || tokens.output > 0))
-      || costText
-      || mobileContextText,
-    );
-
-    return (
-      <button
-        type="button"
-        onClick={() => toggleTopPanel("session")}
-        disabled={!showChat || covered}
-        tabIndex={covered ? -1 : undefined}
-        title={tooltip || translate("session.title")}
-        aria-label={translate("session.title")}
-        aria-pressed={activeTopPanel === "session"}
-        aria-hidden={covered ? true : undefined}
-        className={mobile ? "mobile-session-stats" : undefined}
-        data-mobile-toolbar-stats={mobile ? "true" : undefined}
-        style={{
-          marginLeft: mobile ? 0 : "auto",
-          display: "flex", alignItems: "center", justifyContent: "flex-end",
-          flex: mobile ? 1 : undefined,
-          minWidth: 0,
-          gap: mobile ? 7 : 10,
-          paddingLeft: mobile ? 6 : 12,
-          paddingRight: mobile ? 6 : 12,
-          height: "100%",
-          overflow: "hidden",
-          visibility: covered ? "hidden" : "visible",
-          pointerEvents: covered ? "none" : "auto",
-          background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
-          border: "none",
-          borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
-          fontSize: 11, color: "var(--text-muted)",
-          whiteSpace: "nowrap", cursor: showChat ? "pointer" : "default",
-          fontVariantNumeric: "tabular-nums",
-          transition: "color 0.1s, background 0.1s",
-        }}
-        onMouseEnter={(event) => {
-          if (showChat && !covered) event.currentTarget.style.color = "var(--text)";
-        }}
-        onMouseLeave={(event) => {
-          event.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)";
-        }}
-      >
-        {mobile ? (
-          <>
-            {tokens && tokens.input > 0 && (
-              <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
-                </svg>
-                {formatCompact(tokens.input)}
-              </span>
-            )}
-            {tokens && tokens.output > 0 && (
-              <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-                </svg>
-                {formatCompact(tokens.output)}
-              </span>
-            )}
-            {costText && (
-              <span className="mobile-session-stat-cost" style={{ color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
-                {costText}
-              </span>
-            )}
-            {mobileContextText && (
-              <span style={{ color: contextColor, flexShrink: 0 }}>
-                {mobileContextText}
-              </span>
-            )}
-            {!hasMobileValues && showChat && (
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-dim)" }}>
-                {translate("session.title")}
-              </span>
-            )}
-          </>
-        ) : (
-          <>
-            {tokens && tokens.input > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
-                </svg>
-                {formatCompact(tokens.input)}
-              </span>
-            )}
-            {tokens && tokens.output > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-                </svg>
-                {formatCompact(tokens.output)}
-              </span>
-            )}
-            {tokens && tokens.cacheRead > 0 && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
-                </svg>
-                {formatCompact(tokens.cacheRead)}
-              </span>
-            )}
-            {costText && (
-              <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
-                {costText}
-              </span>
-            )}
-            {desktopContextText && (
-              <span style={{ display: "flex", alignItems: "center", gap: 4, color: contextColor }}>
-                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
-                </svg>
-                {desktopContextText}
-              </span>
-            )}
-          </>
-        )}
-      </button>
-    );
+    if (!showChat) return null;
+    return <SessionUsageSummary mobile={mobile} covered={mobile && mobileToolbarMoreOpen}
+      active={activeTopPanel === "session"} locale={locale} onClick={() => toggleTopPanel("session")}
+      usage={{contextUsage,tokens:sessionStats?.tokenUsageAvailable===false?null:sessionStats?.tokens??null}}
+      cost={sessionStats?.cost??0}/>;
   };
 
   const renderMainFileToggle = (mobile: boolean) => {
@@ -1971,19 +2100,6 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
           animation: none;
         }
       }
-      .mobile-session-stats {
-        container-type: inline-size;
-      }
-      @container (max-width: 158px) {
-        .mobile-session-stat-io {
-          display: none !important;
-        }
-      }
-      @container (max-width: 88px) {
-        .mobile-session-stat-cost {
-          display: none !important;
-        }
-      }
       @media (max-width: 640px) {
         .sidebar-overlay-backdrop.sidebar-mobile-pending {
           opacity: 0 !important;
@@ -1995,7 +2111,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         }
       }
     `}</style>
-    <div style={{
+    <div ref={shellRef} style={{
       display: "flex",
       width: "100%",
       height: "var(--app-viewport-height, 100dvh)",
@@ -2023,6 +2139,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
       <div
         ref={sidebarResizer.panelRef}
         id="session-sidebar"
+        data-pi-native-sidebar-gestures="true"
         inert={rightPanelFullWidth}
         className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}${sidebarResizer.isResizing ? " sidebar-resizing" : ""}`}
         style={{
@@ -2038,6 +2155,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         } as React.CSSProperties}
       >
         {sidebarContent}
+        {sidebarOpen && <div {...sidebarResizer.separatorProps}
+          className="panel-resize-handle sidebar-mobile-resize-handle"
+          data-resize-handle="sidebar-mobile" aria-controls="session-sidebar"
+          title={translate("layout.resizeSidebar")} />}
       </div>
       {sidebarOpen && (
         <div
@@ -2180,7 +2301,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             </>
           )}
           {!isMobile && renderMainFileToggle(false)}
-          {isMobile && sessionHasBranches && (
+          {isMobile && piExecutionReady && sessionHasBranches && (
             <BranchNavigator
               tree={branchTree}
               activeLeafId={branchActiveLeafId}
@@ -2215,14 +2336,14 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                   onSelectSession={handleSelectSession}
                 />
               )}
-              {activeTopPanel === "system" && (
+              {piExecutionReady && activeTopPanel === "system" && (
                 <SystemPromptPanel
                   loading={systemInfoLoading}
                   prompt={systemPrompt}
                   translate={translate}
                 />
               )}
-              {activeTopPanel === "tools" && (
+              {piExecutionReady && activeTopPanel === "tools" && (
                 <ToolDefinitionsPanel
                   loading={systemInfoLoading}
                   tools={systemTools}
@@ -2267,7 +2388,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                        [translate("session.toolResults"), sessionStats.toolResults.toLocaleString(locale)],
                        [translate("session.total"), sessionStats.totalMessages.toLocaleString(locale)],
                     ];
-                    const tokenRows = [
+                    const tokenRows = sessionStats.tokenUsageAvailable===false ? [["Token", "待同步"]] : [
                        [translate("session.input"), sessionStats.tokens.input.toLocaleString(locale)],
                        [translate("session.output"), sessionStats.tokens.output.toLocaleString(locale)],
                        ...(sessionStats.tokens.cacheRead > 0 ? [[translate("session.cacheRead"), sessionStats.tokens.cacheRead.toLocaleString(locale)]] : []),
@@ -2414,7 +2535,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                         display: "grid",
                         gridTemplateColumns: isMobile
                           ? "1fr"
-                          : "minmax(360px, 1.7fr) minmax(140px, 0.55fr) minmax(190px, 0.75fr)",
+                          : "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
                         gap: isMobile ? 16 : 24,
                         fontSize: 12,
                         lineHeight: 1.5,
@@ -2424,7 +2545,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                           {sessionInfoSection}
                           {projectInfoSection}
                         </div>
-                         {section(translate("session.messages"), messageRows)}
+                         {section(sessionStats.messageCountsScope==="loaded"?"消息统计（已加载部分）":translate("session.messages"), messageRows)}
                          {section(translate("session.tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
                       </div>
                     );
@@ -2448,6 +2569,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             <ChatWindow
               key={sessionKey}
               session={selectedSession}
+              executionEngine={executionEngineReady ? activeExecutionEngine : "codex"}
               mobileNavigationOpen={mobileNavigationOpen}
               onMobileNavigationOpenChange={handleMobileNavigationOpenChange}
               searchTarget={searchTarget?.sessionId === selectedSession?.id ? searchTarget : null}
@@ -2464,13 +2586,13 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               onSessionForked={handleSessionForked}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
-              onBranchDataChange={handleBranchDataChange}
-              onSystemPromptChange={handleSystemPromptChange}
-              onSystemToolsChange={handleSystemToolsChange}
-              onSystemInfoLoaderChange={handleSystemInfoLoaderChange}
+              onBranchDataChange={piExecutionReady ? handleBranchDataChange : undefined}
+              onSystemPromptChange={piExecutionReady ? handleSystemPromptChange : undefined}
+              onSystemToolsChange={piExecutionReady ? handleSystemToolsChange : undefined}
+              onSystemInfoLoaderChange={piExecutionReady ? handleSystemInfoLoaderChange : undefined}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
-              onOpenSettings={openSettingsSection}
+              onOpenSettings={piExecutionReady ? openSettingsSection : undefined}
               onContextUsageChange={handleContextUsageChange}
               onOpenFile={handleOpenLinkedFile}
               onOpenSession={handleOpenSession}
@@ -2623,7 +2745,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               initialDisplayMode={activeFileTab.initialDisplayMode}
               initialPage={activeFileTab.page}
               initialState={activeFileTab.viewerState}
-              watchEnabled={rightPanelOpen}
+              watchEnabled={piExecutionReady && rightPanelOpen}
               onStateChange={(viewerState) => handleFileViewerStateChange(
                 activeFileTab.id,
                 activeFileTab.viewerRevision ?? 0,
@@ -2637,12 +2759,12 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                 { sourceSessionId: activeFileTab.sourceSessionId, page },
               )}
             />
-          ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
+          ) : !piExecutionReady || !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
             <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
                {translate("files.noneOpen")}
             </div>
           ) : null}
-          {terminalTabs.map((tab) => (
+          {piExecutionReady && terminalTabs.map((tab) => (
             <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
               <TerminalPanel
                 tab={tab}
@@ -2659,8 +2781,8 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     {settingsSection && (
       <SettingsPanel
         resolveReturnFocus={resolveSettingsReturnFocus}
-        cwd={projectTrustCwd}
-        sessionId={selectedSession?.id ?? null}
+        cwd={piExecutionReady ? projectTrustCwd : null}
+        sessionId={piExecutionReady ? selectedSession?.id ?? null : null}
         initialSection={settingsSection}
         quoteSelectionEnabled={quoteSelectionEnabled}
         onQuoteSelectionChange={handleQuoteSelectionChange}
@@ -2669,13 +2791,13 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
           setModelsRefreshKey((key) => key + 1);
         }}
         onSessionReloaded={() => setSessionKey((key) => key + 1)}
-        projectTrust={projectTrust}
-        onOpenTrustDialog={openProjectTrustDialog}
-        onProjectTrustChanged={handleProjectTrustChanged}
+        projectTrust={piExecutionReady ? projectTrust : null}
+        onOpenTrustDialog={piExecutionReady ? openProjectTrustDialog : undefined}
+        onProjectTrustChanged={piExecutionReady ? handleProjectTrustChanged : undefined}
       />
     )}
     {/* After Settings, so it opens above it (z-index 1100 over 1000) when Settings › MCP asks for it. */}
-    {projectTrustDialogOpen && projectTrustCwd && (
+    {piExecutionReady && projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog
         cwd={projectTrustCwd}
         busy={projectTrustBusy}

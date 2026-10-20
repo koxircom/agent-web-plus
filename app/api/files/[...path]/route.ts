@@ -27,6 +27,7 @@ import {
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { filePathFromApiSegments, samePath } from "@/lib/paths";
 import { readTextPreviewChunk } from "@/lib/text-preview";
+import { handleCodexFileGET, handleCodexFilePOST, shouldUseCodexWorkspace } from "@/lib/execution-engines/codex-files";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -125,10 +126,14 @@ export async function POST(
 
   try {
     const { path: segments } = await params;
+    const type = request.nextUrl.searchParams.get("type") ?? "upload";
+    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    if (await shouldUseCodexWorkspace(sessionId)) {
+      return await handleCodexFilePOST(request, filePathFromApiSegments(segments));
+    }
     const uploadDirectory = await getUploadDirectory(segments);
     if ("response" in uploadDirectory) return uploadDirectory.response;
     const { directory } = uploadDirectory;
-    const type = request.nextUrl.searchParams.get("type") ?? "upload";
 
     if (type === "upload-check") {
       const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
@@ -298,7 +303,7 @@ function streamFile(filePath: string, stat: fs.Stats, contentType: string, range
   };
   // SVG is the only preview type a browser executes as a document. A
   // repo-controlled SVG navigated to directly (for example through a link in
-  // a transcript) would otherwise run script in the Pi Web origin, where it
+  // a transcript) would otherwise run script in the Agent Web Plus origin, where it
   // can call any /api route. These headers only affect document rendering;
   // <img> preview embedding ignores them.
   if (contentType === "image/svg+xml") {
@@ -428,6 +433,9 @@ export async function GET(
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
     }
     const sessionId = request.nextUrl.searchParams.get("sessionId");
+    if (await shouldUseCodexWorkspace(sessionId)) {
+      return await handleCodexFileGET(request, type, filePath);
+    }
 
     const allowedRoots = await getAllowedFileRoots();
     const allowedByRoot = isFilePathAllowed(filePath, allowedRoots);

@@ -2865,7 +2865,7 @@
 
     // 1. 同事端容器 (30142)：无论访问来自内网 IP、域名或手机，端口为 30142 即确定为群晖同事端容器
     if (port === "30142") {
-      const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.0.0.2";
+      const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.10.0.10";
       return {
         id: "synology-30142",
         type: "container",
@@ -2876,21 +2876,21 @@
         port: 30142,
         bridgeCandidateUrls: [
           `http://${bridgeHost}:30149`,
-          "http://10.0.0.2:30149"
+          "http://10.10.0.10:30149"
         ],
         restartApi: "/restart-container",
         statusApi: "/container-status?target=30142",
         probePath: "/login",
         manualScriptPath: "/volume1/docker/pi-agent-colleague/restart-container-30142.sh",
-        manualCommand: 'ssh root@10.0.0.2 -p 2222 "/volume1/docker/pi-agent-colleague/restart-container-30142.sh"',
+        manualCommand: 'ssh root@10.10.0.10 -p 2222 "/volume1/docker/pi-agent-colleague/restart-container-30142.sh"',
       };
     }
 
-    // 2. Windows 本地端：主机名为 10.0.0.89，或在 Windows 系统下的 localhost / 127.0.0.1
-    const isWindowsHost = hostname === "10.0.0.89";
+    // 2. Windows 本地端：主机名为 10.10.0.20，或在 Windows 系统下的 localhost / 127.0.0.1
+    const isWindowsHost = hostname === "10.10.0.20";
     const isWindowsLocal = (hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("win");
     if (isWindowsHost || isWindowsLocal) {
-      const host = isWindowsHost ? "10.0.0.89" : "127.0.0.1";
+      const host = isWindowsHost ? "10.10.0.20" : "127.0.0.1";
       return {
         id: "windows-30141",
         type: "process",
@@ -2903,18 +2903,18 @@
           `http://${host}:30149`,
           "http://127.0.0.1:30149",
           "http://localhost:30149",
-          "http://10.0.0.89:30149"
+          "http://10.10.0.20:30149"
         ],
         restartApi: "/restart-pi-web",
         statusApi: "/pi-web-status",
         probePath: "/login",
-        manualScriptPath: "C:\\Users\\KOXIR\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
-        manualCommand: "node C:\\Users\\KOXIR\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
+        manualScriptPath: "C:\\Users\\demo\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
+        manualCommand: "node C:\\Users\\demo\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
       };
     }
 
-    // 3. MacBook 本地端：主机名为 10.7.7.2，或在 Mac 下的 localhost / 127.0.0.1
-    if (hostname === "10.7.7.2" || ((hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("mac"))) {
+    // 3. MacBook 本地端：主机名为 10.10.0.30，或在 Mac 下的 localhost / 127.0.0.1
+    if (hostname === "10.10.0.30" || ((hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("mac"))) {
       return {
         id: "mac-30141",
         type: "process",
@@ -2926,18 +2926,18 @@
         bridgeCandidateUrls: [
           "http://127.0.0.1:30149",
           "http://localhost:30149",
-          "http://10.7.7.2:30149"
+          "http://10.10.0.30:30149"
         ],
         restartApi: "/restart-pi-web",
         statusApi: "/pi-web-status",
         probePath: "/login",
-        manualScriptPath: "/Users/palhan/.pi/agent/scripts/restart-pi-web.sh",
-        manualCommand: "bash /Users/palhan/.pi/agent/scripts/restart-pi-web.sh",
+        manualScriptPath: "/Users/demo/.pi/agent/scripts/restart-pi-web.sh",
+        manualCommand: "bash /Users/demo/.pi/agent/scripts/restart-pi-web.sh",
       };
     }
 
-    // 4. 群晖主开发端容器 (30141 / pi-agent)：默认全覆盖（10.0.0.2、手机/平板客户端访问、OpenVPN 192.168.255.6、外网域名）
-    const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.0.0.2";
+    // 4. 群晖主开发端容器 (30141 / pi-agent)：默认全覆盖（10.10.0.10、手机/平板客户端访问、OpenVPN 192.168.254.10、外网域名）
+    const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "10.10.0.10";
     return {
       id: "synology-30141",
       type: "container",
@@ -2948,13 +2948,13 @@
       port: 30141,
       bridgeCandidateUrls: [
         `http://${bridgeHost}:30149`,
-        "http://10.0.0.2:30149"
+        "http://10.10.0.10:30149"
       ],
       restartApi: "/restart-container",
       statusApi: "/container-status?target=30141",
       probePath: "/login",
       manualScriptPath: "/volume1/docker/pi-agent/restart-container-30141.sh",
-      manualCommand: 'ssh root@10.0.0.2 -p 2222 "/volume1/docker/pi-agent/restart-container-30141.sh"',
+      manualCommand: 'ssh root@10.10.0.10 -p 2222 "/volume1/docker/pi-agent/restart-container-30141.sh"',
     };
   }
 
@@ -3283,7 +3283,7 @@
             const spinner = modal.querySelector(".pi-enh-probe-spinner");
             if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
             const currentHost = String(window.location.hostname || "").toLowerCase();
-            const alreadyOnWindowsPiWeb = ["127.0.0.1", "localhost", "10.0.0.89"].includes(currentHost);
+            const alreadyOnWindowsPiWeb = ["127.0.0.1", "localhost", "10.10.0.20"].includes(currentHost);
             setTimeout(() => {
               if (alreadyOnWindowsPiWeb) window.location.reload();
               else window.location.assign("http://127.0.0.1:30141/");
@@ -5558,7 +5558,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     const candidates = [
       "http://127.0.0.1:30149",
       "http://localhost:30149",
-      "http://10.0.0.89:30149",
+      "http://10.10.0.20:30149",
     ];
     for (const candidate of candidates) {
       try {
@@ -5578,11 +5578,11 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   bridgeBaseSyncUrl = null;
   async function resolveBridgeSyncUrl() {
     if (bridgeBaseSyncUrl) return bridgeBaseSyncUrl;
-    const hostname = (typeof window !== "undefined" && window.location?.hostname) || "10.0.0.2";
+    const hostname = (typeof window !== "undefined" && window.location?.hostname) || "10.10.0.10";
     // On non-Windows localhost there is no desktop bridge; go directly to the NAS.
     const candidates = /^(127\.0\.0\.1|localhost)$/.test(hostname) && !/Win/i.test(navigator.platform || "")
-      ? ["http://10.0.0.2:30149"]
-      : [`http://${hostname}:30149`, "http://10.0.0.2:30149", "http://127.0.0.1:30149"];
+      ? ["http://10.10.0.10:30149"]
+      : [`http://${hostname}:30149`, "http://10.10.0.10:30149", "http://127.0.0.1:30149"];
     for (const cand of candidates) {
       try {
         const res = await fetch(`${cand}/ping`, { signal: AbortSignal.timeout(1500) });
@@ -5823,7 +5823,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     });
 
     card.querySelector('[data-sync-action="rollback"]')?.addEventListener("click", async () => {
-      const targetChoice = prompt("请选择要回滚的目标端：\\n输入 1: 回滚 30142 同事端\\n输入 2: 回滚 Windows 本地端\\n输入 3: 回滚 MacBook 本地端 (10.7.7.2)", "1");
+      const targetChoice = prompt("请选择要回滚的目标端：\\n输入 1: 回滚 30142 同事端\\n输入 2: 回滚 Windows 本地端\\n输入 3: 回滚 MacBook 本地端 (10.10.0.30)", "1");
       if (!targetChoice) return;
       let target = "30142";
       let targetName = "30142 同事端";
@@ -5932,14 +5932,14 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
               </div>
               <div class="pi-enh-sync-node" data-sync-node="target-windows">
                 <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 Windows 本地端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>Windows 本地端 (10.0.0.89)</span>
+                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>Windows 本地端 (10.10.0.20)</span>
                   <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="开启/暂停 Windows 本地端自动同步" checked>
                 </label>
                 <span class="pi-enh-sync-node-detail" data-sync-windows-detail>检测中…</span>
               </div>
               <div class="pi-enh-sync-node" data-sync-node="target-mac">
                 <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 MacBook 本地端自动同步">
-                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>MacBook 本地端 (10.7.7.2)</span>
+                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>MacBook 本地端 (10.10.0.30)</span>
                   <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="开启/暂停 MacBook 本地端自动同步" checked>
                 </label>
                 <span class="pi-enh-sync-node-detail" data-sync-mac-detail>检测中…</span>
@@ -6116,7 +6116,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     });
 
     panel.querySelector('[data-pwa-action="copy-flag-origin"]')?.addEventListener("click", () => {
-      const origin = (typeof window !== "undefined" && window.location ? window.location.origin : "http://10.0.0.2:30141");
+      const origin = (typeof window !== "undefined" && window.location ? window.location.origin : "http://10.10.0.10:30141");
       copyText(origin, "已复制局域网安全源地址: " + origin);
       showToast("已复制地址！在手机 Chrome 访问 chrome://flags/#unsafely-treat-insecure-origin-as-secure 粘贴并启用即可一键安装 PWA", null, 6000);
     });

@@ -44,7 +44,7 @@ export function mcpServerKey(server: Pick<McpServerInfo, "scope" | "name">): str
 
 /**
  * What a row says about an entry, most important first. From the file: an
- * entry pi refuses, one Pi Web refuses because it references PI_WEB_PASSWORD,
+ * entry pi refuses, one Agent Web Plus refuses because it references PI_WEB_PASSWORD,
  * one turned off in the file, a project entry of a project whose servers may
  * not be read, a global entry the trusted project's entry of the same name
  * replaces, and MCP being off on this server. Only an entry the file lets
@@ -87,7 +87,7 @@ export const MCP_SERVER_ROW_STATES: readonly McpServerRowState[] = [
 ];
 
 export interface McpRowContext {
-  /** MCP is available on this Pi Web server (not turned off by the operator or a setting). */
+  /** MCP is available on this Agent Web Plus server (not turned off by the operator or a setting). */
   mcpAvailable: boolean;
   /** A session may read the project's `.pi/mcp.json` (see `mcpProjectServersLoad()`). */
   projectServersLoad: boolean;
@@ -861,7 +861,7 @@ async function loadWithin(cwd: string | null, fetchImpl: FetchLike, signal: Abor
 /**
  * Loads the overview for the panel's project, or the global file alone without
  * one. A project folder the route refuses (removed since, or outside the
- * folders Pi Web may read) does not hide the global servers: they are loaded
+ * folders Agent Web Plus may read) does not hide the global servers: they are loaded
  * again without it, and the refusal is kept for the Project group to explain.
  * The whole load ends by `timeoutMs`, aborting what is still on its way
  * (`withinDeadline()`).
@@ -1240,7 +1240,7 @@ export function mcpTestBlock(
 
 /**
  * A refusal of the test route in the words of a test: the reasons the route
- * shares with the switches would otherwise say Pi Web "changes" nothing, or
+ * shares with the switches would otherwise say Agent Web Plus "changes" nothing, or
  * that it left a file "unchanged" (`mcp.reason.*` is worded for writes).
  * `server-missing`, the `cwd-*` reasons and the request guards read the same
  * for both, and `internal` shows the route's diagnostic.

@@ -12,6 +12,8 @@
  * Stored in localStorage; best-effort (silently ignored when unavailable).
  */
 
+import { codexProjectKey } from "./execution-engines/codex-projection";
+
 const STORAGE_KEY = "pi-web:last-open-by-workspace";
 
 interface StorageLike {
@@ -90,9 +92,14 @@ export function clearLastOpen(
 
 /** Workspace identity for a session: resolved project root when known, else cwd. */
 export function workspaceKeyOf(session: {
+  id?: string;
   cwd: string;
   projectRoot?: string | null;
   projectKey?: string | null;
 }): string {
-  return session.projectKey ?? session.projectRoot ?? session.cwd;
+  if (session.projectKey != null) return session.projectKey;
+  const root = session.projectRoot ?? session.cwd;
+  // Promotion precedes list hydration. Keep its workspace key identical to the
+  // authoritative Codex row so draft modes and workspace memory remain scoped.
+  return session.id?.startsWith("codex:") ? codexProjectKey(root) : root;
 }

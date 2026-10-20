@@ -7,6 +7,7 @@ export interface SessionRowContextMenuDetail {
   path: string;
   cwd: string;
   name?: string;
+  executionEngine?: "pi" | "codex";
   clientX: number;
   clientY: number;
   refresh: () => void;

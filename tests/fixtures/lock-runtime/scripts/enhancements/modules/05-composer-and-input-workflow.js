@@ -13178,7 +13178,7 @@
       categoryLabel: "🧩 插件与技能",
       title: "synology-docker-ops",
       badge: "NAS",
-      subtitle: "群晖 10.0.0.2 NAS 容器与存储安全运维",
+      subtitle: "群晖 10.10.0.10 NAS 容器与存储安全运维",
       insertText: "@synology-docker-ops ",
       icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 13h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h4"></path><path d="M2 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H2"></path><path d="M20 21a8 8 0 0 0-16 0"></path><rect x="9" y="3" width="6" height="6" rx="1"></rect></svg>',
       keywords: ["synology-docker-ops", "synology", "nas", "群晖", "docker", "容器"],

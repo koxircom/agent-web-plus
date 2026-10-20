@@ -1,3 +1,5 @@
+import { codexProjectKey } from "@/lib/execution-engines/codex-projection";
+import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { NextResponse } from "next/server";
 import { statSync, type Stats } from "fs";
 import { homedir } from "os";
@@ -16,8 +18,15 @@ function normalizeCwd(cwd: string): string {
 // Validates a candidate workspace before the UI selects it.
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { cwd?: unknown };
+    const body = await req.json() as { cwd?: unknown; engine?: unknown };
     const cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+    const engine = body.engine === "pi" || body.engine === "codex" ? body.engine : (await readExecutionEngineSettings()).defaultEngine;
+    if (engine === "codex") {
+      const projects = await (await import("@/lib/execution-engines/codex-engine")).codexProjects();
+      const project = projects.find(p => p.cwd === cwd);
+      return project ? Response.json({ success: true, cwd, projectRoot: cwd, projectKey: codexProjectKey(cwd) })
+        : Response.json({ error: "请选择 Codex 服务配置的工作区" }, { status: 400 });
+    }
 
     if (!cwd) {
       return NextResponse.json({ error: "Path is required" }, { status: 400 });
