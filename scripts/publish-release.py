@@ -64,6 +64,23 @@ def tag_commit(tag):
     raise ValueError('远程标签未指向有效提交')
 
 
+def release_for_tag(tag):
+    # The tag endpoint can omit drafts. The authenticated list includes them.
+    release = api(f'repos/{REPO}/releases/tags/{tag}', allow_missing=True)
+    if release is not None:
+        return release
+    for page in range(1, 21):
+        rows = api(f'repos/{REPO}/releases?per_page=100&page={page}')
+        matches = [row for row in rows if row['tag_name'] == tag]
+        if len(matches) > 1:
+            raise ValueError('同一标签存在多个 Release，已停止')
+        if matches:
+            return matches[0]
+        if len(rows) < 100:
+            return None
+    raise ValueError('Release 查询超过范围，已停止；请核查指定标签')
+
+
 def publish(args, receipt):
     if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?', args.tag or ''):
         raise ValueError('必须指定合法版本标签')
@@ -97,7 +114,14 @@ def publish(args, receipt):
         receipt.update(authentication())
         if tag_commit(args.tag) != args.target:
             raise ValueError('远程标签与指定提交不一致')
-        if api(f'repos/{REPO}/releases/tags/{args.tag}', allow_missing=True) is not None:
+        existing = release_for_tag(args.tag)
+        finalize_id = getattr(args, 'finalize_draft', None)
+        if finalize_id is not None:
+            if (not existing or existing['id'] != finalize_id or not existing['draft']
+                    or existing.get('author', {}).get('login') != receipt['account']):
+                raise ValueError('指定草稿身份或所有者不符，禁止继续公开')
+            receipt['resumedDraftId'] = finalize_id
+        elif existing is not None:
             raise ValueError('该版本 Release 已存在；禁止覆盖或追加未审核附件')
         assets = [stage / p.name for p in args.asset]
         receipt['assets'] = [{'name': p.name, 'size': p.stat().st_size, 'sha256': digest(p)} for p in assets]
@@ -105,13 +129,21 @@ def publish(args, receipt):
             receipt['status'] = 'preflight-passed'
             return
         repository = 'https://github.com/' + REPO
-        gh('release', 'create', args.tag, '--repo', repository, '--verify-tag', '--draft',
-           '--title', args.tag, '--notes-file', str(stage / args.notes_file.name))
-        receipt['draftCreated'] = True
-        gh('release', 'upload', args.tag, *map(str, assets), '--repo', repository)
-        release = api(f'repos/{REPO}/releases/tags/{args.tag}')
-        if not release['draft'] or {a['name'] for a in release['assets']} != {p.name for p in assets}:
+        if finalize_id is None:
+            receipt['phase'] = 'create-draft'
+            gh('release', 'create', args.tag, '--repo', repository, '--verify-tag', '--draft',
+               '--title', args.tag, '--notes-file', str(stage / args.notes_file.name))
+            receipt['draftCreated'] = True
+            receipt['phase'] = 'upload-assets'
+            gh('release', 'upload', args.tag, *map(str, assets), '--repo', repository)
+        receipt['phase'] = 'verify-draft'
+        release = release_for_tag(args.tag)
+        if not release or not release['draft'] or {a['name'] for a in release['assets']} != {p.name for p in assets}:
             raise ValueError('草稿附件集合不一致，已停止公开发布')
+        receipt['phase'] = 'verify-downloads'
+        if finalize_id is not None and (release['id'] != finalize_id
+                or release.get('author', {}).get('login') != receipt['account']):
+            raise ValueError('草稿在核验中发生变化，已停止')
         downloads = stage / 'downloaded'
         downloads.mkdir()
         for asset in receipt['assets']:
@@ -119,8 +151,17 @@ def publish(args, receipt):
             if digest(downloads / asset['name']) != asset['sha256']:
                 raise ValueError('上传附件下载回读指纹不一致，草稿未公开')
         prerelease = '-' in args.tag
-        gh('release', 'edit', args.tag, '--repo', repository, '--draft=false',
-           '--prerelease=' + str(prerelease).lower(), '--latest=' + str(not prerelease).lower())
+        receipt['phase'] = 'publish-draft'
+        if finalize_id is not None:
+            # Address the inspected draft by ID, never a newly resolved tag.
+            gh('api', '--hostname', 'github.com', '--method', 'PATCH',
+               f'repos/{REPO}/releases/{finalize_id}', '-F', 'draft=false',
+               '-F', 'prerelease=' + str(prerelease).lower(),
+               '-f', 'make_latest=' + str(not prerelease).lower())
+        else:
+            gh('release', 'edit', args.tag, '--repo', repository, '--draft=false',
+               '--prerelease=' + str(prerelease).lower(), '--latest=' + str(not prerelease).lower())
+        receipt['phase'] = 'verify-public-release'
         published = api(f'repos/{REPO}/releases/tags/{args.tag}')
         if published['draft'] or published['prerelease'] != prerelease:
             raise ValueError('发布状态回读不一致，需要人工核查')
@@ -137,6 +178,7 @@ def main():
     parser.add_argument('--asset', type=Path, action='append', default=[])
     parser.add_argument('--notes-file', type=Path)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--finalize-draft', type=int, metavar='RELEASE_ID', help='显式核验指定自有草稿并公开；不创建草稿或上传附件')
     parser.add_argument('--check-auth', action='store_true')
     parser.add_argument('--report', type=Path)
     args = parser.parse_args()

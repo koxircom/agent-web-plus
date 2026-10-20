@@ -87,10 +87,14 @@ class FakeGitHub:
             return {'object': {'type': 'commit', 'sha': self.target}}
         if endpoint.endswith('/releases/latest'):
             return {'tag_name': self.tag}
+        release = {'id': 123, 'tag_name': self.tag, 'author': {'login': 'koxircom'},
+                   'draft': self.draft, 'prerelease': '-' in self.tag,
+                   'assets': [{'name': n} for n in self.assets],
+                   'html_url': 'https://github.com/' + publisher.REPO + '/releases/tag/' + self.tag}
         if '/releases/tags/' in endpoint:
-            if self.draft is None:
-                return None
-            return {'draft': self.draft, 'prerelease': '-' in self.tag, 'assets': [{'name': n} for n in self.assets], 'html_url': 'https://github.com/' + publisher.REPO + '/releases/tag/' + self.tag}
+            return release if self.draft is False else None
+        if '/releases?per_page=100&page=' in endpoint:
+            return [] if self.draft is None else [release]
         raise AssertionError(endpoint)
 
     def gh(self, *args):
@@ -105,7 +109,7 @@ class FakeGitHub:
             name = args[args.index('--pattern') + 1]
             directory = Path(args[args.index('--dir') + 1])
             (directory / name).write_bytes(b'corrupt' if self.corrupt else self.assets[name])
-        elif args[:2] == ('release', 'edit'):
+        elif args[:2] == ('release', 'edit') or args[0] == 'api':
             self.draft = False
         return ''
 
@@ -174,6 +178,68 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '提交不一致'):
             self.invoke(fake)
         self.assertEqual(fake.commands, [])
+
+    def test_existing_draft_is_found_when_tag_endpoint_omits_it(self):
+        fake = FakeGitHub(self.args.tag, self.args.target)
+        fake.draft = True
+        with self.assertRaisesRegex(ValueError, 'Release 已存在'):
+            self.invoke(fake)
+        self.assertEqual(fake.commands, [])
+
+    def test_explicit_finalize_downloads_before_publishing_without_upload(self):
+        fake = FakeGitHub(self.args.tag, self.args.target)
+        fake.draft = True
+        fake.assets[self.asset.name] = self.original
+        self.args.finalize_draft = 123
+        receipt = self.invoke(fake)
+        self.assertEqual(receipt['status'], 'published-and-verified')
+        self.assertEqual(receipt['resumedDraftId'], 123)
+        self.assertEqual(fake.commands[0][1], 'download')
+        self.assertEqual(fake.commands[1][0], 'api')
+        self.assertIn('repos/' + publisher.REPO + '/releases/123', fake.commands[1])
+
+    def test_finalize_wrong_id_or_published_release_is_rejected(self):
+        for draft, identity in [(True, 456), (False, 123)]:
+            fake = FakeGitHub(self.args.tag, self.args.target)
+            fake.draft = draft
+            self.args.finalize_draft = identity
+            with self.assertRaisesRegex(ValueError, '草稿身份或所有者不符'):
+                self.invoke(fake)
+            self.assertEqual(fake.commands, [])
+
+    def test_finalize_rejects_different_owner(self):
+        fake = FakeGitHub(self.args.tag, self.args.target)
+        fake.draft = True
+        self.args.finalize_draft = 123
+        original_api = fake.api
+        def foreign_owner(endpoint, **kwargs):
+            result = original_api(endpoint, **kwargs)
+            if isinstance(result, list):
+                for row in result:
+                    row['author']['login'] = 'another-user'
+            return result
+        fake.api = foreign_owner
+        with self.assertRaisesRegex(ValueError, '草稿身份或所有者不符'):
+            self.invoke(fake)
+        self.assertEqual(fake.commands, [])
+
+    def test_finalize_missing_assets_does_not_upload(self):
+        fake = FakeGitHub(self.args.tag, self.args.target)
+        fake.draft = True
+        self.args.finalize_draft = 123
+        with self.assertRaisesRegex(ValueError, '草稿附件集合不一致'):
+            self.invoke(fake)
+        self.assertEqual(fake.commands, [])
+
+    def test_finalize_corrupt_download_keeps_draft(self):
+        fake = FakeGitHub(self.args.tag, self.args.target, corrupt=True)
+        fake.draft = True
+        fake.assets[self.asset.name] = self.original
+        self.args.finalize_draft = 123
+        with self.assertRaisesRegex(ValueError, '下载回读指纹不一致'):
+            self.invoke(fake)
+        self.assertTrue(fake.draft)
+        self.assertEqual([c[1] for c in fake.commands], ['download'])
 
     def test_requires_saved_container_auth_without_env_override(self):
         with patch.dict(os.environ, {'GH_TOKEN': 'not-a-real-token'}), patch.object(Path, 'exists', return_value=True), patch.object(publisher, 'gh') as gh:
