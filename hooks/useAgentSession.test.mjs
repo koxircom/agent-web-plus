@@ -49,7 +49,7 @@ const promptRecovery = await jiti.import("../lib/prompt-recovery.ts");
 const ref = (current) => ({ current });
 const noop = () => {};
 function hookHarness() {
-  const state = { messages: [], activeToolResults: new Map(), phase: null, retryInfo: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0 };
+  const state = { messages: [], activeToolResults: new Map(), phase: null, retryInfo: null, dialogs: [], custom: [], restores: [], commands: [], reconciles: [], settlements: [], closes: 0, noticeActions: [] };
   const setter = (key) => (value) => { state[key] = typeof value === "function" ? value(state[key]) : value; };
   const scope = {
     ...queueHelpers, ...promptRecovery, sessionIdRef: ref("session"), session: { id: "session" },
@@ -59,7 +59,7 @@ function hookHarness() {
     isNew: false, newSessionCwd: null, composerDraftKey: "draft", newSessionDraftKey: null,
     setMessages: setter("messages"), setAgentPhase: setter("phase"), setRetryInfo: setter("retryInfo"), setActiveToolResults: setter("activeToolResults"),
     setExtensionDialogs: setter("dialogs"), setExtensionCustomUis: setter("custom"),
-    setAgentRunning: noop, setPromptAnchorActive: noop, setPromptScrollRevision: noop, setStopRequested: noop, dispatch: noop,
+    setAgentRunning: noop, setPromptAnchorActive: noop, setPromptScrollRevision: noop, setStopRequested: noop, dispatch: noop, dispatchNotice: (action) => state.noticeActions.push(action),
     markOptimisticUserMessage: noop, bumpSessionEpoch: noop, cancelEventStreamGrace: noop, addNotice: noop,
     invalidatesSessionHistory: () => false, normalizeToolCalls: (value) => value,
     isSystemMessageEvent, isNestedToolExecutionEvent, CODEMODE_TOOL_NAME: "codemode",
