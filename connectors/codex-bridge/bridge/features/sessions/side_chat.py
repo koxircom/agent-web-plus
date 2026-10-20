@@ -15,7 +15,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from bridge.features.sessions.model import normalize_state, normalize_request
+from bridge.features.sessions.model import normalize_state, normalize_request, merge_turn_items
 from bridge.features.workspace.uploads import Uploads
 
 
@@ -234,7 +234,7 @@ class SideChat:
                     if key in source:
                         turn[key] = source[key]
                 if source.get('items'):
-                    turn['items'] = copy.deepcopy(source['items'])
+                    turn['items'] = merge_turn_items(source['items'], turn['items'])
                 self.state['threadRuntimeStatus']['type'] = 'active' if method == 'turn/started' else 'idle'
                 if method == 'turn/completed':
                     self.queue_event.set()

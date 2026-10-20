@@ -57,4 +57,47 @@ class SharedCompletionTests(unittest.TestCase):
   chat.backend.request=lambda *a:{'data':[{'id':'done','status':'completed','items':[]}]}
   chat._refresh_completed();self.assertIn(final,chat.state['turns'][0]['items']);self.assertEqual(chat.state['turns'][1]['items'],[{'id':'live'}])
 
+ def test_sparse_completion_keeps_steering_between_opening_and_final(self):
+  chat,_,final=self.fixture()
+  opening={'id':'opening','type':'userMessage','content':[{'type':'text','text':'原始请求'}]}
+  quote={'id':'quote','type':'userMessage','clientId':'quoted-request','content':[{'type':'text','text':'> 引用：请先上线'}]}
+  tool={'id':'observed-tool','type':'commandExecution'}
+  chat.state['turns'][0]['items']=[opening,tool,quote,final]
+  fresh={**final,'text':'完整最终结果'}
+  chat.backend.request=lambda *a:{'data':[{'id':'done','status':'completed','items':[opening,fresh]}]}
+  chat._refresh_completed()
+  items=chat.state['turns'][0]['items']
+  self.assertEqual([i['id'] for i in items],['opening','observed-tool','quote','final'])
+  self.assertEqual(items[-1]['text'],'完整最终结果')
+
+ def test_completion_notification_preserves_steering_before_new_final(self):
+  from bridge.features.sessions.side_chat import SideChat
+  chat,_,final=self.fixture();chat.closed=False;chat.ready=True
+  chat.state['requests']=[];chat.state['threadRuntimeStatus']={'type':'active'};chat.queue_event=threading.Event()
+  opening={'id':'opening','type':'userMessage'}
+  quote={'id':'quote','type':'userMessage','clientId':'quoted-request'}
+  chat.state['turns'][0].update(status='inProgress',items=[opening,quote])
+  SideChat._event(chat,{'method':'turn/completed','params':{'threadId':'test','turn':{'id':'done','status':'completed','items':[opening,final]}}})
+  self.assertEqual([i['id'] for i in chat.state['turns'][0]['items']],['opening','quote','final'])
+
+ def test_no_common_snapshot_ids_keeps_observed_prefix_and_identical_sends(self):
+  chat,_,final=self.fixture()
+  users=[{'id':key,'type':'userMessage','clientId':key,'content':[{'type':'text','text':'同文消息'}]} for key in ['first','second']]
+  chat.state['turns'][0]['items']=users
+  chat.backend.request=lambda *a:{'data':[{'id':'done','status':'completed','items':[final]}]}
+  chat._refresh_completed()
+  self.assertEqual([i['id'] for i in chat.state['turns'][0]['items']],['first','second','final'])
+
+ def test_snapshot_reorders_shared_anchors_and_updates_them_without_mutating_inputs(self):
+  import copy
+  from bridge.features.sessions.model import merge_turn_items
+  observed=[{'id':'a','text':'old'},{'id':'quote'},{'id':'b'},{'id':'tail'}]
+  snapshot=[{'id':'b','text':'fresh'},{'id':'new'},{'id':'a','text':'fresh'}]
+  before=copy.deepcopy([observed,snapshot])
+  result=merge_turn_items(snapshot,observed)
+  self.assertEqual([i['id'] for i in result],['b','tail','new','a','quote'])
+  self.assertEqual(result[0]['text'],'fresh')
+  result[0]['text']='changed'
+  self.assertEqual([observed,snapshot],before)
+
 if __name__=='__main__':unittest.main()

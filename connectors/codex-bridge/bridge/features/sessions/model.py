@@ -78,6 +78,29 @@ def items_array(items):
     return []
 
 
+def merge_turn_items(snapshot, observed):
+    """Update native IDs without moving observed-only entries past the answer.
+
+    Completion snapshots may omit steering inputs and tools. Keep each omitted
+    run after its preceding shared anchor, before newly backfilled items. The
+    snapshot owns shared item contents and their relative order; text is never
+    an identity, and neither input is mutated.
+    """
+    known = {item['id'] for item in snapshot}
+    prefix, after = [], {}
+    bucket = prefix
+    for item in observed:
+        if item['id'] in known:
+            bucket = after.setdefault(item['id'], [])
+        else:
+            bucket.append(item)
+    merged = list(prefix)
+    for item in snapshot:
+        merged.append(item)
+        merged.extend(after.get(item['id'], []))
+    return copy.deepcopy(merged)
+
+
 def request_id(item):
     """Return the bridge submission id attached to a desktop user message."""
     return item.get("clientId") or item.get("clientUserMessageId") or item.get("client_id")

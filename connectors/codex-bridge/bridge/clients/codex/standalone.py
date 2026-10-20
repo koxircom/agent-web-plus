@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from bridge.features.sessions.model import merge_turn_items
 
 from bridge.app.service import Bridge
 from bridge.clients.codex.catalog import Catalog
@@ -349,9 +350,7 @@ class Chat(SideChat):
                     continue
                 # A sparse backfill must never delete items already observed
                 # through the native event stream. Native IDs define identity.
-                items = copy.deepcopy(source.get('items', []))
-                known = {item['id'] for item in items}
-                items.extend(copy.deepcopy(item) for item in turn['items'] if item['id'] not in known)
+                items = merge_turn_items(source.get('items', []), turn['items'])
                 if items != turn['items']:
                     turn['items'] = items
                     changed = True
