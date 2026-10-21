@@ -4,7 +4,7 @@ import { userMessageRenderKey, userMessageRequestId } from "@/lib/prompt-recover
 
 import { createToolProcessSummary, getToolProcessSummaryLabel, includeToolInProcessSummary, type ToolProcessSummary } from "@/lib/tool-public-status";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
@@ -53,6 +53,18 @@ import {
   registerHistoryViewportBridges,
   splitAssistantDisplayRuns,
 } from "@/lib/enhancement-chat-bridge";
+import { isEnhancementPluginFastActive } from "@/lib/enhancement-settings.generated";
+import { computeUserTurnNumbers } from "@/lib/turn-number";
+
+function subscribeTurnNumberPreference(listener: () => void) {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", listener);
+  window.addEventListener("pi-native-composer-preferences-change", listener);
+  return () => {
+    window.removeEventListener("storage", listener);
+    window.removeEventListener("pi-native-composer-preferences-change", listener);
+  };
+}
 
 interface Props {
   session: SessionInfo | null;
@@ -285,6 +297,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     onOpenSettings: isCodexSession ? undefined : onOpenSettings,
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
+  const showTurnNumber = useSyncExternalStore(
+    subscribeTurnNumberPreference,
+    () => isEnhancementPluginFastActive("turn-number-indicator"),
+    () => true
+  );
+  const turnNumbersMap = useMemo(() => (
+    computeUserTurnNumbers({ messages, navigationTotalTurns, hasEarlierMessages })
+  ), [messages, navigationTotalTurns, hasEarlierMessages]);
   const sessionBusy = agentRunning || bashRunning;
   const [quotedSelection, setQuotedSelection] = useState<{
     text: string;
@@ -1782,6 +1802,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                     writtenFiles={writtenFiles}
+                    turnNumber={showTurnNumber ? turnNumbersMap.get(idx) : undefined}
                   />
                 );
                 if (!isVisible || currentRefIdx === undefined) return view;

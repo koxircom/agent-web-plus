@@ -11,17 +11,17 @@ function readRootFile(relPath) {
   return fs.readFileSync(path.join(rootDir, relPath), "utf8");
 }
 
-test("package.json 和 package-lock.json 版本升级为 1.4.10 且关键兼容字段完整", () => {
+test("package.json 和 package-lock.json 版本符合合法 SemVer 且根与 package-lock 一致，关键兼容字段完整", () => {
   const pkg = JSON.parse(readRootFile("package.json"));
-  assert.equal(pkg.version, "1.4.10", "package.json 版本应为 1.4.10");
+  assert.match(pkg.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "package.json 版本应为合法 SemVer");
   assert.equal(pkg.name, "@agegr/pi-web", "npm 内部包名应保留 @agegr/pi-web 以便兼容原位升级");
   assert.equal(pkg.bin["agent-web"], "bin/agent-web.js", "应支持 agent-web 启动入口");
   assert.equal(pkg.bin["pi-web"], "bin/pi-web.js", "应保留 pi-web 兼容启动入口");
   assert.equal(pkg.standalone, true, "应保留 standalone 发行版特性标识");
 
   const lock = JSON.parse(readRootFile("package-lock.json"));
-  assert.equal(lock.version, "1.4.10", "package-lock.json 根版本应为 1.4.10");
-  assert.equal(lock.packages[""].version, "1.4.10", "package-lock.json packages[''] 版本应为 1.4.10");
+  assert.equal(lock.version, pkg.version, "package-lock.json 根版本应与 package.json 一致");
+  assert.equal(lock.packages[""].version, pkg.version, "package-lock.json packages[''] 版本应与 package.json 一致");
 });
 
 test("public/offline.html 离线字标严格对齐 lib/branding.ts 矢量几何事实源", () => {

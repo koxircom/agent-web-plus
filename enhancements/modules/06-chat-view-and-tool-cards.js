@@ -3750,90 +3750,6 @@
   }
 
   // ==========================================
-  // 对话轮次序号 (Turn Number Indicator)
-  // ==========================================
-  function clearAllTurnNumberBadges() {
-    if (typeof document === "undefined" || !document.querySelectorAll) return;
-    const badges = document.querySelectorAll(".pi-enh-turn-number-badge");
-    for (let i = 0; i < badges.length; i++) {
-      badges[i].remove();
-    }
-  }
-
-  function syncAllTurnNumberBadges() {
-    if (!isPluginEnabled("turn-number-indicator")) {
-      clearAllTurnNumberBadges();
-      return;
-    }
-
-    const userMsgs = findUserMessages();
-    if (!userMsgs || userMsgs.length === 0) {
-      clearAllTurnNumberBadges();
-      return;
-    }
-
-    let offset = 0;
-    try {
-      if (typeof readMinimapHistoryState === "function") {
-        const historyState = readMinimapHistoryState(userMsgs.length);
-        if (historyState && Number.isFinite(historyState.totalTurns) && historyState.totalTurns > userMsgs.length) {
-          offset = historyState.totalTurns - userMsgs.length;
-        }
-      }
-    } catch (e) {}
-
-    for (let i = 0; i < userMsgs.length; i++) {
-      const msg = userMsgs[i];
-      const turnNumber = offset + i + 1;
-      const timeSpan = findTimestampElement(msg);
-      if (!timeSpan || !timeSpan.parentElement) continue;
-
-      const parent = timeSpan.parentElement;
-      let badge = null;
-      const prev = timeSpan.previousElementSibling;
-      if (prev && prev.classList && prev.classList.contains("pi-enh-turn-number-badge")) {
-        badge = prev;
-      } else {
-        badge = parent.querySelector(".pi-enh-turn-number-badge");
-      }
-
-      const badgeText = `#${turnNumber}`;
-      const badgeTitle = `第 ${turnNumber} 轮对话`;
-
-      if (!badge) {
-        badge = document.createElement("span");
-        badge.className = "pi-enh-turn-number-badge";
-        badge.textContent = badgeText;
-        badge.setAttribute("title", badgeTitle);
-        badge.setAttribute("data-turn-number", String(turnNumber));
-
-        if (timeSpan.style && timeSpan.style.marginLeft === "auto") {
-          timeSpan.style.marginLeft = "0";
-          badge.style.marginLeft = "auto";
-        }
-        parent.insertBefore(badge, timeSpan);
-      } else {
-        if (badge.nextElementSibling !== timeSpan) {
-          parent.insertBefore(badge, timeSpan);
-        }
-        if (timeSpan.style && timeSpan.style.marginLeft === "auto") {
-          timeSpan.style.marginLeft = "0";
-          badge.style.marginLeft = "auto";
-        }
-        if (badge.textContent !== badgeText) {
-          badge.textContent = badgeText;
-        }
-        if (badge.getAttribute("title") !== badgeTitle) {
-          badge.setAttribute("title", badgeTitle);
-        }
-        if (badge.getAttribute("data-turn-number") !== String(turnNumber)) {
-          badge.setAttribute("data-turn-number", String(turnNumber));
-        }
-      }
-    }
-  }
-
-  // ==========================================
   // Pi Coding Agent 上游更新检查与轻量提示 (https://github.com/earendil-works/pi)
   // ==========================================
   const PI_AGENT_UPDATE_STORAGE_KEY = "pi_enh_agent_update_cache_v2";
@@ -4140,7 +4056,6 @@
     { fn: syncStandaloneVersionDom, scope: "full" },
     { fn: syncWorkspacePickerHover, scope: "full" },
     { fn: syncAllDurationBadges, scope: "chat-text" },
-    { fn: syncAllTurnNumberBadges, scope: "chat-text" },
     { fn: syncAllUsageBadges, scope: "chat-text" },
     { fn: syncAllModelSpeedBadges, scope: "chat-text" },
     { fn: syncAllTaskToolAutoCollapse, scope: "chat-text" },
@@ -4210,8 +4125,6 @@
   window.__PI_ENH_RUN_ALL_SYNC_OPERATIONS__ = runAllSyncOperations;
   window.__PI_ENH_EXECUTE_SYNC_STEP__ = executeSyncStep;
   window.__PI_ENH_SYNC_OPERATION_ERRORS__ = syncOperationErrors;
-  window.__PI_ENH_SYNC_TURN_NUMBERS__ = syncAllTurnNumberBadges;
-  window.__PI_ENH_CLEAR_TURN_NUMBERS__ = clearAllTurnNumberBadges;
 
   setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
   addManagedListener(window, "online", () => {

@@ -983,18 +983,8 @@
         syncAllDurationBadges();
       }
     } else if (id === "turn-number-indicator") {
-      if (!enabled) {
-        if (typeof clearAllTurnNumberBadges === "function") {
-          clearAllTurnNumberBadges();
-        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_CLEAR_TURN_NUMBERS__ === "function") {
-          window.__PI_ENH_CLEAR_TURN_NUMBERS__();
-        }
-      } else {
-        if (typeof syncAllTurnNumberBadges === "function") {
-          syncAllTurnNumberBadges();
-        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_TURN_NUMBERS__ === "function") {
-          window.__PI_ENH_SYNC_TURN_NUMBERS__();
-        }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("pi-native-composer-preferences-change"));
       }
     } else if (id === "model-generation-speed") {
       if (!enabled) {

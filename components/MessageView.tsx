@@ -210,6 +210,7 @@ interface Props {
    * final answer text-only.
    */
   writtenFiles?: WrittenFile[];
+  turnNumber?: number;
 }
 
 export function getModelDisplayName(
@@ -277,9 +278,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, onEditContent, showTimestamp, compactProgress, prevTimestamp, sessionId, writtenFiles }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, onEditContent, showTimestamp, compactProgress, prevTimestamp, sessionId, writtenFiles, turnNumber }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} onEditContent={onEditContent} turnNumber={turnNumber} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} compactProgress={compactProgress} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} />;
@@ -317,7 +318,8 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.writtenFiles === next.writtenFiles
-    && prev.sessionId === next.sessionId;
+    && prev.sessionId === next.sessionId
+    && prev.turnNumber === next.turnNumber;
 });
 
 export function stripSerializedAnnotationBlocks(content: string): string {
@@ -331,7 +333,7 @@ export function stripDimensionNotes(content: string): string {
   return cleaned.replace(/\[Image:\s*original\s+[^\]]+\]\s*/gi, "");
 }
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onEditContent }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, onEditContent, turnNumber }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
@@ -340,6 +342,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   forking?: boolean;
   onNavigate?: (entryId: string) => Promise<boolean>;
   onEditContent?: (message: UserMessage) => void;
+  turnNumber?: number;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -607,6 +610,15 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                 </button>
               )}
             </div>
+          )}
+          {typeof turnNumber === "number" && (
+            <span
+              className="pi-enh-turn-number-badge"
+              data-turn-number={String(turnNumber)}
+              title={`第 ${turnNumber} 轮对话`}
+            >
+              #{turnNumber}
+            </span>
           )}
           {time && <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{time}</span>}
         </div>

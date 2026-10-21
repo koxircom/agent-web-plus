@@ -1666,6 +1666,9 @@
       cursor: default !important;
       flex-shrink: 0 !important;
     }
+    .pi-enh-turn-number-badge:last-child {
+      margin-right: 0 !important;
+    }
     .pi-enh-turn-number-badge:hover {
       opacity: 1 !important;
       color: var(--text, #f4f4f5) !important;
