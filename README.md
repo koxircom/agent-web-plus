@@ -2,7 +2,7 @@
 
 **在电脑和手机的同一个网页工作台，使用 Pi Agent 与 Codex。**
 
-Agent Web Plus 原名 **Pi Web Plus**。现在它支持两种执行引擎：Pi Agent 在 Web 服务所在环境运行；Codex 通过项目内置执行端连接你自己的 Codex CLI。两种引擎共用聊天、输入框、会话导航与设置界面，切换时保留各自的会话和工作目录。
+**Agent Web Plus** 是包含 **Pi Web Plus** 与 **Codex Web Plus** 两大入口的统一浏览器工作台。其中，**Pi Web Plus** 作为 Pi Agent 的 Web 入口，在 Web 服务所在环境运行；**Codex Web Plus** 作为 Codex 的 Web 入口，通过项目内置执行端连接你自己的 Codex CLI。两者共享同一个工作台前端与后台服务实例，无需分别安装；共用聊天、输入框、会话导航与设置界面，切换时保留各自的会话和工作目录。
 
 手机是同一后台的访问入口。将 Web 服务部署在自己的电脑、WSL 或服务器后，可以在另一台设备上继续查看同一会话、跟踪执行过程、发送后续消息。
 
@@ -14,13 +14,13 @@ Agent Web Plus 原名 **Pi Web Plus**。现在它支持两种执行引擎：Pi A
 
 https://github.com/user-attachments/assets/e9a60ee1-a29c-447c-8a8f-9ac49dc8a0ca
 
-介绍 Pi Web Plus 更名、Pi Agent / Codex Agent 切换、电脑与手机接续会话，以及 Codex 的连接配置。包含中文解说、中文字幕和真实界面演示，时长 2分03秒。
+介绍 Agent Web Plus 双入口、Pi Agent 与 Codex 切换、电脑与手机接续会话，以及 Codex 连接配置。包含中文解说、中文字幕和真实界面演示，时长 2分03秒。
 
 [可选：保存 MP4 到手机（1080p · 约8.8MB）](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.2/Agent-Web-Plus-Introduction-1080p.mp4)
 
 ## 在 Pi Agent 与 Codex Agent 之间切换
 
-**左上角的 Agent 名称就是切换入口。** 点击名称旁的下拉箭头，在 **Pi Agent** 与 **Codex** 之间选择；界面中的「Codex」就是本文所说的 Codex Agent。手机和电脑使用同一个入口。
+**左上角的 Agent 名称就是切换入口。** 点击名称旁的下拉箭头，在 **Pi Agent**（对应 Pi Web Plus 入口）与 **Codex**（对应 Codex Web Plus 入口）之间选择。手机和电脑使用同一个入口。
 
 ### 第一次启用 Codex
 
@@ -59,7 +59,7 @@ Codex 未启用时，下拉菜单中的 Codex 选项不可选。开启开关本�
 
 计划/目标模式暂不能逐条保存在原生队列中，因此任务忙碌时，此类输入留在草稿，提示空闲后发送。队列交接由后台保存原文、附件和请求标识，并核对回执；结果不明时不盲目重发，也不承诺任何故障下都恰好执行一次。
 
-Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端、HTML 导出及会话删除；相应入口按引擎能力显示。具体部署和能力范围见 [Codex 配置说明](docs/codex-engine.md)。
+Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端及 HTML 导出；相应入口按引擎能力显示。具体部署和能力范围见 [Codex 配置说明](docs/codex-engine.md)。
 
 ## 两种 Agent 共用的工作台功能
 
@@ -77,12 +77,14 @@ Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端、HTML
 
 ## 安装与启动
 
-项目显示名为 Agent Web Plus，GitHub 仓库名已同步为 `koxircom/agent-web-plus`。本文介绍面向 **1.4.0**（Pi SDK **1.3.0**）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
+项目统一总品牌为 **Agent Web Plus**，GitHub 仓库名为 `koxircom/agent-web-plus`。本文介绍面向 **1.4.10**（Pi SDK **1.3.0**）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
 
-> 本页介绍 **1.4.0 双引擎功能**，旧版 Pi Web Plus 不包含全部 Codex 能力。请从本仓库正式 Releases 下载对应版本，并保留原数据目录；实际可用安装包以 Releases 页面为准。
+从 **1.4.10** 起，官方 Release 规范安装包统一命名为 `agent-web-plus-<version>.tgz`；旧版历史命名的 `pi-web-plus-*.tgz` 仅供历史版本追溯。
+
+> 本页介绍 **1.4.10 双引擎与品牌收敛功能**。安装时请从本仓库正式 Releases 下载对应版本，并保留原数据目录；实际可用安装包以 Releases 页面为准。
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.0/pi-web-plus-1.4.0.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.10/agent-web-plus-1.4.10.tgz
 agent-web --no-open
 ```
 

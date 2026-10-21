@@ -435,7 +435,7 @@
         {
           "name": "release-codex-first-model",
           "command": ["node", "scripts/qa/codex-first-model.cjs"],
-          "files": ["scripts/qa/codex-first-model.cjs", "lib/execution-engines/codex-first-model.test.mjs", "tests/codex-first-model.pw.mjs"],
+          "files": ["scripts/qa/codex-first-model.cjs", "lib/execution-engines/codex-first-model.test.mjs", "tests/codex-first-model.pw.mjs", "public/sw.test.mjs", "tests/brand-naming.test.mjs"],
           "timeoutSeconds": 180
         },
         {

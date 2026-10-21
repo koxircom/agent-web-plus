@@ -4,7 +4,9 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [Русский](./README.ru.md)
 
-[pi コーディングエージェント](https://github.com/earendil-works/pi)（`@earendil-works/pi-coding-agent`）向けのスタンドアロン版ローカルブラウザー UI です。Agent Web Plus は pi と同じローカル設定とセッションファイルを使用し、ブラウザーから会話の検索と再開、エージェントの実行、モデルやリソースの設定、プロジェクトファイルの確認を行えます。
+Agent Web Plus は、**Pi Agent** と **Codex** の双方に対応した統合ローカル Web ワークスペースです。ワークスペースには、[pi コーディングエージェント](https://github.com/earendil-works/pi)（`@earendil-works/pi-coding-agent`）向けの **Pi Web Plus** と、[Codex CLI](https://github.com/openai/codex) 向けの **Codex Web Plus** の 2 つのエントリが含まれます。これらは単一の Web ワークスペース（共通フロントエンド・同一サーバープロセス）を共有しており、別々にインストールする必要はありません。
+
+画面左上のエージェント切り替えメニューの実際の項目名は **Pi Agent** と **Codex** であり、ワンクリックで Pi Web Plus と Codex Web Plus の各エントリを切り替えられます。ブラウザーから会話の検索と再開、エージェントの実行、モデルやリソースの設定、プロジェクトファイルの確認を行えます。
 
 > **注記**：外部アップストリームの静的デモは旧アップストリーム版の画面であり、組み込み拡張機能を備えた **Agent Web Plus**（[`koxircom/agent-web-plus`](https://github.com/koxircom/agent-web-plus) より配布）とは異なります。
 
@@ -21,23 +23,23 @@
 
 ## クイックスタート
 
-Agent Web Plus には Node.js 22.19.0 以降（`node >=22.19`）が必要です。`node --version` でバージョンを確認してから、[`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の公式 `.tgz` パッケージをグローバルにインストールして `pi-web` を起動します：
+Agent Web Plus には Node.js 22.19.0 以降（`node >=22.19`）が必要です。`node --version` でバージョンを確認してから、[`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の公式 `.tgz` パッケージをグローバルにインストールして推奨コマンド `agent-web` を起動します（互換コマンド `pi-web` も引き続き利用可能です）：
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
-pi-web
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.10/agent-web-plus-1.4.10.tgz
+agent-web
 ```
 
-> **重要**：互換性維持のため `package.json` 内のパッケージ名は `@agegr/pi-web` のままですが、Agent Web Plus は [`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の `.tgz` アセットからのみ配布されます。外部の旧アップストリーム版が誤ってインストールされるのを防ぐため、**公開 npm レジストリからは `@agegr/pi-web` を取得・インストールしないでください**。
+> **重要**：バージョン 1.4.10 より、公式リリースの標準パッケージ名は `agent-web-plus-<version>.tgz` に統一されました（以前の `pi-web-plus-*.tgz` は履歴互換資産として保持されます）。互換性維持のため `package.json` 内のパッケージ名は `@agegr/pi-web` のままですが、Agent Web Plus は [`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の `.tgz` アセットからのみ配布されます。外部の旧アップストリーム版が誤ってインストールされるのを防ぐため、**公開 npm レジストリからは `@agegr/pi-web` を取得・インストールしないでください**。
 
-サーバーの準備が整うと、CLI はブラウザーを自動的に開こうとします。開かない場合は [http://127.0.0.1:30141](http://127.0.0.1:30141) にアクセスしてください。Pi Web はデフォルトで `127.0.0.1` のみをリッスンします。
+サーバーの準備が整うと、CLI はブラウザーを自動的に開こうとします。開かない場合は [http://127.0.0.1:30141](http://127.0.0.1:30141) にアクセスしてください。Agent Web Plus はデフォルトで `127.0.0.1` のみをリッスンします。
 
 モデル Provider が未設定の場合は、**Models** パネルを開いてログインするか API Key を追加してください。
 
-上記のコマンドは公開バージョン `v1.3.38` のアセット（`pi-web-plus-1.3.38.tgz`）を例にしています。特定バージョンのインストールやアップグレードを行う場合は、実行中のプロセスを `Ctrl+C` で停止し、URL 内の `v1.3.38` と `1.3.38` を [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) 上の対象バージョン `<version>` に置き換えて再実行してください：
+上記のコマンドは最新バージョン `v1.4.10` のアセット（`agent-web-plus-1.4.10.tgz`）を例にしています。特定バージョンのインストールやアップグレードを行う場合は、実行中のプロセスを `Ctrl+C` で停止し、URL 内のバージョンを [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) 上の対象バージョン `<version>` に置き換えて再実行してください：
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v<version>/pi-web-plus-<version>.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v<version>/agent-web-plus-<version>.tgz
 ```
 
 アンインストールするには `npm uninstall -g @agegr/pi-web` を実行します。
@@ -67,33 +69,33 @@ pi-web -p 8080 -H 0.0.0.0 --no-open
 ループバック以外のアドレスにバインドすると、高い権限の操作を実行できるエージェントがネットワークに公開されます。信頼できる LAN で使用する場合も、十分に長いランダムなパスワードを設定してください：
 
 ```bash
-PI_WEB_PASSWORD='十分に長いランダムなパスワード' pi-web --hostname 0.0.0.0
+PI_WEB_PASSWORD='十分に長いランダムなパスワード' agent-web --hostname 0.0.0.0
 ```
 
-パスワード認証は接続を暗号化しません。平文 HTTP で Pi Web をインターネットに公開せず、信頼できるリバースプロキシによる HTTPS または信頼できる VPN を使用してください。リバースプロキシが外部ホスト名を転送する場合は、その名前を完全一致で `PI_WEB_ALLOWED_HOSTS` に追加します。この許可リストは Pi Web のバインド先を変更しません。
+パスワード認証は接続を暗号化しません。平文 HTTP で Agent Web Plus をインターネットに公開せず、信頼できるリバースプロキシによる HTTPS または信頼できる VPN を使用してください。リバースプロキシが外部ホスト名を転送する場合は、その名前を完全一致で `PI_WEB_ALLOWED_HOSTS` に追加します。この許可リストは Agent Web Plus のバインド先を変更しません。
 
 ### HTTP プロキシ
 
 サーバー側のモデルリクエストと API リクエストは、標準の `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 環境変数を使用します。
 
-macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz)からインストールして起動）：
+macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.10/agent-web-plus-1.4.10.tgz)からインストールして起動）：
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.10/agent-web-plus-1.4.10.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-pi-web
+agent-web
 ```
 
 Windows PowerShell：
 
 ```powershell
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.3.38/pi-web-plus-1.3.38.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.10/agent-web-plus-1.4.10.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-pi-web
+agent-web
 ```
 
 ## 注意事項

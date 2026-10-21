@@ -1,10 +1,14 @@
 # Agent Web Plus 改名兼容
 
-应用显示品牌已改为 Agent Web Plus，推荐命令为 agent-web；旧命令与数据协议保持兼容。npm 包内部标识暂保留原值，以便构建包原位升级。
+应用显示总品牌为 **Agent Web Plus**，其下包含 **Pi Web Plus**（Pi Agent 入口）与 **Codex Web Plus**（Codex 入口）；两者共享同一个网页工作台前端与同一套后台服务，并非独立安装的两个软件。界面左上角切换菜单项实际仍显示为 **Pi Agent** 与 **Codex**。
 
-## 命令
+推荐命令为 `agent-web`，旧命令 `pi-web` 与数据协议保持完整兼容。从 1.4.10 起，官方 Release 规范安装包命名统一为 `agent-web-plus-<版本>.tgz`；此前发布的 `pi-web-plus-<版本>.tgz` 属于历史兼容资产，保留用于历史链接追溯。npm 包内部标识暂保留原值 `@agegr/pi-web`，以便构建包原位升级。
 
-`agent-web` 与原 `pi-web` 使用同一个启动实现，支持相同的端口、监听地址及 `--no-open` 选项。旧的服务脚本、快捷方式和 `pi-web` 命令继续可用。本次发布保留两个命令。GitHub 仓库已改名为 `koxircom/agent-web-plus`，已有克隆请执行 `git remote set-url origin https://github.com/koxircom/agent-web-plus.git`。旧仓库链接继续通过 GitHub 重定向；不要重新创建同名的 `pi-web-plus` 仓库，以免中断旧链接兼容。
+## 命令与安装包
+
+`agent-web` 与原 `pi-web` 使用同一个启动实现，支持相同的端口、监听地址及 `--no-open` 选项。旧的服务脚本、快捷方式和 `pi-web` 命令继续可用。本次发布保留两个命令。
+
+官方发布包命名规范从 1.4.10 起统一使用 `agent-web-plus-<版本>.tgz`（例如 `agent-web-plus-1.4.10.tgz`）。旧版 Release 资产中以 `pi-web-plus-` 命名的历史包继续可供追溯，但新安装与自动化脚本推荐统一使用新的规范名称。GitHub 仓库已改名为 `koxircom/agent-web-plus`，已有克隆请执行 `git remote set-url origin https://github.com/koxircom/agent-web-plus.git`。旧仓库链接继续通过 GitHub 重定向；不要重新创建同名的 `pi-web-plus` 仓库，以免中断旧链接兼容。
 
 ## 数据目录：原位接续
 

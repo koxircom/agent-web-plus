@@ -30,7 +30,7 @@ npm run build
 npm pack
 ```
 
-`prepack` 也执行源码脱敏扫描及已有质量关卡。最终附件另放在源码目录外，命名为 `pi-web-plus-<版本>.tgz`；保持安装地址兼容。检查压缩包结构、在隔离前缀安装，并验证 `pi-web --help` 和 `agent-web --help`。这些验收沿用当前变更的有效证据，不重复无关全量回归。
+`prepack` 也执行源码脱敏扫描及已有质量关卡。从 1.4.10 起，发布物规范命名为 `agent-web-plus-<版本>.tgz`；此前发布的 `pi-web-plus-<版本>.tgz` 作为历史兼容资产保留。检查压缩包结构、在隔离前缀安装，并验证 `pi-web --help` 和 `agent-web --help`。这些验收沿用当前变更的有效证据，不重复无关全量回归。
 
 ## 2. 提交并核对远程标签
 
@@ -52,7 +52,7 @@ python3 scripts/publish-release.py \
   --root /workspace/source \
   --tag "v${VERSION}" \
   --target "$COMMIT_SHA" \
-  --asset "/workspace/artifacts/pi-web-plus-${VERSION}.tgz" \
+  --asset "/workspace/artifacts/agent-web-plus-${VERSION}.tgz" \
   --notes-file /workspace/artifacts/release-notes.md
 ```
 

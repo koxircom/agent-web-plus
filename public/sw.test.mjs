@@ -143,7 +143,7 @@ test("notification click opens a window and rejects cross-origin targets", async
 // A reachable port backed by a dead upstream answers nothing at all, so these
 // tests drive fetch() with a stub that only settles once the worker aborts it.
 function installOfflineStub() {
-  const offline = new Response("<!doctype html><title>Pi Web is offline</title>", {
+  const offline = new Response("<!doctype html><title>Agent Web Plus 离线</title>", {
     status: 200,
     headers: { "Content-Type": "text/html" },
   });
@@ -197,7 +197,7 @@ test("a stalled navigation falls back to offline.html", async () => {
     const response = await pending;
 
     assert.equal(wasAborted(), true, "a hung upstream must be aborted, not awaited forever");
-    assert.match(await response.text(), /Pi Web is offline/);
+    assert.match(await response.text(), /Agent Web Plus 离线/);
   } finally {
     mock.timers.reset();
   }
@@ -301,7 +301,7 @@ test("offline shell update precaches into a new version and removes only Pi Web 
   globalThis.fetch = async (url) => {
     const path = new URL(url, self.location.origin).pathname;
     requested.push(path);
-    return new Response(path === "/offline.html" ? "<h1>Pi Web Plus 离线</h1>" : "precache asset");
+    return new Response(path === "/offline.html" ? "<h1>Agent Web Plus 离线</h1>" : "precache asset");
   };
 
   let skippedWaiting = false;
@@ -316,7 +316,7 @@ test("offline shell update precaches into a new version and removes only Pi Web 
   const updatedCacheName = "pi-web-static-test-plus-offline-v2";
   assert.ok(stored.has(updatedCacheName), "the installed worker must use a fresh cache key");
   const installedOfflinePage = await cacheFor(updatedCacheName).match("/offline.html");
-  assert.match(await installedOfflinePage.text(), /Pi Web Plus 离线/);
+  assert.match(await installedOfflinePage.text(), /Agent Web Plus 离线/);
   assert.deepEqual(requested, [
     "/offline.html",
     "/manifest.webmanifest",

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "edition": "koxir-standalone-1.4.9",
-  "version": "1.4.9",
+  "edition": "koxir-standalone-1.4.10",
+  "version": "1.4.10",
   "targetFile": "enhancements/pi-web-enhancements.js",
   "mirrorFile": "public/pi-web-enhancements.js",
   "totalLines": 40108,

@@ -15,7 +15,7 @@ node enhancements/check-release-ownership.cjs --source-dir .
 - `SettingsPanel` 的五个原生区与启用的 legacy 扩展沿同一导航列表渲染，面板只有一个对话框根节点。
 - `ChatMinimap` 隐藏占位和可见轨道都立即标记 `data-minimap-native-owner`。module06仅保留偏好事件与原生接口适配；旧渲染、手势、移动导航和样式实现已经删除，门禁禁止它们重新进入主包。
 - module07 的编辑区变更过滤以原生 textarea 为目标，并保留菜单和对话框自己的同步处理。
-- `PiWebBrand` 保留 inline SVG `Pi Web Plus` 字标，不把旧图片叠回品牌组件。
+- `PiWebBrand` 保留 inline SVG `Agent Web Plus` 字标，不把旧图片叠回品牌组件。
 - builder 将 01/05/06/07 纳入固定模块规格，`Buffer.concat` 后覆盖写主 bundle 与 public 镜像；`runVerify` 仍检查主 bundle 字节一致和镜像中核心 bundle 只出现一次。
 
 `enhancements/tests/release-ownership.test.cjs` 含纯内存 fixture：一个有效 ownership 样例，以及新增第二编辑器、缺失设置 section、minimap 加载期/已退役交互恢复、图片品牌叠层和追加写 bundle 等负向样例。测试由主控统一运行。
