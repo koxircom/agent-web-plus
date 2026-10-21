@@ -83,10 +83,10 @@ test("Markdown mode controls and Copy Source stay under FileViewer ownership", (
   assert.match(source, /pi:obsidian-markdown-viewer-preferences-change/);
   assert.match(source, /"复制源码"[\s\S]*?"已复制"|"已复制"[\s\S]*?"复制源码"/);
   assert.match(source, /title="复制源码全文"/);
-  assert.match(source, /while \(truncated\)[\s\S]*getFileApiUrl\(filePath, "read", sourceSessionId, \{ offset \}\)/);
+  assert.match(source, /while \(truncated\)[\s\S]*getFileApiUrl\(filePath, "read", sourceSessionId, \{ offset \}, executionEngine\)/);
   assert.match(source, /navigator\.clipboard\.writeText\(source\)/);
   assert.match(source, /await navigator\.clipboard\.writeText\(source\)[\s\S]*?catch \{[\s\S]*?if \(stopIfStale\(\)\) return;[\s\S]*?document\.execCommand\("copy"\)/);
-  assert.match(source, /useEffect\(\(\) => \{\s*viewerIdentityRef\.current = \{ filePath, sourceSessionId \};[\s\S]*?return \(\) => \{[\s\S]*?contentRequestRef\.current\+\+;[\s\S]*?viewerIdentityRef\.current = null;/);
+  assert.match(source, /useEffect\(\(\) => \{\s*viewerIdentityRef\.current = \{ filePath, sourceSessionId, executionEngine, cwd \};[\s\S]*?return \(\) => \{[\s\S]*?contentRequestRef\.current\+\+;[\s\S]*?viewerIdentityRef\.current = null;/);
   assert.match(source, /\.\.\.\(hasGitDiff \? \["diff" as const\] : \[\]\)/);
 
   assert.doesNotMatch(enhancementModule, /pi-enh-md-mode-switch|pi-enh-md-btn|previewBtn\.click\(\)|sourceBtn\.click\(\)/);

@@ -40,7 +40,7 @@ export async function codexBridgeRequest(path: string, body?: unknown, options?:
     value?: unknown,
     binary?: Uint8Array,
     requestSignal: AbortSignal | null | undefined = options?.signal,
-    timeout = options?.timeout ?? (route.includes("/changes?") ? 20000 : 10000),
+    timeout = options?.timeout ?? (route.includes("/changes?") ? 20000 : route.includes("/settings") ? 15000 : 10000),
   ) => {
     const headers: Record<string, string> = { Origin: origin };
     if (target.cookie) headers.Cookie = target.cookie;
@@ -56,7 +56,19 @@ export async function codexBridgeRequest(path: string, body?: unknown, options?:
       });
     } catch (error) {
       if (requestSignal?.aborted) throw requestSignal.reason ?? error;
-      if (error instanceof Error && error.name === "AbortError") throw error;
+      const isTimeout = error instanceof Error && (error.name === "TimeoutError" || (error.name === "AbortError" && !requestSignal?.aborted));
+      if (isTimeout) {
+        if (value !== undefined || binary) {
+          throw new CodexBridgeError(
+            "Codex 操作响应超时，当前设置未在时限内确认生效；写操作未自动重发，请刷新核对",
+            504,
+            "codex_timeout",
+            undefined,
+            false,
+          );
+        }
+        throw new CodexBridgeError("Codex 请求响应超时，请稍后刷新重试", 504, "codex_timeout", undefined, true);
+      }
       throw new CodexBridgeError("Codex 执行端暂时不可达；Pi 引擎可继续使用", 502, "codex_connection_required", undefined, true);
     }
   };

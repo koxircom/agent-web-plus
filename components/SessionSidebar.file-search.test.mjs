@@ -9,7 +9,7 @@ test("provides a debounced file search UI and opens selected results", () => {
   assert.match(source, /searchQuery/);
   assert.match(source, /\/api\/file-index\?cwd=\$\{encodeURIComponent\(cwd\)\}&q=\$\{encodeURIComponent\(query\)\}/);
   assert.match(source, /setTimeout\(\(\) =>/);
-  assert.match(source, /onOpenFile\(node\.fullPath, node\.name\)/);
+  assert.match(source, /onOpenFile\(node\.fullPath, node\.name, \{ sourceSessionId: sessionId, executionEngine, cwd \}\)/);
 });
 
 test("renders search results with the existing expandable file tree", () => {

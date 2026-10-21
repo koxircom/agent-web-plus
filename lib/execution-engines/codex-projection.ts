@@ -112,10 +112,12 @@ export function projectCodexPage(page: CodexPage, id: string) {
       model: { provider: "codex", modelId: page.meta.model || "Codex" } },
   };
 }
-export function projectCodexSession(row: { id: string; title: string; cwd: string; path?: string; updatedAt?: number; recency?: number }): SessionInfo {
+export function projectCodexSession(row: { id: string; title: string; cwd: string; path?: string; updatedAt?: number; recency?: number; projectRoot?: string; projectKey?: string; configKey?: string }): SessionInfo {
   const modified = new Date(typeof row.recency === "number" && Number.isFinite(row.recency) && row.recency > 0
     ? row.recency : row.updatedAt ? row.updatedAt * 1000 : Date.now()).toISOString();
+  const root = row.projectRoot || row.cwd;
+  const key = codexProjectKey(root);
   return { id: publicCodexId(row.id), path: row.path || publicCodexId(row.id), cwd: row.cwd,
     name: row.title, firstMessage: row.title, created: modified, modified, messageCount: 0,
-    detailsPending: true, projectRoot: row.cwd, projectKey: codexProjectKey(row.cwd) };
+    detailsPending: true, projectRoot: root, projectKey: key };
 }

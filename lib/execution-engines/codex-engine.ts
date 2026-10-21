@@ -227,9 +227,10 @@ export async function readCodexSession(id: string, request?: Request) {
 }
 export async function codexModels(cwd?: string) {
   const projects = await codexProjects();
-  const project = cwd ? projects.find(p => p.cwd === cwd) : projects[0];
+  const project = cwd ? projects.filter(p => p.cwd === cwd || cwd.startsWith(p.cwd.replace(/\/$/, "") + "/"))
+    .sort((a, b) => b.cwd.length - a.cwd.length)[0] : projects[0];
   if (!project) throw new Error("请选择 Codex 服务已配置的工作区");
-  const catalog = await codexBridgeJson(`/api/projects/catalog?${new URLSearchParams({ project: project.key, kind: "models" })}`);
+  const catalog = await codexBridgeJson(`/api/projects/catalog?${new URLSearchParams({ project: project.key, kind: "models", cwd: cwd || project.cwd })}`);
   const models = catalog.models as { id: string; name: string; efforts?: string[]; isDefault?: boolean }[];
   return { models: Object.fromEntries(models.map(m => ["codex:" + m.id, m.name])),
     modelList: models.map(m => ({ id: m.id, name: m.name, provider: "codex", input: ["text", "image"] })),
@@ -239,15 +240,67 @@ export async function codexModels(cwd?: string) {
 }
 export async function createCodexSession(cwd: string, command: Record<string, unknown>) {
   if (command.type !== "ensure_session") throw new Error("请先创建 Codex 会话，再提交消息");
-  const project = (await codexProjects()).find(p => p.cwd === cwd);
+  let targetModelId = typeof command.modelId === "string" && command.modelId.trim() ? command.modelId.trim() : null;
+  let targetThinkingLevel = typeof command.thinkingLevel === "string" && command.thinkingLevel.trim() ? command.thinkingLevel.trim() : null;
+
+  if (!targetModelId) {
+    let catalog;
+    try {
+      catalog = await codexModels(cwd);
+    } catch (e) {
+      throw new Error(`Codex 目录获取失败，无法解析默认模型: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const defaultId = catalog?.defaultModel?.modelId;
+    if (!defaultId) {
+      throw new Error("Codex 目录无可用模型，无法创建会话");
+    }
+    targetModelId = defaultId;
+    if (!targetThinkingLevel && catalog?.defaultThinkingLevel) {
+      targetThinkingLevel = catalog.defaultThinkingLevel;
+    }
+  }
+
+  const projects = await codexProjects();
+  let project = projects.find(p => p.cwd === cwd || cwd.startsWith(p.cwd.replace(/\/$/, "") + "/"));
+  if (!project) {
+    try {
+      const { validateCodexCwd } = await import("./codex-workspaces");
+      const resolved = await validateCodexCwd(cwd);
+      if (resolved.projectKey) {
+        project = projects.find(p => p.key === resolved.projectKey);
+      }
+    } catch {
+      // ignore
+    }
+  }
   if (!project) throw new Error("请选择 Codex 服务已配置的工作区");
-  const created = await codexBridgeJson("/api/sessions", { project: project.key, title: "新聊天", id: randomUUID() });
+  const created = await codexBridgeJson("/api/sessions", { project: project.key, title: "新聊天", id: randomUUID(), cwd });
   const id = publicCodexId(created.id);
   const runtime = await getCodexRuntime(id);
-  if (typeof command.modelId === "string") await runtime.send({ type: "set_model", modelId: command.modelId });
-  if (typeof command.thinkingLevel === "string") await runtime.send({ type: "set_thinking_level", level: command.thinkingLevel });
+
+  if (targetModelId) {
+    const modelAck = await runtime.send({ type: "set_model", modelId: targetModelId }) as { provider?: string; id?: string } | undefined;
+    if (runtime.meta.model !== targetModelId || modelAck?.id !== targetModelId) {
+      throw new Error(`Codex 模型设置未得到原生确认: 期望 ${targetModelId}，实际 ${runtime.meta.model || "空"}`);
+    }
+  }
+
+  if (targetThinkingLevel) {
+    const thinkingAck = await runtime.send({ type: "set_thinking_level", level: targetThinkingLevel }) as { thinkingLevel?: string } | undefined;
+    const expectedEffort = targetThinkingLevel === "off" ? "none" : targetThinkingLevel;
+    const expectedAckLevel = targetThinkingLevel === "off" ? "off" : targetThinkingLevel;
+    if (!thinkingAck?.thinkingLevel || thinkingAck.thinkingLevel !== expectedAckLevel || runtime.meta.effort !== expectedEffort) {
+      throw new Error(`Codex thinking level 设置未得到原生确认: 期望 ${targetThinkingLevel}，实际 ${thinkingAck?.thinkingLevel || "空"}`);
+    }
+  }
+
+  if (targetModelId && runtime.meta.model !== targetModelId) {
+    throw new Error(`Codex 模型在 thinking 设置后与期望不符: 期望 ${targetModelId}，当前 ${runtime.meta.model || "空"}`);
+  }
+
   return { success: true, sessionId: id, data: null,
-    model: { provider: "codex", modelId: runtime.meta.model || "Codex" }, thinkingLevel: runtime.meta.effort === "none" ? "off" : runtime.meta.effort || "high" };
+    model: { provider: "codex", modelId: runtime.meta.model || targetModelId || "Codex" },
+    thinkingLevel: runtime.meta.effort === "none" ? "off" : (runtime.meta.effort || "high") };
 }
 export async function reconcileCodexDelivery(id: string, requestId: string) {
   const submissionId = submissionUuid(requestId);
@@ -362,6 +415,9 @@ export class CodexRuntime {
   private completedAssistantKeys = new Set<string>();
   private requests = new Map<string, { native: CodexRequest; event: AgentEventLike; questionId?: string }>();
   private answers = new Map<string, Record<string, string[]>>();
+  private modelWriteSequence = 0;
+  private lastConfirmedModelWrite = 0;
+  private settingsChain: Promise<void> = Promise.resolve();
   streamingMessage: AgentMessage | null = null;
   meta: CodexMeta;
   constructor(readonly id: string, readonly identity: string, private page: CodexPage) {
@@ -379,8 +435,11 @@ export class CodexRuntime {
     }
     this.updateRequests();
   }
-  private adoptMeta(incoming: CodexMeta, queueGeneration = this.queueMutationGeneration): CodexMeta {
-    if (queueGeneration < this.queueMutationGeneration) incoming = { ...incoming, submissions: this.meta.submissions };
+  private adoptMeta(incoming: CodexMeta, queueGeneration = this.queueMutationGeneration, snapshotRequestSequence = this.modelWriteSequence): CodexMeta {
+    const submissions = queueGeneration < this.queueMutationGeneration
+      ? this.meta.submissions
+      : incoming.submissions;
+
     // Queue/history polls may have started before a confirmed mode change.
     // Preserve only the newer composer snapshot; other runtime fields stay live.
     const validComposerState = (candidate: unknown): CodexMeta["composerState"] | undefined => {
@@ -400,13 +459,24 @@ export class CodexRuntime {
     // Missing or malformed snapshots cannot erase a valid confirmed state.
     const preserveCurrent = !incomingState || (currentRevision !== undefined && (incomingRevision === undefined
       || incomingRevision < currentRevision));
-    this.meta = preserveCurrent
-      ? { ...incoming, composerState: currentState ?? incoming.composerState }
-      : incoming;
+
+    // 模型与推理强度乱序保护：
+    // 仅拒绝实际起始早于最近确认写入的请求快照。
+    // 写入确认之后新启动的权威读取（包含外部原生更改）必须能更新模型/effort。
+    const isStaleModelSnapshot = snapshotRequestSequence < this.lastConfirmedModelWrite;
+    const model = isStaleModelSnapshot ? this.meta.model : incoming.model;
+    const effort = isStaleModelSnapshot ? this.meta.effort : incoming.effort;
+
+    this.meta = {
+      ...(preserveCurrent ? { ...incoming, composerState: currentState ?? incoming.composerState } : incoming),
+      submissions,
+      model,
+      effort,
+    };
     return this.meta;
   }
-  private json(path: string, body?: unknown, options?: { signal?: AbortSignal }) {
-    return codexBridgeJson(path, body, { connectionIdentity: this.identity, signal: options?.signal });
+  private json(path: string, body?: unknown, options?: { signal?: AbortSignal; timeout?: number }) {
+    return codexBridgeJson(path, body, { connectionIdentity: this.identity, signal: options?.signal, timeout: options?.timeout });
   }
   get isStreaming() { return this.meta.status === "active" || Boolean(this.meta.requests?.length); }
   isAlive() { return this.reachable; } // History-only views are valid even without an active executor.
@@ -481,7 +551,7 @@ export class CodexRuntime {
   hasConfirmedDelivery(requestId: string) {
     return [...this.rows.values()].some(row => row.role === "user" && row.requestId === requestId && row.deliveryConfirmed === true);
   }
-  private async accept(next: CodexPage, queueGeneration = this.queueMutationGeneration) {
+  private async accept(next: CodexPage, queueGeneration = this.queueMutationGeneration, snapshotRequestSequence = this.modelWriteSequence) {
     // A concurrent get_state/settings read can refresh meta before this poll.
     // Lifecycle edges belong to the event stream, not to those read snapshots.
     const wasActive = this.publishedStreaming;
@@ -497,7 +567,7 @@ export class CodexRuntime {
         answerBodies.set(row.key, await rowText(this.id, next.epoch, row, this.identity));
       }
     }
-    this.adoptMeta(next.meta, queueGeneration);
+    this.adoptMeta(next.meta, queueGeneration, snapshotRequestSequence);
     const queueSnapshot = queue(this.meta);
     this.publishComposer();
     this.publishedStreaming = this.isStreaming;
@@ -589,8 +659,9 @@ export class CodexRuntime {
         try {
           const query = new URLSearchParams({ after: String(this.page.sequence), epoch: this.page.epoch, start: this.page.before || "" });
           const queueGeneration = this.queueMutationGeneration;
+          const pollModelGeneration = this.modelWriteSequence;
           const next = await this.json(`/api/sessions/${codexThreadId(this.id)}/changes?${query}`, undefined, { signal: controller.signal });
-          await this.accept(next, queueGeneration);
+          await this.accept(next, queueGeneration, pollModelGeneration);
           retry = 0;
         } catch (error) {
           if (controller.signal.aborted || !this.listeners.size || (error instanceof Error && error.name === "AbortError")) break;
@@ -621,8 +692,15 @@ export class CodexRuntime {
       case "recall_all_queued_messages":
       case "reorder_queued_message":
       case "clear_queue": {
+        const priorRequestIds = new Map((this.meta.submissions || []).map(row => [row.id, row.clientRequestId]));
         const result = await this.json(base + "/queue", command);
         const recalled = new Set<string>(result.recalledPromptRequestIds || []);
+        const identifyRecall = (entry: Record<string, unknown>) => {
+          const requestId = priorRequestIds.get(String(entry.token));
+          return requestId && recalled.has(requestId) ? { ...entry, requestId } : entry;
+        };
+        if (Array.isArray(result.entries)) result.entries = result.entries.map(identifyRecall);
+        else if (recalled.size === 1) result.requestId = [...recalled][0];
         for (const requestId of result.cancelledPromptRequestIds || []) {
           if (recalled.has(requestId)) recallPromptDelivery(this.id, requestId);
           else cancelPromptDelivery(this.id, requestId);
@@ -631,8 +709,13 @@ export class CodexRuntime {
           this.queueMutationGeneration++;
           if (Array.isArray(result.queuedSubmissions)) this.meta = { ...this.meta, submissions: result.queuedSubmissions };
         }
-        if (queueGeneration < this.queueMutationGeneration && ["get_queue_actions", "get_queued_message"].includes(String(command.type)) && result.queuedMessages) result.queuedMessages = queue(this.meta);
         if (result.queuedMessages) {
+          const staleRead = queueGeneration < this.queueMutationGeneration
+            && ["get_queue_actions", "get_queued_message"].includes(String(command.type));
+          // Bridge v2's text-only reply is not a second queue owner. Preserve
+          // the generation barrier and project identities from the same rows.
+          if (staleRead) result.queuedMessages = queue(this.meta);
+          else if (Array.isArray(result.queuedSubmissions)) result.queuedMessages = queue({ ...this.meta, submissions: result.queuedSubmissions });
           this.publishedQueue = JSON.stringify(result.queuedMessages);
           this.emit({ type: "queue_update", ...result.queuedMessages });
         }
@@ -650,12 +733,15 @@ export class CodexRuntime {
           tokenUsageAvailable:usage.tokens!==null,messageCountsScope:"loaded",contextUsage:usage.contextUsage};
       }
       case "get_state": {
+        const requestGeneration = this.modelWriteSequence;
         const view = await this.json(base + "?metadata=1") as CodexMeta;
-        this.adoptMeta(view, queueGeneration);
+        this.adoptMeta(view, queueGeneration, requestGeneration);
         this.updateRequests();
-        return { model: { provider: "codex", id: view.model }, thinkingLevel: view.effort === "none" ? "off" : view.effort || "high",
+        const effectiveModel = this.meta.model;
+        const effectiveEffort = this.meta.effort;
+        return { model: { provider: "codex", id: effectiveModel }, thinkingLevel: effectiveEffort === "none" ? "off" : (effectiveEffort || "high"),
           isStreaming: this.isStreaming, isPromptRunning: this.isStreaming, isBashRunning: false, isCompacting: false,
-          autoCompactionEnabled: false, contextUsage: projectCodexUsage(view).contextUsage,
+          autoCompactionEnabled: false, contextUsage: projectCodexUsage(this.meta).contextUsage,
           queuedMessages: queue(this.meta), extensionStatuses: codexComposerStatuses(this.meta), extensionWidgets: [] };
       }
       case "set_composer_mode": {
@@ -730,12 +816,50 @@ export class CodexRuntime {
       }
       case "abort": return this.json(base + "/stop", {});
       case "set_model": {
-        const view = await this.json(base + "/settings", { model: command.modelId, effort: this.meta.effort || "high" }) as CodexMeta;
-        this.adoptMeta(view, queueGeneration); return { provider: "codex", id: view.model };
+        const modelId = command.modelId;
+        const previousChain = this.settingsChain;
+        let chainResolver: () => void;
+        this.settingsChain = new Promise<void>((resolve) => { chainResolver = resolve; });
+        try {
+          await previousChain;
+        } catch {
+          // 容错：即使上一个并发设置失败，也不影响本设置执行
+        }
+        try {
+          ++this.modelWriteSequence;
+          const currentEffort = this.meta.effort || "high";
+          const view = await this.json(base + "/settings", { model: modelId, effort: currentEffort }, { timeout: 15000 }) as CodexMeta;
+          if (view.model !== modelId) throw new Error("Codex 模型设置未得到原生确认");
+          // Reads started while the write was awaiting native confirmation
+          // are stale too, not only reads started before the write began.
+          this.lastConfirmedModelWrite = ++this.modelWriteSequence;
+          this.adoptMeta(view, queueGeneration, this.lastConfirmedModelWrite);
+          return { provider: "codex", id: view.model };
+        } finally {
+          chainResolver!();
+        }
       }
       case "set_thinking_level": {
-        const view = await this.json(base + "/settings", { model: this.meta.model, effort: command.level === "off" ? "none" : command.level }) as CodexMeta;
-        this.adoptMeta(view, queueGeneration); return { thinkingLevel: view.effort === "none" ? "off" : view.effort };
+        const effort = command.level === "off" ? "none" : command.level;
+        const previousChain = this.settingsChain;
+        let chainResolver: () => void;
+        this.settingsChain = new Promise<void>((resolve) => { chainResolver = resolve; });
+        try {
+          await previousChain;
+        } catch {
+          // 容错：即使上一个并发设置失败，也不影响本设置执行
+        }
+        try {
+          ++this.modelWriteSequence;
+          const currentModel = this.meta.model;
+          const view = await this.json(base + "/settings", { model: currentModel, effort }, { timeout: 15000 }) as CodexMeta;
+          if (view.model !== currentModel || view.effort !== effort) throw new Error("Codex thinking level 设置未得到原生确认");
+          this.lastConfirmedModelWrite = ++this.modelWriteSequence;
+          this.adoptMeta(view, queueGeneration, this.lastConfirmedModelWrite);
+          return { thinkingLevel: view.effort === "none" ? "off" : view.effort };
+        } finally {
+          chainResolver!();
+        }
       }
       case "set_session_name": return this.json(base + "/rename", { title: command.name });
       case "get_messages": return (await readCodexSession(this.id) as ReturnType<typeof projectCodexPage>).context.messages;

@@ -395,7 +395,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self.output(405, {'error': '请使用上传操作'})
                 if operation not in ('list', 'info', 'preview', 'download', 'git-status', 'git-diff'):
                     raise ValueError('不支持的项目文件操作')
+                operation_root = project['path']
+                repository_root = None
                 allowed = {'project', 'operation', 'path'}
+                if operation in ('git-status', 'git-diff'):
+                    allowed.add('cwd')
+                    selected_cwd = query.get('cwd', [str(project['path'])])[0]
+                    from bridge.features.workspace.project_scopes import resolve_scoped_cwd, get_scoped_worktree_info
+                    _, operation_root = resolve_scoped_cwd(selected_cwd, [project])
+                    git_info = get_scoped_worktree_info(operation_root, project)
+                    repository_root = git_info.get('currentWorktreePath')
                 if operation == 'list':
                     allowed |= {'hidden', 'search', 'offset'}
                 if operation == 'git-diff':
@@ -420,13 +429,16 @@ class Handler(BaseHTTPRequestHandler):
                     params = {'path': relative, 'section': query.get('section', ['unstaged'])[0]}
                 else:
                     params = {'path': relative}
-                return self.output(200, operate(project['path'], operation, params))
+                result = operate(operation_root, operation, params)
+                if operation == 'git-status' and isinstance(result, dict):
+                    result['repositoryRoot'] = repository_root
+                return self.output(200, result)
             if path == '/api/projects/catalog':
                 if not getattr(self.server.bridge, 'standalone', False):
                     return self.output(404, {'error': '接口不存在'})
                 if write:
                     return self.output(405, {'error': '目录接口仅支持读取'})
-                if (set(query) != {'project', 'kind'} or
+                if (not {'project', 'kind'} <= set(query) or set(query) - {'project', 'kind', 'cwd'} or
                         any(len(values) != 1 for values in query.values())):
                     raise ValueError('目录查询请求无效')
                 project_key, kind = query['project'][0], query['kind'][0]
@@ -435,7 +447,45 @@ class Handler(BaseHTTPRequestHandler):
                 project = next((item for item in self.server.bridge.workspaces if item.get('key') == project_key), None)
                 if project is None:
                     raise ValueError('项目标识无效')
-                return self.output(200, self.server.bridge.catalog_reader.get_kind(kind, str(project['path'])))
+                from bridge.features.workspace.project_scopes import resolve_scoped_cwd
+                _, catalog_cwd = resolve_scoped_cwd(query.get('cwd', [str(project['path'])])[0], [project])
+                return self.output(200, self.server.bridge.catalog_reader.get_kind(kind, str(catalog_cwd)))
+            if path in ('/api/projects/worktrees', '/api/projects/browse', '/api/projects/resolve'):
+                if not getattr(self.server.bridge, 'standalone', False):
+                    return self.output(404, {'error': '接口不存在'})
+                if path == '/api/projects/worktrees':
+                    if write:
+                        if query:
+                            raise ValueError('工作树创建请求无效')
+                        body = self.read_json()
+                        if not isinstance(body, dict) or set(body) - {'cwd', 'branch'}:
+                            raise ValueError('工作树创建请求无效')
+                        cwd, branch = body.get('cwd'), body.get('branch')
+                        if not isinstance(cwd, str) or not isinstance(branch, str):
+                            raise ValueError('工作树创建请求无效')
+                        return self.output(200, self.server.bridge.create_worktree(cwd, branch))
+                    if set(query) != {'cwd'} or len(query.get('cwd', [])) != 1:
+                        raise ValueError('工作树查询请求无效')
+                    return self.output(200, self.server.bridge.worktree_info(query['cwd'][0]))
+                if path == '/api/projects/browse':
+                    if write:
+                        return self.output(405, {'error': '目录浏览接口仅支持读取'})
+                    if query and (set(query) != {'path'} or len(query.get('path', [])) != 1):
+                        raise ValueError('目录浏览请求无效')
+                    browse_path = query.get('path', [''])[0] if query else None
+                    return self.output(200, self.server.bridge.browse_directories(browse_path))
+                if path == '/api/projects/resolve':
+                    if not write:
+                        return self.output(405, {'error': '工作区校验接口仅支持提交'})
+                    if query:
+                        raise ValueError('工作区校验请求无效')
+                    body = self.read_json()
+                    if not isinstance(body, dict) or set(body) - {'cwd'}:
+                        raise ValueError('工作区校验请求无效')
+                    cwd = body.get('cwd', '')
+                    if not isinstance(cwd, str):
+                        raise ValueError('工作区校验请求无效')
+                    return self.output(200, self.server.bridge.validate_cwd(cwd))
             if getattr(self.server.bridge, 'standalone', False):
                 if path == '/api/runtime' and not write:
                     return self.output(200, {'mode': 'standalone', 'workspace': str(self.server.bridge.root),
@@ -669,7 +719,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.output(200, {'sessions': rows})
             if write and path == '/api/sessions':
                 body = self.read_json()
-                return self.output(200, self.server.bridge.create_chat(body.get('project'), body.get('title'), body.get('id')))
+                if getattr(self.server.bridge, 'standalone', False):
+                    return self.output(200, self.server.bridge.create_chat(
+                        body.get('project'), body.get('title'), body.get('id'), cwd=body.get('cwd')
+                    ))
+                return self.output(200, self.server.bridge.create_chat(
+                    body.get('project'), body.get('title'), body.get('id')
+                ))
             if path == '/api/notifications/defaults':
                 if self.server.notifications is None:
                     raise ValueError('当前网关未启用通知服务')

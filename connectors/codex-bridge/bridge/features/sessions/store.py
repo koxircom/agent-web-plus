@@ -1,18 +1,17 @@
 """Read-only discovery and history for existing desktop chats."""
 import copy
-import threading
-from collections import OrderedDict
 import json
 import logging
 import os
 import shutil
 import sqlite3
 import tempfile
-from contextlib import closing, contextmanager, ExitStack
+import threading
+from collections import OrderedDict
+from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
-
-from bridge.features.sessions.model import text_content
+from bridge.features.sessions.model import normalize_state, text_content
 
 
 def runtime_context_input(payload):
@@ -320,41 +319,196 @@ class SessionStore:
         except (ValueError, AttributeError):
             return {}
 
-    def subagents(self, thread_id):
-        self.get(thread_id)  # Only a desktop parent can authorize this subtree.
+    @staticmethod
+    def _is_uuid(val):
+        if not isinstance(val, str):
+            return False
+        try:
+            import uuid as _uuid
+            _uuid.UUID(val.strip())
+            return True
+        except (ValueError, AttributeError):
+            return False
+
+    @classmethod
+    def _resolve_subagent_title(cls, meta, spawn):
+        nickname = meta.get("agent_nickname") or spawn.get("agent_nickname")
+        role = meta.get("agent_role") or spawn.get("agent_role")
+        if nickname and role:
+            return f"{nickname} ({role})"
+        if nickname:
+            return nickname
+        if role:
+            return role
+        for candidate in (meta.get("name"), meta.get("title")):
+            if candidate and isinstance(candidate, str) and candidate.strip():
+                trimmed = candidate.strip()
+                if not cls._is_uuid(trimmed):
+                    return trimmed if len(trimmed) <= 40 else trimmed[:40] + "..."
+        return "子智能体"
+
+    def _is_path_in_home(self, path_str):
+        if not path_str or not isinstance(path_str, str):
+            return False
+        try:
+            p = Path(path_str).resolve()
+            home = self.home.resolve()
+            for folder in ("sessions", "archived_sessions"):
+                root = (home / folder).resolve()
+                if p.is_relative_to(root):
+                    return True
+        except (OSError, ValueError):
+            pass
+        return False
+
+    @staticmethod
+    def _detect_subagent_status(path):
+        """Detect turn/task status from rollout suffix without loading whole transcript."""
+        try:
+            resolved = Path(path).resolve()
+            if not resolved.is_file():
+                return "unknown"
+            with resolved.open("rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - 32768))
+                tail = f.read()
+            lines = tail.splitlines()
+            for line in reversed(lines):
+                try:
+                    rec = json.loads(line)
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    continue
+                payload = rec.get("payload", {})
+                p_type = payload.get("type")
+                if p_type in ("task_complete", "task_completed"):
+                    return "completed"
+                if p_type == "task_failed" or payload.get("error"):
+                    return "failed"
+                if p_type == "task_started":
+                    return "inProgress"
+                if rec.get("type") == "turn_status":
+                    s = rec.get("status")
+                    if s:
+                        return s
+            return "unknown"
+        except OSError:
+            return "unknown"
+
+    def subagents(self, thread_id, verified_parent=None):
+        parent_meta = verified_parent if verified_parent is not None else self.get(thread_id)
+        if parent_meta.get("thread_source") == "subagent" or '"subagent"' in (parent_meta.get("source") or ""):
+            raise KeyError("不是主会话")
+        parent_rollout = parent_meta.get("rollout_path")
+        if parent_rollout and not self._is_path_in_home(parent_rollout):
+            raise ValueError("会话记录路径不在 Codex 数据目录中")
+
         result, pending, seen = [], [thread_id], {thread_id}
+        limited = False
         with self._connect() as conn:
             while pending and len(result) < 128:
                 parent = pending.pop(0)
-                rows = conn.execute("SELECT * FROM threads WHERE source LIKE ? ORDER BY updated_at DESC LIMIT 129", ('%' + parent + '%',))
+                rows = conn.execute(
+                    "SELECT * FROM threads WHERE source LIKE ? ORDER BY updated_at DESC LIMIT 129",
+                    ("%" + parent + "%",),
+                ).fetchall()
                 for row in rows:
-                    meta = dict(row); spawn = self._agent_source(meta)
-                    if spawn.get('parent_thread_id') != parent or meta['id'] in seen: continue
-                    seen.add(meta['id']); pending.append(meta['id'])
-                    result.append({'id': meta['id'], 'parentId': parent,
-                                   'title': meta.get('name') or meta.get('title') or '子智能体',
-                                   'nickname': meta.get('agent_nickname') or spawn.get('agent_nickname'),
-                                   'role': meta.get('agent_role') or spawn.get('agent_role'),
-                                   'path': meta.get('agent_path') or spawn.get('agent_path'),
-                                   'updated': meta.get('updated_at'), 'archived': bool(meta.get('archived'))})
-                    if len(result) >= 128: break
-        return {'agents': result, 'limited': len(result) >= 128}
+                    meta = dict(row)
+                    spawn = self._agent_source(meta)
+                    if spawn.get("parent_thread_id") != parent or meta["id"] in seen:
+                        continue
+                    seen.add(meta["id"])
+                    pending.append(meta["id"])
 
-    def subagent_history(self, thread_id, agent_id):
-        self.get(thread_id)
+                    status = "unknown"
+                    if meta.get("status") and meta["status"] != "unknown":
+                        status = meta["status"]
+                    elif self._is_path_in_home(meta.get("rollout_path")):
+                        status = self._detect_subagent_status(meta["rollout_path"])
+
+                    title = self._resolve_subagent_title(meta, spawn)
+                    result.append({
+                        "id": meta["id"],
+                        "parentId": parent,
+                        "title": title,
+                        "nickname": meta.get("agent_nickname") or spawn.get("agent_nickname"),
+                        "role": meta.get("agent_role") or spawn.get("agent_role"),
+                        "path": meta.get("agent_path") or spawn.get("agent_path"),
+                        "updated": meta.get("updated_at"),
+                        "archived": bool(meta.get("archived")),
+                        "status": status,
+                    })
+                    if len(result) >= 128:
+                        limited = True
+                        break
+        return {"agents": result, "limited": limited}
+
+    def subagent_history(self, thread_id, agent_id, verified_parent=None):
+        parent_meta = verified_parent if verified_parent is not None else self.get(thread_id)
+        if parent_meta.get("thread_source") == "subagent" or '"subagent"' in (parent_meta.get("source") or ""):
+            raise KeyError("不是主会话")
+        parent_rollout = parent_meta.get("rollout_path")
+        if parent_rollout and not self._is_path_in_home(parent_rollout):
+            raise ValueError("会话记录路径不在 Codex 数据目录中")
+
         with self._connect() as conn:
-            current = agent_id; seen = set(); target = None
+            current = agent_id
+            seen = set()
+            target = None
+            ancestors = []
             while current != thread_id:
-                if current in seen or len(seen) >= 32: raise KeyError('子智能体不属于此聊天')
+                if current in seen or len(seen) >= 32:
+                    raise KeyError("子智能体不属于此聊天")
                 seen.add(current)
-                row = conn.execute('SELECT * FROM threads WHERE id = ?', (current,)).fetchone()
-                if not row: raise KeyError('子智能体不存在')
+                row = conn.execute("SELECT * FROM threads WHERE id = ?", (current,)).fetchone()
+                if not row:
+                    raise KeyError("子智能体不存在")
                 meta = dict(row)
-                if target is None: target = meta
-                current = self._agent_source(meta).get('parent_thread_id')
-                if not current: raise KeyError('子智能体不属于此聊天')
-        if target is None: raise KeyError('请选择子智能体')
-        return self._history(agent_id, target, 10)
+                ancestors.append(meta)
+                if target is None:
+                    target = meta
+                current = self._agent_source(meta).get("parent_thread_id")
+                if not current:
+                    raise KeyError("子智能体不属于此聊天")
+
+        if target is None:
+            raise KeyError("请选择子智能体")
+
+        for anc in ancestors:
+            anc_path = anc.get("rollout_path")
+            if not anc_path or not self._is_path_in_home(anc_path):
+                raise ValueError("会话记录路径不在 Codex 数据目录中")
+
+        target_path = Path(target["rollout_path"]).resolve()
+        if not target_path.is_file():
+            raise KeyError("子智能体会话记录文件不存在")
+
+        state = self._history(agent_id, target, 20)
+        view = normalize_state(state, False)
+        spawn = self._agent_source(target)
+        last_turn_status = view["turns"][-1].get("status") if view.get("turns") else None
+        detected_status = self._detect_subagent_status(target_path)
+        status = (
+            last_turn_status
+            if last_turn_status not in (None, "unknown")
+            else detected_status
+            if detected_status != "unknown"
+            else (view.get("status") if view.get("status") not in (None, "idle", "unknown", "notLoaded") else "unknown")
+        )
+
+        return {
+            "id": agent_id,
+            "parentId": thread_id,
+            "title": self._resolve_subagent_title(target, spawn),
+            "nickname": target.get("agent_nickname") or spawn.get("agent_nickname"),
+            "role": target.get("agent_role") or spawn.get("agent_role"),
+            "status": status,
+            "turns": view.get("turns", []),
+            "historyComplete": view.get("historyComplete", True),
+            "saved": True,
+            "updated": target.get("updated_at"),
+            "archived": bool(target.get("archived")),
+        }
 
     def _history(self, thread_id, meta, turn_limit=None):
         path = Path(meta["rollout_path"])
@@ -413,9 +567,9 @@ class SessionStore:
                 settings = (payload.get('collaboration_mode') or {}).get('settings') or {}
                 current['params'] = {'model':payload.get('model') or settings.get('model'),
                                      'effort':payload.get('effort') or settings.get('reasoning_effort')}
-            elif record.get("type") == "event_msg" and payload.get("type") in ("task_complete", "turn_aborted"):
+            elif record.get("type") == "event_msg" and payload.get("type") in ("task_complete", "task_completed", "turn_aborted"):
                 if current:
-                    current["status"] = "completed" if payload["type"] == "task_complete" else "interrupted"
+                    current["status"] = "completed" if payload["type"] in ("task_complete", "task_completed") else "interrupted"
             elif record.get("type") == "event_msg" and payload.get("type") == "item_completed":
                 item = payload.get("item", {})
                 if (isinstance(item, dict) and item.get("type") in ("UserMessage", "userMessage")

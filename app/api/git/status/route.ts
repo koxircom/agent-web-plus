@@ -11,7 +11,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }
 
-    if (await shouldUseCodexWorkspace(request.nextUrl.searchParams.get("sessionId"))) {
+    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    const requestedEngine = request.nextUrl.searchParams.get("engine") ?? request.nextUrl.searchParams.get("executionEngine");
+    if (await shouldUseCodexWorkspace(sessionId, requestedEngine)) {
       return NextResponse.json(await codexGitStatus(cwd));
     }
 
@@ -35,6 +37,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(await getGitStatus(cwd));
   } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

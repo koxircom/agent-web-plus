@@ -20,6 +20,7 @@ import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
+import { CodexSubagentsPanel } from "./CodexSubagentsPanel";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { useTheme } from "@/hooks/useTheme";
@@ -386,7 +387,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "codex-subagents" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -406,7 +407,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   }, [rightPanelFullWidth]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session",
+    panel: "agents" | "branches" | "system" | "tools" | "session" | "codex-subagents",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
@@ -527,6 +528,14 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
           top: topBarRect.bottom,
           left: topBarRect.left,
           width: Math.min(AGENT_PANEL_WIDTH, topBarRect.width),
+        });
+        return;
+      }
+      if (activeTopPanel === "codex-subagents") {
+        setTopPanelPos({
+          top: topBarRect.bottom,
+          left: isMobile ? topBarRect.left : Math.max(topBarRect.left, Math.min(topBarRect.left, window.innerWidth - 760)),
+          width: isMobile ? topBarRect.width : Math.min(760, topBarRect.width),
         });
         return;
       }
@@ -1418,29 +1427,48 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   const handleOpenFile = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; page?: number },
+    options?: {
+      sourceSessionId?: string | null;
+      modeHint?: "diff";
+      page?: number;
+      executionEngine?: "pi" | "codex";
+      cwd?: string;
+    },
   ) => {
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const page = options?.page;
-    const tabId = `file:${filePath}`;
+    const engine = resolveExecutionEngine(
+      options?.executionEngine,
+      activeExecutionEngine,
+      sourceSessionId,
+    );
+    const cwd = options?.cwd ?? activeCwd ?? undefined;
+    const tabId = `file:${engine}:${filePath}`;
     setFileTabs((prev) => openFileTab(prev, {
       fileName,
       filePath,
       modeHint,
       page,
       sourceSessionId,
+      executionEngine: engine,
+      cwd,
       tabId,
     }));
     setActiveFileTabId(tabId);
     setRightPanelOpen(true);
     // On mobile the file panel is full-screen; close the drawer so it shows.
     if (isMobile) setSidebarOpen(false);
-  }, [isMobile]);
+  }, [activeCwd, activeExecutionEngine, isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string, page?: number) => {
-    handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
-  }, [handleOpenFile, selectedSession?.id]);
+    handleOpenFile(filePath, getFileName(filePath), {
+      sourceSessionId: selectedSession?.id ?? null,
+      executionEngine: activeExecutionEngine,
+      cwd: activeCwd ?? undefined,
+      page,
+    });
+  }, [activeCwd, activeExecutionEngine, handleOpenFile, selectedSession?.id]);
 
   const handleOpenTerminal = useCallback((cwd: string) => {
     if (!piExecutionReady) return;
@@ -1883,6 +1911,34 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             >
               {activeSessionFamily!.subagents.length}
             </span>
+          </button>
+        )}
+        {Boolean(selectedSession && activeExecutionEngine === "codex") && (
+          <button
+            type="button"
+            onClick={() => toggleTopPanel("codex-subagents", mobile)}
+            title="Codex 子智能体"
+            aria-label="Codex 子智能体"
+            aria-pressed={activeTopPanel === "codex-subagents"}
+            style={{
+              position: "relative",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+              height: "100%", padding: mobile ? 0 : "0 12px",
+              background: activeTopPanel === "codex-subagents" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "codex-subagents" ? "2px solid var(--accent)" : "2px solid transparent",
+              borderRight: "1px solid var(--border)",
+              color: activeTopPanel === "codex-subagents" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+              transition: "color 0.1s, background 0.1s",
+            }}
+            data-mobile-toolbar-action={mobile ? "codex-subagents" : undefined}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+            </svg>
+            {!mobile && <span>子Agent</span>}
           </button>
         )}
         {piExecutionReady && sessionHasBranches && (mobile ? (
@@ -2336,6 +2392,14 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                   onSelectSession={handleSelectSession}
                 />
               )}
+              {activeTopPanel === "codex-subagents" && selectedSession && (
+                <CodexSubagentsPanel
+                  sessionId={selectedSession.id}
+                  sessionTitle={selectedSession.name || selectedSession.id}
+                  isMobile={isMobile}
+                  onClose={() => setActiveTopPanel(null)}
+                />
+              )}
               {piExecutionReady && activeTopPanel === "system" && (
                 <SystemPromptPanel
                   loading={systemInfoLoading}
@@ -2739,8 +2803,9 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
             <FileViewer
               key={`${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
               filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
+              cwd={activeFileTab.cwd ?? activeCwd ?? undefined}
               sourceSessionId={activeFileTab.sourceSessionId}
+              executionEngine={activeFileTab.executionEngine}
               gitRefreshKey={explorerRefreshKey}
               initialDisplayMode={activeFileTab.initialDisplayMode}
               initialPage={activeFileTab.page}
@@ -2756,7 +2821,12 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               onOpenFile={(filePath, page) => handleOpenFile(
                 filePath,
                 getFileName(filePath),
-                { sourceSessionId: activeFileTab.sourceSessionId, page },
+                {
+                  sourceSessionId: activeFileTab.sourceSessionId,
+                  executionEngine: activeFileTab.executionEngine,
+                  cwd: activeFileTab.cwd,
+                  page,
+                },
               )}
             />
           ) : !piExecutionReady || !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (

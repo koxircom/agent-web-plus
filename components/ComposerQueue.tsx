@@ -4,6 +4,8 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PendingPromptSubmission } from "@/lib/prompt-submissions";
 import type { QueuedMessages } from "@/hooks/useAgentSession";
+import { sendAgentCommand } from "@/lib/agent-client";
+import type { RecalledPromptRestoration } from "@/lib/queue-recall-client";
 
 type Entry = { kind: "steer" | "follow-up"; text: string };
 type Image = { data: string; mimeType: string; alt?: string };
@@ -24,19 +26,23 @@ const QueueIcon = ComposerQueueIcon;
 /** Queue nodes belong to React from their first paint to consumption. The
  * existing enhancement service provides secure actions and attachment data,
  * through an explicit extension boundary; it never inspects/writes these nodes. */
-export function ComposerQueue({ sessionId, executionEngine = "pi", queuedMessages, onRecallQueue, pending, syncStatus = "ready", retainedSubmissions = [], deliveredRequestIds = [] }: {
+export function ComposerQueue({ sessionId, executionEngine = "pi", queuedMessages, onRecallQueue, onRestoreRecall, pending, syncStatus = "ready", retainedSubmissions = [], deliveredRequestIds = [] }: {
   retainedSubmissions?: PendingPromptSubmission[];
   deliveredRequestIds?: readonly string[];
   syncStatus?: "loading" | "ready" | "error";
   pending?: { kind: "steering" | "followUp"; text: string; images: Image[] } | null;
   sessionId: string; executionEngine?: "pi" | "codex"; queuedMessages?: QueuedMessages | null; onRecallQueue?: () => void;
+  onRestoreRecall?: (payload: RecalledPromptRestoration) => Promise<boolean>;
 }) {
   const host = useRef<HTMLElement>(null);
   const entries: Entry[] = [
     ...(queuedMessages?.steering ?? []).map(text => ({ kind: "steer" as const, text })),
     ...(queuedMessages?.followUp ?? []).map(text => ({ kind: "follow-up" as const, text })),
   ];
-  const nativeIds = [...(queuedMessages?.requestIds?.steering ?? []), ...(queuedMessages?.requestIds?.followUp ?? [])];
+  const nativeIds = [
+    ...(queuedMessages?.steering ?? []).map((_, i) => queuedMessages?.requestIds?.steering?.[i] ?? null),
+    ...(queuedMessages?.followUp ?? []).map((_, i) => queuedMessages?.requestIds?.followUp?.[i] ?? null),
+  ];
   const represented = new Set([...nativeIds, ...deliveredRequestIds]);
   const backups = retainedSubmissions.filter(row => row.sessionId === sessionId && row.streamingBehavior
     && row.status !== "recalled" && !represented.has(row.requestId));
@@ -46,7 +52,7 @@ export function ComposerQueue({ sessionId, executionEngine = "pi", queuedMessage
     ...(pending ? [{ kind: pending.kind === "steering" ? "steer" as const : "follow-up" as const, text: pending.text, pending: true, backup: undefined, requestId: null }] : []),
   ];
   const actionsEnabled = syncStatus === "ready" && (executionEngine === "pi" || executionEngine === "codex");
-  const signature = JSON.stringify([sessionId, entries]);
+  const signature = JSON.stringify([sessionId, entries, nativeIds]);
   const current = useRef({ sessionId, entries, signature, actionsEnabled });
   current.current = { sessionId, entries, signature, actionsEnabled };
   const [details, setDetails] = useState<Details | null>(null);
@@ -63,9 +69,9 @@ export function ComposerQueue({ sessionId, executionEngine = "pi", queuedMessage
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const publish = useCallback(() => {
     window.dispatchEvent(new CustomEvent("pi:native-queue-snapshot", {
-      detail: { ...current.current, host: host.current },
+      detail: { ...current.current, host: host.current, sendCommand: sendAgentCommand, restoreRecall: onRestoreRecall },
     }));
-  }, []);
+  }, [onRestoreRecall]);
   useLayoutEffect(() => {
     const receive = (event: Event) => {
       const data = (event as CustomEvent<Details>).detail;

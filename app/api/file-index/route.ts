@@ -181,8 +181,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }
     const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
-
-    if (await shouldUseCodexWorkspace(req.nextUrl.searchParams.get("sessionId"))) {
+    const sessionId = req.nextUrl.searchParams.get("sessionId");
+    const requestedEngine = req.nextUrl.searchParams.get("engine") ?? req.nextUrl.searchParams.get("executionEngine");
+    if (await shouldUseCodexWorkspace(sessionId, requestedEngine)) {
       const target = await resolveCodexWorkspaceTarget(cwd);
       const cacheKey = `codex:${await codexConnectionIdentity()}:${target.project.key}:${target.fullPath}`;
       const cache = getIndexCache();
@@ -248,6 +249,9 @@ export async function GET(req: NextRequest) {
       truncated: hardTruncated || files.length > MAX_FILES,
     });
   } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     const status = error && typeof error === "object" && "status" in error && typeof error.status === "number"
       ? error.status
       : 500;

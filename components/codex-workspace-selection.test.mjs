@@ -10,7 +10,7 @@ test('directory validation and session projection use identical workspace identi
 });
 test('remote workspace selection cannot be replaced by NAS worktree identity',()=>{
  const source=fs.readFileSync(new URL('./SessionSidebar.tsx',import.meta.url),'utf8');
- assert.match(source,/if \(isCodexEngine \|\| !selectedCwd\)/);
+ assert.match(source,/fetch\(`\/api\/worktrees\?cwd=\$\{encodeURIComponent\(selectedCwd\)\}&engine=\$\{executionEngine\}`\)/);
  assert.match(source,/body: JSON.stringify\(\{ cwd: path, engine: executionEngine \}\)/);
  assert.match(source,/executionEngine=\{executionEngine\}[\s\S]*?initialPath=\{customPathValue\}/);
  assert.match(source,/fetch\(`\/api\/home\?engine=\$\{executionEngine\}`\)/);
@@ -42,4 +42,15 @@ test('native remote picker keeps sole ownership of directory actions',()=>{
  assert.match(legacy,/if \(!picker \|\| picker.hasAttribute\("data-pi-native-directory-picker"\)\) return/);
  const css=fs.readFileSync(new URL("../app/enhancements.css",import.meta.url),"utf8");
  assert.match(css,/\.directory-picker-panel:not\(\[data-pi-native-directory-picker\]\) \.directory-picker-footer button/);
+});
+
+test('SessionSidebar hides worktree remove button for Codex engine and tracks engine in closure deps',()=>{
+ const sidebar=fs.readFileSync(new URL('./SessionSidebar.tsx',import.meta.url),'utf8');
+ // Removal button hidden under Codex
+ assert.match(sidebar,/!wt\.isMain && !isCodexEngine &&/);
+ // Closure deps include executionEngine
+ assert.match(sidebar,/handleCreateWorktree[\s\S]*?\[wtNewBranch, wtBusy, worktreeState, executionEngine\]/);
+ assert.match(sidebar,/handleRemoveWorktree[\s\S]*?\[worktreeState, wtBusy, currentWorktreePath, executionEngine, isCodexEngine\]/);
+ // projectFor resolves worktreeState before session search in codex mode
+ assert.match(sidebar,/if \(isCodexEngine\) \{\s*if \(worktreeState && \(worktreeState\.forCwd === cwd \|\| worktreeState\.worktrees\.some/);
 });

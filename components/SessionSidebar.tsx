@@ -893,6 +893,9 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
   const projectFor = useCallback((cwd: string | null): ProjectSelection | null => {
     if (!cwd) return null;
     if (isCodexEngine) {
+      if (worktreeState && (worktreeState.forCwd === cwd || worktreeState.worktrees.some((w) => w.path === cwd))) {
+        return projectSelection(worktreeState.projectRoot, worktreeState.projectKey);
+      }
       const match = allSessions.find(session => session.cwd === cwd || session.projectRoot === cwd);
       return projectSelection(match?.projectRoot ?? cwd, match ? workspaceKeyOf(match) : codexProjectKey(cwd));
     }
@@ -948,14 +951,14 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
   // Load worktrees for the current effective cwd
   const [wtRefreshKey, setWtRefreshKey] = useState(0);
   useLayoutEffect(() => {
-    if (isCodexEngine || !selectedCwd) {
+    if (!selectedCwd) {
       setWorktreeState(null);
       setWorktreeLoadingCwd(null);
       return;
     }
     let cancelled = false;
     setWorktreeLoadingCwd(selectedCwd);
-    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`)
+    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}&engine=${executionEngine}`)
       .then((r) => r.json())
       .then((d: { projectRoot?: string; projectKey?: string; isGit?: boolean; isTopLevel?: boolean; currentWorktreePath?: string | null; worktrees?: WorktreeEntry[]; error?: string }) => {
         if (cancelled) return;
@@ -981,7 +984,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
         }
       });
     return () => { cancelled = true; };
-  }, [isCodexEngine, selectedCwd, wtRefreshKey, refreshKey]);
+  }, [executionEngine, selectedCwd, wtRefreshKey, refreshKey]);
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
@@ -1085,7 +1088,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
       const res = await fetch("/api/worktrees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: worktreeState.projectRoot, branch }),
+        body: JSON.stringify({ cwd: worktreeState.projectRoot, branch, engine: executionEngine }),
       });
       const data = await res.json().catch(() => ({})) as { path?: string; error?: string };
       if (!res.ok || data.error || !data.path) {
@@ -1111,17 +1114,21 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
     } finally {
       setWtBusy(false);
     }
-  }, [wtNewBranch, wtBusy, worktreeState]);
+  }, [wtNewBranch, wtBusy, worktreeState, executionEngine]);
 
   const handleRemoveWorktree = useCallback(async (path: string, force: boolean) => {
     if (!worktreeState || wtBusy) return;
+    if (isCodexEngine) {
+      setWtError("Codex 执行端不支持通过网页删除工作树，请在 WSL 终端中管理");
+      return;
+    }
     setWtBusy(true);
     setWtError(null);
     try {
       const res = await fetch("/api/worktrees", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: worktreeState.projectRoot, path, force }),
+        body: JSON.stringify({ cwd: worktreeState.projectRoot, path, force, engine: executionEngine }),
       });
       const data = await res.json().catch(() => ({})) as { error?: string; dirty?: boolean };
       if (!res.ok) {
@@ -1141,7 +1148,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
     } finally {
       setWtBusy(false);
     }
-  }, [worktreeState, wtBusy, currentWorktreePath]);
+  }, [worktreeState, wtBusy, currentWorktreePath, executionEngine, isCodexEngine]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -1777,7 +1784,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
                             <PathLabel text={wt.branch ?? displayCwd(wt.path, homeDir)} style={{ flex: 1 }} />
                             {wt.isMain && <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>{t("sidebar.main")}</span>}
                           </button>
-                          {!wt.isMain && (
+                          {!wt.isMain && !isCodexEngine && (
                             <button
                               onClick={() => void handleRemoveWorktree(wt.path, false)}
                               disabled={wtBusy}
@@ -2216,6 +2223,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
                 ref={fileExplorerRef}
                 cwd={selectedCwd ?? selectedCwdProp!}
                 sessionId={selectedSessionId}
+                executionEngine={executionEngine}
                 onOpenFile={onOpenFile ?? (() => {})}
                 refreshKey={explorerKey}
                 onAtMention={onAtMention}

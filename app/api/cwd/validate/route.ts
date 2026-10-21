@@ -23,9 +23,17 @@ export async function POST(req: Request) {
     const engine = body.engine === "pi" || body.engine === "codex" ? body.engine : (await readExecutionEngineSettings()).defaultEngine;
     if (engine === "codex") {
       const projects = await (await import("@/lib/execution-engines/codex-engine")).codexProjects();
-      const project = projects.find(p => p.cwd === cwd);
-      return project ? Response.json({ success: true, cwd, projectRoot: cwd, projectKey: codexProjectKey(cwd) })
-        : Response.json({ error: "请选择 Codex 服务配置的工作区" }, { status: 400 });
+      const project = projects.find(p => p.cwd === cwd || cwd.startsWith(p.cwd.replace(/\/$/, "") + "/"));
+      if (project) {
+        return Response.json({ success: true, cwd, projectRoot: project.cwd, projectKey: codexProjectKey(project.cwd) });
+      }
+      try {
+        const { validateCodexCwd } = await import("@/lib/execution-engines/codex-workspaces");
+        const validated = await validateCodexCwd(cwd);
+        return Response.json({ success: true, cwd: validated.cwd, projectRoot: validated.projectRoot, projectKey: codexProjectKey(validated.projectRoot) });
+      } catch {
+        return Response.json({ error: "请选择 Codex 服务配置的工作区" }, { status: 400 });
+      }
     }
 
     if (!cwd) {

@@ -412,6 +412,39 @@
           "timeoutSeconds": 180
         },
         {
+          "name": "release-queue-edit-identity",
+          "command": ["node", "scripts/qa/queue-edit-identity.cjs"],
+          "files": [
+            "scripts/qa/queue-edit-identity.cjs",
+            "tests/queue-edit-identity.pw.mjs",
+            "lib/agent-client.test.mjs",
+            "lib/queue-recall-client.test.mjs",
+            "lib/queue-restore-ownership.test.mjs",
+            "lib/queue-ownership.test.mjs",
+            "components/ComposerQueue.test.mjs",
+            "lib/execution-engines/codex-native-handoff.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-file-engine-context",
+          "command": ["node", "scripts/qa/file-engine-context.cjs"],
+          "files": ["scripts/qa/file-engine-context.cjs", "tests/file-engine-context.test.mjs", "tests/file-engine-context.pw.mjs", "tests/file-engine-page.pw.mjs"],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-codex-first-model",
+          "command": ["node", "scripts/qa/codex-first-model.cjs"],
+          "files": ["scripts/qa/codex-first-model.cjs", "lib/execution-engines/codex-first-model.test.mjs", "tests/codex-first-model.pw.mjs"],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-codex-foundations",
+          "command": ["node", "scripts/qa/codex-foundations.cjs"],
+          "files": ["scripts/qa/codex-foundations.cjs", "tests/codex-subagents-panel.pw.mjs", "tests/codex-worktree-flow.pw.mjs", "lib/execution-engines/codex-model-runtime.test.mjs"],
+          "timeoutSeconds": 180
+        },
+        {
           "name": "release-codex-engine",
           "command": [
             "node",

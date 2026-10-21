@@ -35,6 +35,7 @@ interface FileNode {
 interface Props {
   cwd: string;
   sessionId?: string | null;
+  executionEngine?: "pi" | "codex";
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
@@ -79,10 +80,11 @@ interface PendingConflict {
   nonReplaceable: string[];
 }
 
-async function fetchEntries(dirPath: string, sessionId?: string | null): Promise<FileNode[]> {
+async function fetchEntries(dirPath: string, sessionId?: string | null, executionEngine?: "pi" | "codex"): Promise<FileNode[]> {
   const encoded = encodeFilePathForApi(dirPath);
   const params = new URLSearchParams({ type: "list" });
   if (sessionId) params.set("sessionId", sessionId);
+  if (executionEngine) params.set("engine", executionEngine);
   const res = await fetch(`/api/files/${encoded}?${params.toString()}`);
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
@@ -105,9 +107,10 @@ async function fetchEntries(dirPath: string, sessionId?: string | null): Promise
   }));
 }
 
-async function fetchGitStatus(cwd: string, sessionId?: string | null): Promise<GitStatusResponse> {
+async function fetchGitStatus(cwd: string, sessionId?: string | null, executionEngine?: "pi" | "codex"): Promise<GitStatusResponse> {
   const params = new URLSearchParams({ cwd });
   if (sessionId) params.set("sessionId", sessionId);
+  if (executionEngine) params.set("engine", executionEngine);
   const res = await fetch(`/api/git/status?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
   return res.json() as Promise<GitStatusResponse>;
@@ -160,6 +163,7 @@ function uploadFiles(
   strategy: UploadConflictStrategy,
   onProgress: (progress: number) => void,
   sessionId?: string | null,
+  executionEngine?: "pi" | "codex",
 ): Promise<{ status: number; data: UploadResponse }> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
@@ -168,6 +172,7 @@ function uploadFiles(
     const xhr = new XMLHttpRequest();
     const params = new URLSearchParams({ type: "upload", conflict: strategy });
     if (sessionId) params.set("sessionId", sessionId);
+    if (executionEngine) params.set("engine", executionEngine);
     xhr.open("POST", `/api/files/${encodeFilePathForApi(targetDirectory)}?${params.toString()}`);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
@@ -222,6 +227,7 @@ function TreeNode({
   depth,
   cwd,
   sessionId,
+  executionEngine,
   onOpenFile,
   onAtMention,
   expandedPaths,
@@ -236,6 +242,7 @@ function TreeNode({
   depth: number;
   cwd: string;
   sessionId?: string | null;
+  executionEngine?: "pi" | "codex";
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   expandedPaths: Set<string>;
@@ -253,27 +260,41 @@ function TreeNode({
   const containsGitChanges = node.isDir && (
     gitStatus !== undefined || changedDirectoryPaths.has(normalizedPath)
   );
-  const downloadParams = new URLSearchParams({ type: "download" });
-  if (sessionId) downloadParams.set("sessionId", sessionId);
-  const downloadHref = `/api/files/${encodeFilePathForApi(node.fullPath)}?${downloadParams.toString()}`;
+  const downloadExtra = new URLSearchParams();
+  if (sessionId) downloadExtra.set("sessionId", sessionId);
+  if (executionEngine) downloadExtra.set("engine", executionEngine);
+  const downloadExtraStr = downloadExtra.toString();
+  const downloadHref = `/api/files/${encodeFilePathForApi(node.fullPath)}?type=download${downloadExtraStr ? `&${downloadExtraStr}` : ""}`;
   const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
   const [loaded, setLoaded] = useState(node.loaded ?? false);
   const [loading, setLoading] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const activeRequestRef = useRef(0);
 
   const loadChildren = useCallback(async (force = false) => {
     if (loaded && !force) return;
+    const requestId = ++activeRequestRef.current;
     setLoading(true);
     try {
-      const entries = await fetchEntries(node.fullPath, sessionId);
-      setChildren(entries);
-      setLoaded(true);
+      const entries = await fetchEntries(node.fullPath, sessionId, executionEngine);
+      if (activeRequestRef.current === requestId) {
+        setChildren(entries);
+        setLoaded(true);
+      }
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      if (activeRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
-  }, [loaded, node.fullPath, sessionId]);
+  }, [executionEngine, loaded, node.fullPath, sessionId]);
+
+  useEffect(() => {
+    return () => {
+      activeRequestRef.current++;
+    };
+  }, []);
 
   // Re-fetch children when the tree refreshes and the directory is open.
   useEffect(() => {
@@ -289,9 +310,9 @@ function TreeNode({
       onToggleExpanded(node.fullPath, next);
       if (next && !loaded) loadChildren();
     } else {
-      onOpenFile(node.fullPath, node.name);
+      onOpenFile(node.fullPath, node.name, { sourceSessionId: sessionId, executionEngine, cwd });
     }
-  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded]);
+  }, [cwd, executionEngine, node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded, sessionId]);
 
   return (
     <div>
@@ -444,11 +465,12 @@ function TreeNode({
         <div>
           {children.map((child) => (
             <TreeNode
-              key={child.fullPath}
+              key={`${executionEngine ?? "pi"}:${sessionId ?? ""}:${cwd}:${child.fullPath}`}
               node={child}
               depth={depth + 1}
               cwd={cwd}
               sessionId={sessionId}
+              executionEngine={executionEngine}
               onOpenFile={onOpenFile}
               onAtMention={onAtMention}
               expandedPaths={expandedPaths}
@@ -471,19 +493,29 @@ function TreeNode({
   );
 }
 
-type OpenFileOptions = { sourceSessionId?: string | null; modeHint?: "diff" };
+type OpenFileOptions = {
+  sourceSessionId?: string | null;
+  modeHint?: "diff";
+  page?: number;
+  executionEngine?: "pi" | "codex";
+  cwd?: string;
+};
 
 type OpenFileHandler = (filePath: string, fileName: string, options?: OpenFileOptions) => void;
 
 function ChangeRow({
   status,
   cwd,
+  sessionId,
+  executionEngine,
   onOpenFile,
   onAtMention,
   t,
 }: {
   status: GitFileStatus;
   cwd: string;
+  sessionId?: string | null;
+  executionEngine?: "pi" | "codex";
   onOpenFile: OpenFileHandler;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   t: Translate;
@@ -497,7 +529,7 @@ function ChangeRow({
   const baseName = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
   return (
     <div
-      onClick={() => onOpenFile(status.filePath, name, { modeHint: "diff" })}
+      onClick={() => onOpenFile(status.filePath, name, { modeHint: "diff", sourceSessionId: sessionId, executionEngine, cwd })}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       title={status.filePath}
@@ -595,6 +627,7 @@ function ChangeRow({
 export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileExplorer({
   cwd,
   sessionId,
+  executionEngine,
   onOpenFile,
   refreshKey,
   onAtMention,
@@ -625,11 +658,14 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [searchError, setSearchError] = useState(false);
   const [searchExpanded, setSearchExpanded] = useState<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const prevCwdRef = useRef<string | null>(null);
+  const prevScopeRef = useRef<{ key: string } | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}:${sessionId ?? ""}`;
+  const scopeKey = `${executionEngine ?? "pi"}:${sessionId ?? ""}:${cwd}`;
+  const refreshToken = `${refreshKey ?? 0}:${treeRefreshKey}:${scopeKey}`;
   const uploadBusy = uploadPhase !== "idle";
   const hasSearchQuery = searchQuery.trim().length > 0;
+
+  useEffect(() => () => { prevScopeRef.current = null; }, []);
 
   // Reuse the cached, bounded file index used by @ mentions.
   useEffect(() => {
@@ -645,11 +681,17 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setSearchLoading(true);
     setSearchError(false);
     const timer = setTimeout(() => {
-      const params = new URLSearchParams({ cwd, q: query });
-      if (sessionId) params.set("sessionId", sessionId);
-      fetch(`/api/file-index?${params.toString()}`, { signal: controller.signal })
+      const searchExtra = new URLSearchParams();
+      if (sessionId) searchExtra.set("sessionId", sessionId);
+      if (executionEngine) searchExtra.set("engine", executionEngine);
+      const searchExtraStr = searchExtra.toString();
+      fetch(`/api/file-index?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}${searchExtraStr ? `&${searchExtraStr}` : ""}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() as Promise<{ matches?: FileIndexEntry[] }> : Promise.reject(new Error("Search failed")))
-        .then((data) => setSearchPaths((data.matches ?? []).filter((entry) => !entry.isDir).map((entry) => entry.path)))
+        .then((data) => {
+          if (!controller.signal.aborted) {
+            setSearchPaths((data.matches ?? []).filter((entry) => !entry.isDir).map((entry) => entry.path));
+          }
+        })
         .catch(() => {
           if (!controller.signal.aborted) {
             setSearchPaths([]);
@@ -659,7 +701,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         .finally(() => { if (!controller.signal.aborted) setSearchLoading(false); });
     }, 150);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [cwd, fileSearchOpen, searchQuery, sessionId]);
+  }, [cwd, executionEngine, fileSearchOpen, searchQuery, sessionId]);
 
   // Focus the search input whenever the search panel opens.
   useEffect(() => {
@@ -745,13 +787,18 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     files: File[],
     strategy: UploadConflictStrategy,
   ) => {
+    const owner = prevScopeRef.current;
+    if (!owner || owner.key !== scopeKey) return;
     setPendingConflict(null);
     setUploadError(null);
     setUploadProgress(0);
     setUploadPhase("uploading");
 
     try {
-      const { status, data } = await uploadFiles(cwd, files, strategy, setUploadProgress, sessionId);
+      const { status, data } = await uploadFiles(cwd, files, strategy, (progress) => {
+        if (prevScopeRef.current === owner) setUploadProgress(progress);
+      }, sessionId, executionEngine);
+      if (prevScopeRef.current !== owner) return;
       if (status === 409 && data.conflicts?.length) {
         setPendingConflict({
           files,
@@ -766,14 +813,17 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       setUploadProgress(100);
       applyUploadResult(data);
     } catch (uploadFailure) {
-      setUploadError(uploadFailure instanceof Error ? uploadFailure.message : String(uploadFailure));
+      if (prevScopeRef.current === owner) {
+        setUploadError(uploadFailure instanceof Error ? uploadFailure.message : String(uploadFailure));
+      }
     } finally {
-      setUploadPhase("idle");
+      if (prevScopeRef.current === owner) setUploadPhase("idle");
     }
-  }, [applyUploadResult, cwd, sessionId]);
+  }, [applyUploadResult, cwd, executionEngine, scopeKey, sessionId]);
 
   const prepareUpload = useCallback(async (files: File[]) => {
-    if (files.length === 0 || uploadBusy) return;
+    const owner = prevScopeRef.current;
+    if (files.length === 0 || uploadBusy || !owner || owner.key !== scopeKey) return;
     setUploadSummary(null);
     setHighlightedPaths(new Set());
     setPendingConflict(null);
@@ -784,6 +834,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     try {
       const params = new URLSearchParams({ type: "upload-check" });
       if (sessionId) params.set("sessionId", sessionId);
+      if (executionEngine) params.set("engine", executionEngine);
       const res = await fetch(
         `/api/files/${encodeFilePathForApi(cwd)}?${params.toString()}`,
         {
@@ -793,6 +844,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         },
       );
       const data = await res.json().catch(() => ({})) as UploadResponse;
+      if (prevScopeRef.current !== owner) return;
       if (!res.ok) throw new Error(data.error ?? `Upload check failed (HTTP ${res.status})`);
 
       if (data.conflicts?.length) {
@@ -806,11 +858,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
       await performUpload(files, "error");
     } catch (uploadFailure) {
-      setUploadError(uploadFailure instanceof Error ? uploadFailure.message : String(uploadFailure));
+      if (prevScopeRef.current === owner) {
+        setUploadError(uploadFailure instanceof Error ? uploadFailure.message : String(uploadFailure));
+      }
     } finally {
-      setUploadPhase("idle");
+      if (prevScopeRef.current === owner) setUploadPhase("idle");
     }
-  }, [cwd, performUpload, sessionId, uploadBusy]);
+  }, [cwd, executionEngine, performUpload, scopeKey, sessionId, uploadBusy]);
 
   const handleUploadInput = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
@@ -831,11 +885,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   useEffect(() => () => onUploadBusyChange?.(false), [onUploadBusyChange]);
 
   useEffect(() => {
-    const cwdChanged = prevCwdRef.current !== cwd;
-    prevCwdRef.current = cwd;
-
-    // Reset expanded state only when cwd changes, not on refreshKey bumps
-    if (cwdChanged) {
+    const scopeChanged = prevScopeRef.current?.key !== scopeKey;
+    if (scopeChanged) {
+      prevScopeRef.current = { key: scopeKey };
+      setRoots([]);
+      setGitFiles([]);
+      setGitLineStats({ additions: 0, deletions: 0 });
+      setSearchPaths([]);
+      setSearchExpanded(new Set());
+      setUploadPhase("idle");
       setExpandedPaths(new Set());
       setHighlightedPaths(new Set());
       setUploadSummary(null);
@@ -843,19 +901,19 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       setUploadError(null);
     }
 
-    setLoading(cwdChanged);
+    setLoading(scopeChanged);
     setError(null);
     let cancelled = false;
-    fetchEntries(cwd, sessionId)
+    fetchEntries(cwd, sessionId, executionEngine)
       .then((entries) => { if (!cancelled) setRoots(entries); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, sessionId, treeRefreshKey]);
+  }, [cwd, executionEngine, refreshKey, scopeKey, sessionId, treeRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
-    fetchGitStatus(cwd, sessionId)
+    fetchGitStatus(cwd, sessionId, executionEngine)
       .then((status) => {
         if (!cancelled) {
           setGitFiles(status.isGitRepository ? status.files : []);
@@ -871,7 +929,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         }
       });
     return () => { cancelled = true; };
-  }, [cwd, refreshKey, sessionId, treeRefreshKey]);
+  }, [cwd, executionEngine, refreshKey, sessionId, treeRefreshKey]);
 
   useEffect(() => {
     onChangesCountChange?.(gitFiles.length);
@@ -1047,11 +1105,12 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
               <div>
                 {searchRoots.map((node) => (
                   <TreeNode
-                    key={`${searchQuery}:${node.fullPath}`}
+                    key={`${searchQuery}:${scopeKey}:${node.fullPath}`}
                     node={node}
                     depth={0}
                     cwd={cwd}
                     sessionId={sessionId}
+                    executionEngine={executionEngine}
                     onOpenFile={onOpenFile}
                     onAtMention={onAtMention}
                     expandedPaths={searchExpanded}
@@ -1096,6 +1155,8 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
               key={status.filePath}
               status={status}
               cwd={cwd}
+              sessionId={sessionId}
+              executionEngine={executionEngine}
               onOpenFile={onOpenFile}
               onAtMention={onAtMention}
               t={t}
@@ -1113,11 +1174,12 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
           ) : (
             roots.map((node) => (
               <TreeNode
-                key={node.fullPath}
+                key={`${scopeKey}:${node.fullPath}`}
                 node={node}
                 depth={0}
                 cwd={cwd}
                 sessionId={sessionId}
+                executionEngine={executionEngine}
                 onOpenFile={onOpenFile}
                 onAtMention={onAtMention}
                 expandedPaths={expandedPaths}

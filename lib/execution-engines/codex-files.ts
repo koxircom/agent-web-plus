@@ -1,7 +1,8 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import path from "node:path";
-import { readExecutionEngineSettings, isCodexSessionId } from "../execution-engine-settings";
+import { readExecutionEngineSettings } from "../execution-engine-settings";
+import { resolveExecutionEngine } from "../execution-engine-context";
 import { codexBridgeJson, codexBridgeRequest, CodexBridgeError } from "./codex-bridge-client";
 import { codexProjects } from "./codex-engine";
 import {
@@ -84,9 +85,13 @@ function validateWorkspaceRelativePath(value: string, allowEmpty = true): string
   return null;
 }
 
-export async function shouldUseCodexWorkspace(sessionId?: string | null): Promise<boolean> {
-  if (sessionId !== undefined && sessionId !== null) return isCodexSessionId(sessionId);
-  return (await readExecutionEngineSettings()).defaultEngine === "codex";
+export async function shouldUseCodexWorkspace(
+  sessionId?: string | null,
+  requestedEngine?: unknown,
+): Promise<boolean> {
+  const fallback = (await readExecutionEngineSettings()).defaultEngine;
+  const engine = resolveExecutionEngine(requestedEngine, fallback, sessionId);
+  return engine === "codex";
 }
 
 export async function resolveCodexWorkspaceTarget(absolutePath: string): Promise<CodexWorkspaceTarget> {
@@ -114,9 +119,10 @@ function workspaceRoute(
   workspacePath: string,
   extraQuery?: Record<string, string>,
 ): string {
-  const invalid = validateWorkspaceRelativePath(workspacePath, operation === "list" || operation === "git-status");
+  const normalizedPath = operation === "git-status" ? "" : workspacePath;
+  const invalid = validateWorkspaceRelativePath(normalizedPath, operation === "list" || operation === "git-status");
   if (invalid) throw new CodexWorkspacePathError(invalid, 403);
-  const query = new URLSearchParams({ project: target.project.key, operation, path: workspacePath });
+  const query = new URLSearchParams({ project: target.project.key, operation, path: normalizedPath });
   for (const [key, value] of Object.entries(extraQuery ?? {})) query.set(key, value);
   return `/api/projects/workspace?${query.toString()}`;
 }
@@ -541,27 +547,27 @@ export async function handleCodexFilePOST(
 
 export async function codexGitStatus(cwd: string) {
   const target = await resolveCodexWorkspaceTarget(cwd);
-  const state = await codexWorkspaceJson(target, "git-status", "");
-  const prefix = target.relativePath ? target.relativePath + "/" : "";
-  const files = (state.entries || []).filter((entry: { path: string }) => !prefix || entry.path.startsWith(prefix)).map((entry: { path: string; index: string; worktree: string; conflict: boolean; untracked: boolean }) => {
+  const state = await codexWorkspaceJson(target, "git-status", "", { cwd: target.fullPath });
+  const files = (state.entries || []).map((entry: { path: string; index: string; worktree: string; conflict: boolean; untracked: boolean }) => {
     const code = entry.conflict ? "U" : entry.untracked ? "U" : [entry.index, entry.worktree].find(c => ["A", "D", "R", "C", "M"].includes(c)) || "M";
     const status = entry.conflict ? "conflict" : entry.untracked ? "untracked" : ({ A: "added", D: "deleted", R: "renamed", C: "renamed", M: "modified" } as Record<string, string>)[code];
-    return { filePath: target.project.cwd.replace(/\/$/, "") + "/" + entry.path, code, status, indexStatus: entry.index, worktreeStatus: entry.worktree };
+    return { filePath: target.fullPath.replace(/\/$/, "") + "/" + entry.path, code, status, indexStatus: entry.index, worktreeStatus: entry.worktree };
   });
-  return { isGitRepository: Boolean(state.available), repositoryRoot: state.available ? target.project.cwd : null, files,
+  return { isGitRepository: Boolean(state.available), repositoryRoot: state.available ? (state.repositoryRoot || target.fullPath) : null, files,
     additions: state.additions ?? 0, deletions: state.deletions ?? 0 };
 }
 export async function codexGitDiff(cwd: string, filePath: string) {
   const target = await resolveCodexWorkspaceTarget(filePath);
   const scope = await resolveCodexWorkspaceTarget(cwd);
   if (scope.project.key !== target.project.key || !absolutePathContains(scope.fullPath, target.fullPath)) throw new CodexWorkspacePathError("文件不属于当前工作区", 403);
-  const state = await codexWorkspaceJson(target, "git-status", "");
-  const entry = state.entries?.find((row: { path: string }) => row.path === target.relativePath);
+  const relativeFile = relativePathFromAbsolute(scope.fullPath, target.fullPath);
+  const state = await codexWorkspaceJson(scope, "git-status", "", { cwd: scope.fullPath });
+  const entry = state.entries?.find((row: { path: string }) => row.path === relativeFile);
   if (!entry) return { supported: false };
   const sections = entry.conflict ? ["conflict"] : entry.untracked ? ["untracked"] : [...(entry.index !== "." ? ["staged"] : []), ...(entry.worktree !== "." ? ["unstaged"] : [])];
   const parts: string[] = [];
   for (const section of sections) {
-    const result = await codexWorkspaceJson(target, "git-diff", target.relativePath, { section });
+    const result = await codexWorkspaceJson(scope, "git-diff", relativeFile, { section, cwd: scope.fullPath });
     if (result.kind !== "diff" && result.kind !== "conflict") return { supported: false };
     if (result.text) parts.push(result.text);
   }

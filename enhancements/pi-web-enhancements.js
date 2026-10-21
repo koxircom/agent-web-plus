@@ -22122,20 +22122,6 @@
     }
   }
 
-  function saveRecalledToOwnerPersistedDraft(ownerKey, text, images) {
-    if (!ownerKey) return;
-    const existing = (typeof getPersistedDraft === "function" ? getPersistedDraft(ownerKey) : null) || { value: "", images: [] };
-    const mergedText = [text, existing.value].filter(Boolean).join("\n\n");
-    const existingImgs = Array.isArray(existing.images) ? existing.images : [];
-    const recallImgs = Array.isArray(images) ? images : [];
-    const mergedImgs = [...recallImgs, ...existingImgs];
-
-    if (mergedImgs.length <= 10 && savePersistedDraft(ownerKey, { value: mergedText, images: mergedImgs })) return true;
-    // Do not truncate or silently lose large Base64 payloads to localStorage quota.
-    downloadQueueRecovery(ownerKey, text, recallImgs);
-    return false;
-  }
-
   function downloadQueueRecovery(ownerKey, text, images) {
     const blob = new Blob([JSON.stringify({ version: 1, ownerKey, text, images }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -22160,19 +22146,6 @@
     const fromScroll = document.querySelector?.("[data-pi-native-scroll-owner]")?.getAttribute?.("data-pi-native-scroll-owner");
     if (fromScroll && !fromScroll.startsWith("new:")) return fromScroll;
     return explicitSid || null;
-  }
-
-  function deliverRecalledQueuePayload(ownerKey, keyRef, route, text, images) {
-    const current = readNativeComposerDraft();
-    const effectiveRoute = getEffectiveQueueSessionId(route);
-    const activeRoute = getEffectiveQueueSessionId();
-    if (activeRoute === effectiveRoute && current?.key === ownerKey && current.keyRef === keyRef
-      && current.pendingRef.current === 0 && current.imagesRef.current.length + images.length <= 10) {
-      current.handle.restoreSubmission(text, images, ownerKey);
-      current.textarea?.focus();
-      return true;
-    }
-    return saveRecalledToOwnerPersistedDraft(ownerKey, text, images);
   }
 
   async function hydrateSessionQueueAttachments(sessionId) {
@@ -22237,7 +22210,9 @@
     notifyQueueAttachmentUpdated();
   }
 
-  // Native React owns queue rendering; this adapter owns secure RPC/recovery only.
+  // Native React owns queue rendering, delivery receipts and draft restoration.
+  // This service only supplies token/attachment actions through that boundary.
+  let composerQueueNativeHost = null;
   composerQueuePanel = null;
   let composerQueueLastEntriesSignature = "";
   let composerQueueCurrentEntries = [];
@@ -22512,6 +22487,9 @@
 
   async function recallSingleQueuedMessage(entryIndex, sessionId, signature) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
+    const nativeHost = composerQueueNativeHost;
+    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature
+      || typeof nativeHost.sendCommand !== "function" || typeof nativeHost.restoreRecall !== "function") return;
     if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
@@ -22570,29 +22548,22 @@
         || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
         || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + recallImages.length > 10) return;
 
-      let res;
       let result;
       try {
-        res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "recall_queued_message", token }),
-        });
-        result = await res.json();
+        result = await nativeHost.sendCommand(activeSid, { type: "recall_queued_message", token });
       } catch (networkErr) {
         downloadQueueRecovery(capturedOwner, payload.text, recallImages);
         showToast("召回结果未确认，原图文已导出备份；不会自动重发，请核对队列状态", null, 6000);
         return;
       }
 
-      const resData = result?.data || result;
-      if (!res.ok || result?.success !== true || (resData?.version !== 2 && result?.version !== 2)) {
-        throw new Error(result?.error || "召回失败");
+      if (result?.version !== 2 || result.token !== token || typeof result.text !== "string" || !Array.isArray(result.images)) {
+        throw new Error("召回响应无效，原消息仍已保留");
       }
-
-      if (deliverRecalledQueuePayload(capturedOwner, capturedKeyRef, capturedRoute, payload.text, recallImages)) {
-        showToast(getEffectiveQueueSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
-      }
+      const requestId = result.requestId || (result.recalledPromptRequestIds?.length === 1 ? result.recalledPromptRequestIds[0] : undefined);
+      await nativeHost.restoreRecall({ sessionId: activeSid, targetDraftKey: capturedOwner,
+        entries: [{ requestId, text: result.text, images: result.images }] });
+      showToast(getEffectiveQueueSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
     } catch (error) {
       handleQueueOperationError(activeSid, error.message, "移回编辑");
     } finally {
@@ -22603,6 +22574,9 @@
 
   async function recallAllQueuedMessages(sessionId, signature, entries) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
+    const nativeHost = composerQueueNativeHost;
+    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature
+      || typeof nativeHost.sendCommand !== "function" || typeof nativeHost.restoreRecall !== "function") return;
     if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
@@ -22659,33 +22633,21 @@
         || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
         || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + backupImages.length > 10) return;
 
-      let res;
       let result;
       try {
-        res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "recall_all_queued_messages", tokens: expectedTokens }),
-        });
-        result = await res.json();
+        result = await nativeHost.sendCommand(activeSid, { type: "recall_all_queued_messages", tokens: expectedTokens });
       } catch (netErr) {
         downloadQueueRecovery(capturedOwner, backupText, backupImages);
         showToast("召回结果未确认，原图文已导出备份；不会自动重发，请核对队列状态", null, 6000);
         return;
       }
 
-      const resData = result?.data || result;
-      if (!res.ok || result?.success !== true || (resData?.version !== 2 && result?.version !== 2)) {
-        throw new Error(result?.error || "全部召回失败");
+      if (result?.version !== 2 || !Array.isArray(result.entries) || result.entries.length !== expectedTokens.length
+        || result.entries.some((entry, index) => entry.token !== expectedTokens[index])) {
+        throw new Error("全部召回响应无效，原消息仍已保留");
       }
-
-      const returnedEntries = result.data?.entries || [];
-      const combinedTexts = returnedEntries.map((e) => e.text).filter(Boolean).join("\n\n");
-      const combinedImages = returnedEntries.flatMap((e) => e.images || []);
-
-      if (deliverRecalledQueuePayload(capturedOwner, capturedKeyRef, capturedRoute, combinedTexts, combinedImages)) {
-        showToast(getEffectiveQueueSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
-      }
+      await nativeHost.restoreRecall({ sessionId: activeSid, targetDraftKey: capturedOwner, entries: result.entries });
+      showToast(getEffectiveQueueSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
     } catch (error) {
       handleQueueOperationError(activeSid, error.message, "全部移回");
     } finally {
@@ -22696,6 +22658,8 @@
 
   async function deleteSingleQueuedMessage(entryIndex, sessionId, signature) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
+    const nativeHost = composerQueueNativeHost;
+    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature || typeof nativeHost.sendCommand !== "function") return;
     if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
@@ -22720,14 +22684,8 @@
     publishNativeQueueDetails(activeSid);
 
     try {
-      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "delete_queued_message", token }),
-      });
-      const result = await res.json();
-      const resData = result?.data || result;
-      if (!res.ok || result?.success !== true || (resData?.version !== 2 && result?.version !== 2)) {
+      const result = await nativeHost.sendCommand(activeSid, { type: "delete_queued_message", token });
+      if (result?.version !== 2) {
         throw new Error(result?.error || "删除失败");
       }
 
@@ -22816,12 +22774,13 @@
 
   const handleNativeQueueSnapshot = (event) => {
     const detail = event.detail;
-    if (!detail || !Array.isArray(detail.entries)) return;
+    if (!detail || !Array.isArray(detail.entries) || typeof detail.signature !== "string") return;
+    composerQueueNativeHost = detail;
     const activeSid = getEffectiveQueueSessionId(detail.sessionId);
     if (!activeSid) return;
     composerQueueActionsEnabled = detail.actionsEnabled !== false;
     composerQueuePanel = detail.host;
-    const signature = JSON.stringify([activeSid, detail.entries]);
+    const signature = detail.signature;
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
     composerQueueLastEntriesSignature = signature;
@@ -22862,6 +22821,7 @@
   activeCleanups.push(() => {
     window.removeEventListener("pi:native-queue-snapshot", handleNativeQueueSnapshot);
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
+    composerQueueNativeHost = null;
     removeComposerQueuePanel();
   });
   window.dispatchEvent(new Event("pi:native-queue-ready"));

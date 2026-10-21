@@ -15,11 +15,24 @@ import {
 
 // GET /api/cwd/browse?path=...：列出文件系统中的可读子目录。
 export async function GET(request: NextRequest) {
-  const requested = new URL(request.url).searchParams.get("engine");
+  const url = new URL(request.url);
+  const requested = url.searchParams.get("engine");
   const engine = requested === "pi" || requested === "codex" ? requested : (await readExecutionEngineSettings()).defaultEngine;
   if (engine === "codex") {
-    const projects = await (await import("@/lib/execution-engines/codex-engine")).codexProjects();
-    return Response.json(projectCodexDirectories(projects, request.nextUrl.searchParams.get("path")));
+    const rawPath = url.searchParams.get("path");
+    if (!rawPath || rawPath === "/") {
+      const projects = await (await import("@/lib/execution-engines/codex-engine")).codexProjects();
+      return Response.json(projectCodexDirectories(projects, "/"));
+    }
+    try {
+      const { browseCodexDirectories } = await import("@/lib/execution-engines/codex-workspaces");
+      const result = await browseCodexDirectories(rawPath);
+      return Response.json(result);
+    } catch (error) {
+      const status = typeof (error as { status?: number })?.status === "number" ? (error as { status: number }).status : 500;
+      const message = error instanceof Error ? error.message : String(error);
+      return Response.json({ error: message }, { status });
+    }
   }
   try {
     const requested = request.nextUrl.searchParams.get("path")?.trim();

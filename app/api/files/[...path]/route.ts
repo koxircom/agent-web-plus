@@ -128,7 +128,8 @@ export async function POST(
     const { path: segments } = await params;
     const type = request.nextUrl.searchParams.get("type") ?? "upload";
     const sessionId = request.nextUrl.searchParams.get("sessionId");
-    if (await shouldUseCodexWorkspace(sessionId)) {
+    const requestedEngine = request.nextUrl.searchParams.get("engine") ?? request.nextUrl.searchParams.get("executionEngine");
+    if (await shouldUseCodexWorkspace(sessionId, requestedEngine)) {
       return await handleCodexFilePOST(request, filePathFromApiSegments(segments));
     }
     const uploadDirectory = await getUploadDirectory(segments);
@@ -235,6 +236,9 @@ export async function POST(
       { status: errors.length > 0 ? 207 : 200 },
     );
   } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }
@@ -433,7 +437,8 @@ export async function GET(
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
     }
     const sessionId = request.nextUrl.searchParams.get("sessionId");
-    if (await shouldUseCodexWorkspace(sessionId)) {
+    const requestedEngine = request.nextUrl.searchParams.get("engine") ?? request.nextUrl.searchParams.get("executionEngine");
+    if (await shouldUseCodexWorkspace(sessionId, requestedEngine)) {
       return await handleCodexFileGET(request, type, filePath);
     }
 
@@ -656,6 +661,9 @@ export async function GET(
 
     return NextResponse.json({ entries, path: filePath });
   } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

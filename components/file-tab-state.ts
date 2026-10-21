@@ -7,6 +7,8 @@ interface OpenFileTabInput {
   modeHint?: "diff";
   page?: number;
   sourceSessionId?: string | null;
+  executionEngine?: "pi" | "codex";
+  cwd?: string;
   tabId: string;
 }
 
@@ -18,6 +20,8 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
       label: input.fileName,
       filePath: input.filePath,
       sourceSessionId: input.sourceSessionId,
+      executionEngine: input.executionEngine,
+      cwd: input.cwd,
       initialDisplayMode: input.modeHint,
       page: input.page,
       viewerState: input.modeHint ? {
@@ -30,12 +34,16 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
     }];
   }
 
-  const sourceChanged = Boolean(
-    input.sourceSessionId && existing.sourceSessionId !== input.sourceSessionId,
+  const sourceChanged = input.sourceSessionId !== undefined && existing.sourceSessionId !== input.sourceSessionId;
+  const engineChanged = Boolean(
+    input.executionEngine && existing.executionEngine !== input.executionEngine,
   );
-  const sourceUnchanged = !sourceChanged;
+  const cwdChanged = Boolean(
+    input.cwd && existing.cwd !== input.cwd,
+  );
+  const sourceUnchanged = !sourceChanged && !engineChanged;
   const pageChanged = existing.page !== input.page;
-  if (sourceUnchanged && !input.modeHint && !pageChanged) return tabs;
+  if (sourceUnchanged && !input.modeHint && !pageChanged && !cwdChanged) return tabs;
 
   return tabs.map((tab) => {
     if (tab.id !== input.tabId) return tab;
@@ -43,6 +51,14 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
     let bumpRevision = false;
     if (sourceChanged) {
       next.sourceSessionId = input.sourceSessionId;
+      bumpRevision = true;
+    }
+    if (engineChanged) {
+      next.executionEngine = input.executionEngine;
+      bumpRevision = true;
+    }
+    if (cwdChanged) {
+      next.cwd = input.cwd;
       bumpRevision = true;
     }
     if (pageChanged) {

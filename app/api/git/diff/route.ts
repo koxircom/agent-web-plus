@@ -14,7 +14,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "path must be an absolute path" }, { status: 400 });
     }
 
-    if (await shouldUseCodexWorkspace(request.nextUrl.searchParams.get("sessionId"))) return NextResponse.json(await codexGitDiff(cwd, filePath));
+    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    const requestedEngine = request.nextUrl.searchParams.get("engine") ?? request.nextUrl.searchParams.get("executionEngine");
+    if (await shouldUseCodexWorkspace(sessionId, requestedEngine)) return NextResponse.json(await codexGitDiff(cwd, filePath));
     const allowedRoots = await getAllowedFileRoots();
     if (!isFilePathAllowed(cwd, allowedRoots) || !isFilePathAllowed(filePath, allowedRoots)) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
@@ -28,6 +30,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(await getGitFileDiff(cwd, filePath));
   } catch (error) {
+    if (error instanceof RangeError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
 }

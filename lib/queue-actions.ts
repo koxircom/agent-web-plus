@@ -33,6 +33,7 @@ export interface QueueActionsSnapshot {
 }
 
 export interface QueuedMessageInfo {
+  requestId?: string;
   text: string;
   kind: "steering" | "followUp";
   token: string;

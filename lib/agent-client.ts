@@ -96,12 +96,15 @@ export async function sendAgentCommand<T = unknown>(
   if (requestId) {
     reconcilePromptSubmission(requestId, body.receipt ?? { status: "accepted" });
   }
+  const recalled = (body.data as { recalledPromptRequestIds?: unknown } | undefined)?.recalledPromptRequestIds;
+  const recalledIds = new Set(Array.isArray(recalled) ? recalled.filter((id): id is string => typeof id === "string") : []);
   const cancelled = (body.data as { cancelledPromptRequestIds?: unknown } | undefined)?.cancelledPromptRequestIds;
   if (Array.isArray(cancelled)) for (const id of cancelled) {
-    if (typeof id === "string") releasePromptSubmission(id);
+    // Codex v2 also lists recalls as removed-from-queue. Only a saved draft's
+    // later acknowledgement may retire their retained original.
+    if (typeof id === "string" && !recalledIds.has(id)) releasePromptSubmission(id);
   }
-  const recalled = (body.data as { recalledPromptRequestIds?: unknown } | undefined)?.recalledPromptRequestIds;
-  if (Array.isArray(recalled)) markPromptSubmissionsRecalled(recalled.filter((id): id is string => typeof id === "string"));
+  if (recalledIds.size) markPromptSubmissionsRecalled([...recalledIds]);
   return body.data as T;
   } catch (error) {
     if (requestId) {

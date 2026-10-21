@@ -17,9 +17,16 @@ async function checkCwdAllowed(cwd: string): Promise<NextResponse | null> {
 // GET /api/worktrees?cwd=  →  { projectRoot, projectKey, isGit, isTopLevel, currentWorktreePath, worktrees }
 export async function GET(req: Request) {
   try {
-    const cwd = new URL(req.url).searchParams.get("cwd");
+    const url = new URL(req.url);
+    const cwd = url.searchParams.get("cwd");
+    const engine = url.searchParams.get("engine");
     if (!cwd) {
       return NextResponse.json({ error: "cwd is required" }, { status: 400 });
+    }
+    if (engine === "codex") {
+      const { fetchCodexWorktrees } = await import("@/lib/execution-engines/codex-workspaces");
+      const data = await fetchCodexWorktrees(cwd);
+      return NextResponse.json(data);
     }
     const denied = await checkCwdAllowed(cwd);
     if (denied) return denied;
@@ -56,12 +63,17 @@ export async function GET(req: Request) {
 // POST /api/worktrees  body: { cwd, branch }  →  { path, branch }
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { cwd?: string; branch?: string };
+    const body = await req.json() as { cwd?: string; branch?: string; engine?: string };
     if (!body.cwd || typeof body.cwd !== "string") {
       return NextResponse.json({ error: "cwd is required" }, { status: 400 });
     }
     if (!body.branch || typeof body.branch !== "string") {
       return NextResponse.json({ error: "branch is required" }, { status: 400 });
+    }
+    if (body.engine === "codex") {
+      const { createCodexWorktree } = await import("@/lib/execution-engines/codex-workspaces");
+      const result = await createCodexWorktree(body.cwd, body.branch);
+      return NextResponse.json(result);
     }
     const denied = await checkCwdAllowed(body.cwd);
     if (denied) return denied;
@@ -80,9 +92,12 @@ export async function POST(req: Request) {
 // DELETE /api/worktrees  body: { cwd, path, force? }
 export async function DELETE(req: Request) {
   try {
-    const body = await req.json() as { cwd?: string; path?: string; force?: boolean };
+    const body = await req.json() as { cwd?: string; path?: string; force?: boolean; engine?: string };
     if (!body.cwd || typeof body.cwd !== "string") {
       return NextResponse.json({ error: "cwd is required" }, { status: 400 });
+    }
+    if (body.engine === "codex") {
+      return NextResponse.json({ error: "Codex 执行端不支持通过网页删除工作树，请在 WSL 终端中管理" }, { status: 405 });
     }
     if (!body.path || typeof body.path !== "string") {
       return NextResponse.json({ error: "path is required" }, { status: 400 });

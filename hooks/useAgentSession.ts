@@ -18,7 +18,7 @@ import type {
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { completeActiveToolResult } from "@/lib/tool-public-status";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { handoffUnsubmittedPrompt, acknowledgeRecalledPrompts, isPromptRejectedError, readPromptReceipt, isPromptSubmissionDispatching, sendAgentCommand } from "@/lib/agent-client";
+import { handoffUnsubmittedPrompt, isPromptRejectedError, readPromptReceipt, isPromptSubmissionDispatching, sendAgentCommand } from "@/lib/agent-client";
 import { getPendingPromptSubmissions, markPromptSubmissionsRecalled, reconcilePromptSubmission, mergeServerPromptSubmissions, getServerPendingPromptSubmissions, subscribePendingPromptSubmissions, releasePromptSubmission, type PendingPromptSubmission, type PromptSubmissionPreviewIdentity } from "@/lib/prompt-submissions";
 import {
   clearSessionViewCache,
@@ -80,7 +80,7 @@ import {
   getEnhancementWindow,
   registerSessionReloadAliases,
 } from "@/lib/enhancement-chat-bridge";
-import { recallSessionQueue } from "@/lib/queue-recall-client";
+import { recallSessionQueue, restoreRecalledPrompts, type RecalledPromptRestoration } from "@/lib/queue-recall-client";
 import { pendingSessionInfo } from "@/lib/session-catalog-client";
 import { admitNativeNotification, isNativeNotificationEnabled, NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT } from "@/lib/native-notifications";
 
@@ -429,6 +429,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
   const [newSessionModel, setNewSessionModel] = useState<SelectedModel | null>(null);
   const [newSessionDefaultModel, setNewSessionDefaultModel] = useState<SelectedModel | null>(null);
+  const displayModelSnapshotRef = useRef<{ model: SelectedModel | null; thinkingLevel: ConcreteThinkingLevel | null }>({ model: null, thinkingLevel: null });
+  const pendingNewSessionSettingsPromiseRef = useRef<Promise<unknown> | null>(null);
   const [toolPreset, setToolPreset] = useState<ToolPreset>(CONFIGURED_TOOL_PRESET);
   const [newSessionThinkingLevel, setNewSessionThinkingLevel] = useState<ConcreteThinkingLevel | null>(null);
   const [newSessionDefaultThinkingLevel, setNewSessionDefaultThinkingLevel] = useState<ConcreteThinkingLevel | null>(null);
@@ -438,7 +440,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
   const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
-  const [currentModelOverride, setCurrentModelOverride] = useState<{ provider: string; modelId: string } | null>(null);
+  const [currentModelOverride, setCurrentModelOverride] = useState<{ sid: string; provider: string; modelId: string } | null>(null);
+  const currentModelOverrideRef = useRef(currentModelOverride);
+  currentModelOverrideRef.current = currentModelOverride;
+  const modelSwitchGenerationRef = useRef(0);
   const [liveModel, setLiveModel] = useState<{ provider: string; modelId: string } | null>(null);
   const [pendingModel, setPendingModel] = useState<{ provider: string; modelId: string } | null>(null);
   const [modelSwitching, setModelSwitching] = useState(false);
@@ -618,7 +623,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     previousScrollTopRef.current = container.scrollTop;
   }, []);
 
-  const currentModel = currentModelOverride ?? liveModel ?? data?.context.model ?? pendingModel ?? null;
+  const activeModelOverride = (currentModelOverride && currentModelOverride.sid === (session?.id ?? sessionIdRef.current))
+    ? { provider: currentModelOverride.provider, modelId: currentModelOverride.modelId }
+    : null;
+  const currentModel = activeModelOverride ?? liveModel ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew
     ? (newSessionModel ?? newSessionDefaultModel)
     : currentModel ?? (data?.context.messages.length === 0 ? newSessionDefaultModel : null);
@@ -633,16 +641,43 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     : currentThinkingLevel ?? (data?.context.messages.length === 0 ? newSessionDefaultThinkingLevel : null);
   const displayThinkingLevel = clampModelThinkingLevel(requestedDisplayThinkingLevel, displayModel
     ? modelThinkingLevels[`${displayModel.provider}:${displayModel.modelId}`] : null);
+  displayModelSnapshotRef.current = {
+    model: displayModel,
+    thinkingLevel: displayThinkingLevel,
+  };
   const composerDraftKey = session?.id ?? newSessionDraftKey ?? undefined;
 
-  const syncLiveModel = useCallback((state?: AgentStateResponse) => {
-    setLiveModel(state?.model
-      ? { provider: state.model.provider, modelId: state.model.id }
-      : null);
+  const syncLiveModel = useCallback((state?: AgentStateResponse, stateSid?: string) => {
+    const sid = stateSid ?? sessionIdRef.current;
+    if (executionEngine !== "codex") {
+      setLiveModel(state?.model
+        ? { provider: state.model.provider, modelId: state.model.id }
+        : null);
+      if (state?.thinkingLevel !== undefined) {
+        setLiveThinkingLevel(asConcreteThinkingLevel(state.thinkingLevel));
+      }
+      return;
+    }
+
+    if (state?.model) {
+      const override = currentModelOverrideRef.current;
+      const isCurrentSessionPending = override && override.sid === sid && modelSwitchPendingRef.current;
+      if (isCurrentSessionPending) {
+        // 当前会话已有模型写入请求在途（尚未回执），旧 read 绝不覆盖 liveModel，更不能提前清空 override
+      } else {
+        setLiveModel({ provider: state.model.provider, modelId: state.model.id });
+        if (override && override.sid === sid && !modelSwitchPendingRef.current) {
+          // 写已结束或回执已完成，权威读取到达后清除 override，允许后续外部更改正常可见
+          setCurrentModelOverride(null);
+        }
+      }
+    } else {
+      setLiveModel(null);
+    }
     if (state?.thinkingLevel !== undefined) {
       setLiveThinkingLevel(asConcreteThinkingLevel(state.thinkingLevel));
     }
-  }, []);
+  }, [executionEngine]);
 
   const resolveComposerDraftKey = useCallback((key: string | undefined) => {
     if (!key) return undefined;
@@ -821,7 +856,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // Apply even on unchanged: a remounted view must restore the session's tool preset.
       sessionToolsPinnedRef.current = d.toolNames !== undefined;
       setToolPresetState(d.toolNames !== undefined ? getPresetFromToolNames(d.toolNames) : CONFIGURED_TOOL_PRESET);
-      setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
+      const activeOverride = currentModelOverrideRef.current;
+      if (activeOverride && activeOverride.sid === sid) {
+        const canonicalMatches = d.context.model && d.context.model.provider === activeOverride.provider && d.context.model.modelId === activeOverride.modelId;
+        if (canonicalMatches && !modelSwitchPendingRef.current) {
+          setCurrentModelOverride(null);
+        }
+      } else {
+        setCurrentModelOverride((current) => modelSwitchPendingRef.current ? current : null);
+      }
       setCurrentThinkingOverride(null); setError(null);
       if (syncEnabled && d.treeFormat === "summary") {
         setSessionViewSnapshot({ sessionId: sid, queuePreview: queuedMessagesRef.current, revision: d.snapshotRevision ?? null, livePreview: !d.snapshotRevision, ...(!d.snapshotRevision ? { data: d } : {}), messages: d.context.messages,
@@ -836,7 +879,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         eventConnectionRef.current?.close();
         eventConnectionRef.current?.maintain(sid);
       }
-      if (!includeState && d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
+      if (!includeState && d.context.thinkingLevel) {
         setLiveThinkingLevel(asConcreteThinkingLevel(d.context.thinkingLevel));
       }
 
@@ -855,7 +898,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           || agentStateRevisionRef.current !== stateRevision) return null;
 
         const liveState = agentState.state;
-        syncLiveModel(liveState);
+        syncLiveModel(liveState, sid);
         if (liveState) {
           if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
@@ -1048,10 +1091,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
 
     const promise = (async () => {
-      // Only send explicit user overrides. The server resolves the current
-      // enabledModels scope atomically with AgentSession construction.
-      const selectedModel = newSessionModelOverrideRef.current;
-      const selectedThinkingLevel = thinkingLevelOverrideRef.current;
+      // Only send explicit user overrides for Pi. For Codex, capture the currently displayed
+      // default model/thinking when no explicit override was selected.
+      const isCodex = executionEngine === "codex";
+      const explicitModel = newSessionModelOverrideRef.current;
+      const explicitThinkingLevel = thinkingLevelOverrideRef.current;
+      const snapshot = displayModelSnapshotRef.current;
+
+      const selectedModel = explicitModel ?? (isCodex ? snapshot.model : null);
+      const selectedThinkingLevel = explicitThinkingLevel ?? (isCodex ? snapshot.thinkingLevel : null);
+
       if (selectedModel) setPendingModel(selectedModel);
       // Undefined means the user never overrode the loadout: omit the field entirely
       // so pi resolves settings.json defaultTools instead of being pinned to ours (#700).
@@ -1083,21 +1132,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         throw new Error("新会话返回的 Agent 不一致，已保留输入，请刷新后重试");
       }
       sessionIdRef.current = realId;
-      if (result.model && newSessionModelOverrideRef.current === selectedModel) {
+      if (result.model && newSessionModelOverrideRef.current === explicitModel) {
         setPendingModel(result.model);
-        if (!selectedModel) setNewSessionDefaultModel(result.model);
+        if (!explicitModel) {
+          setNewSessionDefaultModel(result.model);
+        }
       }
       if (
         result.thinkingLevel
-        && thinkingLevelOverrideRef.current === selectedThinkingLevel
+        && thinkingLevelOverrideRef.current === explicitThinkingLevel
       ) {
         setLiveThinkingLevel(asConcreteThinkingLevel(result.thinkingLevel));
-        if (selectedThinkingLevel) {
+        if (explicitThinkingLevel) {
           const effective = asConcreteThinkingLevel(result.thinkingLevel);
           thinkingLevelOverrideRef.current = effective;
           setNewSessionThinkingLevel(effective);
         } else {
-          setNewSessionDefaultThinkingLevel(asConcreteThinkingLevel(result.thinkingLevel));
+          const effective = asConcreteThinkingLevel(result.thinkingLevel);
+          setNewSessionDefaultThinkingLevel(effective);
         }
       }
       return realId;
@@ -1110,6 +1162,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ensuringNewSessionRef.current = null;
     }
   }, [isNew, newSessionCwd, toolPreset, executionEngine]);
+
+  // Only settings selected while a Codex draft is being created belong to this
+  // admission barrier. Keep a rejection until the draft is remounted: a failed
+  // native confirmation must never silently release the waiting first prompt.
+  const updateNewCodexSettings = useCallback((command: Parameters<typeof sendAgentCommand>[1]) => {
+    if (!sessionIdRef.current && !ensuringNewSessionRef.current) return Promise.resolve(null);
+    const previous = pendingNewSessionSettingsPromiseRef.current ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
+      if (!sid) throw new Error("新会话尚未确认，已保留输入");
+      return sendAgentCommand(sid, command);
+    });
+    pendingNewSessionSettingsPromiseRef.current = next;
+    return next;
+  }, []);
 
   // Opening the System or Tools panel may initialize an otherwise dormant
   // session. This is deliberately a non-prompt command: it creates no message
@@ -2145,7 +2212,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
     try {
       if (isNew && newSessionCwd) {
-        const selectedModel = newSessionModel;
+        const selectedModel = newSessionModelOverrideRef.current;
         const existingSid = sessionIdRef.current ?? await prepare(ensuringNewSessionRef.current ?? Promise.resolve(null));
         const sid = existingSid ?? await prepare(ensureNewSession());
 
@@ -2153,7 +2220,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         sentSessionId = sid;
         if (optimisticUserMessageRef.current?.message === userMsg) optimisticUserMessageRef.current.sessionId = sid;
         if (sourceDraftKey) onSessionSubmissionChange?.(sourceDraftKey, pendingSessionInfo(sourceDraftKey, newSessionCwd, sid, message));
-        if (selectedModel) {
+
+        if (executionEngine === "codex") {
+          let settings;
+          do {
+            settings = pendingNewSessionSettingsPromiseRef.current;
+            if (settings) await prepare(settings);
+          } while (settings !== pendingNewSessionSettingsPromiseRef.current);
+        }
+
+        if (selectedModel && executionEngine !== "codex") {
           setPendingModel(selectedModel);
           if (existingSid) {
             await prepare(sendAgentCommand(sid, { type: "set_model", provider: selectedModel.provider, modelId: selectedModel.modelId }));
@@ -2250,7 +2326,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (preparationRef.current === preparation) preparationRef.current = null;
     }
-  }, [isNew, newSessionCwd, newSessionDraftKey, newSessionModel, session, ensureNewSession, maintainEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission, onSessionSubmissionChange, loadSession]);
+  }, [isNew, newSessionCwd, newSessionDraftKey, newSessionModel, session, executionEngine, ensureNewSession, maintainEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission, onSessionSubmissionChange, loadSession]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -2383,37 +2459,51 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       if (thinkingLevelOverrideRef.current === null) {
         const pinned = thinkingLevelPinsRef.current[`${provider}/${modelId}`];
-        setNewSessionDefaultThinkingLevel(
-          clampModelThinkingLevel(asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current, supported),
-        );
+        const nextThinking = clampModelThinkingLevel(asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current, supported);
+        setNewSessionDefaultThinkingLevel(nextThinking);
       }
-      const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
-      if (!sid) return;
       try {
-        await sendAgentCommand(sid, { type: "set_model", provider, modelId });
+        if (executionEngine === "codex") {
+          await updateNewCodexSettings({ type: "set_model", provider, modelId });
+        } else {
+          const sid = sessionIdRef.current ?? await ensuringNewSessionRef.current;
+          if (sid) await sendAgentCommand(sid, { type: "set_model", provider, modelId });
+        }
       } catch (e) {
         console.error("Failed to set model:", e);
+        addNotice({ type: "error", message: `切换模型未确认，输入已保留：${e instanceof Error ? e.message : String(e)}`, error: e });
       }
       return;
     }
     const sid = sessionIdRef.current;
     if (!sid || modelSwitchPendingRef.current) return;
-    const target = { provider, modelId };
-    const previousOverride = currentModelOverride;
+    const target = { sid, provider, modelId };
+    const previousOverride = currentModelOverrideRef.current;
+    const switchGen = ++modelSwitchGenerationRef.current;
+    if (executionEngine === "codex") agentStateRevisionRef.current++;
     modelSwitchPendingRef.current = true;
     setCurrentModelOverride(target);
     setModelSwitching(true);
     try {
       const selected = await sendAgentCommand<{ provider: string; id: string }>(sid, { type: "set_model", provider, modelId });
-      setLiveModel({ provider: selected.provider, modelId: selected.id });
+      if (executionEngine === "codex") agentStateRevisionRef.current++;
+      if (sessionHookMountedRef.current && sessionIdRef.current === sid && switchGen >= modelSwitchGenerationRef.current) {
+        setLiveModel({ provider: selected.provider, modelId: selected.id });
+      }
       // Pi persists model_change synchronously. Reload the canonical session so
       // the model, thinking level, and active leaf all advance together.
       modelSwitchPendingRef.current = false;
       await loadSession(sid);
+      if (sessionHookMountedRef.current && sessionIdRef.current === sid && switchGen >= modelSwitchGenerationRef.current) {
+        setCurrentModelOverride(null);
+      }
     } catch (e) {
       console.error("Failed to set model:", e);
+      if (executionEngine === "codex") agentStateRevisionRef.current++;
       modelSwitchPendingRef.current = false;
-      setCurrentModelOverride(previousOverride);
+      if (sessionHookMountedRef.current && sessionIdRef.current === sid && switchGen >= modelSwitchGenerationRef.current) {
+        setCurrentModelOverride(null);
+      }
       addNotice({
         type: "error",
         message: `切换模型失败：${e instanceof Error ? e.message : String(e)}`,
@@ -2423,10 +2513,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // dropped connection), so let the session file settle the displayed model.
       await loadSession(sid, false, true);
     } finally {
-      modelSwitchPendingRef.current = false;
-      setModelSwitching(false);
+      if (switchGen >= modelSwitchGenerationRef.current) {
+        modelSwitchPendingRef.current = false;
+        setModelSwitching(false);
+      }
     }
-  }, [addNotice, currentModelOverride, isNew, loadSession, modelThinkingLevels, setNewSessionModel]);
+  }, [addNotice, currentModelOverride, executionEngine, isNew, loadSession, modelThinkingLevels, setNewSessionModel, updateNewCodexSettings]);
 
   const handleCompact = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -2505,9 +2597,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // Like pi, apply it to the model a new session starts with.
       const pinned = displayDefaultModel && d.thinkingLevelPins?.[`${displayDefaultModel.provider}/${displayDefaultModel.id}`];
       if (thinkingLevelOverrideRef.current === null) {
-        setNewSessionDefaultThinkingLevel(
-          asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current,
-        );
+        const nextDefaultThinking = asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current;
+        setNewSessionDefaultThinkingLevel(nextDefaultThinking);
       }
     }
   }, [executionEngine, isNew, newSessionCwd, session?.cwd, session?.id]);
@@ -2691,10 +2782,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, composerDraftKey, restoreSubmission, maintainEventsConnected]);
 
-  // A disabled/full draft cache keeps the server original. Do not prepend it
-  // again on every receipt poll in this mounted composer. On refresh the new
-  // composer can restore it again from the still-durable server record.
-  const restoredRecallsRef = useRef(new Set<string>());
+  // Queue editing and receipt recovery share the tab-local native owner,
+  // including late replies across A -> B -> A. No hook-local competing claim.
+  const handleRestoreRecall = useCallback((payload: RecalledPromptRestoration) =>
+    restoreRecalledPrompts(payload, restoreSubmission), [restoreSubmission]);
   const confirmPendingSubmission = useCallback(async (row: PendingPromptSubmission, recoverRecall = true) => {
     try {
       const receipt = await readPromptReceipt(row.sessionId, row.requestId);
@@ -2713,15 +2804,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // Automatic recovery restores the original, then acknowledges only a
         // persisted draft. Repeated receipt reads cannot duplicate the draft.
         if (recoverRecall) {
-          const restoreKey = JSON.stringify([row.sessionId, row.requestId]);
-          if (!current.recallRestored && !restoredRecallsRef.current.has(restoreKey)) {
-            restoreSubmission(row.message, row.images, row.sessionId);
-            restoredRecallsRef.current.add(restoreKey);
-            if (receipt.reason === "runtime_exit" && sessionIdRef.current === row.sessionId) {
-              addNotice({ type: "info", message: "运行进程已退出，排队消息原文和附件已恢复到本会话草稿，未重新发送。" });
-            }
+          const restored = await handleRestoreRecall({ sessionId: row.sessionId, targetDraftKey: row.sessionId,
+            entries: [{ requestId: row.requestId, text: row.message, images: row.images }] });
+          if (restored && receipt.reason === "runtime_exit" && sessionIdRef.current === row.sessionId) {
+            addNotice({ type: "info", message: "运行进程已退出，排队消息原文和附件已恢复到本会话草稿，未重新发送。" });
           }
-          await acknowledgeRecalledPrompts(row.sessionId, [row.requestId]);
         }
       } else if (receipt.status === "cancelled") {
         // Delete or an acknowledged recall already owns removal. Do not
@@ -2744,7 +2831,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         addNotice({ type: "error", message: `消息未被接收，已退回输入框：${error.message}` });
       }
     }
-  }, [addNotice, loadSession, maintainEventsConnected, promoteNewSession, reconcileAgentState, restoreSubmission, isNew, newSessionDraftKey, onSessionSubmissionChange]);
+  }, [addNotice, handleRestoreRecall, loadSession, maintainEventsConnected, promoteNewSession, reconcileAgentState, restoreSubmission, isNew, newSessionDraftKey, onSessionSubmissionChange]);
 
   // Metadata/UI callbacks may change each render. Keep the existing recovery
   // clock stable while using the latest owner when a receipt check runs.
@@ -2809,6 +2896,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       targetDraftKey,
       sendCommand: sendAgentCommand,
       restoreSubmission,
+      restoreRecall: handleRestoreRecall,
       isSameSession: (originSid) => sessionHookMountedRef.current && sessionIdRef.current === originSid,
       clearQueuedMessagesUi: () => setQueuedMessages({ steering: [], followUp: [] }),
       onError: (message, e) => {
@@ -2816,7 +2904,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         addNotice({ type: "error", message, error: e });
       },
     });
-  }, [addNotice, composerDraftKey, restoreSubmission]);
+  }, [addNotice, composerDraftKey, handleRestoreRecall, restoreSubmission]);
 
   const handleThinkingLevelChange = useCallback(async (requested: ThinkingLevelOption) => {
     const level = requested === "auto" ? "auto" : clampModelThinkingLevel(requested, displayModel
@@ -2830,6 +2918,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (isNew) {
       thinkingLevelOverrideRef.current = level;
       setNewSessionThinkingLevel(level);
+      if (executionEngine === "codex") {
+        try {
+          const result = await updateNewCodexSettings({ type: "set_thinking_level", level }) as { thinkingLevel?: string } | null;
+          if (result && sessionHookMountedRef.current) {
+            setLiveThinkingLevel(asConcreteThinkingLevel(result.thinkingLevel) ?? level);
+          }
+        } catch (e) {
+          console.error("Failed to set thinking level:", e);
+          addNotice({ type: "error", message: `设置思考深度未确认，输入已保留：${e instanceof Error ? e.message : String(e)}`, error: e });
+        }
+        return;
+      }
     } else {
       setCurrentThinkingOverride(level);
     }
@@ -2846,7 +2946,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setCurrentThinkingOverride(null);
       addNotice({ type: "error", message: `设置思考深度失败：${e instanceof Error ? e.message : String(e)}` });
     }
-  }, [addNotice, displayModel, isNew, modelThinkingLevels]);
+  }, [addNotice, displayModel, executionEngine, isNew, modelThinkingLevels, updateNewCodexSettings]);
 
   const handleToolPresetChange = useCallback(async (preset: ToolPreset) => {
     const toolNames = getToolNamesForPreset(preset);
@@ -3309,7 +3409,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue,
+    handleRecallQueue, handleRestoreRecall,
     handleBuiltinSlashCommand,
     setNoticePaused: setPausedNoticeId, dismissNotice,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,

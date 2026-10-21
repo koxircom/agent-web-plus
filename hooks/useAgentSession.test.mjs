@@ -376,8 +376,9 @@ test("an empty persisted session displays the model it will use on first send", 
 
 test("the selector prefers the live wrapper model over persisted response metadata", () => {
   assert.match(source, /model\?: \{ provider: string; id: string \}/);
-  assert.match(source, /const currentModel = currentModelOverride \?\? liveModel \?\? data\?\.context\.model \?\? pendingModel \?\? null/);
-  assert.match(source, /syncLiveModel\(liveState\)/);
+  assert.match(source, /const currentModel = activeModelOverride \?\? liveModel \?\? data\?\.context\.model \?\? pendingModel \?\? null/);
+  assert.match(source, /currentModelOverride\.sid === \(session\?\.id \?\? sessionIdRef\.current\)/);
+  assert.match(source, /syncLiveModel\(liveState, sid\)/);
   assert.match(source, /syncLiveModel\(state\);[\s\S]*?const busy = data\.running/);
 });
 
@@ -870,7 +871,7 @@ test("keeps live following cancellable when the user scrolls away from the tail"
   );
   const scrollToBottomSource = source.slice(
     source.indexOf("const scrollToBottom"),
-    source.indexOf("const currentModel"),
+    source.indexOf("const activeModelOverride"),
   );
 
   assert.match(source, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
@@ -1229,3 +1230,102 @@ test('queue snapshots invalidate state reads started before their SSE revision',
  scope.handleAgentEvent({type:'message_end',entryId:'e',requestId:'r',message:{role:'user',content:'same'},queuedMessages:{steering:[],followUp:[]}});
  assert.equal(scope.agentStateRevisionRef.current,before+2);
 });
+
+test("Codex ensureNewSession captures displayed default model/thinking while Pi keeps explicit-only override", async () => {
+  const ensureDecl = findNode(hookFile, node => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === "ensureNewSession");
+
+  // Case A: Codex engine without explicit overrides sends captured display default
+  {
+    let postedBody = null;
+    const scope = {
+      sessionIdRef: ref(null),
+      isNew: true,
+      newSessionCwd: "/workspace/codex",
+      ensuringNewSessionRef: ref(null),
+      executionEngine: "codex",
+      newSessionModelOverrideRef: ref(null),
+      thinkingLevelOverrideRef: ref(null),
+      newSessionModel: null,
+      displayModelSnapshotRef: ref({ model: { provider: "codex", modelId: "gpt-6.1-sol" }, thinkingLevel: "high" }),
+      newSessionDefaultModel: { provider: "codex", modelId: "gpt-6.1-sol" },
+      newSessionThinkingLevel: null,
+      newSessionDefaultThinkingLevelRef: ref("high"),
+      newSessionDefaultThinkingLevel: "high",
+      toolPreset: "full",
+      sessionToolsPinnedRef: ref(false),
+      getToolNamesForPreset: () => undefined,
+      setPendingModel: () => {},
+      fetch: async (url, opts) => {
+        postedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          json: async () => ({
+            sessionId: "codex:01a15b90-6267-7423-8c2d-9e077c62aa6c",
+            model: { provider: "codex", modelId: "gpt-6.1-sol" },
+            thinkingLevel: "high"
+          })
+        };
+      },
+      resolveExecutionEngine: () => "codex",
+      setNewSessionDefaultModel: () => {},
+      setLiveThinkingLevel: () => {},
+      asConcreteThinkingLevel: v => v,
+      setNewSessionDefaultThinkingLevel: () => {},
+      setNewSessionThinkingLevel: () => {}
+    };
+    const ensure = evaluate(ensureDecl.initializer.arguments[0], hookFile, scope);
+    const sid = await ensure();
+    assert.equal(sid, "codex:01a15b90-6267-7423-8c2d-9e077c62aa6c");
+    assert.equal(postedBody.engine, "codex");
+    assert.equal(postedBody.provider, "codex");
+    assert.equal(postedBody.modelId, "gpt-6.1-sol", "Codex 路径必须捕获并发送显示的默认模型 6.1");
+    assert.equal(postedBody.thinkingLevel, "high", "Codex 路径必须捕获并发送显示的默认 thinkingLevel");
+  }
+
+  // Case B: Pi engine without explicit override must NOT send implicit model/thinking
+  {
+    let postedBody = null;
+    const scope = {
+      sessionIdRef: ref(null),
+      isNew: true,
+      newSessionCwd: "/workspace/pi",
+      ensuringNewSessionRef: ref(null),
+      executionEngine: "pi",
+      newSessionModelOverrideRef: ref(null),
+      thinkingLevelOverrideRef: ref(null),
+      newSessionModel: null,
+      displayModelSnapshotRef: ref({ model: { provider: "openai", modelId: "gpt-4o" }, thinkingLevel: "high" }),
+      newSessionDefaultModel: { provider: "openai", modelId: "gpt-4o" },
+      newSessionThinkingLevel: null,
+      newSessionDefaultThinkingLevelRef: ref("high"),
+      newSessionDefaultThinkingLevel: "high",
+      toolPreset: "full",
+      sessionToolsPinnedRef: ref(false),
+      getToolNamesForPreset: () => undefined,
+      setPendingModel: () => {},
+      fetch: async (url, opts) => {
+        postedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          json: async () => ({
+            sessionId: "pi-session-12345",
+          })
+        };
+      },
+      resolveExecutionEngine: () => "pi",
+      setNewSessionDefaultModel: () => {},
+      setLiveThinkingLevel: () => {},
+      asConcreteThinkingLevel: v => v,
+      setNewSessionDefaultThinkingLevel: () => {},
+      setNewSessionThinkingLevel: () => {}
+    };
+    const ensure = evaluate(ensureDecl.initializer.arguments[0], hookFile, scope);
+    const sid = await ensure();
+    assert.equal(sid, "pi-session-12345");
+    assert.equal(postedBody.engine, "pi");
+    assert.equal(postedBody.provider, undefined, "Pi 路径新建会话不得发送 implicit 默认模型");
+    assert.equal(postedBody.modelId, undefined, "Pi 路径新建会话不得发送 implicit 默认模型");
+    assert.equal(postedBody.thinkingLevel, undefined, "Pi 路径新建会话不得发送 implicit thinking");
+  }
+});
+

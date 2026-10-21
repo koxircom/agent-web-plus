@@ -578,6 +578,16 @@ export class AgentSessionWrapper {
     try { result = action(); }
     finally { this.mutatingPromptQueue = false; }
     const remaining = new Set([...queues.steeringQueue.messages, ...queues.followUpQueue.messages]);
+    const removedIds = before.filter(message => !remaining.has(message)).map(message => this.promptReceiptMessages.get(message));
+    if (recalling) {
+      if ("entries" in result && Array.isArray(result.entries)) {
+        result = { ...result, entries: result.entries.map((entry, index) => ({ ...entry,
+          ...(removedIds[index] ? { requestId: removedIds[index] } : {}),
+        })) };
+      } else if (removedIds.length === 1 && removedIds[0]) {
+        result = { ...result, requestId: removedIds[0] };
+      }
+    }
     const cancelledPromptRequestIds: string[] = [];
     const recalledPromptRequestIds: string[] = [];
     for (const message of before) {
@@ -603,7 +613,10 @@ export class AgentSessionWrapper {
         // synchronous mutation, retaining dequeued objects until message_end.
         if (!this.mutatingPromptQueue && !this.queueUpdateScheduled) {
           this.queueUpdateScheduled = true;
-          queueMicrotask(() => {
+          // SDK queue notifications precede the prompt's preflight identity
+          // binding. Use the existing admission transaction, not a new queue,
+          // so viewers never receive an unbound copy of the same submission.
+          void this.promptAdmissionTail.then(() => {
             this.queueUpdateScheduled = false;
             if (this.isAlive()) this.publishQueueUpdate();
           });
@@ -1151,6 +1164,9 @@ export class AgentSessionWrapper {
                 if (added.length === 1) {
                   this.promptReceiptMessages.set(added[0], requestId);
                   this.queuedDeliveries.set(added[0], queues.steeringQueue?.messages.includes(added[0]) ? "steering" : "followUp");
+                  // The SDK's earlier queue_update precedes this identity binding.
+                  // Publish the identified snapshot before acknowledging admission.
+                  this.publishQueueUpdate();
                 }
               } else {
                 // Extension commands can intentionally produce no user bubble.

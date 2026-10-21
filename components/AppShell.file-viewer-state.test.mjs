@@ -33,7 +33,7 @@ test("closing the file panel pauses the active viewer watcher", () => {
 test("markdown preview links forward a PDF page fragment to the viewer", () => {
   const block = fileContentBlock();
   assert.match(block, /onOpenFile=\{\(filePath, page\) => handleOpenFile\(/);
-  assert.match(block, /\{ sourceSessionId: activeFileTab\.sourceSessionId, page \}/);
+  assert.match(block, /sourceSessionId: activeFileTab\.sourceSessionId,[\s\S]*?executionEngine: activeFileTab\.executionEngine,[\s\S]*?cwd: activeFileTab\.cwd,[\s\S]*?page,/);
 });
 
 test("remote Codex file viewers cannot start local watchers",()=>{assert.match(source,/const piExecutionReady = executionEngineReady && activeExecutionEngine === "pi"/);});

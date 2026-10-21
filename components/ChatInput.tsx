@@ -42,6 +42,7 @@ import type { PendingPromptSubmission, PromptSubmissionPreviewIdentity } from "@
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
 import { ThinkingSelector } from "./ThinkingSelector";
 import { ComposerQueue, ComposerQueueIcon } from "./ComposerQueue";
+import type { RecalledPromptRestoration } from "@/lib/queue-recall-client";
 import { isSuggestionDoubleTap, type InlineSuggestion, type SuggestionTap } from "@/lib/inline-suggestion";
 
 export { filterModelOptions } from "./ModelSelector";
@@ -98,6 +99,7 @@ interface Props {
   retainedSubmissions?: PendingPromptSubmission[];
   deliveredRequestIds?: readonly string[];
   onRecallQueue?: () => void;
+  onRestoreRecall?: (payload: RecalledPromptRestoration) => Promise<boolean>;
   onQueuePreviewChange?: (identity: PromptSubmissionPreviewIdentity | null) => void;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
@@ -817,7 +819,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, isStreaming, executionEngine = "pi", model, isAutoModelSelection, modelNames, modelList, modelError, modelsLoading, onModelChange, modelSwitching,
   compactError, compactResult, inlineSuggestion, hasConversation = false,
   thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, queueSyncStatus = "ready", inputHistory = [], retainedSubmissions = [], deliveredRequestIds = [], onRecallQueue, onQueuePreviewChange,
+  retryInfo, queuedMessages, queueSyncStatus = "ready", inputHistory = [], retainedSubmissions = [], deliveredRequestIds = [], onRecallQueue, onRestoreRecall, onQueuePreviewChange,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
  onAudioUnlock,
@@ -853,9 +855,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [historyActiveIndex, setHistoryActiveIndex] = useState(0);
   const [builtinCommandPending, setBuiltinCommandPending] = useState(false);
   const builtinCommandPendingRef = useRef(false);
-  const [fileIndex, setFileIndex] = useState<{ cwd: string; entries: FileIndexEntry[]; truncated: boolean } | null>(null);
+  const [fileIndex, setFileIndex] = useState<{ cwd: string; executionEngine: "pi" | "codex"; entries: FileIndexEntry[]; truncated: boolean } | null>(null);
   const [fileIndexLoading, setFileIndexLoading] = useState(false);
-  const [atServerResult, setAtServerResult] = useState<{ cwd: string; query: string; matches: FileIndexEntry[] } | null>(null);
+  const [atServerResult, setAtServerResult] = useState<{ cwd: string; executionEngine: "pi" | "codex"; query: string; matches: FileIndexEntry[] } | null>(null);
   const [skillDormancyState, setSkillDormancyState] = useState<{
     cwd: string;
     values: Record<string, boolean>;
@@ -875,8 +877,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const atMenuRef = useRef<HTMLDivElement>(null);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const historyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const fileIndexMetaRef = useRef<{ cwd: string; fetchedAt: number } | null>(null);
-  const fileIndexFetchingRef = useRef<string | null>(null);
+  const fileIndexMetaRef = useRef<{ cwd: string; executionEngine: "pi" | "codex"; fetchedAt: number } | null>(null);
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
@@ -1371,38 +1372,42 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const atQueryText = atQuery?.query ?? null;
   const atLocalMatches: FileIndexEntry[] = React.useMemo(() => (
-    atQueryText !== null && fileIndex && fileIndex.cwd === cwd
+    atQueryText !== null && fileIndex && fileIndex.cwd === cwd && fileIndex.executionEngine === executionEngine
       ? filterFileEntries(fileIndex.entries, atQueryText)
       : []
-  ), [atQueryText, fileIndex, cwd]);
+  ), [atQueryText, executionEngine, fileIndex, cwd]);
 
   // When the client index is truncated (repo larger than the index cap),
   // local filtering cannot see deep files, so queries are also ranked
   // server-side against the full listing. Local matches render immediately
   // and are replaced when the (debounced) server result for the current
   // query arrives; stale responses are ignored via the query/cwd tag.
-  const needsServerSearch = Boolean(atQueryText && fileIndex?.truncated && fileIndex.cwd === cwd);
+  const needsServerSearch = Boolean(atQueryText && fileIndex?.truncated && fileIndex.cwd === cwd && fileIndex.executionEngine === executionEngine);
   useEffect(() => {
     if (!needsServerSearch || !cwd || !atQueryText) return;
     const fetchCwd = cwd;
     const query = atQueryText;
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&q=${encodeURIComponent(query)}`)
+      fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&engine=${executionEngine}&q=${encodeURIComponent(query)}`, { signal: controller.signal })
         .then((res) => {
           if (!res.ok) throw new Error(`file search failed: ${res.status}`);
           return res.json() as Promise<{ matches?: FileIndexEntry[] }>;
         })
-        .then((data) => setAtServerResult({ cwd: fetchCwd, query, matches: data.matches ?? [] }))
+        .then((data) => {
+          if (!controller.signal.aborted) setAtServerResult({ cwd: fetchCwd, executionEngine, query, matches: data.matches ?? [] });
+        })
         .catch(() => {
           // Keep showing local matches; the next keystroke retries.
         });
     }, 150);
-    return () => clearTimeout(timer);
-  }, [needsServerSearch, atQueryText, cwd]);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [needsServerSearch, atQueryText, cwd, executionEngine]);
 
   const serverResultInUse = needsServerSearch
     && atServerResult !== null
     && atServerResult.cwd === cwd
+    && atServerResult.executionEngine === executionEngine
     && atServerResult.query === atQueryText;
   const atMatches: FileIndexEntry[] = serverResultInUse ? atServerResult.matches : atLocalMatches;
 
@@ -1423,31 +1428,34 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // ~10s, so re-opening refreshes cheaply; while typing nothing refetches.
   const atTokenActive = atQuery !== null;
   useEffect(() => {
-    if (!atTokenActive || !cwd) return;
+    if (!atTokenActive || !cwd) { setFileIndexLoading(false); return; }
     const meta = fileIndexMetaRef.current;
-    if (meta && meta.cwd === cwd && Date.now() - meta.fetchedAt < 10_000) return;
-    if (fileIndexFetchingRef.current === cwd) return;
-    fileIndexFetchingRef.current = cwd;
+    if (meta && meta.cwd === cwd && meta.executionEngine === executionEngine && Date.now() - meta.fetchedAt < 10_000) {
+      setFileIndexLoading(false);
+      return;
+    }
+    const controller = new AbortController();
     const fetchCwd = cwd;
     setFileIndexLoading(true);
-    fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}`)
+    fetch(`/api/file-index?cwd=${encodeURIComponent(fetchCwd)}&engine=${executionEngine}`, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`file index failed: ${res.status}`);
         return res.json() as Promise<{ files?: string[]; truncated?: boolean }>;
       })
       .then((data) => {
-        setFileIndex({ cwd: fetchCwd, entries: buildEntriesFromFiles(data.files ?? []), truncated: !!data.truncated });
-        fileIndexMetaRef.current = { cwd: fetchCwd, fetchedAt: Date.now() };
+        if (controller.signal.aborted) return;
+        setFileIndex({ cwd: fetchCwd, executionEngine, entries: buildEntriesFromFiles(data.files ?? []), truncated: !!data.truncated });
+        fileIndexMetaRef.current = { cwd: fetchCwd, executionEngine, fetchedAt: Date.now() };
       })
       .catch(() => {
-        // Leave any previous index in place; next open retries.
-        fileIndexMetaRef.current = null;
+        // Leave the scoped index in place; next open retries.
+        if (!controller.signal.aborted) fileIndexMetaRef.current = null;
       })
       .finally(() => {
-        fileIndexFetchingRef.current = null;
-        setFileIndexLoading(false);
+        if (!controller.signal.aborted) setFileIndexLoading(false);
       });
-  }, [atTokenActive, cwd]);
+    return () => controller.abort();
+  }, [atTokenActive, cwd, executionEngine]);
 
   const applyAtCompletion = useCallback((entry: FileIndexEntry) => {
     if (!atQuery) return;
@@ -2180,7 +2188,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />}
-      <ComposerQueue sessionId={draftKey ?? ""} executionEngine={executionEngine} queuedMessages={queuedMessages} syncStatus={queueSyncStatus} onRecallQueue={onRecallQueue} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} retainedSubmissions={retainedSubmissions} deliveredRequestIds={deliveredRequestIds} />
+      <ComposerQueue sessionId={draftKey ?? ""} executionEngine={executionEngine} queuedMessages={queuedMessages} syncStatus={queueSyncStatus} onRecallQueue={onRecallQueue} onRestoreRecall={onRestoreRecall} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} retainedSubmissions={retainedSubmissions} deliveredRequestIds={deliveredRequestIds} />
       {extensionPanel}
       {isCodexActive && modesEnabled && <div ref={setGoalHost} className="chat-composer-goal-host" style={{maxWidth: rootStyle.maxWidth, marginLeft: "auto", marginRight: "auto"}} />}
       <div className={rootClassName} style={rootStyle} data-pi-native-composer-layout="true" data-pi-native-inline-suggestions={!compact ? "true" : undefined}
@@ -2557,7 +2565,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </div>
           )}
           {atMenuOpen && atQuery !== null && (() => {
-            const indexLoading = fileIndexLoading && (!fileIndex || fileIndex.cwd !== cwd);
+            const indexLoading = fileIndexLoading && (!fileIndex || fileIndex.cwd !== cwd || fileIndex.executionEngine !== executionEngine);
              const matchCountLabel = atMatches.length === 1 ? t("chat.match") : t("chat.matches", { count: atMatches.length });
             // With a truncated index, local results are provisional — the
             // debounced server search over the full listing replaces them.

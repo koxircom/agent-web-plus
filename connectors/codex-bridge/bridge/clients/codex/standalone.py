@@ -18,6 +18,13 @@ import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from bridge.features.sessions.model import async_requests, merge_turn_items, question_replies
+from bridge.features.workspace.project_scopes import (
+    browse_scoped_directories,
+    create_scoped_worktree,
+    get_scoped_worktree_info,
+    remove_scoped_worktree,
+    resolve_scoped_cwd,
+)
 
 from bridge.app.service import Bridge
 from bridge.clients.codex.catalog import Catalog
@@ -65,6 +72,19 @@ def pending_submissions(submissions):
 def async_submission_id(thread_id, request_id):
     """Keep one durable user-message identity for each native question request."""
     return str(uuid.uuid5(uuid.UUID(str(thread_id)), 'async-question:' + str(request_id)))
+
+
+def terminal_turn_result(turn, items, authoritative=False):
+    """Return whether a completed snapshot contains its visible terminal result."""
+    if turn.get('error') or turn.get('status') in ('failed', 'interrupted', 'cancelled'):
+        return True
+    if authoritative:
+        return any(item.get('type') in ('error', 'planImplementation') or
+                   (item.get('type') in ('agentMessage', 'assistantMessage') and
+                    item.get('phase') != 'commentary') for item in items)
+    return any((item.get('type') in ('error', 'planImplementation') and item.get('_completed')) or
+               (item.get('type') in ('agentMessage', 'assistantMessage') and
+                item.get('phase') != 'commentary' and item.get('_completed')) for item in items)
 
 
 def async_reply_text(questions, response):
@@ -199,6 +219,7 @@ class Chat(SideChat):
         self.queue_event = threading.Event()
         self.queue_worker = None
         self.completed_reads = set()
+        self.pending_completions = {}
         entry = entry if entry is not None else bridge.records['threads'][identifier]
         self.submissions = copy.deepcopy(entry.get('submissions', {}))
         self.goal_known = bool(entry.get('goalKnown', False))
@@ -221,11 +242,19 @@ class Chat(SideChat):
         self.shared = bool(getattr(backend, 'shared', False))
         self.bind_submission_on_turn_started = not self.shared
         self.shared_requests = {}
+        collab = result.get('collaborationMode')
+        collab_settings = (collab.get('settings') or {}) if isinstance(collab, dict) else {}
+        if self.shared:
+            model = collab_settings.get('model') or result.get('model') or entry.get('model')
+            effort = collab_settings.get('reasoning_effort') or result.get('reasoningEffort') or entry.get('effort')
+        else:
+            model = collab_settings.get('model') or entry.get('model') or result.get('model')
+            effort = collab_settings.get('reasoning_effort') or entry.get('effort') or result.get('reasoningEffort')
         self.state = {'id': identifier, 'title': entry['title'], 'cwd': entry['cwd'],
-                      'latestModel': entry.get('model') or result.get('model'),
+                      'latestModel': model,
                       'modelProvider': result.get('modelProvider', 'openai'),
-                      'latestReasoningEffort': entry.get('effort') or result.get('reasoningEffort'),
-                      'latestCollaborationMode': copy.deepcopy(result.get('collaborationMode')),
+                      'latestReasoningEffort': effort,
+                      'latestCollaborationMode': copy.deepcopy(collab),
                       'latestThreadSettings': copy.deepcopy(self.turn_permissions),
                       'currentPermissions': copy.deepcopy(self.turn_permissions),
                       'threadGoal': copy.deepcopy(entry.get('threadGoal')) if self.goal_known else None,
@@ -252,7 +281,8 @@ class Chat(SideChat):
 
     @property
     def connected(self):
-        return self.ready and not self.closed and self.runtime.process.poll() is None
+        process = getattr(self.backend, 'process', None)
+        return bool(self.ready and not self.closed and process is not None and process.poll() is None)
 
     def changed(self):
         self.sequence += 1
@@ -267,13 +297,29 @@ class Chat(SideChat):
         if Path(result['thread']['cwd']).resolve() != Path(self.state['cwd']).resolve():
             raise PermissionError('共享运行时返回的工作区不一致')
         with self.condition:
-            self.state['threadRuntimeStatus'] = copy.deepcopy(result['thread'].get('status') or {'type': 'notLoaded'})
-            if result.get('model'):
-                self.state['latestModel'] = result['model']
-            if 'reasoningEffort' in result:
-                self.state['latestReasoningEffort'] = result['reasoningEffort']
-            if result.get('collaborationMode'):
-                self.state['latestCollaborationMode'] = copy.deepcopy(result['collaborationMode'])
+            native_status = copy.deepcopy(result['thread'].get('status') or {'type': 'notLoaded'})
+            has_pending = bool(self.pending_completions)
+            if has_pending and native_status.get('type') == 'idle':
+                current_type = self.state.get('threadRuntimeStatus', {}).get('type')
+                native_status = copy.deepcopy(self.state['threadRuntimeStatus']) if current_type != 'idle' else {'type': 'active'}
+            self.state['threadRuntimeStatus'] = native_status
+            collab = result.get('collaborationMode')
+            if collab and isinstance(collab, dict):
+                self.state['latestCollaborationMode'] = copy.deepcopy(collab)
+                collab_settings = collab.get('settings') or {}
+                if collab_settings.get('model'):
+                    self.state['latestModel'] = collab_settings['model']
+                elif result.get('model'):
+                    self.state['latestModel'] = result['model']
+                if 'reasoning_effort' in collab_settings and collab_settings['reasoning_effort'] is not None:
+                    self.state['latestReasoningEffort'] = collab_settings['reasoning_effort']
+                elif 'reasoningEffort' in result:
+                    self.state['latestReasoningEffort'] = result['reasoningEffort']
+            else:
+                if result.get('model'):
+                    self.state['latestModel'] = result['model']
+                if 'reasoningEffort' in result:
+                    self.state['latestReasoningEffort'] = result['reasoningEffort']
             self.changed()
 
     def _sync_shared_requests(self):
@@ -282,8 +328,114 @@ class Chat(SideChat):
         self.state['requests'] = [copy.deepcopy(r) for r in self.shared_requests.values()
                                   if r.get('params', {}).get('turnId') in owned]
 
+    def _commit_completion(self, turn_id, source):
+        super()._event({'method': 'turn/completed', 'params': {'threadId': self.id, 'turn': source}})
+        self.pending_completions.pop(turn_id, None)
+        self.completed_reads.discard(turn_id)
+        if self.shared:
+            self.shared_requests = {k: r for k, r in self.shared_requests.items()
+                                    if r.get('params', {}).get('turnId') != turn_id}
+        if self.pending_completions or any(t.get('status') == 'inProgress' for t in self.state.get('turns', [])):
+            self.state['threadRuntimeStatus']['type'] = 'active'
+        else:
+            self.state['threadRuntimeStatus']['type'] = 'idle'
+        self.persist()
+
+    def settings(self, model, effort, catalog, timeout=10.0):
+        if not isinstance(model, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:@+-]{0,199}", model):
+            raise ValueError("模型 ID 格式不正确")
+        if effort not in ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"):
+            raise ValueError("请选择有效的推理强度")
+        known = next((m for m in catalog.get('models', []) if m['id'] == model), None)
+        if known and known.get('efforts') and effort not in known['efforts']:
+            raise ValueError("这个模型不支持所选推理强度")
+        with self.actions:
+            if not self.connected:
+                raise SideChatError('侧边聊天已失效，请关闭后新建')
+            params = {
+                'threadId': self.id,
+                'model': model,
+                'effort': effort,
+            }
+            collab = copy.deepcopy(self.state.get('latestCollaborationMode'))
+            if collab and isinstance(collab, dict) and 'mode' in collab:
+                old_settings = copy.deepcopy(collab.get('settings') or {})
+                collab_mode = collab.get('mode') or 'default'
+                dev_instructions = old_settings.get('developer_instructions')
+            else:
+                collab_mode = 'default'
+                dev_instructions = None
+            params['collaborationMode'] = {
+                'mode': collab_mode,
+                'settings': {
+                    'model': model,
+                    'reasoning_effort': effort,
+                    'developer_instructions': dev_instructions,
+                }
+            }
+            deadline = time.monotonic() + min(timeout, 10.0)
+            self.backend.request('thread/settings/update', params, timeout=min(5.0, timeout))
+            confirmed = False
+            last_observed_model = None
+
+            while time.monotonic() < deadline:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                read_timeout = min(5.0, remaining)
+                try:
+                    read_result = self.backend.request('thread/resume', {'threadId': self.id, 'excludeTurns': True}, timeout=read_timeout)
+                except Exception:
+                    with self.condition:
+                        self.condition.wait(min(0.25, max(0.01, deadline - time.monotonic())))
+                    continue
+
+                c_mode = read_result.get('collaborationMode')
+                c_settings = (c_mode.get('settings') or {}) if isinstance(c_mode, dict) else {}
+                r_model = c_settings.get('model') or read_result.get('model') or (read_result.get('thread') or {}).get('model')
+                r_effort = c_settings.get('reasoning_effort') or read_result.get('reasoningEffort') or (read_result.get('thread') or {}).get('reasoningEffort')
+                last_observed_model = r_model
+
+                model_match = (r_model == model)
+                effort_match = (r_effort == effort)
+                collab_match = True
+                expected_cm = params['collaborationMode']
+                if c_mode and isinstance(c_mode, dict):
+                    if c_mode.get('mode') != expected_cm.get('mode'):
+                        collab_match = False
+                    if c_settings.get('model') and c_settings.get('model') != model:
+                        collab_match = False
+                    if c_settings.get('reasoning_effort') and c_settings.get('reasoning_effort') != effort:
+                        collab_match = False
+
+                if model_match and effort_match and collab_match:
+                    confirmed = True
+                    break
+
+                with self.condition:
+                    rem_wait = min(0.25, max(0.01, deadline - time.monotonic()))
+                    self.condition.wait(rem_wait)
+
+            if not confirmed:
+                raise SideChatError(f'模型设置未能在时限内确认生效（当前模型仍为 {last_observed_model or "未知"}），已取消确认')
+
+            with self.lock:
+                self.state['latestModel'] = model
+                self.state['latestReasoningEffort'] = effort
+                self.state['latestCollaborationMode'] = copy.deepcopy(params['collaborationMode'])
+                self.persist()
+            with self.condition:
+                self.changed()
+            return self.view()
+
     def _event(self, message):
         with self.condition:
+            method, params = message.get('method'), message.get('params') or {}
+            if params.get('threadId') and params.get('threadId') != self.id:
+                return
+            if self.closed or not self.ready:
+                if method != 'bridge/disconnected':
+                    return
             if self.shared and message.get('method') == 'bridge/disconnected':
                 self.shared_requests.clear()
                 self.state['requests'] = []
@@ -291,7 +443,6 @@ class Chat(SideChat):
                 self.persist()
                 return
             if self.shared and 'id' in message:
-                params = message.get('params') or {}
                 turn_id = params.get('turnId')
                 # Supplementing another client's turn does not transfer its
                 # tool/approval request ownership to the web connector.
@@ -305,9 +456,13 @@ class Chat(SideChat):
                 return
             if self.shared and message.get('method') == 'serverRequest/resolved':
                 self.shared_requests.pop(str((message.get('params') or {}).get('requestId')), None)
-            method, params = message.get('method'), message.get('params') or {}
             if params.get('threadId') == self.id and method in ('item/started', 'item/completed'):
-                item = params.get('item') or {}
+                item = copy.deepcopy(params.get('item') or {})
+                message = {**message, 'params': {**params, 'item': item}}
+                if method == 'item/completed':
+                    item['_completed'] = True
+                else:
+                    item.pop('_completed', None)
                 client_id = item.get('clientId') or item.get('clientUserMessageId') or item.get('client_id')
                 row = self.submissions.get(client_id)
                 if item.get('type') == 'userMessage' and row and row.get('queueOwner') == 'native':
@@ -324,33 +479,79 @@ class Chat(SideChat):
                 self.goal_known = True
                 self.goal_supported = self.goal_support_checked = True
                 self.persist()
-            if self.shared and message.get('method') == 'turn/completed':
-                turn_id = (message.get('params') or {}).get('turn', {}).get('id')
-                self.shared_requests = {k: r for k, r in self.shared_requests.items()
-                                        if r.get('params', {}).get('turnId') != turn_id}
-
-            if message.get('method') == 'error':
+            if params.get('threadId') == self.id and method == 'thread/settings/updated':
+                self.condition.notify_all()
+            if method == 'error':
+                if params.get('threadId') and params.get('threadId') != self.id:
+                    return
                 # A failed model turn does not mean the backend connection died.
-                params = message.get('params') or {}
                 if not params.get('willRetry'):
                     self.state['threadRuntimeStatus']['type'] = 'idle'
                     turn = next((t for t in reversed(self.state['turns']) if t.get('status') == 'inProgress'), None)
                     if turn:
+                        turn['status'] = 'failed'
                         turn['error'] = (params.get('error') or {}).get('message', 'Codex 执行失败')
+                        turn_id = turn.get('turnId') or turn.get('id')
+                        self.pending_completions.pop(turn_id, None)
+                        self.completed_reads.discard(turn_id)
                 self.changed()
                 return
+
+            if method == 'turn/completed':
+                if params.get('threadId') != self.id or not self.ready or self.closed:
+                    return
+                turn_source = params.get('turn') or {}
+                turn_id = turn_source.get('id')
+                if not turn_id:
+                    return
+                if self.shared and self.shared_requests:
+                    self.shared_requests = {k: r for k, r in self.shared_requests.items()
+                                            if r.get('params', {}).get('turnId') != turn_id}
+                turn = self._turn(turn_id)
+                items = turn.get('items', [])
+                if turn_source.get('items'):
+                    items = merge_turn_items(turn_source['items'], items)
+                    turn['items'] = items
+                if not self.shared:
+                    self._commit_completion(turn_id, turn_source)
+                    self.completed_reads.add(turn_id)
+                    self.queue_event.set()
+                elif (terminal_turn_result(turn_source, turn_source.get('items', []), authoritative=True)
+                      or terminal_turn_result(turn_source, items, authoritative=False)):
+                    self._commit_completion(turn_id, turn_source)
+                    self.queue_event.set()
+                else:
+                    self.pending_completions[turn_id] = copy.deepcopy(turn_source)
+                    self.state['threadRuntimeStatus']['type'] = 'active'
+                    self.completed_reads.add(turn_id)
+                    self.queue_event.set()
+                self._release_handoff_turns()
+                self.changed()
+                return
+
             super()._event(message)
             self._release_handoff_turns()
-            if message.get('method') == 'turn/completed':
-                self.completed_reads.add(message['params']['turn']['id'])
-                self.queue_event.set()
+
+            if self.pending_completions:
+                turn_id = params.get('turnId')
+                if turn_id and turn_id in self.pending_completions:
+                    turn = self._turn(turn_id)
+                    if terminal_turn_result(self.pending_completions[turn_id], turn.get('items', []), authoritative=False):
+                        self._commit_completion(turn_id, self.pending_completions[turn_id])
+
             if message.get('method') == 'thread/status/changed':
-                status = (message.get('params') or {}).get('status') or {}
-                self.state['threadRuntimeStatus']['type'] = 'active' if status.get('type') == 'active' else 'idle'
-                if status.get('type') == 'idle':
-                    self.queue_event.set()
+                params = message.get('params') or {}
+                if params.get('threadId') == self.id:
+                    status = params.get('status') or {}
+                    if status.get('type') == 'active':
+                        self.state['threadRuntimeStatus']['type'] = 'active'
+                    else:
+                        if not self.pending_completions and not any(
+                                turn.get('status') == 'inProgress' for turn in self.state['turns']):
+                            self.state['threadRuntimeStatus']['type'] = 'idle'
+                        self.queue_event.set()
             self.changed()
-            if message.get('method') in ('turn/completed', 'bridge/disconnected'):
+            if message.get('method') == 'bridge/disconnected':
                 self.persist()
 
     def _refresh_completed(self):
@@ -379,8 +580,14 @@ class Chat(SideChat):
         with self.condition:
             resolved, changed = set(), False
             for turn in self.state['turns']:
-                source = authoritative.get(turn['turnId'])
-                if not source or turn.get('status') == 'inProgress' or source.get('status') == 'inProgress':
+                turn_id = turn.get('turnId') or turn.get('id')
+                source = authoritative.get(turn_id)
+                if not source:
+                    continue
+                pending_meta = self.pending_completions.get(turn_id)
+                if source.get('status') == 'inProgress':
+                    continue
+                if turn.get('status') == 'inProgress' and not pending_meta and source.get('status') not in ('completed', 'failed', 'interrupted', 'cancelled'):
                     continue
                 # A sparse backfill must never delete items already observed
                 # through the native event stream. Native IDs define identity.
@@ -388,7 +595,16 @@ class Chat(SideChat):
                 if items != turn['items']:
                     turn['items'] = items
                     changed = True
-                resolved.add(turn['turnId'])
+                # thread/turns/list can expose status=completed before its
+                # final assistant item becomes readable. Keep this turn in the
+                # existing bounded completion queue until the visible result
+                # (or a terminal error) arrives; otherwise the browser settles
+                # and closes SSE with only the last tool card on screen.
+                if not self.shared or terminal_turn_result(source, items, authoritative=True):
+                    resolved.add(turn_id)
+                    terminal_source = source if source.get('status') in ('completed', 'failed', 'interrupted', 'cancelled') else (pending_meta or source)
+                    self._commit_completion(turn_id, terminal_source)
+                    changed = True
             self.completed_reads.difference_update(resolved)
             if changed:
                 self.changed()
@@ -1019,7 +1235,7 @@ class StandaloneBridge(Bridge):
         elif 'id' in message and not getattr(backend, 'shared', False):
             backend.write({'id': message['id'], 'error': {'code': -32601, 'message': '此请求不属于网页管理的会话'}})
 
-    def create_chat(self, project_key, title, request_id):
+    def create_chat(self, project_key, title, request_id, cwd=None):
         uuid.UUID(str(request_id))
         project = self.workspace_by_key.get(project_key)
         if not project:
@@ -1027,12 +1243,23 @@ class StandaloneBridge(Bridge):
         if not isinstance(title, str) or not title.strip() or len(title) > 120:
             raise ValueError('请输入 1–120 字的聊天名称')
         title = title.strip()
+        target_cwd = project['path']
+        if cwd is not None:
+            _, resolved_cwd = resolve_scoped_cwd(cwd, self.workspaces, must_exist=True)
+            if not (resolved_cwd == project['path'] or resolved_cwd.is_relative_to(project['path'])):
+                raise PermissionError('指定工作区超出所选项目授权范围')
+            target_cwd = resolved_cwd
         with self.lock:
             with self.registry_lock:
                 prior = copy.deepcopy(self.records['creations'].get(request_id))
             if prior:
                 if prior['title'] != title:
                     raise ValueError('同一创建请求不能用于不同内容')
+                prior_cwd = prior.get('cwd')
+                if prior_cwd is None and prior.get('id'):
+                    prior_cwd = self.records['threads'].get(prior['id'], {}).get('cwd')
+                if prior_cwd is not None and str(target_cwd) != str(prior_cwd):
+                    raise ValueError('同一创建请求不能用于不同工作区')
                 if prior.get('deleted'):
                     raise ValueError('此创建请求对应的会话已删除，请重新新建聊天')
                 if not prior.get('id'):
@@ -1041,14 +1268,14 @@ class StandaloneBridge(Bridge):
             backend = self._history_backend() if self.history_socket else self.runtime
             backend.start()
             with self.registry_lock:
-                self.records['creations'][request_id] = {'title': title}
+                self.records['creations'][request_id] = {'title': title, 'cwd': str(target_cwd)}
                 self.save()
-            result = backend.request('thread/start', {'cwd': str(project['path']), 'persistExtendedHistory': True})
+            result = backend.request('thread/start', {'cwd': str(target_cwd), 'persistExtendedHistory': True})
             identifier = result['thread']['id']
             thread_path = self._validated_rollout_path((result.get('thread') or {}).get('path'),
                                                        self.history_home if self.history_socket else self.store.home)
             with self.registry_lock:
-                entry = {'title': title, 'cwd': str(project['path']),
+                entry = {'title': title, 'cwd': str(target_cwd),
                          'runtime': 'history' if self.history_socket else 'web', 'createdAt': time.time(), 'updatedAt': time.time()}
                 if thread_path:
                     entry['path'] = thread_path
@@ -1059,7 +1286,40 @@ class StandaloneBridge(Bridge):
             self.live[identifier] = chat
             backend.request('thread/name/set', {'threadId': identifier, 'name': title})
             self._start_queue(chat)
-            return {'id': identifier, 'host': 'local', 'opened': True, 'message': 'WSL 聊天已创建'}
+            return {'id': identifier, 'host': 'local', 'opened': True, 'cwd': str(target_cwd), 'message': 'WSL 聊天已创建'}
+
+    def worktree_info(self, cwd):
+        ws, resolved = resolve_scoped_cwd(cwd, self.workspaces, must_exist=True)
+        return get_scoped_worktree_info(resolved, ws)
+
+    def create_worktree(self, cwd, branch):
+        ws, resolved = resolve_scoped_cwd(cwd, self.workspaces, must_exist=True)
+        return create_scoped_worktree(resolved, branch, ws)
+
+    def remove_worktree(self, cwd, path, force=False):
+        return remove_scoped_worktree(cwd, path, force=force)
+
+    def browse_directories(self, path=None):
+        if not path or path == '/':
+            return {
+                'path': '',
+                'parentPath': None,
+                'directories': [{'name': ws['name'], 'path': str(ws['path'])} for ws in self.workspaces]
+            }
+        ws, resolved = resolve_scoped_cwd(path, self.workspaces, must_exist=True)
+        return browse_scoped_directories(resolved, ws)
+
+    def validate_cwd(self, cwd):
+        ws, resolved = resolve_scoped_cwd(cwd, self.workspaces, must_exist=True)
+        info = get_scoped_worktree_info(resolved, ws)
+        project_root = info.get('projectRoot') if info.get('isGit') else str(ws['path'])
+        return {
+            'success': True,
+            'cwd': str(resolved),
+            'projectRoot': project_root,
+            'projectKey': ws['key'],
+            'isGit': info.get('isGit', False)
+        }
 
     @staticmethod
     def _start_queue(chat):
@@ -1648,9 +1908,12 @@ class StandaloneBridge(Bridge):
             raise ValueError('此独立入口暂未启用快速服务档位')
         chat = self.session(thread_id)
         result = chat.settings(model, effort, self.catalog(thread_id, kind='models'))
-        chat.persist()
-        with chat.condition:
-            chat.changed()
+        with self.registry_lock:
+            entry = self.records['threads'].get(thread_id)
+            if entry is not None:
+                entry['model'] = model
+                entry['effort'] = effort
+                self.save()
         return result
 
     def rename(self, thread_id, title):
@@ -1773,11 +2036,8 @@ class StandaloneBridge(Bridge):
             return {'ok': True}
 
     def subagents(self, thread_id, agent_id=None):
-        if thread_id not in self.records['threads'] and self.history:
-            self.history.get(thread_id)
-        else:
-            self._record(thread_id)
-        return {'agents': []}
+        from bridge.clients.codex.subagent_views import subagents
+        return subagents(self, thread_id, agent_id)
 
     def side_chat(self, thread_id, owner, action, body):
         self._adopt_record(thread_id)

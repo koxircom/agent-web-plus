@@ -268,7 +268,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     lastUserMsgRef, promptAnchorActive, promptScrollRevision,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue,
+    handleRecallQueue, handleRestoreRecall,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollUserMsgToTop,
     loadContext, activeLeafId, scrollToBottom, scrollToMessage,
@@ -1366,6 +1366,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       retainedSubmissions={unconfirmedSubmissions}
       deliveredRequestIds={messages.map(userMessageRequestId).filter((id): id is string => Boolean(id))}
       onRecallQueue={handleRecallQueue}
+      onRestoreRecall={handleRestoreRecall}
       slashCommands={isCodexSession ? [] : slashCommands}
       slashCommandsLoading={!isCodexSession && slashCommandsLoading}
       onLoadSlashCommands={!isCodexSession ? loadSlashCommands : undefined}
