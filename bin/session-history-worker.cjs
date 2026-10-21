@@ -632,34 +632,68 @@ function addUsage(stats, usage) {
   stats.tokens.cacheWrite += usage.cacheWrite ?? 0;
   stats.cost += usage.cost?.total ?? 0;
 }
-function addMessage(stats, message) {
+function addMessage(stats, message, options) {
+  const countUsage = options?.countUsage ?? true;
   stats.totalMessages += 1;
   if (message.role === "user") {
     stats.userMessages += 1;
   } else if (message.role === "toolResult") {
     stats.toolResults += 1;
-    addUsage(stats, message.usage);
+    if (countUsage) addUsage(stats, message.usage);
   } else if (message.role === "assistant") {
     stats.assistantMessages += 1;
     if (Array.isArray(message.content)) {
       stats.toolCalls += message.content.filter((c) => c.type === "toolCall").length;
     }
-    addUsage(stats, message.usage);
+    if (countUsage) addUsage(stats, message.usage);
   }
 }
 function finishStats(stats) {
   stats.tokens.total = stats.tokens.input + stats.tokens.output + stats.tokens.cacheRead + stats.tokens.cacheWrite;
   return stats;
 }
+var FORK_PROVENANCE_TYPE = "pi-web:fork-provenance";
+function extractForkProvenance(entries) {
+  const inheritedEntryIds = /* @__PURE__ */ new Set();
+  const entryOrigins = /* @__PURE__ */ new Map();
+  let parentSessionId;
+  for (const entry of entries) {
+    if (entry.type === "custom" && entry.customType === FORK_PROVENANCE_TYPE) {
+      const data = entry.data;
+      if (data) {
+        if (data.parentSessionId && !parentSessionId) {
+          parentSessionId = data.parentSessionId;
+        }
+        if (Array.isArray(data.inheritedEntryIds)) {
+          for (const id of data.inheritedEntryIds) {
+            if (typeof id === "string" && id) inheritedEntryIds.add(id);
+          }
+        }
+        if (data.entryOrigins && typeof data.entryOrigins === "object") {
+          for (const [id, orig] of Object.entries(data.entryOrigins)) {
+            if (orig && typeof orig.sessionId === "string") {
+              entryOrigins.set(id, orig);
+            }
+          }
+        }
+      }
+    }
+  }
+  return { inheritedEntryIds, entryOrigins, parentSessionId };
+}
 function computeSessionStats(entries) {
   const stats = emptyStats();
+  const { inheritedEntryIds } = extractForkProvenance(entries);
   for (const entry of entries) {
+    const isInherited = Boolean(entry.id && inheritedEntryIds.has(entry.id));
     if (entry.type === "compaction" || entry.type === "branch_summary" || entry.type === "usage") {
-      addUsage(stats, entry.usage);
+      if (!isInherited) {
+        addUsage(stats, entry.usage);
+      }
       continue;
     }
     if (entry.type !== "message") continue;
-    addMessage(stats, entry.message);
+    addMessage(stats, entry.message, { countUsage: !isInherited });
   }
   return finishStats(stats);
 }

@@ -4,7 +4,7 @@ import { codexConnectionIdentity, codexThreadId } from "../execution-engine-sett
 import { CodexBridgeError, codexBridgeJson, codexBridgeRequest } from "./codex-bridge-client";
 import { assistantText, codexComposerStatuses, projectCodexPage, projectCodexUsage, projectCodexRow, projectCodexSession, publicCodexId, type CodexMeta, type CodexPage, type CodexRow, type CodexRequest } from "./codex-projection";
 import type { AgentEventLike } from "../agent-event-wire";
-import type { AgentMessage } from "../types";
+import type { AgentMessage, SessionInfo } from "../types";
 import { acceptPromptDelivery, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery } from "../prompt-delivery";
 
 export async function codexProjects(): Promise<{ key: string; name: string; cwd: string }[]> {
@@ -13,7 +13,15 @@ export async function codexProjects(): Promise<{ key: string; name: string; cwd:
   return result.projects;
 }
 const catalogKey = Symbol.for("pi-web.codex-catalog");
-type CatalogRow = { id: string; recency?: number; title: string; cwd: string };
+type CatalogRow = {
+  id: string;
+  recency?: number;
+  title: string;
+  cwd: string;
+  pinned?: boolean;
+  archived?: boolean;
+  nativeMetadata?: { desktopShared: boolean; pinningSupported: boolean };
+};
 type CatalogCache = { identity: string; version: number; loadedAt: number; rows: CatalogRow[] };
 const catalogGlobals = globalThis as unknown as Record<symbol, CatalogCache | undefined>;
 type SharedFlight<T> = { promise: Promise<T>; controller: AbortController; waiters: number; settled: boolean };
@@ -68,16 +76,22 @@ const statusFlights = (flightGlobals[statusFlightsKey] ||= new Map()) as Map<str
 
 const CODEX_STATUS_CATALOG_TTL_MS = 10_000;
 function catalogVersion(rows: CatalogRow[]) {
-  const entries = rows.map(row => [row.id, row.title, row.cwd, row.recency ?? null]);
+  const entries = rows.map(row => [row.id, row.title, row.cwd, row.recency ?? null, row.pinned ?? null, row.archived ?? null]);
   return Number.parseInt(createHash("sha256").update(JSON.stringify(entries)).digest("hex").slice(0, 12), 16);
+}
+function mapCodexSession(row: CatalogRow): SessionInfo {
+  const session = projectCodexSession(row);
+  if (row.pinned !== undefined) session.pinned = row.pinned;
+  if (row.archived !== undefined) session.archived = row.archived;
+  if (row.nativeMetadata !== undefined) session.nativeMetadata = row.nativeMetadata;
+  return session;
 }
 async function loadCodexCatalog(identity: string, signal?: AbortSignal, maxAgeMs = 0): Promise<CatalogCache> {
   const pending = catalogFlights.get(identity);
   if (pending && !pending.controller.signal.aborted) return joinFlight(pending, signal);
   const cached = catalogGlobals[catalogKey];
   if (cached?.identity === identity && Date.now() - cached.loadedAt < maxAgeMs) return cached;
-  let flight!: SharedFlight<CatalogCache>;
-  flight = sharedFlight(catalogFlights, identity, async flightSignal => {
+  const flight: SharedFlight<CatalogCache> = sharedFlight(catalogFlights, identity, async flightSignal => {
     const rows: CatalogRow[] = [];
     for (let offset = 0; offset < 5000; offset += 100) {
       const page = (await codexBridgeJson(`/api/sessions?offset=${offset}`, undefined, { connectionIdentity: identity, signal: flightSignal })).sessions;
@@ -146,15 +160,41 @@ export async function codexRunningStatus(signal?: AbortSignal) {
   const flight = sharedFlight(statusFlights, identity, flightSignal => buildCodexRunningStatus(identity, flightSignal));
   return joinFlight(flight, signal);
 }
-export async function listCodexSessions(signal?: AbortSignal) {
+export type ListCodexSessionsOptions = {
+  archived?: boolean;
+  offset?: number;
+  limit?: number;
+  signal?: AbortSignal;
+};
+export async function listCodexSessions(options?: ListCodexSessionsOptions | AbortSignal) {
+  const signal = options instanceof AbortSignal ? options : options?.signal;
+  const isArchived = options && !(options instanceof AbortSignal) && options.archived === true;
+  const offset = options && !(options instanceof AbortSignal) ? options.offset : undefined;
+  const limit = options && !(options instanceof AbortSignal) ? options.limit : undefined;
   const identity = await codexConnectionIdentity();
+
+  if (isArchived) {
+    const query = new URLSearchParams({ archived: "true" });
+    if (typeof offset === "number") query.set("offset", String(offset));
+    if (typeof limit === "number") query.set("limit", String(limit));
+    const result = await codexBridgeJson(`/api/sessions?${query.toString()}`, undefined, { connectionIdentity: identity, signal });
+    const rows: CatalogRow[] = Array.isArray(result.sessions) ? result.sessions : [];
+    if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
+    return {
+      sessions: rows.map(mapCodexSession),
+      sessionListVersion: catalogVersion(rows),
+      runningSessionIds: [],
+      completionNotificationSuppressedSessionIds: [],
+    };
+  }
+
   // The explicit session-list request is the user's refresh action; it always
   // reads the authoritative catalog instead of trusting the status TTL.
   const catalog = await loadCodexCatalog(identity, signal);
   // Query runtime metadata only. Listing never creates or resumes a Codex thread.
   const activity = await codexActivity(catalog.rows, identity, signal);
   if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
-  return { sessions: catalog.rows.map(projectCodexSession), sessionListVersion: catalog.version,
+  return { sessions: catalog.rows.map(mapCodexSession), sessionListVersion: catalog.version,
     runningSessionIds: activity.filter(r => r.status === "active").map(r => publicCodexId(r.id)), completionNotificationSuppressedSessionIds: [] };
 }
 /** Metadata-only live attention reads for the server notification owner. */
@@ -345,6 +385,49 @@ export async function deleteCodexSession(id: string) {
   // Existing viewers receive the native 404 through their normal read loop.
   runtimes.delete(identity + ":" + id);
   flights.delete(identity + ":" + id);
+}
+
+export async function messageActionCodexSession(
+  id: string,
+  action: "pin" | "unpin" | "archive" | "unarchive",
+  signal?: AbortSignal,
+) {
+  const identity = await codexConnectionIdentity();
+  const threadId = codexThreadId(id);
+  const result = await codexBridgeJson(
+    `/api/sessions/${threadId}/message-action`,
+    { action },
+    { connectionIdentity: identity, signal },
+  );
+  if (result?.ok !== true || !result?.session) {
+    throw new CodexBridgeError(result?.error || "执行端未确认操作", 502);
+  }
+  const session = mapCodexSession(result.session);
+  const expectedPublicId = publicCodexId(threadId);
+  if (session.id !== expectedPublicId && session.id !== id) {
+    throw new CodexBridgeError("执行端返回的会话标识不匹配", 502);
+  }
+  if (action === "pin" && session.pinned !== true) {
+    throw new CodexBridgeError("执行端未确认置顶状态，会话保持原状", 502);
+  }
+  if (action === "unpin" && session.pinned !== false) {
+    throw new CodexBridgeError("执行端未确认取消置顶状态，会话保持原状", 502);
+  }
+  if (action === "archive" && session.archived !== true) {
+    throw new CodexBridgeError("执行端未确认归档状态，会话保持原状", 502);
+  }
+  if (action === "unarchive" && session.archived !== false) {
+    throw new CodexBridgeError("执行端未确认还原状态，会话保持原状", 502);
+  }
+  if (await codexConnectionIdentity() !== identity) {
+    throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
+  }
+  if (catalogGlobals[catalogKey]?.identity === identity) catalogGlobals[catalogKey] = undefined;
+  for (const pending of [catalogFlights, statusFlights]) {
+    pending.get(identity)?.controller.abort();
+    pending.delete(identity);
+  }
+  return { ok: true, session };
 }
 export async function getCodexRuntime(id: string) {
   codexThreadId(id);
@@ -892,6 +975,40 @@ export class CodexRuntime {
         const decision = command.cancelled ? (item.native.method.includes("permissions") ? "decline" : "cancel") : labels[String(command.value)];
         if (!decision) throw new Error("请选择允许、拒绝或取消");
         return this.json(base + "/respond", { requestId: item.native.id, response: { decision } });
+      }
+      case "fork": {
+        const { entryId, requestId } = command as { entryId?: unknown; requestId?: unknown };
+        if (typeof entryId !== "string" || !entryId) throw new Error("请指定要分支的消息");
+        const key = entryId.includes(":") ? entryId.slice(0, entryId.lastIndexOf(":")) : entryId;
+        const row = this.rows.get(key);
+        if (!row) throw new Error("选定的消息不存在于当前会话中");
+        if (row.role !== "user") throw new Error("仅支持在用户消息处创建分支");
+        if (!row.forkable) throw new Error("当前消息不支持创建分支");
+
+        const clientRequestId = typeof requestId === "string" && requestId.trim() ? requestId.trim() : randomUUID();
+        const base = `/api/sessions/${codexThreadId(this.id)}`;
+        const payload = {
+          action: "fork",
+          id: submissionUuid(clientRequestId),
+          requestId: clientRequestId,
+          key: row.key,
+          epoch: this.page.epoch,
+          version: row.version,
+        };
+        const result = await this.json(base + "/message-action", payload) as { ok?: boolean; id?: string; childId?: string };
+        if (!result || typeof result !== "object") throw new Error("分支创建结果待确认，请刷新后重试");
+        const childId = result.childId || result.id;
+        if (!childId || childId === codexThreadId(this.id)) throw new Error("分支创建结果无效，请刷新后重试");
+
+        // 清除 catalog 缓存而不停止源线程
+        const identity = this.identity;
+        if (catalogGlobals[catalogKey]?.identity === identity) catalogGlobals[catalogKey] = undefined;
+        for (const pending of [catalogFlights, statusFlights]) {
+          pending.get(identity)?.controller.abort();
+          pending.delete(identity);
+        }
+
+        return { newSessionId: publicCodexId(childId) };
       }
       default: throw new CodexBridgeError("当前网页暂不支持这项 Codex 操作，请查看处理方式。", 501, "codex_operation_unsupported", false, false);
     }

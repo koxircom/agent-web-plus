@@ -81,7 +81,7 @@ export async function GET(
         try { exists = getSessionFileFingerprint(filePath) !== null && readSessionHeader(filePath)?.id === id; }
         catch { /* A concurrent removal is an unavailable result. */ }
       }
-      return NextResponse.json(exists ? { sessionId: id, exists: true } : { error: "Session not found" }, {
+      return NextResponse.json(exists ? { sessionId: id, exists: true, usageDeleteGuard: GUARD_VERSION } : { error: "Session not found" }, {
         status: exists ? 200 : 404, headers: { "Cache-Control": "no-store" },
       });
     }
@@ -253,20 +253,37 @@ export async function GET(
   }
 }
 
-// PATCH /api/sessions/[id]  body: { name: string }
+// PATCH /api/sessions/[id]  body: { name?: string; action?: string }
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   try {
-    const { name } = await req.json() as { name?: string };
+    const body = (await req.json()) as { name?: string; action?: string };
+    if (isCodexSessionId(id)) {
+      if (typeof body.action === "string" && ["pin", "unpin", "archive", "unarchive"].includes(body.action)) {
+        try {
+          const { messageActionCodexSession } = await import("@/lib/execution-engines/codex-engine");
+          const result = await messageActionCodexSession(id, body.action as "pin" | "unpin" | "archive" | "unarchive");
+          return NextResponse.json(result);
+        } catch (error: unknown) {
+          const status = error && typeof error === "object" && "status" in error ? Number((error as { status?: number }).status) : 502;
+          return NextResponse.json(
+            { error: error instanceof Error ? error.message : "Codex 操作失败" },
+            { status: status >= 400 && status <= 599 ? status : 502 },
+          );
+        }
+      }
+      if (typeof body.name === "string") {
+        await (await import("@/lib/execution-engines/codex-bridge-client")).codexBridgeJson(`/api/sessions/${id.slice(6)}/rename`, { title: body.name });
+        return NextResponse.json({ ok: true });
+      }
+      return NextResponse.json({ error: "name or valid action is required" }, { status: 400 });
+    }
+    const { name } = body;
     if (typeof name !== "string") {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
-    }
-    if (isCodexSessionId(id)) {
-      await (await import("@/lib/execution-engines/codex-bridge-client")).codexBridgeJson(`/api/sessions/${id.slice(6)}/rename`, { title: name });
-      return NextResponse.json({ ok: true });
     }
     const filePath = await resolveSessionPath(id);
     if (!filePath) {

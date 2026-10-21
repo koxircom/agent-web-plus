@@ -1691,26 +1691,47 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     // 批量还原
     const batchRestoreBtn = panel.querySelector('[data-action="batch-restore-selected"]');
     if (batchRestoreBtn) {
-      batchRestoreBtn.addEventListener("click", () => {
+      batchRestoreBtn.addEventListener("click", async () => {
         const idsToRestore = [...selectedArchivedIds];
         if (idsToRestore.length === 0) return;
-        const restoredCount = (typeof restoreArchivedSessions === "function")
-          ? restoreArchivedSessions(idsToRestore)
-          : (() => {
-              let count = 0;
-              for (const id of idsToRestore) {
-                if (restoreArchivedSession(id)) count++;
-              }
-              return count;
-            })();
-        selectedArchivedIds.clear();
-        lastCheckedArchivedIndex = null;
-        requestSessionListRefresh(false, true);
-        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+        try {
+          const restoreFn = (typeof restoreArchivedSessions === "function")
+            ? restoreArchivedSessions
+            : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSIONS__ : null);
+          const result = restoreFn ? await restoreFn(idsToRestore) : 0;
+          const restoredCount = typeof result === "object" && result !== null ? (result.restoredCount ?? Number(result)) : Number(result);
+          const succeeded = (result && typeof result === "object" && Array.isArray(result.succeededIds))
+            ? result.succeededIds
+            : idsToRestore;
+          for (const sid of succeeded) {
+            selectedArchivedIds.delete(sid);
+          }
+          lastCheckedArchivedIndex = null;
+          invalidateCodexArchivedEntries();
+          requestSessionListRefresh(false, true);
+          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          }
+          renderArchivedPanel(panel, nav);
+          showToast(`已批量还原 ${restoredCount} 个会话`, sessionArchiveIcon);
+        } catch (err) {
+          const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
+          if (succeeded.length > 0) {
+            for (const sid of succeeded) {
+              selectedArchivedIds.delete(sid);
+            }
+            lastCheckedArchivedIndex = null;
+            invalidateCodexArchivedEntries();
+            requestSessionListRefresh(false, true);
+            if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+              try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+            }
+            renderArchivedPanel(panel, nav);
+            showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
+          } else {
+            showToast(err?.message || "批量还原未确认，已保留归档状态", undefined, 3500);
+          }
         }
-        renderArchivedPanel(panel, nav);
-        showToast(`已批量还原 ${restoredCount} 个会话`, sessionArchiveIcon);
       });
     }
 
@@ -1828,16 +1849,26 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
 
     for (const btn of panel.querySelectorAll('[data-action="restore-archived-session"]')) {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         let sessionId = "";
         try { sessionId = decodeURIComponent(btn.getAttribute("data-session-id") || ""); } catch (e) {}
-        if (!restoreArchivedSession(sessionId)) return;
-        requestSessionListRefresh(false, true);
-        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+        try {
+          const restoreFn = (typeof restoreArchivedSession === "function")
+            ? restoreArchivedSession
+            : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSION__ : null);
+          const ok = restoreFn ? await restoreFn(sessionId) : false;
+          if (!ok) return;
+          selectedArchivedIds.delete(sessionId);
+          invalidateCodexArchivedEntries();
+          requestSessionListRefresh(false, true);
+          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          }
+          renderArchivedPanel(panel, nav);
+          showToast("已还原会话", sessionArchiveIcon);
+        } catch (err) {
+          showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
         }
-        renderArchivedPanel(panel, nav);
-        showToast("已还原会话", sessionArchiveIcon);
       });
     }
 
@@ -1892,6 +1923,22 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         try { sessionId = decodeURIComponent(btn.getAttribute("data-session-id") || ""); } catch (err) {}
         if (!sessionId) return;
 
+        if (getCurrentArchivedEngine() === "codex") {
+          selectedArchivedIds.delete(sessionId);
+          (async () => {
+            try {
+              await deleteArchivedSession(sessionId);
+              invalidateCodexArchivedEntries();
+              requestSessionListRefresh(false, true);
+              renderArchivedPanel(panel, nav);
+              showToast("已彻底删除会话", sessionDeleteIcon);
+            } catch (err) {
+              showToast(err?.message || "删除会话未确认，已保留状态", undefined, 3500);
+            }
+          })();
+          return;
+        }
+
         // 彻底移出归档列表：本地 localStorage、全局 manifest 及选中态全部立即清理
         const archivedEntriesBeforeDelete = readStoredArchivedEntries();
         const nextEntries = archivedEntriesBeforeDelete.filter((entry) => entry && entry.id !== sessionId);
@@ -1931,27 +1978,48 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
     });
 
-    panel.querySelector('[data-action="restore-all-archived"]')?.addEventListener("click", () => {
-      const all = readStoredArchivedEntries();
+    panel.querySelector('[data-action="restore-all-archived"]')?.addEventListener("click", async () => {
+      const all = allEntries;
       if (all.length === 0) return;
       const allIds = all.map((item) => item.id).filter(Boolean);
-      const restoredCount = (typeof restoreArchivedSessions === "function")
-        ? restoreArchivedSessions(allIds)
-        : (() => {
-            let count = 0;
-            for (const item of all) {
-              if (restoreArchivedSession(item.id)) count++;
-            }
-            return count;
-          })();
-      selectedArchivedIds.clear();
-      lastCheckedArchivedIndex = null;
-      requestSessionListRefresh(false, true);
-      if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-        try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+      try {
+        const restoreFn = (typeof restoreArchivedSessions === "function")
+          ? restoreArchivedSessions
+          : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSIONS__ : null);
+        const result = restoreFn ? await restoreFn(allIds) : 0;
+        const restoredCount = typeof result === "object" && result !== null ? (result.restoredCount ?? Number(result)) : Number(result);
+        const succeeded = (result && typeof result === "object" && Array.isArray(result.succeededIds))
+          ? result.succeededIds
+          : allIds;
+        for (const sid of succeeded) {
+          selectedArchivedIds.delete(sid);
+        }
+        lastCheckedArchivedIndex = null;
+        invalidateCodexArchivedEntries();
+        requestSessionListRefresh(false, true);
+        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+        }
+        renderArchivedPanel(panel, nav);
+        showToast(`已全部还原 ${restoredCount} 个会话`, sessionArchiveIcon);
+      } catch (err) {
+        const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
+        if (succeeded.length > 0) {
+          for (const sid of succeeded) {
+            selectedArchivedIds.delete(sid);
+          }
+          lastCheckedArchivedIndex = null;
+          invalidateCodexArchivedEntries();
+          requestSessionListRefresh(false, true);
+          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          }
+          renderArchivedPanel(panel, nav);
+          showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
+        } else {
+          showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
+        }
       }
-      renderArchivedPanel(panel, nav);
-      showToast(`已全部还原 ${restoredCount} 个会话`, sessionArchiveIcon);
     });
 
     for (const titleEl of panel.querySelectorAll(".pi-enh-archived-title")) {
@@ -3419,16 +3487,22 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
 
     for (const restoreButton of panel.querySelectorAll('[data-action="restore-archived-session"]')) {
-      restoreButton.addEventListener("click", () => {
+      restoreButton.addEventListener("click", async () => {
         let sessionId = "";
         try { sessionId = decodeURIComponent(restoreButton.getAttribute("data-session-id") || ""); } catch (e) {}
-        if (!restoreArchivedSession(sessionId)) return;
-        requestSessionListRefresh(false, true);
-        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+        try {
+          const ok = await restoreArchivedSession(sessionId);
+          if (!ok) return;
+          invalidateCodexArchivedEntries();
+          requestSessionListRefresh(false, true);
+          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          }
+          renderEnhancementsPanel(panel, nav);
+          showToast("已还原会话", sessionArchiveIcon);
+        } catch (err) {
+          showToast(err instanceof Error ? err.message : "还原会话失败", "error");
         }
-        renderEnhancementsPanel(panel, nav);
-        showToast("已还原会话", sessionArchiveIcon);
       });
     }
 

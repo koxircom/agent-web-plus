@@ -1333,11 +1333,34 @@
       };
     };
     try {
-      let meta = await freshMeta();
-      if (meta.usageDeleteGuard >= 1) {
-        knownSessionsMap.set(sessionId, meta);
+      const lookupResp = await activeFetch(`/api/sessions/${encodeURIComponent(sessionId)}?lookup=1&usageGuard=${Date.now()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!lookupResp || !lookupResp.ok) {
+        throw new Error(`入账核验 HTTP ${lookupResp?.status || "失败"}`);
+      }
+      const lookup = await lookupResp.json().catch(() => null);
+      if (!lookup || lookup.exists !== true) {
+        throw new Error("会话不存在或已删除");
+      }
+
+      if (typeof lookup.usageDeleteGuard === "number" && lookup.usageDeleteGuard >= 1) {
+        const listing = await request(`/api/sessions?usageGuard=${Date.now()}`);
+        if (!Array.isArray(listing.sessions) || !Array.isArray(listing.runningSessionIds)) {
+          throw new Error("无法确认会话或运行状态，已阻止删除");
+        }
+        if (listing.runningSessionIds.includes(sessionId)) {
+          throw new Error("会话仍在运行，待用量回传后再删除");
+        }
+        const meta = listing.sessions.find(s => s.id === sessionId);
+        if (!meta) throw new Error("无法取得最新会话版本，已阻止删除");
+
+        knownSessionsMap.set(sessionId, { ...meta, usageDeleteGuard: lookup.usageDeleteGuard });
         return true;
       }
+
+      let meta = await freshMeta();
       if (!isSessionIngested(sessionId, meta)) {
         const result = await request("/api/usage/ledger", { method: "POST" });
         if (result.version !== 2 || !Array.isArray(result.buckets)) {

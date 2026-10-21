@@ -577,7 +577,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
 
   const askSelectionInNewChat = useCallback(async (prompt: string) => {
     const sourceSessionId = sessionIdRef.current ?? session?.id;
-    if (quoteSubmitting || !prompt.trim() || !quotedSelection?.sourceEntryId || !sourceSessionId || !onAskInNewChat) return;
+    if (quoteSubmitting || !prompt.trim() || !quotedSelection?.sourceEntryId || !sourceSessionId || !onAskInNewChat || isCodexSession) return;
     setQuoteSubmitting(true);
     setQuoteError(null);
     unlockAudio?.();
@@ -594,7 +594,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     } finally {
       setQuoteSubmitting(false);
     }
-  }, [onAskInNewChat, quotedSelection, quoteSubmitting, session?.id, sessionIdRef, closeQuotedSelection, unlockAudio]);
+  }, [onAskInNewChat, quotedSelection, quoteSubmitting, session?.id, sessionIdRef, closeQuotedSelection, unlockAudio, isCodexSession]);
 
   const initialPromptSentRef = useRef(false);
   useEffect(() => {
@@ -1793,10 +1793,10 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
                     onOpenSession={onOpenSession}
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
-                    onFork={isCodexSession || bashRunning || isNew ? undefined : handleFork}
+                    onFork={bashRunning || isNew ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy ? undefined : handleNavigate}
-                    onEditContent={handleEditContent}
+                    onNavigate={sessionBusy || isCodexSession ? undefined : handleNavigate}
+                    onEditContent={isCodexSession ? undefined : handleEditContent}
                     compactProgress={plan.keyPrefix?.startsWith("public-") === true && plan.showTimestamp === false}
                     showTimestamp={plan.showTimestamp ?? (msg.role === "assistant")}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
@@ -2024,7 +2024,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
                 <span>{t("chat.askInCurrent")}</span>
               </button>
             )}
-            {quotedSelection.nativeQuote && onAskInNewChat && quotedSelection.sourceEntryId && !bashRunning && (
+            {quotedSelection.nativeQuote && onAskInNewChat && !isCodexSession && quotedSelection.sourceEntryId && !bashRunning && (
               <button
                 type="button"
                 className="file-viewer-icon-button pi-enh-quote-btn"

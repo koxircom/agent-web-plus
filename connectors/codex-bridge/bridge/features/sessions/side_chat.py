@@ -242,10 +242,14 @@ class SideChat:
             elif method in ('item/started', 'item/completed'):
                 turn = self._turn(params['turnId'])
                 item = copy.deepcopy(params['item'])
+                if 'timestamp' not in item and params.get('timestamp'):
+                    item['timestamp'] = params['timestamp']
                 index = next((i for i, x in enumerate(turn['items']) if x['id'] == item['id']), None)
                 if index is None:
                     turn['items'].append(item)
                 else:
+                    if 'timestamp' not in item and 'timestamp' in turn['items'][index]:
+                        item['timestamp'] = turn['items'][index]['timestamp']
                     turn['items'][index] = item
             elif method in ('item/agentMessage/delta', 'item/commandExecution/outputDelta'):
                 turn = self._turn(params['turnId'])
@@ -255,6 +259,8 @@ class SideChat:
                     # Current app-server command items start with a null output
                     # until the first delta. An empty output is still a string.
                     item[key] = (item.get(key) or '') + params.get('delta', '')
+                    if 'timestamp' not in item and params.get('timestamp'):
+                        item['timestamp'] = params['timestamp']
             elif method == 'serverRequest/resolved':
                 self.state['requests'] = [r for r in self.state['requests'] if r['id'] != params.get('requestId')]
                 self.queue_event.set()

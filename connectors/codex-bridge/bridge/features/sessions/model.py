@@ -1,11 +1,42 @@
 """Normalize desktop state without changing the native thread or provider."""
 import copy
+from datetime import datetime, timezone
 import json
-import re
+import math
 from pathlib import Path
+import re
 from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 import ntpath
+
+
+def normalize_timestamp(value):
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        if not math.isfinite(value) or value <= 0:
+            return None
+        val = int(value)
+        return val * 1000 if val < 100_000_000_000 else val
+    if isinstance(value, str):
+        val_str = value.strip()
+        if not val_str:
+            return None
+        if val_str.isdigit():
+            val = int(val_str)
+            if val <= 0:
+                return None
+            return val * 1000 if val < 100_000_000_000 else val
+        try:
+            parsed = datetime.fromisoformat(val_str.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            val = int(parsed.timestamp() * 1000)
+            return val if val > 0 else None
+        except (ValueError, OverflowError, OSError):
+            return None
+    return None
+
 
 
 
@@ -125,6 +156,9 @@ def user_display_text(text):
 def normalize_item(item):
     kind = item.get("type", "unknown")
     row = {"id": item.get("id"), "kind": kind, "status": item.get("status")}
+    ts = normalize_timestamp(item.get("timestamp") or item.get("createdAt") or item.get("created_at") or item.get("time"))
+    if ts is not None:
+        row["timestamp"] = ts
     if kind in ("userMessage", "steeringUserMessage"):
         if kind == "steeringUserMessage":
             item = {**item, "content": item.get("input", [])}
@@ -235,23 +269,34 @@ def normalize_state(state, connected=True, *, include_turns=True):
                 message = {'id': item.get('call_id', item.get('id')), 'kind': 'storedToolEvent',
                            'role': 'activity', 'title': item.get('name') or '工具调用',
                            'text': str(item.get('arguments', item.get('input', '')))}
+                ts = normalize_timestamp(item.get('timestamp') or item.get('createdAt') or item.get('created_at') or item.get('time'))
+                if ts is not None:
+                    message['timestamp'] = ts
                 calls[message['id']] = message
                 messages.append(message)
             elif kind in ('function_call_output', 'custom_tool_call_output') and item.get('call_id') in calls:
                 output = item.get('output', '')
                 calls[item['call_id']]['output'] = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+                ts = normalize_timestamp(item.get('timestamp') or item.get('createdAt') or item.get('created_at') or item.get('time'))
+                if ts is not None and 'timestamp' not in calls[item['call_id']]:
+                    calls[item['call_id']]['timestamp'] = ts
             else:
                 messages.append(normalize_item(item))
         if not any(x.get("role") == "user" for x in messages):
             opening = text_content(turn.get("params", {}).get("input", []))
             if opening:
-                messages.insert(0, {"id": "opening-" + str(turn.get("turnId", ordinal)), "role": "user", "kind": "userMessage", "text": opening})
+                opening_row = {"id": "opening-" + str(turn.get("turnId", ordinal)), "role": "user", "kind": "userMessage", "text": opening}
+                opening_ts = normalize_timestamp(turn.get("params", {}).get("timestamp") or (turn.get("params") or {}).get("createdAt"))
+                if opening_ts is not None:
+                    opening_row["timestamp"] = opening_ts
+                messages.insert(0, opening_row)
         params = turn.get('params') or {}
         settings = (params.get('collaborationMode') or {}).get('settings') or {}
         model = params.get('model') or settings.get('model') or turn.get('model')
         effort = params.get('effort') or params.get('reasoningEffort') or settings.get('reasoning_effort') or turn.get('reasoningEffort')
+        turn_started = normalize_timestamp(turn.get("turnStartedAtMs") or turn.get("startedAt"))
         result.append({"model": model, "effort": effort, "id": turn.get("turnId") or str(ordinal), "status": turn.get("status"),
-                       "startedAt": turn.get("turnStartedAtMs"), "messages": messages,
+                       "startedAt": turn_started, "messages": messages,
                        "actionable": bool(turn.get("turnId")) and turn.get("turnId") != "history",
                        "error": turn.get("error"), "diff": turn.get("diff")})
     history = state.get("turnHistory", {}).get("history", {})

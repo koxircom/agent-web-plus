@@ -108,3 +108,42 @@ test('Codex status polling refreshes visibly and shares one effect-owned request
   assert.match(componentSource, /removeEventListener\("visibilitychange", refreshWhenVisible\)/);
   assert.match(componentSource, /controller\.abort\(\)/);
 });
+
+test('initial pending state without injected status displays loading indicator instead of unavailable', () => {
+  const html = render({ executionEngine: 'codex' });
+  assert.match(html, /CLI 已安装 <span[^>]*>正在读取<\/span>/);
+  assert.match(html, /data-pi-element="codex-cli-running-version"[^>]*>正在读取<\/span>/);
+  assert.doesNotMatch(html, /版本暂不可用/);
+  assert.doesNotMatch(html, /运行状态暂不可用/);
+});
+
+test('fast local-only update query is sent first and preserves real status on subsequent check failure', () => {
+  assert.match(componentSource, /fetch\("\/api\/codex-update\?localOnly=1"/);
+  assert.match(componentSource, /fetch\("\/api\/codex-update"/);
+  assert.match(componentSource, /roundFreshLocal/);
+  assert.match(componentSource, /prevInstalled/);
+  assert.match(componentSource, /状态读取失败/);
+});
+
+test('stale version snapshot on read failure shows last-known version with failure note and never claims running', () => {
+  const html = render({ executionEngine: 'codex', codexStatus: {
+    currentVersion: '0.163.0',
+    installedVersion: '0.163.0',
+    runningVersion: null,
+    runtimeStatus: 'unknown',
+    activationState: 'manual',
+    activationMessage: '运行状态暂不可用',
+    latestVersion: null,
+    updateAvailable: false,
+    releaseUrl: '',
+    versionError: '状态读取失败',
+    updateError: 'Codex CLI 更新检查失败',
+  } });
+
+  assert.match(html, /CLI 已安装/);
+  assert.match(html, /v0\.163\.0（上次读取）/);
+  assert.match(html, /状态读取失败/);
+  assert.doesNotMatch(html, /运行中/);
+  assert.match(html, /更新检查暂不可用/);
+});
+

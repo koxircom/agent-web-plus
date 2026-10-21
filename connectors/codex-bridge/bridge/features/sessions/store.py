@@ -11,7 +11,7 @@ from collections import OrderedDict
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
-from bridge.features.sessions.model import normalize_state, text_content
+from bridge.features.sessions.model import normalize_state, text_content, normalize_timestamp
 
 
 def runtime_context_input(payload):
@@ -539,8 +539,12 @@ class SessionStore:
             except ValueError:
                 continue
             payload = record.get("payload", {})
+            rec_ts = normalize_timestamp(record.get("timestamp") or payload.get("timestamp"))
             if record.get("type") == "event_msg" and payload.get("type") == "task_started":
+                turn_ts = normalize_timestamp(payload.get("turnStartedAtMs") or payload.get("startedAt") or payload.get("timestamp") or rec_ts)
                 current = {"turnId": payload.get("turn_id"), "status": "inProgress", "items": []}
+                if turn_ts is not None:
+                    current["turnStartedAtMs"] = turn_ts
                 pending_user = None
                 user_receipts = set()
                 turns.append(current)
@@ -586,6 +590,9 @@ class SessionStore:
                     if client_id:
                         pending_user["clientId"] = str(client_id)
                     user_receipts.add(item["id"])
+                    receipt_ts = normalize_timestamp(item.get("timestamp") or item.get("createdAt") or item.get("created_at"))
+                    if receipt_ts is not None and "timestamp" not in pending_user:
+                        pending_user["timestamp"] = receipt_ts
                     pending_user = None
                 elif isinstance(item, dict) and item.get("type") in ("ImageView", "imageView"):
                     # ImageView evidence only exists in event records. Preserve it
@@ -594,25 +601,41 @@ class SessionStore:
                         current = {"turnId": "history", "status": "completed", "items": []}
                         turns.append(current)
                         items = current["items"]
-                    items.append({"id": item.get("id", str(len(items))), "type": "ImageView", "path": item.get("path", "")})
+                    img_ts = normalize_timestamp(item.get("timestamp") or item.get("createdAt") or rec_ts)
+                    img_item = {"id": item.get("id", str(len(items))), "type": "ImageView", "path": item.get("path", "")}
+                    if img_ts is not None:
+                        img_item["timestamp"] = img_ts
+                    items.append(img_item)
             elif record.get("type") == "response_item":
                 if current is None:
                     current = {"turnId": "history", "status": "completed", "items": []}
                     turns.append(current)
                     items = current["items"]
+                msg_ts = normalize_timestamp(payload.get("timestamp") or payload.get("createdAt") or payload.get("created_at") or rec_ts)
                 if payload.get("type") == "message" and payload.get("role") in ("user", "assistant"):
                     role = payload["role"]
                     if role == "user":
                         pending_user = {"id": payload.get("id") or str(len(items)), "type": "userMessage", "content": payload.get("content", [])}
+                        if msg_ts is not None:
+                            pending_user["timestamp"] = msg_ts
                         if runtime_context_input(payload):
                             pending_user["_runtimeContext"] = True
                         items.append(pending_user)
                     else:
-                        items.append({"id": str(len(items)), "type": "agentMessage", "text": "\n".join(x.get("text", "") for x in payload.get("content", []) if isinstance(x, dict)), "phase": payload.get("phase")})
+                        item_obj = {"id": str(len(items)), "type": "agentMessage", "text": "\n".join(x.get("text", "") for x in payload.get("content", []) if isinstance(x, dict)), "phase": payload.get("phase")}
+                        if msg_ts is not None:
+                            item_obj["timestamp"] = msg_ts
+                        items.append(item_obj)
                 elif payload.get("type") in ("agent_message", "agentMessage"):
-                    items.append({"id": payload.get("id", str(len(items))), "type": "agentMessage", "text": payload.get("text", "")})
+                    item_obj = {"id": payload.get("id", str(len(items))), "type": "agentMessage", "text": payload.get("text", "")}
+                    if msg_ts is not None:
+                        item_obj["timestamp"] = msg_ts
+                    items.append(item_obj)
                 elif payload.get("type") in ("function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"):
-                    items.append({"id": payload.get("call_id", str(len(items))), "type": "storedToolEvent", **payload})
+                    tool_obj = {"id": payload.get("call_id", str(len(items))), "type": "storedToolEvent", **payload}
+                    if msg_ts is not None and "timestamp" not in tool_obj:
+                        tool_obj["timestamp"] = msg_ts
+                    items.append(tool_obj)
         for turn in turns:
             turn["items"] = [item for item in turn["items"] if not item.pop("_runtimeContext", False)]
         result = {"id": thread_id, "title": meta.get("name") or meta.get("title"), "cwd": meta["cwd"],

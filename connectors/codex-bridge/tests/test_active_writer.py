@@ -152,7 +152,7 @@ class ActiveWriterTests(unittest.TestCase):
             self.assertIs(result, bridge.web_history.value)
             self.assertFalse(bridge.web_history.full)  # Never parse the entire web rollout on open.
 
-    def test_timeline_metadata_uses_the_same_title_override_as_view(self):
+    def test_timeline_ignores_legacy_web_title_override(self):
         class Chat:
             def __init__(self):
                 self.condition = threading.Condition()
@@ -175,19 +175,36 @@ class ActiveWriterTests(unittest.TestCase):
         bridge._native_queue_items = lambda _: []
         chat.timeline.update(chat.view())
         result = StandaloneBridge.timeline_read(bridge, THREAD_ID)
-        self.assertEqual(result['meta']['title'], '网页覆盖标题')
+        self.assertEqual(result['meta']['title'], '原始标题')
 
-    def test_offline_rename_is_a_local_title_override(self):
+    def test_offline_rename_writes_native_name_without_adoption(self):
+        calls = []
+        meta = {'id': THREAD_ID, 'name': '原始标题', 'cwd': '/tmp'}
+
         class HistorySession:
             def __init__(self):
                 self.condition = threading.Condition()
 
             def view(self, **_options):
-                return {'id': THREAD_ID, 'title': '原始标题'}
+                return {'id': THREAD_ID, 'title': meta.get('name')}
 
         class History:
+            def workspace(self, _cwd):
+                return {'name':'test', 'key':'test'}
+            def rollout_path(self, _meta):
+                return None
+            def get(self, _identifier):
+                return meta
+
             def session(self, _identifier, full=False):
                 return HistorySession()
+
+        class Backend:
+            def request(self, method, params, timeout=30):
+                calls.append((method, params))
+                if method == 'thread/name/set':
+                    meta['name'] = params['name']
+                return {}
 
         with tempfile.TemporaryDirectory() as folder:
             bridge = StandaloneBridge.__new__(StandaloneBridge)
@@ -195,18 +212,19 @@ class ActiveWriterTests(unittest.TestCase):
             bridge.path = Path(folder) / 'web-threads.json'
             bridge.records = {'threads': {}, 'creations': {}, 'titleOverrides': {}}
             bridge.registry_lock = threading.RLock()
+            bridge.lock = threading.RLock()
             bridge.history = History()
             bridge.live = {}
+            bridge.view = lambda _id: {'id': THREAD_ID, 'title': meta.get('name')}
+            bridge.save = lambda: bridge.path.write_text(json.dumps(bridge.records), encoding='utf-8')
             bridge._native_queue_items = lambda _: []
-            bridge._scoped_record = lambda _identifier: {'runtime': 'history'}
-            bridge._history_backend = lambda: (_ for _ in ()).throw(
-                AssertionError('offline rename must not start or resume a runtime'))
+            bridge._scoped_record = lambda _identifier: {'runtime': 'history', 'cwd':'/tmp'}
+            bridge._history_backend = lambda: Backend()
             result = StandaloneBridge.rename(bridge, THREAD_ID, '  网页标题  ')
             self.assertEqual(result['title'], '网页标题')
-            self.assertEqual(bridge.records['titleOverrides'][THREAD_ID], '网页标题')
+            self.assertIn(('thread/name/set', {'threadId': THREAD_ID, 'name': '网页标题'}), calls)
+            self.assertNotIn(THREAD_ID, bridge.records['titleOverrides'])
             self.assertEqual(bridge.records['threads'], {})
-            saved = json.loads(bridge.path.read_text(encoding='utf-8'))
-            self.assertEqual(saved['titleOverrides'][THREAD_ID], '网页标题')
 
     def test_session_paths_are_exposed_only_inside_codex_history_roots(self):
         with tempfile.TemporaryDirectory() as folder:

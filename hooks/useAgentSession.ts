@@ -455,6 +455,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [stopRequested, setStopRequested] = useState(false);
   const preparationRef = useRef<AbortController | null>(null);
   const stopInFlightRef = useRef<Promise<void> | null>(null);
+  const forkInFlightRef = useRef(false);
   useEffect(() => { setStopRequested(false); }, [session?.id]);
   useEffect(() => {
     if (!agentRunning && !bashRunning) setStopRequested(false);
@@ -2390,23 +2391,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice]);
 
   const handleFork = useCallback(async (entryId: string) => {
-    if (bashRunningRef.current) return;
+    if (bashRunningRef.current || forkInFlightRef.current) return;
     const sid = sessionIdRef.current;
     if (!sid) return;
+    forkInFlightRef.current = true;
     setForkingEntryId(entryId);
+    const clientRequestId = crypto.randomUUID();
     try {
       const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
         type: "fork",
         entryId,
+        requestId: clientRequestId,
       });
       const { cancelled, newSessionId } = result ?? {};
       if (!cancelled && newSessionId) {
-        onSessionForked?.(newSessionId);
+        if (sessionIdRef.current === sid) {
+          onSessionForked?.(newSessionId);
+        }
       }
     } catch (e) {
       console.error("Fork failed:", e);
       addNotice({ type: "error", message: e instanceof Error ? e.message : String(e), error: e });
     } finally {
+      forkInFlightRef.current = false;
       setForkingEntryId(null);
     }
   }, [addNotice, onSessionForked]);

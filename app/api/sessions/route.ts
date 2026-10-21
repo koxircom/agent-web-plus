@@ -16,7 +16,18 @@ export async function GET(req: Request) {
     perf?.span("start");
     const requestedEngine = searchParams.get("engine");
     const engine = requestedEngine === "pi" || requestedEngine === "codex" ? requestedEngine : undefined;
-    const data = await readSessionList({ summary, force, engine });
+    const isArchived = searchParams.get("archived") === "true";
+    let data;
+    if (engine === "codex" && isArchived) {
+      const rawOffset = searchParams.get("offset");
+      const offset = rawOffset !== null && !Number.isNaN(Number(rawOffset)) ? Number(rawOffset) : undefined;
+      const rawLimit = searchParams.get("limit");
+      const limit = rawLimit !== null && !Number.isNaN(Number(rawLimit)) ? Number(rawLimit) : undefined;
+      const { listCodexSessions } = await import("@/lib/execution-engines/codex-engine");
+      data = await listCodexSessions({ archived: true, offset, limit });
+    } else {
+      data = await readSessionList({ summary, force, engine });
+    }
     perf?.span("scan+projects");
     return perf?.attach(jsonResponse(
       req,

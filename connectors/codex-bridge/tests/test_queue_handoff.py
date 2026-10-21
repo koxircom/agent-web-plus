@@ -47,6 +47,9 @@ class QueueHandoffTests(unittest.TestCase):
         self.chat._event({'method': 'turn/started', 'params': {'threadId': ID, 'turn': {'id': turn_id, 'status': 'inProgress'}}})
         self.chat._event({'method': 'item/started', 'params': {'threadId': ID, 'turnId': turn_id, 'item': {'id': 'native-' + token, 'type': 'userMessage', 'clientId': token, 'content': [{'type': 'text', 'text': '相同的排队内容'}]}}})
         if complete:
+            # A successful native turn is not settled until its final item is
+            # committed. Model the real protocol instead of bypassing that gate.
+            self.chat._event({'method':'item/completed','params':{'threadId':ID,'turnId':turn_id,'item':{'id':'final-'+token,'type':'agentMessage','phase':'final_answer','text':'隔离最终回复'}}})
             self.chat._event({'method': 'turn/completed', 'params': {'threadId': ID, 'turn': {'id': turn_id, 'status': 'completed'}}})
 
     def assert_representation(self, page, delivered, queued):

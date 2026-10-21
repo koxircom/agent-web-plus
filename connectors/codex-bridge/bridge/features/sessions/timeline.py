@@ -9,6 +9,8 @@ import re
 import uuid
 from collections import OrderedDict
 
+from bridge.features.sessions.model import normalize_timestamp
+
 PAGE_BYTES = 192 * 1024
 TEXT_PREVIEW = 8000
 DETAIL_CHARS = 16000
@@ -45,6 +47,7 @@ class Timeline:
             # Display metadata can change without a new native turn/event.
             self.meta.update({k: v for k, v in view.items() if k != 'turns'})
             return
+        old_timestamps = {row['key']: row['timestamp'] for row in self.rows if 'timestamp' in row}
         activation_ids = set(view.get('goalActivationIds') or ())
         rows, details = [], {}
         for turn in view['turns']:
@@ -63,14 +66,23 @@ class Timeline:
                 key = base + '-' + str(ordinal)
                 text = visible_text(message)
                 activity = message['role'] == 'activity'
+                row = {k: message[k] for k in ('role', 'kind', 'status', 'title', 'phase', 'requestId', 'deliveryConfirmed', 'timestamp') if k in message}
+                if 'timestamp' in row:
+                    normalized = normalize_timestamp(row['timestamp'])
+                    if normalized is not None:
+                        row['timestamp'] = normalized
+                    else:
+                        row.pop('timestamp', None)
+                if 'timestamp' not in row and key in old_timestamps:
+                    row['timestamp'] = old_timestamps[key]
                 version = hashlib.sha256(encoded([text, turn.get('model'), turn.get('effort'),
-                                                 message.get('requestId'), message.get('attachments'), message.get('deliveryConfirmed')])).hexdigest()[:24]
-                row = {k: message[k] for k in ('role', 'kind', 'status', 'title', 'phase', 'requestId', 'deliveryConfirmed') if k in message}
+                                                 message.get('requestId'), message.get('attachments'), message.get('deliveryConfirmed'),
+                                                 row.get('timestamp')])).hexdigest()[:24]
                 row.update(key=key, turnId=turn['id'], order=len(rows), version=version,
                            text=text[:180 if activity else TEXT_PREVIEW],
                            truncated=(activity and bool(text)) or len(text) > TEXT_PREVIEW, turnStatus=turn.get('status'),
                            editable=turn.get('actionable', True) and message is first_user and message.get('kind') == 'userMessage',
-                           forkable=turn.get('actionable', True) and message['role'] == 'assistant' and message.get('phase') != 'commentary' and turn.get('status') == 'completed')
+                           forkable=bool(turn.get('actionable', True) and turn.get('id') and turn.get('id') != 'history' and message is first_user and message.get('kind') == 'userMessage' and message.get('role') == 'user'))
                 if message['role'] == 'assistant':
                     row.update({k:turn[k] for k in ('model','effort') if turn.get(k)})
                 if message.get('attachments'):
@@ -81,8 +93,12 @@ class Timeline:
             if turn.get('error'):
                 key = hashlib.sha256(encoded([turn['id'], 'error'])).hexdigest()[:24] + '-error'
                 text = turn['error'] if isinstance(turn['error'], str) else json.dumps(turn['error'], ensure_ascii=False)
-                rows.append(dict(key=key, turnId=turn['id'], order=len(rows), role='error', text=text[:TEXT_PREVIEW],
-                                 truncated=len(text) > TEXT_PREVIEW, version=hashlib.sha256(text.encode()).hexdigest()[:24]))
+                err_ts = normalize_timestamp(turn.get('errorTimestamp') or turn.get('timestamp')) or old_timestamps.get(key)
+                error_row = dict(key=key, turnId=turn['id'], order=len(rows), role='error', text=text[:TEXT_PREVIEW],
+                                 truncated=len(text) > TEXT_PREVIEW, version=hashlib.sha256(text.encode()).hexdigest()[:24])
+                if err_ts is not None:
+                    error_row['timestamp'] = err_ts
+                rows.append(error_row)
                 details[key] = text
         old_keys = [row['key'] for row in self.rows]
         new_keys = [row['key'] for row in rows]

@@ -28,6 +28,12 @@ class SharedBridgeTests(unittest.TestCase):
         chat=Chat(bridge,ID,backend.request('fixture',{}),backend);bridge.live={ID:chat};bridge.history_runtime=backend;bridge.runtime=SimpleNamespace(write=lambda _:self.fail('unrelated runtime received a reply'));bridge.closed=threading.Event()
         return bridge,chat,backend
 
+    def test_native_name_notification_uses_thread_name_schema(self):
+        with tempfile.TemporaryDirectory() as root:
+            b,c,_=self.fixture(root)
+            b._runtime_event({'method':'thread/name/updated','params':{'threadId':ID,'threadName':'桌面原生名称'}}, 'history')
+            self.assertEqual(c.view()['title'], '桌面原生名称')
+
     def test_shared_resume_preserves_original_active_status(self):
         with tempfile.TemporaryDirectory() as root:
             b,c,r=self.fixture(root);r.status='active';c.refresh_shared_state()
@@ -128,10 +134,19 @@ class SharedBridgeTests(unittest.TestCase):
 
     def test_rename_of_a_read_only_observer_keeps_its_title_without_adopting(self):
         with tempfile.TemporaryDirectory() as root:
-            b,c,r=self.fixture(root);b.records['threads'].clear();b._scoped_record=lambda _: {'runtime':'history'}
+            b,c,r=self.fixture(root);b.records['threads'].clear();b._scoped_record=lambda _: {'runtime':'history', 'cwd':root}
+            native={'name':'原会话','cwd':root}
+            original=r.request
+            def request(method,params,timeout=30):
+                if method=='thread/name/set': native['name']=params['name']
+                return original(method,params,timeout)
+            r.request=request
+            b.history=SimpleNamespace(get=lambda _:native,workspace=lambda _: {'name':'test','key':'test'},rollout_path=lambda _:None)
+            b._history_backend=lambda: r
             b.view=lambda identifier:c.state
             b.rename(ID,'新名称')
-            self.assertEqual(b.records['titleOverrides'][ID],'新名称')
+            self.assertIn(('thread/name/set', {'threadId': ID, 'name': '新名称'}), r.calls)
+            self.assertNotIn(ID, b.records['titleOverrides'])
             self.assertEqual(b.records['threads'],{})
             self.assertEqual(c.state['title'],'新名称')
 

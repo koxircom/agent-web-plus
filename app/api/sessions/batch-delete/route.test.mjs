@@ -6,14 +6,14 @@ import test from 'node:test';
 import { createJiti } from 'jiti';
 import fsPromises from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
-const jiti = createJiti(import.meta.url, { alias: { '@': process.cwd() }, interopDefault: true });
+const jiti = createJiti(import.meta.url, { alias: { '@': process.cwd(), 'server-only':'next/dist/compiled/server-only/empty.js' }, interopDefault: true });
 const { POST } = await jiti.import('./route.ts');
 const { cacheSessionPath, invalidateSessionListCache, invalidateSessionPathCache } = await jiti.import('../../../../lib/session-reader.ts');
 const { loadUsageDeleteGuard } = await jiti.import('../../../../lib/usage-delete-guard.ts');
 const requestFor = ids => new Request('http://localhost/api/sessions/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) });
 const post = ids => POST(requestFor(ids));
 async function postWithFreshImports(ids) {
- const fresh=createJiti(import.meta.url,{alias:{'@':process.cwd()},interopDefault:true,moduleCache:false});
+ const fresh=createJiti(import.meta.url,{alias:{'@':process.cwd(),'server-only':'next/dist/compiled/server-only/empty.js'},interopDefault:true,moduleCache:false});
  const route=await fresh.import('./route.ts');return route.POST(requestFor(ids));
 }
 async function fixture(t) {

@@ -21,6 +21,7 @@ import {
   preferUserShellExtensions,
 } from "./project-command-env";
 import { cacheSessionPath, getLatestModelChange, invalidateSessionListCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader";
+import { computeSessionStats, FORK_PROVENANCE_TYPE, prepareForkProvenance } from "./session-stats";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
@@ -1415,6 +1416,39 @@ export class AgentSessionWrapper {
           }
 
           const newSessionId = forkedManager.getSessionId();
+          if (entry.parentId && existsSync(newSessionFile)) {
+            const branchTargetManager = SessionManager.open(newSessionFile, sessionDir);
+            const branchEntries = branchTargetManager.getEntries();
+            if (branchEntries.length > 0) {
+              const inheritedEntryIds = branchEntries
+                .filter((e) => e.type !== "custom" || (e as { customType?: string }).customType !== FORK_PROVENANCE_TYPE)
+                .map((e) => e.id)
+                .filter((id): id is string => typeof id === "string" && Boolean(id));
+              if (inheritedEntryIds.length > 0) {
+                const provenanceData = prepareForkProvenance(
+                  sessionManager.getEntries(),
+                  sessionManager.getSessionId(),
+                  currentSessionFile,
+                  entry.parentId,
+                  inheritedEntryIds,
+                );
+                branchTargetManager.appendCustomEntry(FORK_PROVENANCE_TYPE, provenanceData);
+
+                // 重新读取并验证 marker 确实持久化落盘
+                const verifyManager = SessionManager.open(newSessionFile, sessionDir);
+                const verifyEntries = verifyManager.getEntries();
+                const verified = verifyEntries.some(
+                  (e) =>
+                    e.type === "custom" &&
+                    (e as { customType?: string }).customType === FORK_PROVENANCE_TYPE &&
+                    Boolean((e as { data?: { inheritedEntryIds?: string[] } }).data?.inheritedEntryIds?.length),
+                );
+                if (!verified) {
+                  throw new Error(`Failed to verify fork provenance persistence in ${newSessionFile}`);
+                }
+              }
+            }
+          }
           cacheSessionPath(newSessionId, newSessionFile);
           invalidateSessionListCache();
           if (!keepSource) await this.shutdownAfterSessionReplacement("fork");
@@ -1434,10 +1468,46 @@ export class AgentSessionWrapper {
         if (!sessionManager.getEntry(entryId)) throw new Error("Invalid entry ID for forking");
         if (!existsSync(currentSessionFile)) throw new Error(UNSAVED_SESSION_FORK_ERROR);
 
+        const sourceEntries = sessionManager.getEntries();
+        const parentSessionId = sessionManager.getSessionId();
         const sessionDir = sessionManager.getSessionDir();
         const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
         const forkedPath = sourceManager.createBranchedSession(entryId);
         if (!forkedPath) throw new Error("Failed to create forked session");
+
+        if (existsSync(forkedPath)) {
+          const branchTargetManager = SessionManager.open(forkedPath, sessionDir);
+          const branchEntries = branchTargetManager.getEntries();
+          if (branchEntries.length > 0) {
+            const inheritedEntryIds = branchEntries
+              .filter((e) => e.type !== "custom" || (e as { customType?: string }).customType !== FORK_PROVENANCE_TYPE)
+              .map((e) => e.id)
+              .filter((id): id is string => typeof id === "string" && Boolean(id));
+            if (inheritedEntryIds.length > 0) {
+              const provenanceData = prepareForkProvenance(
+                sourceEntries,
+                parentSessionId,
+                currentSessionFile,
+                entryId,
+                inheritedEntryIds,
+              );
+              branchTargetManager.appendCustomEntry(FORK_PROVENANCE_TYPE, provenanceData);
+
+              // 重新读取并验证 marker 确实持久化落盘
+              const verifyManager = SessionManager.open(forkedPath, sessionDir);
+              const verifyEntries = verifyManager.getEntries();
+              const verified = verifyEntries.some(
+                (e) =>
+                  e.type === "custom" &&
+                  (e as { customType?: string }).customType === FORK_PROVENANCE_TYPE &&
+                  Boolean((e as { data?: { inheritedEntryIds?: string[] } }).data?.inheritedEntryIds?.length),
+              );
+              if (!verified) {
+                throw new Error(`Failed to verify fork_branch provenance persistence in ${forkedPath}`);
+              }
+            }
+          }
+        }
 
         const newSessionId = SessionManager.open(forkedPath, sessionDir).getSessionId();
         cacheSessionPath(newSessionId, forkedPath);
@@ -1519,8 +1589,14 @@ export class AgentSessionWrapper {
       }
 
       case "get_session_stats": {
+        const rawStats = this.inner.getSessionStats();
+        const entries = this.inner.sessionManager.getEntries() as SessionEntry[];
+        const computed = computeSessionStats(entries);
         return {
-          ...this.inner.getSessionStats(),
+          ...rawStats,
+          ...computed,
+          sessionId: rawStats?.sessionId ?? this.sessionId,
+          sessionFile: rawStats?.sessionFile ?? this.sessionFile,
           sessionName: this.inner.sessionManager.getSessionName(),
         };
       }

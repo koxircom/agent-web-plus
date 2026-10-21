@@ -26,7 +26,7 @@ class DeleteTests(unittest.TestCase):
             def request(self, method, params, timeout=30):
                 self.calls.append((method, params))
                 if method == 'thread/resume':
-                    return {'thread': {'id': ID, 'status': {'type': self.status}}}
+                    return {'thread': {'id': ID, 'cwd':root, 'status': {'type': self.status}}}
                 if method == 'thread/queue/list':
                     return {'data': self.queue, 'nextCursor': None}
                 if self.failure:
@@ -40,7 +40,7 @@ class DeleteTests(unittest.TestCase):
                           'titleOverrides': {ID: '名称'}, 'creations': {'r': {'id': ID, 'title': '名称'}}}
         bridge.workspaces = [{'path': Path(root)}]
         bridge.runtime = backend
-        history = SimpleNamespace(lock=threading.RLock(), sessions={ID: object()})
+        history = SimpleNamespace(lock=threading.RLock(), sessions={ID: object()}, get=lambda _: {'cwd':root,'archived':False})
         bridge.history, bridge.web_history = None, history
         bridge.live = {}
         bridge.saved = []
@@ -63,6 +63,18 @@ class DeleteTests(unittest.TestCase):
             self.assertTrue(chat.closed)
             self.assertNotIn(ID, b.live)
             self.assertNotIn(ID, b.web_history.sessions)
+
+    def test_archived_thread_deletes_through_native_owner_without_waking_it(self):
+        with tempfile.TemporaryDirectory() as root:
+            b,backend=self.fixture(root)
+            b.web_history.get=lambda _: {'cwd':root,'archived':True}
+            self.assertEqual(b.delete_thread(ID), {'ok':True})
+            self.assertEqual([m for m,_ in backend.calls], ['thread/delete'])
+            b,backend=self.fixture(root)
+            b.web_history.get=lambda _: {'cwd':root,'archived':True}
+            b.records['threads'][ID]['submissions']={'queued':{'status':'unknown'}}
+            with self.assertRaisesRegex(ValueError, '处理队列'): b.delete_thread(ID)
+            self.assertNotIn('thread/delete',[m for m,_ in backend.calls])
 
     def test_active_or_waiting_thread_never_reaches_delete(self):
         with tempfile.TemporaryDirectory() as root:

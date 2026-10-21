@@ -612,6 +612,7 @@ export function ChatMinimap({
   const handleMouseLeave = useCallback((event?: React.MouseEvent<HTMLDivElement>) => {
     // Touch generates compatibility mouse events after release; it must not hide a just-opened drawer.
     if (lastPointerTypeRef.current !== "mouse" || (event?.nativeEvent as any)?.sourceCapabilities?.firesTouchEvents) return;
+    if (event && event.buttons !== 0) return;
     schedulePreviewHide();
     closedByUserRef.current = false;
   }, [schedulePreviewHide]);
@@ -1116,6 +1117,9 @@ export function ChatMinimap({
     previewBox.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
   }, [minimapHovered, nearestNodeIndex]);
 
+  const triggerLoadEarlierRef = useRef(triggerLoadEarlier);
+  triggerLoadEarlierRef.current = triggerLoadEarlier;
+
   useEffect(() => {
     // Mobile overlays use native scrolling; desktop wheel/swipe history gestures
     // must not load older pages or interfere with Android navigation.
@@ -1133,7 +1137,7 @@ export function ChatMinimap({
 
     const handleWheel = (e: WheelEvent) => {
       if (previewBox.scrollTop <= 1 && e.deltaY < 0) {
-        if (triggerLoadEarlier("wheel")) {
+        if (triggerLoadEarlierRef.current("wheel")) {
           e.preventDefault();
         }
       }
@@ -1168,6 +1172,7 @@ export function ChatMinimap({
     };
 
     const handleTouchStart = (e: TouchEvent) => {
+      cancelPreviewHide();
       const touch = e.touches?.[0];
       if (!touch) return;
       touchStartX = touch.clientX;
@@ -1188,14 +1193,22 @@ export function ChatMinimap({
       if (!touch) return;
       const dx = touch.clientX - touchStartX;
       const dy = touch.clientY - touchStartY;
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
 
       if (!gestureIntent) {
-        if (Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx)) {
+        if (absY > 8 && absY >= absX) {
           gestureIntent = "scroll";
           justSwipedRef.current = true;
-        } else if (dx > 10 && dx > Math.abs(dy) * 1.1) {
+        } else if (dx > 10 && dx > absY * 1.1) {
           gestureIntent = "swipe-right";
           justSwipedRef.current = true;
+        }
+      } else if (gestureIntent === "swipe-right") {
+        if (absY >= 8 && absY >= dx) {
+          gestureIntent = "scroll";
+          currentTranslateX = 0;
+          previewBox.style.transform = "";
         }
       }
 
@@ -1203,7 +1216,7 @@ export function ChatMinimap({
         if (isAtTop && dy >= 32) {
           isAtTop = false;
           justSwipedRef.current = true;
-          if (triggerLoadEarlier("touch") && e.cancelable) {
+          if (triggerLoadEarlierRef.current("touch") && e.cancelable) {
             e.preventDefault();
           }
         }
@@ -1223,15 +1236,20 @@ export function ChatMinimap({
       }
     };
 
-    const handleTouchEnd = () => {
+    const handleTouchEnd = (e: TouchEvent) => {
       if (gestureIntent === null) {
         resetSwipe(false);
         return; // A normal tap must reach the user's native button onClick.
       }
+      const touch = e.changedTouches?.[0];
+      const dy = touch ? touch.clientY - touchStartY : 0;
+      const absY = Math.abs(dy);
+
       if (gestureIntent === "swipe-right" && currentTranslateX > 0) {
         const elapsed = Math.max(1, Date.now() - touchStartTime);
         const vx = currentTranslateX / elapsed;
-        const shouldClose = currentTranslateX >= 48 || (currentTranslateX >= 24 && vx > 0.25);
+        const isDominant = currentTranslateX >= absY * 1.1;
+        const shouldClose = isDominant && (currentTranslateX >= 48 || (currentTranslateX >= 24 && vx > 0.25));
         if (shouldClose) {
           closedByUserRef.current = true; // Hover during the exit animation must not cancel the user's close.
           justSwipedRef.current = true;
@@ -1295,7 +1313,7 @@ export function ChatMinimap({
         suppressClickTimerRef.current = null;
       }
     };
-  }, [cancelPreviewHide, minimapHovered, overlay, triggerLoadEarlier, visible]);
+  }, [cancelPreviewHide, minimapHovered, overlay, visible]);
 
   // 导航测量前保留固定宽度，避免消息先按全宽渲染后再次换行。
   if (!visible && !overlay) return (
@@ -1456,6 +1474,10 @@ export function ChatMinimap({
             aria-label={overlay ? "会话导航" : undefined}
             data-minimap-preview-box=""
             data-minimap-native-preview=""
+            onPointerDown={(event) => {
+              cancelPreviewHide();
+              lastPointerTypeRef.current = event.pointerType || "mouse";
+            }}
             onMouseEnter={showPreview}
             onMouseDown={(event) => event.stopPropagation()}
             onMouseMove={(event) => event.stopPropagation()}

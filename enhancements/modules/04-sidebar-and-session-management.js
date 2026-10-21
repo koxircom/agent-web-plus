@@ -821,12 +821,143 @@
   }
   window.__PI_ENH_TRIGGER_SESSION_INLINE_RENAME__ = triggerSessionInlineRename;
 
-  function handleSessionPinArchiveAction(sessionId, action) {
+  // ==========================================
+  // 会话引擎与合法 Native 路径识别核心逻辑
+  // ==========================================
+  function isLegalAbsolutePath(p) {
+    if (typeof p !== "string") return false;
+    const trimmed = p.trim();
+    if (!trimmed) return false;
+    if (trimmed.startsWith("codex:")) return false;
+    if (trimmed.startsWith("/")) return true;
+    if (/^[a-zA-Z]:[/\\]/.test(trimmed)) return true;
+    if (/^([/\\]{2})[^/\\]+/.test(trimmed)) return true;
+    return false;
+  }
+
+  function resolveSessionRolloutPath(sessionId, explicitPath) {
+    if (isLegalAbsolutePath(explicitPath)) {
+      return explicitPath.trim();
+    }
+    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
+      try {
+        const rawSessions = window.__PI_ENH_GET_RAW_SESSIONS__();
+        if (Array.isArray(rawSessions)) {
+          const found = rawSessions.find((s) => s && s.id === sessionId);
+          if (found && isLegalAbsolutePath(found.path)) {
+            return found.path.trim();
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function isCodexSession(sessionId, explicitEngine) {
+    if (explicitEngine === "codex") return true;
+    if (explicitEngine === "pi") return false;
+    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) return true;
+
+    // 检查 rawSessions
+    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
+      try {
+        const raw = window.__PI_ENH_GET_RAW_SESSIONS__();
+        if (Array.isArray(raw)) {
+          const s = raw.find((item) => item && item.id === sessionId);
+          if (s) {
+            if (s.executionEngine === "codex" || (typeof s.path === "string" && s.path.startsWith("codex:"))) {
+              return true;
+            }
+            if (s.executionEngine === "pi") {
+              return false;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 检查 DOM row 属性
+    const row = typeof getSessionRowById === "function" ? getSessionRowById(sessionId) : null;
+    const rowEngine = row?.getAttribute?.("data-execution-engine");
+    if (rowEngine === "codex") return true;
+    if (rowEngine === "pi") return false;
+
+    // 若 sessionId 存在且未指明 codex，明确 Pi id 不能被当前页面引擎覆盖，直接视为非 Codex 会话
+    if (sessionId) return false;
+
+    // 仅在无具体 sessionId 时的兜底参考全局当前页面引擎
+    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_EXECUTION_ENGINE__ === "function") {
+      try {
+        if (window.__PI_ENH_GET_EXECUTION_ENGINE__() === "codex") return true;
+      } catch (_) {}
+    }
+    return false;
+  }
+
+  async function handleSessionReload(sessionId, options = {}) {
+    if (!sessionId) return false;
+    const isCodex = isCodexSession(sessionId, options.executionEngine);
+    if (!isCodex) {
+      if (typeof window.__PI_ENH_RELOAD_SPECIFIC_SESSION__ === "function") {
+        window.__PI_ENH_RELOAD_SPECIFIC_SESSION__(sessionId, true);
+        return true;
+      }
+      return false;
+    }
+
+    const isCurrentResident = Boolean(
+      typeof window.__PI_WEB_GET_RESIDENT_SESSION_DATA__ === "function" &&
+      window.__PI_WEB_GET_RESIDENT_SESSION_DATA__(sessionId)
+    );
+
+    if (isCurrentResident) {
+      if (typeof window.__PI_WEB_RELOAD_SESSION__ !== "function") {
+        showToast("当前环境未提供原生会话重读接口", "error");
+        return false;
+      }
+      try {
+        showToast("正在重新读取原生会话...");
+        const reloadResult = await window.__PI_WEB_RELOAD_SESSION__(sessionId, true, true, { force: true });
+        if (reloadResult === false) {
+          showToast("重新读取原生会话失败", "error");
+          return false;
+        }
+        return true;
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : (err?.message || "重新读取原生会话失败"), "error");
+        return false;
+      }
+    } else {
+      try {
+        const targetUrl = `/?session=${encodeURIComponent(sessionId)}`;
+        if (typeof window !== "undefined" && window.location) {
+          if (typeof window.location.assign === "function") {
+            window.location.assign(targetUrl);
+          } else {
+            window.location.href = targetUrl;
+          }
+        }
+        return true;
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "导航到目标会话失败", "error");
+        return false;
+      }
+    }
+  }
+
+  async function handleSessionPinArchiveAction(sessionId, action) {
     if (action === "pin") {
-      const pinned = toggleSessionPin(sessionId);
-      syncSessionPinArchiveControls();
-      requestSessionListRefresh();
-      showToast(pinned ? "已置顶会话" : "已取消置顶会话", sessionPinIcon);
+      try {
+        const pinFn = (typeof toggleSessionPin === "function")
+          ? toggleSessionPin
+          : (typeof window !== "undefined" ? window.__PI_ENH_TOGGLE_SESSION_PIN__ : null);
+        const pinned = pinFn ? await pinFn(sessionId) : false;
+        syncSessionPinArchiveControls();
+        requestSessionListRefresh();
+        showToast(pinned ? "已置顶会话" : "已取消置顶会话", sessionPinIcon);
+      } catch (err) {
+        showToast(err?.message || "置顶状态切换未确认，已保留原状态", undefined, 3500);
+      }
       return;
     }
     if (action === "toggle-unread" || action === "unread") {
@@ -835,22 +966,27 @@
       return;
     }
     if (action === "archive") {
-      const row = getSessionRowById(sessionId);
-      const sessionName = extractSessionTitleFromRow(row, sessionId);
-      const archiveFn = (typeof archiveSession === "function")
-        ? archiveSession
-        : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
-      const archived = archiveFn ? archiveFn(sessionId, { name: sessionName }) : false;
+      try {
+        const row = getSessionRowById(sessionId);
+        const sessionName = extractSessionTitleFromRow(row, sessionId);
+        const archiveFn = (typeof archiveSession === "function")
+          ? archiveSession
+          : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
+        const archived = archiveFn ? await archiveFn(sessionId, { name: sessionName }) : false;
 
-      if (archived) {
-        syncSessionPinArchiveControls();
-        requestSessionListRefresh(false, true);
-        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+        if (archived) {
+          syncSessionPinArchiveControls();
+          requestSessionListRefresh(false, true);
+          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          }
+          showToast("已归档会话，可在“设置 → 已归档”中还原", sessionArchiveIcon, 4200);
+          return;
         }
-        showToast("已归档会话，可在“设置 → 已归档”中还原", sessionArchiveIcon, 4200);
-        return;
+      } catch (err) {
+        showToast(err?.message || "归档未确认，会话已保留在列表中", undefined, 3500);
       }
+      return;
     }
     if (action === "rename") {
       closeMenu();
@@ -859,9 +995,7 @@
     }
     if (action === "reload") {
       closeMenu();
-      if (typeof window.__PI_ENH_RELOAD_SPECIFIC_SESSION__ === "function") {
-        window.__PI_ENH_RELOAD_SPECIFIC_SESSION__(sessionId, true);
-      }
+      void handleSessionReload(sessionId);
       return;
     }
     if (action === "delete") {
@@ -881,15 +1015,19 @@
     if (typeof document !== "undefined" && document.documentElement) {
       document.documentElement.classList.remove("pi-enh-scroll-restoring");
     }
-    const pinned = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
+    const isPinnedFn = typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function"
+      ? window.__PI_ENH_IS_SESSION_PINNED__
+      : (id) => readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(id);
+    const pinned = isPinnedFn(sessionId);
     const unread = isSessionUnread(sessionId);
+    const isCodex = isCodexSession(sessionId);
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu pi-enh-session-menu";
     menu.innerHTML = `
       <div class="pi-enh-menu-item" data-session-action="pin">${sessionPinIcon}<span>${pinned ? "取消置顶" : "置顶会话"}</span></div>
       <div class="pi-enh-menu-item" data-session-action="toggle-unread">${unread ? sessionReadIcon : sessionUnreadIcon}<span>${unread ? "标为已读" : "标为未读"}</span></div>
       <div class="pi-enh-menu-item" data-session-action="rename"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg><span>重命名</span></div>
-      <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>从磁盘重载 (Alt+R)</span></div>
+      <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>${isCodex ? "重新读取原生会话" : "从磁盘重载 (Alt+R)"}</span></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-session-action="archive">${sessionArchiveIcon}<span>归档会话</span></div>
       <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" data-stage="init" title="点击一次进入确认，再次点击彻底删除，无法撤销"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
@@ -1075,13 +1213,18 @@
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>
           <span>还原</span>
         `;
-        restoreBtn.addEventListener("click", (e) => {
+        restoreBtn.addEventListener("click", async (e) => {
           e.preventDefault();
           e.stopPropagation();
-          restoreArchivedSession(sessionId);
-          requestSessionListRefresh();
-          showToast("已还原会话", sessionArchiveIcon);
-          addManagedTimeout(syncSearchResultsArchivedDecoration, 50);
+          try {
+            const ok = await restoreArchivedSession(sessionId);
+            if (!ok) return;
+            requestSessionListRefresh();
+            showToast("已还原会话", sessionArchiveIcon);
+            addManagedTimeout(syncSearchResultsArchivedDecoration, 50);
+          } catch (err) {
+            showToast(err instanceof Error ? err.message : "还原会话失败", "error");
+          }
         });
         metaRow.appendChild(restoreBtn);
       }
@@ -1105,6 +1248,9 @@
     const { id, path, cwd, name, clientX, clientY, executionEngine } = event.detail || {};
     if (!id) return;
 
+    const isCodex = isCodexSession(id, executionEngine);
+    const validRolloutPath = resolveSessionRolloutPath(id, path);
+
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu";
     const displayName = name || id.slice(0, 18) + "...";
@@ -1121,6 +1267,10 @@
         <span>重命名会话</span>
       </div>
       ${isPluginEnabled("session-pin-archive") ? `
+      <div class="pi-enh-menu-item" data-action="pin-session">
+        ${sessionPinIcon}
+        <span>${((typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function") ? window.__PI_ENH_IS_SESSION_PINNED__(id) : readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(id)) ? "取消置顶" : "置顶会话"}</span>
+      </div>
       <div class="pi-enh-menu-item" data-action="archive-session">
         ${sessionArchiveIcon}
         <span>归档会话</span>
@@ -1132,7 +1282,7 @@
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
           <line x1="7" y1="7" x2="7.01" y2="7"></line>
         </svg>
-        <span>会话标签</span>
+        <span>会话标签 (Web 偏好)</span>
         <span class="pi-enh-menu-arrow" style="margin-left:auto;opacity:0.6;font-size:11px;">▶</span>
       </div>
       ` : ""}
@@ -1160,7 +1310,7 @@
       </div>
       <div class="pi-enh-menu-item" data-action="reload-session">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-        <span>从磁盘重载 (Alt+R)</span>
+        <span>${isCodex ? "重新读取原生会话" : "从磁盘重载 (Alt+R)"}</span>
       </div>
       ${renderSessionColorMenuItems(id)}
     `;
@@ -1272,9 +1422,13 @@
         closeMenu();
         triggerSessionInlineRename(id);
         return;
+      } else if (action === "pin-session") {
+        closeMenu();
+        void handleSessionPinArchiveAction(id, "pin");
+        return;
       } else if (action === "archive-session") {
         closeMenu();
-        handleSessionPinArchiveAction(id, "archive");
+        void handleSessionPinArchiveAction(id, "archive");
         return;
       } else if (action === "open-session-tags") {
         e.stopPropagation();
@@ -1293,16 +1447,20 @@
         const url = `${origin}/?session=${encodeURIComponent(id)}`;
         copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
       } else if (action === "copy-path") {
-        copyText(path || "", `已复制会话文件路径`);
+        const targetPath = resolveSessionRolloutPath(id, path);
+        if (targetPath) {
+          copyText(targetPath, `已复制会话文件完整路径`);
+        } else {
+          showToast(isCodex ? "该 Codex 会话暂无本地文件路径" : "会话无独立文件路径");
+        }
       } else if (action === "copy-prompt") {
-        const prompt = `这是我之前的 ${executionEngine === "codex" || id.startsWith("codex:") ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${path || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
+        const targetPath = resolveSessionRolloutPath(id, path);
+        const prompt = `这是我之前的 ${isCodex ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${targetPath || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
         copyText(cwd || "", `已复制工作目录`);
       } else if (action === "reload-session") {
-        if (typeof window.__PI_ENH_RELOAD_SPECIFIC_SESSION__ === "function") {
-          window.__PI_ENH_RELOAD_SPECIFIC_SESSION__(id, true);
-        }
+        void handleSessionReload(id, { executionEngine });
       } else if (action === "set-session-color") {
         const color = item.getAttribute("data-session-color") || "";
         const preset = SESSION_COLOR_PRESETS.find((candidate) => candidate.id === color);

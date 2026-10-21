@@ -461,6 +461,60 @@
             "lib/execution-engines/codex-projection.test.mjs"
           ],
           "timeoutSeconds": 90
+        },
+        {
+          "name": "release-codex-desktop-sync",
+          "command": [
+            "node",
+            "scripts/qa/codex-desktop-sync.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-desktop-sync.cjs",
+            "lib/execution-engines/codex-metadata-sync.test.mjs",
+            "lib/execution-engines/codex-fork.test.mjs",
+            "lib/execution-engines/codex-projection.test.mjs",
+            "lib/execution-engines/codex-delete.test.mjs",
+            "lib/session-stats.test.mjs",
+            "tests/fork-provenance-and-delete-guard.test.mjs",
+            "app/api/sessions/batch-delete/route.test.mjs",
+            "tests/codex-metadata-sync.pw.mjs",
+            "tests/codex-user-message-fork.pw.mjs",
+            "connectors/codex-bridge/tests/test_active_writer.py",
+            "connectors/codex-bridge/tests/test_contract.py",
+            "connectors/codex-bridge/tests/test_queue_handoff.py",
+            "connectors/codex-bridge/tests/test_shared_bridge.py",
+            "connectors/codex-bridge/tests/test_fork_helper.py",
+            "connectors/codex-bridge/tests/test_native_metadata_sync.py",
+            "connectors/codex-bridge/tests/test_timeline_timestamp.py"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-minimap-drag-stability",
+          "command": [
+            "node",
+            "tests/minimap-drag-stability.pw.mjs"
+          ],
+          "files": [
+            "tests/minimap-drag-stability.pw.mjs"
+          ],
+          "timeoutSeconds": 90
+        },
+        {
+          "name": "release-codex-web-audit",
+          "command": [
+            "node",
+            "scripts/qa/codex-web-audit.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-web-audit.cjs",
+            "components/new-session-codex-brand.test.mjs",
+            "lib/codex-update.test.mjs",
+            "tests/codex-capability-boundaries.pw.mjs",
+            "tests/codex-menu-capabilities.pw.mjs",
+            "tests/codex-status-loading.pw.mjs"
+          ],
+          "timeoutSeconds": 180
         }
       ]
     }

@@ -43,6 +43,8 @@ async function fixture(route){
    return json(state(s));
   }
   const command=req.postDataJSON()??{},type=command.type;
+  if(type==='get_tools')return success([]);
+  if(type==='get_commands')return success({commands:[]});
   if(type==='prompt'){promptCalls++;return json({error:'No prompt is permitted in this test'},403)}
   if(type==='get_queue_actions'){const q=kind=>s.rows.filter(x=>x.kind===kind).map(x=>({token:x.token,text:x.text,imageCount:x.images.length}));return success({version:2,reorder:true,steering:q('steering'),followUp:q('followUp')})}
   if(type==='get_queued_message')return success(detail(s.rows.find(x=>x.token===command.token)));

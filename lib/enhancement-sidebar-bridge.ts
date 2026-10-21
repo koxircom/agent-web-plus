@@ -1,6 +1,8 @@
 export interface EnhancementSidebarBridgeHandle<TSession = unknown> {
   refreshSessions: (showLoading?: boolean, force?: boolean) => unknown;
   getRawSessions: () => TSession[];
+  getSessionGroups?: () => unknown[];
+  getExecutionEngine?: () => "pi" | "codex";
   rerenderSessions: () => void;
   notifySessionDeleted: (sessionId: string) => void;
   setUnreadSession: (sessionId: string, isUnread: boolean) => void;
@@ -33,6 +35,8 @@ const SIDEBAR_BRIDGE_KEYS = [
   "__PI_ENH_REFRESH_SESSIONS__",
   "__PI_ENH_GET_RAW_SESSIONS__",
   "__PI_ENH_GET_SEARCH_CATALOG__",
+  "__PI_ENH_GET_SESSION_GROUPS__",
+  "__PI_ENH_GET_EXECUTION_ENGINE__",
   "__PI_ENH_RERENDER_SESSIONS__",
   "__PI_ENH_SESSION_DELETED__",
   "__PI_ENH_SET_UNREAD_SESSION__",
@@ -98,6 +102,36 @@ function getOrCreateSidebarBridgeState(win: WindowRecord): SidebarBridgeState {
     __PI_ENH_GET_SEARCH_CATALOG__: () => {
       const sessions = (installed.__PI_ENH_GET_RAW_SESSIONS__ as () => unknown[])();
       return { sessions, scope: getSessionSearchCatalogScope(sessions) };
+    },
+    __PI_ENH_GET_SESSION_GROUPS__: () => {
+      const list = [...handles];
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        try {
+          const fn = list[i].getSessionGroups;
+          if (typeof fn === "function") {
+            const groups = fn();
+            if (Array.isArray(groups)) return groups;
+          }
+        } catch {
+          // Ignore faulty pane getter
+        }
+      }
+      return [];
+    },
+    __PI_ENH_GET_EXECUTION_ENGINE__: () => {
+      const list = [...handles];
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        try {
+          const fn = list[i].getExecutionEngine;
+          if (typeof fn === "function") {
+            const engine = fn();
+            if (engine === "codex" || engine === "pi") return engine;
+          }
+        } catch {
+          // Ignore faulty pane getter
+        }
+      }
+      return "pi";
     },
     __PI_ENH_RERENDER_SESSIONS__: () => {
       for (const handle of handles) {

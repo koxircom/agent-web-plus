@@ -2977,8 +2977,8 @@
     `).join("");
     return `
       <div class="pi-enh-menu-sep"></div>
-      <div class="pi-enh-session-color-label">会话背景颜色</div>
-      <div class="pi-enh-session-color-grid" role="group" aria-label="会话背景颜色">${choices}</div>
+      <div class="pi-enh-session-color-label">会话背景颜色 (Web 偏好)</div>
+      <div class="pi-enh-session-color-grid" role="group" aria-label="会话背景颜色 (Web 偏好)">${choices}</div>
       <div class="pi-enh-menu-item" data-action="clear-session-color"><span>清除背景颜色</span></div>
     `;
   }
@@ -5746,7 +5746,11 @@
         }
         void persistPinnedSessionsToServer(pinnedIds);
       }
-      restoreArchivedSession(sessionId);
+      const archivedEntries = readStoredArchivedEntries();
+      if (archivedEntries.some((e) => e.id === sessionId)) {
+        writeStoredArchivedEntries(archivedEntries.filter((e) => e.id !== sessionId));
+      }
+      void restoreArchivedSession(sessionId).catch(() => {});
       try { clearSessionTags(sessionId); } catch (e) {}
       try {
         const uIds = readUnreadSessionIds();
@@ -5779,6 +5783,36 @@
     });
   }
 
+  function isSessionPinnedItem(group, pinnedIds) {
+    const rootId = group?.root?.id;
+    if (!rootId) return false;
+    if (typeof rootId === "string" && rootId.startsWith("codex:")) {
+      return Boolean(group?.root?.pinned);
+    }
+    return Boolean(pinnedIds && pinnedIds.has(rootId));
+  }
+
+  function isSessionPinned(sessionId) {
+    if (!sessionId) return false;
+    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
+      if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
+        try {
+          const rawList = window.__PI_ENH_GET_RAW_SESSIONS__();
+          if (Array.isArray(rawList)) {
+            const found = rawList.find((s) => s?.id === sessionId);
+            if (found && typeof found.pinned === "boolean") return found.pinned;
+          }
+        } catch (_) {}
+      }
+      const group = latestKnownSessionGroups.find((g) => g?.root?.id === sessionId);
+      if (group?.root && typeof group.root.pinned === "boolean") return group.root.pinned;
+      const entry = knownSessionsMap.get(sessionId);
+      if (entry && typeof entry.pinned === "boolean") return entry.pinned;
+      return false;
+    }
+    return readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
+  }
+
   function processSessionGroups(groups) {
     if (!Array.isArray(groups)) return groups;
     const isPinArchiveEnabled = isPluginEnabled("session-pin-archive");
@@ -5793,15 +5827,12 @@
       const rootId = group?.root?.id;
       if (!rootId) continue;
       if (group.root) {
-        const prev = knownSessionsMap.get(rootId);
-        if (!prev || !prev.modified || (group.root.modified && group.root.modified > prev.modified)) {
-          knownSessionsMap.set(rootId, group.root);
-          knownSessionTitles.set(rootId, computeSessionTitle(group.root));
-        } else if (!knownSessionTitles.has(rootId)) {
-          knownSessionTitles.set(rootId, computeSessionTitle(group.root));
-        }
+        knownSessionsMap.set(rootId, group.root);
+        knownSessionTitles.set(rootId, computeSessionTitle(group.root));
       }
-      if (archivedIds.has(rootId) || isSessionDeleted(rootId)) {
+      const isCodex = typeof rootId === "string" && rootId.startsWith("codex:");
+      const isArchived = isCodex ? Boolean(group?.root?.archived) : archivedIds.has(rootId);
+      if (isArchived || isSessionDeleted(rootId)) {
         continue;
       }
       // 标签快速过滤：若选中了某个特定标签，仅保留拥有该标签的会话
@@ -5822,7 +5853,7 @@
     // 严格按所属项目隔离，严禁将其他项目的置顶会话跨工作区注入当前列表
     const result = !isPinArchiveEnabled
       ? filtered
-      : filtered.sort((left, right) => Number(pinnedIds.has(right?.root?.id)) - Number(pinnedIds.has(left?.root?.id)));
+      : filtered.sort((left, right) => Number(isSessionPinnedItem(right, pinnedIds)) - Number(isSessionPinnedItem(left, pinnedIds)));
 
     latestKnownSessionGroups = result;
     scheduleImmediateSidebarRowsSync();
@@ -5921,14 +5952,11 @@
     let pinnedCount = 0;
     if (pinArchiveEnabled && sectionHeadersEnabled) {
       const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
-      if (pinnedIds && pinnedIds.size > 0) {
-        for (const group of groups) {
-          const rootId = group?.root?.id;
-          if (rootId && pinnedIds.has(rootId)) {
-            pinnedCount += 1;
-          } else {
-            break;
-          }
+      for (const group of groups) {
+        if (isSessionPinnedItem(group, pinnedIds)) {
+          pinnedCount += 1;
+        } else {
+          break;
         }
       }
     }
@@ -6071,11 +6099,9 @@
     }
 
     const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
-    if (!pinnedIds || pinnedIds.size === 0) return 0;
     let count = 0;
     for (const group of groups) {
-      const rootId = group?.root?.id;
-      if (rootId && pinnedIds.has(rootId)) {
+      if (isSessionPinnedItem(group, pinnedIds)) {
         count += 1;
       } else {
         break;
@@ -6417,8 +6443,32 @@
   window.__PI_ENH_SYNC_SESSION_SECTION_HEADERS__ = syncSessionSectionHeaders;
   window.__PI_ENH_REMOVE_SESSION_SECTION_HEADERS__ = removeSessionSectionHeaders;
 
-  function toggleSessionPin(sessionId) {
+  async function toggleSessionPin(sessionId) {
     if (!sessionId) return false;
+    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
+      const isPinned = isSessionPinned(sessionId);
+      const targetAction = isPinned ? "unpin" : "pin";
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: targetAction }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "置顶操作未确认，会话状态已保留");
+      }
+      const data = await res.json().catch(() => ({}));
+      if (data?.ok !== true || !data.session || data.session.id !== sessionId || data.session.pinned !== (targetAction === "pin")) {
+        throw new Error(data?.error || "置顶操作未获得原生确认，会话状态已保留");
+      }
+      const nextPinned = Boolean(data.session.pinned);
+      const entry = knownSessionsMap.get(sessionId);
+      if (entry) entry.pinned = nextPinned;
+      requestSessionListRefresh(false, true);
+      syncSessionOdooAddonsLayout();
+      syncSessionSectionHeaders();
+      return nextPinned;
+    }
     const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
     const isPinned = pinnedIds.has(sessionId);
     if (isPinned) pinnedIds.delete(sessionId);
@@ -6437,8 +6487,29 @@
     return !isPinned;
   }
 
-  function archiveSession(sessionId, meta = {}) {
+  async function archiveSession(sessionId, meta = {}) {
     if (!sessionId) return false;
+    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "archive" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "归档操作未确认，会话状态已保留");
+      }
+      const data = await res.json().catch(() => ({}));
+      if (data?.ok !== true || !data.session || data.session.id !== sessionId || data.session.archived !== true) {
+        throw new Error(data?.error || "归档操作未获得原生确认，会话状态已保留");
+      }
+      const entry = knownSessionsMap.get(sessionId);
+      if (entry) entry.archived = true;
+      requestSessionListRefresh(false, true);
+      syncSessionOdooAddonsLayout();
+      syncSessionSectionHeaders();
+      return true;
+    }
     unmarkSessionAsRecentlyRestored(sessionId);
     const entries = readStoredArchivedEntries();
     if (entries.some((e) => e.id === sessionId)) {
@@ -6473,34 +6544,83 @@
     return true;
   }
 
-  function restoreArchivedSessions(sessionIds) {
+  async function restoreArchivedSessions(sessionIds) {
     if (!Array.isArray(sessionIds) || sessionIds.length === 0) return 0;
-    const targetSet = new Set(sessionIds.map((id) => (typeof id === "string" ? id.trim() : id?.id)).filter(Boolean));
-    if (targetSet.size === 0) return 0;
+    const codexIds = sessionIds.map(id => typeof id === "string" ? id.trim() : id?.id).filter(id => typeof id === "string" && id.startsWith("codex:"));
+    const piIds = sessionIds.map(id => typeof id === "string" ? id.trim() : id?.id).filter(id => typeof id === "string" && Boolean(id) && !id.startsWith("codex:"));
+    let restoredCount = 0;
+    const succeededIds = [];
+    const failedIds = [];
 
-    const entries = readStoredArchivedEntries();
-    const next = entries.filter((e) => !targetSet.has(e.id));
-    const restoredCount = entries.length - next.length;
-    if (restoredCount === 0) return 0;
-
-    for (const sid of targetSet) {
-      markSessionAsRecentlyRestored(sid);
+    if (codexIds.length > 0) {
+      let firstError = null;
+      for (const cid of codexIds) {
+        try {
+          const res = await fetch(`/api/sessions/${encodeURIComponent(cid)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "unarchive" }),
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `还原会话 ${cid} 未确认，操作已中止`);
+          }
+          const data = await res.json().catch(() => ({}));
+          if (data?.ok !== true || !data.session || data.session.id !== cid || data.session.archived !== false) {
+            throw new Error(data?.error || `还原会话 ${cid} 未获得原生确认，操作已中止`);
+          }
+          const entry = knownSessionsMap.get(cid);
+          if (entry) entry.archived = false;
+          restoredCount++;
+          succeededIds.push(cid);
+        } catch (err) {
+          failedIds.push(cid);
+          if (!firstError) firstError = err;
+        }
+      }
+      if (succeededIds.length > 0) {
+        requestSessionListRefresh(false, true);
+      }
+      if (firstError) {
+        const error = new Error(firstError.message || "部分会话还原未确认，已保留归档状态");
+        error.succeededIds = succeededIds;
+        error.failedIds = failedIds;
+        error.restoredCount = restoredCount;
+        throw error;
+      }
     }
 
-    writeStoredArchivedEntries(next);
-    if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
-      window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => {
-        const id = typeof e === "string" ? e : e?.id;
-        return id && !targetSet.has(id);
-      });
+    if (piIds.length > 0) {
+      const targetSet = new Set(piIds);
+      const entries = readStoredArchivedEntries();
+      const next = entries.filter((e) => !targetSet.has(e.id));
+      const piRestored = entries.length - next.length;
+      if (piRestored > 0) {
+        for (const sid of targetSet) {
+          markSessionAsRecentlyRestored(sid);
+          succeededIds.push(sid);
+        }
+        writeStoredArchivedEntries(next);
+        if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
+          window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => {
+            const id = typeof e === "string" ? e : e?.id;
+            return id && !targetSet.has(id);
+          });
+        }
+        void persistArchivedSessionsToServer(next, undefined, true);
+        restoredCount += piRestored;
+      }
     }
-    void persistArchivedSessionsToServer(next, undefined, true);
-    return restoredCount;
+    const resultObj = new Number(restoredCount);
+    resultObj.succeededIds = succeededIds;
+    resultObj.failedIds = failedIds;
+    resultObj.restoredCount = restoredCount;
+    return resultObj;
   }
 
-  function restoreArchivedSession(sessionId) {
+  async function restoreArchivedSession(sessionId) {
     if (!sessionId) return false;
-    return restoreArchivedSessions([sessionId]) > 0;
+    return (await restoreArchivedSessions([sessionId])) > 0;
   }
 
   function isArchiveAutoRestoreOnPromptEnabled() {
@@ -6515,7 +6635,15 @@
     const archivedIds = readStoredSessionIds(ARCHIVED_SESSION_STORAGE_KEY);
     if (!archivedIds.has(sessionId)) return false;
 
-    if (restoreArchivedSession(sessionId)) {
+    // Pi 本地存储同步先移出，保证 Pi 自动恢复行为实时生效
+    archivedIds.delete(sessionId);
+    writeStoredSessionIds(ARCHIVED_SESSION_STORAGE_KEY, archivedIds);
+    const entries = readStoredArchivedEntries();
+    const next = entries.filter((e) => e.id !== sessionId);
+    writeStoredArchivedEntries(next);
+    void persistArchivedSessionsToServer(next, undefined, true);
+
+    restoreArchivedSession(sessionId).then((restored) => {
       requestSessionListRefresh();
       showToast("已自动唤醒会话并恢复至列表", sessionArchiveIcon);
       const panel = document.querySelector(".pi-enh-archived-panel");
@@ -6523,9 +6651,10 @@
       if (panel && panel.style.display !== "none") {
         renderArchivedPanel(panel, nav);
       }
-      return true;
-    }
-    return false;
+    }).catch((err) => {
+      console.warn("[pi-enh] 自动唤醒会话恢复确认异常:", err);
+    });
+    return true;
   }
 
   // ==========================================
@@ -6718,6 +6847,7 @@
   }
 
   window.__PI_ENH_PROCESS_SESSION_GROUPS__ = processSessionGroups;
+  window.__PI_ENH_IS_SESSION_PINNED__ = isSessionPinned;
   window.__PI_ENH_TOGGLE_SESSION_PIN__ = toggleSessionPin;
   window.__PI_ENH_ARCHIVE_SESSION__ = archiveSession;
   window.__PI_ENH_RESTORE_ARCHIVED_SESSION__ = restoreArchivedSession;

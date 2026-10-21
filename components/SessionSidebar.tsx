@@ -540,12 +540,16 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
     allSessions,
     onSessionDeleted,
     unreadSessionIds,
+    executionEngine,
+    sessionFamilies: [] as unknown[],
   });
   sidebarBridgeStateRef.current = {
     loadSessions,
     allSessions,
     onSessionDeleted,
     unreadSessionIds,
+    executionEngine,
+    sessionFamilies: sidebarBridgeStateRef.current?.sessionFamilies ?? [],
   };
 
   useEffect(() => {
@@ -553,6 +557,8 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
       refreshSessions: (showLoading = false, force = false) =>
         sidebarBridgeStateRef.current.loadSessions(showLoading, force),
       getRawSessions: () => sidebarBridgeStateRef.current.allSessions.filter((session) => !session.submissionPending),
+      getSessionGroups: () => sidebarBridgeStateRef.current.sessionFamilies || [],
+      getExecutionEngine: () => sidebarBridgeStateRef.current.executionEngine,
       rerenderSessions: () => {
         setDecorationRevision((revision) => revision + 1);
       },
@@ -1275,6 +1281,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
     () => processEnhancementSessionGroups(listSessionFamilies(filteredSessions)),
     [filteredSessions, decorationRevision],
   );
+  sidebarBridgeStateRef.current.sessionFamilies = sessionFamilies;
 
   const initialDecorations = bootstrap?.decorations?.state;
   const nativeHeights = sessionFamilies.map((family) => SESSION_LIST_ITEM_HEIGHT

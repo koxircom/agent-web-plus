@@ -331,19 +331,19 @@ test("forking stays available during a run while in-session branch switches wait
 
   // Fork copies into a new file, so only a shell command blocks it; the
   // in-session edit still waits because pi refuses navigate_tree mid-run.
-  assert.match(chatWindowSource, /onFork=\{isCodexSession \|\| bashRunning \|\| isNew \? undefined : handleFork\}/);
+  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
   const handleFork = noop;
   const handleNavigate = noop;
   // Editing is gated by navigation; its content callback need not disappear.
-  for (const busy of [false, true]) {
-    const scope = { bashRunning: false, isNew: false, sessionBusy: busy, handleFork, handleNavigate };
+  for (const busy of [false, true]) for (const isCodexSession of [false, true]) {
+    const scope = { bashRunning: false, isNew: false, sessionBusy: busy, isCodexSession, handleFork, handleNavigate };
     assert.equal(messageViewProp("onFork", scope), handleFork);
-    assert.equal(messageViewProp("onNavigate", scope), busy ? undefined : handleNavigate);
+    assert.equal(messageViewProp("onNavigate", scope), busy || isCodexSession ? undefined : handleNavigate);
   }
-  for (const blocked of [{ isCodexSession: true, bashRunning: false, isNew: false }, { bashRunning: true, isNew: false }, { bashRunning: false, isNew: true }]) {
+  for (const blocked of [{ bashRunning: true, isNew: false }, { bashRunning: false, isNew: true }]) {
     assert.equal(messageViewProp("onFork", { ...blocked, handleFork }), undefined);
   }
-  assert.match(chatWindowSource, /onAskInNewChat && quotedSelection\.sourceEntryId && !bashRunning &&/);
+  assert.match(chatWindowSource, /onAskInNewChat && !isCodexSession && quotedSelection\.sourceEntryId && !bashRunning &&/);
   assert.match(forkSource, /addNotice\(\{ type: "error", message:/);
 
   assert.match(leafChangeSource, /if \(bashRunningRef\.current \|\| agentRunningRef\.current \|\| isCompacting\) return;/);
@@ -359,7 +359,7 @@ test("first user messages expose both branch actions and edit before their own e
     source.indexOf("  const handleLeafChange = useCallback"),
   );
 
-  assert.match(chatWindowSource, /onFork=\{isCodexSession \|\| bashRunning \|\| isNew \? undefined : handleFork\}/);
+  assert.match(chatWindowSource, /onFork=\{bashRunning \|\| isNew \? undefined : handleFork\}/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user"/);
   assert.doesNotMatch(chatWindowSource, /prevAssistantEntryId/);
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);

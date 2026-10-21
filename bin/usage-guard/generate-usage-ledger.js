@@ -297,6 +297,8 @@ function extractToolCalls(m) {
   return Array.from(calls.values());
 }
 
+const FORK_PROVENANCE_TYPE = "pi-web:fork-provenance";
+
 async function scanSession(file, state, source, audit, options = {}) {
   let sessionId, current = {}, lastAssistant = {}, lineNo = 0, lastEntryId = null;
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
@@ -307,7 +309,49 @@ async function scanSession(file, state, source, audit, options = {}) {
   const abandonedToolCalls = new Set();
   const toolCallControllers = new Map();
   let hasSessionHeader = false;
+  let hasParentSession = false;
   let hasUnaccountedNestedUsage = false;
+
+  let forkProvenance = null;
+  const inheritedEntryIds = new Set();
+  const entryOrigins = new Map();
+  let parentSessionId = null;
+  const deferredEmits = [];
+
+  function applyProvenance(data) {
+    if (!data || typeof data !== "object") return;
+    forkProvenance = data;
+    if (data.parentSessionId && typeof data.parentSessionId === "string") {
+      parentSessionId = data.parentSessionId;
+    }
+    if (Array.isArray(data.inheritedEntryIds)) {
+      for (const id of data.inheritedEntryIds) {
+        if (typeof id === "string" && id) inheritedEntryIds.add(id);
+      }
+    }
+    if (data.entryOrigins && typeof data.entryOrigins === "object") {
+      for (const [id, orig] of Object.entries(data.entryOrigins)) {
+        if (orig && typeof orig.sessionId === "string") {
+          entryOrigins.set(id, orig);
+        }
+      }
+    }
+  }
+
+  function flushDeferredEmits() {
+    while (deferredEmits.length > 0) {
+      const emit = deferredEmits.shift();
+      emit();
+    }
+  }
+
+  function scheduleOrEmit(emitFn) {
+    if (hasParentSession) {
+      deferredEmits.push(emitFn);
+    } else {
+      emitFn();
+    }
+  }
 
   const stream = readline.createInterface({ input: fs.createReadStream(file), crlfDelay: Infinity });
   let pending = null;
@@ -324,6 +368,7 @@ async function scanSession(file, state, source, audit, options = {}) {
       sessionId = e.id;
       if (!sessionId) throw new Error("Session header missing id");
       hasSessionHeader = true;
+      hasParentSession = Boolean(e.parentSession);
       const old = state.sessions[sessionId] || {};
       state.sessions[sessionId] = {
         ...old,
@@ -338,6 +383,10 @@ async function scanSession(file, state, source, audit, options = {}) {
     if (e.id) lastEntryId = e.id;
     if (e.type === "session_info" && e.name) state.sessions[sessionId].title = e.name;
     if (e.type === "model_change") current = { provider: e.provider, model: e.modelId };
+    if (e.type === "custom" && e.customType === FORK_PROVENANCE_TYPE) {
+      applyProvenance(e.data);
+      return;
+    }
     const eTs = (typeof e.timestamp === "number" ? e.timestamp : (e.timestamp ? Date.parse(e.timestamp) : null)) || null;
     const base = { sessionId, source, day: core.day(eTs || e.timestamp) };
     const m = e.message;
@@ -364,8 +413,47 @@ async function scanSession(file, state, source, audit, options = {}) {
           pendingToolCalls.add(tc.id);
         }
       }
-      putEvent(state, { ...base, ...lastAssistant, ...usageValues(m.usage), timestamp: eventTs, day: core.day(eventTs), key: messageKey(m, [sessionId, e.id]), role: "main", messageCount: 1 });
-      audit.assistant++;
+
+      const assistantModel = { ...lastAssistant };
+      const entryId = e.id;
+      const msgUsage = m.usage;
+      const msgContent = m.content;
+      const msgTimestamp = m.timestamp;
+      const msgProvider = m.provider;
+      const msgResponseModel = m.responseModel || m.model;
+      const msgResponseId = m.responseId;
+
+      scheduleOrEmit(() => {
+        const isInherited = Boolean(entryId && inheritedEntryIds.has(entryId));
+        const origin = isInherited
+          ? (entryOrigins.get(entryId) || (parentSessionId ? { sessionId: parentSessionId } : null))
+          : null;
+        const targetSid = origin?.sessionId || sessionId;
+        const targetBase = { sessionId: targetSid, source, day: core.day(eventTs || eTs) };
+        const eventKey = hash([
+          "message",
+          msgTimestamp || [targetSid, entryId],
+          msgProvider,
+          msgResponseModel,
+          msgResponseId,
+          msgContent,
+          msgUsage,
+        ]);
+
+        putEvent(state, {
+          ...targetBase,
+          ...assistantModel,
+          ...usageValues(msgUsage),
+          timestamp: eventTs,
+          day: core.day(eventTs),
+          key: eventKey,
+          role: "main",
+          messageCount: 1,
+        });
+        if (!isInherited) {
+          audit.assistant++;
+        }
+      });
     } else if (e.type === "message" && m?.role === "toolResult") {
       if (m.toolCallId) {
         pendingToolCalls.delete(m.toolCallId);
@@ -373,63 +461,156 @@ async function scanSession(file, state, source, audit, options = {}) {
         abandonedToolCalls.delete(m.toolCallId);
       }
       if (m.toolName === "subagent" && Array.isArray(m.details?.results)) {
-        const seenResults = new Set();
-        const ctrlInfo = (m.toolCallId && toolCallControllers.get(m.toolCallId)) || null;
+        const entryId = e.id;
+        const toolCallId = m.toolCallId;
+        const detailsResults = m.details.results;
+        const ctrlInfo = (toolCallId && toolCallControllers.get(toolCallId)) || null;
         const ctrlModel = ctrlInfo ? ctrlInfo.model : "";
         const ctrlProvider = ctrlInfo ? ctrlInfo.provider : "";
         const controllerResolved = Boolean(ctrlInfo);
-        for (const [i, r] of m.details.results.entries()) {
-          const taskKey = hash(["task", m.toolCallId || e.id, i, r.agent, r.step]);
-          if (seenResults.has(taskKey)) continue;
-          seenResults.add(taskKey);
-          const parts = String(r.model || "unknown").split("/");
-          const fallback = { provider: parts.length > 1 ? parts.shift() : "unknown", model: parts.join("/") };
-          const rawMsgs = Array.isArray(r.messages) ? r.messages : [];
-          for (const rawMsg of rawMsgs) {
-            if (!rawMsg || typeof rawMsg !== "object" || !rawMsg.role) {
-              audit.unknownWrappers = (audit.unknownWrappers || 0) + 1;
-            }
-            if (rawMsg && typeof rawMsg === "object" && rawMsg.role !== "assistant" && rawMsg.usage) {
-              const u = rawMsg.usage;
-              const uTokens = usageValues(u).totalTokens;
-              if (uTokens > 0) {
-                if (!audit.unaccountedNestedUsage) audit.unaccountedNestedUsage = { count: 0, tokens: 0 };
-                audit.unaccountedNestedUsage.count++;
-                audit.unaccountedNestedUsage.tokens += uTokens;
-                hasUnaccountedNestedUsage = true;
+        const lastAssocAssistant = { ...lastAssistant };
+
+        scheduleOrEmit(() => {
+          const isInherited = Boolean(entryId && inheritedEntryIds.has(entryId));
+          const origin = isInherited
+            ? (entryOrigins.get(entryId) || (parentSessionId ? { sessionId: parentSessionId } : null))
+            : null;
+          const targetSid = origin?.sessionId || sessionId;
+          const targetBase = { sessionId: targetSid, source, day: core.day(eTs || e.timestamp) };
+          const seenResults = new Set();
+
+          for (const [i, r] of detailsResults.entries()) {
+            const taskKey = hash(["task", toolCallId || entryId, i, r.agent, r.step]);
+            if (seenResults.has(taskKey)) continue;
+            seenResults.add(taskKey);
+            const parts = String(r.model || "unknown").split("/");
+            const fallback = {
+              provider: parts.length > 1 ? parts.shift() : "unknown",
+              model: parts.join("/"),
+            };
+            const rawMsgs = Array.isArray(r.messages) ? r.messages : [];
+            for (const rawMsg of rawMsgs) {
+              if (!rawMsg || typeof rawMsg !== "object" || !rawMsg.role) {
+                audit.unknownWrappers = (audit.unknownWrappers || 0) + 1;
+              }
+              if (rawMsg && typeof rawMsg === "object" && rawMsg.role !== "assistant" && rawMsg.usage) {
+                const u = rawMsg.usage;
+                const uTokens = usageValues(u).totalTokens;
+                if (uTokens > 0) {
+                  if (!audit.unaccountedNestedUsage) audit.unaccountedNestedUsage = { count: 0, tokens: 0 };
+                  audit.unaccountedNestedUsage.count++;
+                  audit.unaccountedNestedUsage.tokens += uTokens;
+                  hasUnaccountedNestedUsage = true;
+                }
               }
             }
-          }
-          const messages = rawMsgs.filter(x => x && x.role === "assistant");
-          const totals = messages.reduce((a, x) => core.add(a, usageValues(x.usage)), core.empty());
-          const declared = usageValues(r.usage);
-          if (messages.length) {
-            for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costNano"]) {
-              if (Math.abs(totals[k] - declared[k]) > (k === "costNano" ? messages.length : 0)) throw new Error(`Subagent detail mismatch ${k}: ${taskKey}`);
+            const messages = rawMsgs.filter((x) => x && x.role === "assistant");
+            const totals = messages.reduce((a, x) => core.add(a, usageValues(x.usage)), core.empty());
+            const declared = usageValues(r.usage);
+            if (messages.length) {
+              for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costNano"]) {
+                if (Math.abs(totals[k] - declared[k]) > (k === "costNano" ? messages.length : 0)) {
+                  throw new Error(`Subagent detail mismatch ${k}: ${taskKey}`);
+                }
+              }
+              if (r.usage?.turns != null && messages.length !== r.usage.turns) {
+                throw new Error(`Subagent turn mismatch: ${taskKey}`);
+              }
+              for (const [j, child] of messages.entries()) {
+                const childTs =
+                  (typeof child.timestamp === "number"
+                    ? child.timestamp
+                    : child.timestamp
+                      ? Date.parse(child.timestamp)
+                      : null) || eTs;
+                putEvent(state, {
+                  ...targetBase,
+                  ...modelOf(child, fallback),
+                  controllerModel: ctrlModel,
+                  controllerProvider: ctrlProvider,
+                  controllerResolved,
+                  ...usageValues(child.usage),
+                  key: messageKey(child, [taskKey, j]),
+                  role: "subagent",
+                  agent: r.agent || "unknown",
+                  taskKey,
+                  timestamp: childTs,
+                  day: core.day(childTs),
+                  messageCount: 1,
+                });
+              }
+            } else {
+              putEvent(state, {
+                ...targetBase,
+                ...fallback,
+                controllerModel: ctrlModel,
+                controllerProvider: ctrlProvider,
+                controllerResolved,
+                ...declared,
+                key: `${taskKey}:aggregate`,
+                role: "subagent",
+                agent: r.agent || "unknown",
+                taskKey,
+                timestamp: eTs,
+                day: core.day(eTs),
+                messageCount: r.usage?.turns ?? 0,
+              });
+              if (declared.totalTokens && !isInherited) audit.aggregateOnlyTasks++;
             }
-            if (r.usage?.turns != null && messages.length !== r.usage.turns) throw new Error(`Subagent turn mismatch: ${taskKey}`);
-            for (const [j, child] of messages.entries()) {
-              const childTs = (typeof child.timestamp === "number" ? child.timestamp : (child.timestamp ? Date.parse(child.timestamp) : null)) || eTs;
-              putEvent(state, { ...base, ...modelOf(child, fallback), controllerModel: ctrlModel, controllerProvider: ctrlProvider, controllerResolved, ...usageValues(child.usage), key: messageKey(child, [taskKey, j]), role: "subagent", agent: r.agent || "unknown", taskKey, timestamp: childTs, day: core.day(childTs), messageCount: 1 });
+            const actual = messages[0] ? modelOf(messages[0], fallback) : fallback;
+            putEvent(state, {
+              ...targetBase,
+              ...actual,
+              controllerModel: ctrlModel,
+              controllerProvider: ctrlProvider,
+              controllerResolved,
+              ...core.empty(),
+              key: taskKey,
+              role: "subagent",
+              agent: r.agent || "unknown",
+              taskKey,
+              timestamp: eTs,
+              day: core.day(eTs),
+              calls: 1,
+            });
+            if (!isInherited) {
+              audit.subagentResults++;
             }
-          } else {
-            putEvent(state, { ...base, ...fallback, controllerModel: ctrlModel, controllerProvider: ctrlProvider, controllerResolved, ...declared, key: `${taskKey}:aggregate`, role: "subagent", agent: r.agent || "unknown", taskKey, timestamp: eTs, day: core.day(eTs), messageCount: r.usage?.turns ?? 0 });
-            if (declared.totalTokens) audit.aggregateOnlyTasks++;
           }
-          const actual = messages[0] ? modelOf(messages[0], fallback) : fallback;
-          putEvent(state, { ...base, ...actual, controllerModel: ctrlModel, controllerProvider: ctrlProvider, controllerResolved, ...core.empty(), key: taskKey, role: "subagent", agent: r.agent || "unknown", taskKey, timestamp: eTs, day: core.day(eTs), calls: 1 });
-          audit.subagentResults++;
-        }
+        });
       } else if (m.usage) {
         const ctrlInfo = (m.toolCallId && toolCallControllers.get(m.toolCallId)) || null;
         const ctxAssistant = ctrlInfo || lastAssistant;
         const sysModel = resolveSystemModel(
           { provider: m?.provider || e.provider, model: m?.responseModel || m?.model || e.responseModel || e.model },
           ctxAssistant,
-          current
+          current,
         );
-        putEvent(state, { ...base, ...sysModel, ...usageValues(m.usage), timestamp: eTs, day: core.day(eTs), key: hash(["system", e.id, e.timestamp, m.usage]), role: "system" });
-        audit.system++;
+        const entryId = e.id;
+        const entryTs = e.timestamp;
+        const toolResultUsage = m.usage;
+
+        scheduleOrEmit(() => {
+          const isInherited = Boolean(entryId && inheritedEntryIds.has(entryId));
+          const origin = isInherited
+            ? (entryOrigins.get(entryId) || (parentSessionId ? { sessionId: parentSessionId } : null))
+            : null;
+          const targetSid = origin?.sessionId || sessionId;
+          const targetBase = { sessionId: targetSid, source, day: core.day(eTs || entryTs) };
+
+          putEvent(state, {
+            ...targetBase,
+            ...sysModel,
+            ...usageValues(toolResultUsage),
+            timestamp: eTs,
+            day: core.day(eTs),
+            key: hash(["system", entryId, entryTs, toolResultUsage]),
+            role: "system",
+          });
+          if (!isInherited) {
+            audit.system++;
+          }
+        });
       }
     } else if ((e.type === "compaction" || e.type === "branch_summary") && e.usage) {
       const explicit = {
@@ -437,8 +618,31 @@ async function scanSession(file, state, source, audit, options = {}) {
         model: e.responseModel || e.model || e.modelId || m?.responseModel || m?.model,
       };
       const sysModel = resolveSystemModel(explicit, lastAssistant, current);
-      putEvent(state, { ...base, ...sysModel, ...usageValues(e.usage), timestamp: eTs, day: core.day(eTs), key: hash(["system", e.id, e.timestamp, e.usage]), role: "system" });
-      audit.system++;
+      const entryId = e.id;
+      const entryTs = e.timestamp;
+      const compUsage = e.usage;
+
+      scheduleOrEmit(() => {
+        const isInherited = Boolean(entryId && inheritedEntryIds.has(entryId));
+        const origin = isInherited
+          ? (entryOrigins.get(entryId) || (parentSessionId ? { sessionId: parentSessionId } : null))
+          : null;
+        const targetSid = origin?.sessionId || sessionId;
+        const targetBase = { sessionId: targetSid, source, day: core.day(eTs || entryTs) };
+
+        putEvent(state, {
+          ...targetBase,
+          ...sysModel,
+          ...usageValues(compUsage),
+          timestamp: eTs,
+          day: core.day(eTs),
+          key: hash(["system", entryId, entryTs, compUsage]),
+          role: "system",
+        });
+        if (!isInherited) {
+          audit.system++;
+        }
+      });
     }
   }
   for await (const line of stream) {
@@ -446,6 +650,8 @@ async function scanSession(file, state, source, audit, options = {}) {
     pending = line;
   }
   if (pending !== null) await processLine(pending, true);
+
+  flushDeferredEmits();
 
   if (!hasSessionHeader || !sessionId) {
     throw new Error(`Empty or missing session header: ${path.basename(file)}`);

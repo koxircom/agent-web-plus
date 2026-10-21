@@ -156,24 +156,159 @@ export function NewSessionBrandHeader({
       if (!active || document.visibilityState === "hidden" || inFlight) return;
       inFlight = true;
       try {
-        const response = await fetch("/api/codex-update", { signal: controller.signal });
-        if (!response.ok) throw new Error(`Codex update status request failed (${response.status})`);
-        const result = await response.json() as CodexCliReleaseStatus;
-        if (active) setFetchedCodexStatus(result);
-      } catch {
-        if (active) {
-          setFetchedCodexStatus({
-            currentVersion: null,
-            installedVersion: null,
-            runningVersion: null,
-            runtimeStatus: "unknown",
-            activationState: "manual",
-            activationMessage: "运行状态暂不可用",
-            latestVersion: null,
-            updateAvailable: false,
-            releaseUrl: "",
-            versionError: "Codex CLI 版本读取失败",
-            updateError: "Codex CLI 更新检查失败",
+        let roundFreshLocal: CodexCliReleaseStatus | null = null;
+        try {
+          const localResponse = await fetch("/api/codex-update?localOnly=1", { signal: controller.signal });
+          if (localResponse.ok) {
+            const localResult = (await localResponse.json()) as CodexCliReleaseStatus;
+            const isLocalValid =
+              (Boolean(localResult.installedVersion) ||
+                localResult.runtimeStatus === "running" ||
+                localResult.runtimeStatus === "stopped") &&
+              !localResult.versionError;
+            if (isLocalValid) {
+              roundFreshLocal = localResult;
+              if (active) {
+                setFetchedCodexStatus((prev) => {
+                  if (!prev) return localResult;
+                  return {
+                    ...prev,
+                    installedVersion: localResult.installedVersion,
+                    currentVersion: localResult.currentVersion,
+                    runningVersion: localResult.runningVersion,
+                    runtimeStatus: localResult.runtimeStatus,
+                    activationState: localResult.activationState,
+                    activationMessage: localResult.activationMessage,
+                    versionError: undefined,
+                  };
+                });
+              }
+            }
+          }
+        } catch {
+          // 快路由异常不阻断后续完整请求
+        }
+
+        if (!active) return;
+
+        try {
+          const response = await fetch("/api/codex-update", { signal: controller.signal });
+          if (!response.ok) throw new Error(`Codex update status request failed (${response.status})`);
+          const result = (await response.json()) as CodexCliReleaseStatus;
+          if (!active) return;
+
+          const isResultLocalValid =
+            (Boolean(result.installedVersion) ||
+              result.runtimeStatus === "running" ||
+              result.runtimeStatus === "stopped") &&
+            !result.versionError;
+
+          setFetchedCodexStatus((prev) => {
+            // 场景 1：full 响应包含有效的本地状态（最新 fresh）
+            if (isResultLocalValid) {
+              return {
+                ...result,
+                versionError: undefined,
+              };
+            }
+
+            // 场景 2：full 响应的本地状态无效（例如 connector read 失败，versionError，installed: null, runtime: unknown）
+            // 但是本轮快路由刚读到了 valid 快照 roundFreshLocal：绝不得擦除刚读到的 valid 快照！
+            if (roundFreshLocal) {
+              const installed = roundFreshLocal.installedVersion;
+              const latest = result.latestVersion;
+              const updateAvailable = Boolean(installed && latest && isNewerReleaseVersion(latest, installed));
+              return {
+                ...roundFreshLocal,
+                latestVersion: latest,
+                updateAvailable,
+                releaseUrl: result.releaseUrl || "",
+                updateError: result.updateError,
+                versionError: undefined,
+              };
+            }
+
+            // 场景 3：本轮快路由无效，full 的本地状态也无效（本轮本地读失败且 full 也无有效 local 字段）
+            const prevInstalled = prev?.installedVersion ?? prev?.currentVersion ?? null;
+            if (prevInstalled) {
+              return {
+                installedVersion: prevInstalled,
+                currentVersion: prevInstalled,
+                runningVersion: null,
+                runtimeStatus: "unknown",
+                activationState: "manual",
+                activationMessage: "运行状态暂不可用",
+                latestVersion: result.latestVersion ?? null,
+                updateAvailable: false,
+                releaseUrl: result.releaseUrl || "",
+                versionError: "状态读取失败",
+                updateError: result.updateError,
+              };
+            }
+
+            // 场景 4：初始两者皆失败（初始 bothfail 仍 unknown）
+            return {
+              installedVersion: null,
+              currentVersion: null,
+              runningVersion: null,
+              runtimeStatus: "unknown",
+              activationState: "manual",
+              activationMessage: "运行状态暂不可用",
+              latestVersion: result.latestVersion ?? null,
+              updateAvailable: false,
+              releaseUrl: result.releaseUrl || "",
+              versionError: result.versionError || "Codex CLI 版本暂不可用",
+              updateError: result.updateError,
+            };
+          });
+        } catch {
+          if (!active) return;
+          setFetchedCodexStatus((prev) => {
+            // full 抛出网络异常（或 non-ok 抛出）进 catch：
+            // 场景 A：GH 更新失败但本轮本地 fresh 成功应保持当前真实状态，仅 updateError！
+            if (roundFreshLocal) {
+              return {
+                ...roundFreshLocal,
+                latestVersion: null,
+                updateAvailable: false,
+                releaseUrl: "",
+                updateError: "Codex CLI 更新检查失败",
+                versionError: undefined,
+              };
+            }
+
+            // 场景 B：本轮本地读失败且 full 也失败（双失败）
+            const prevInstalled = prev?.installedVersion ?? prev?.currentVersion ?? null;
+            if (prevInstalled) {
+              return {
+                installedVersion: prevInstalled,
+                currentVersion: prevInstalled,
+                runningVersion: null,
+                runtimeStatus: "unknown",
+                activationState: "manual",
+                activationMessage: "运行状态暂不可用",
+                latestVersion: null,
+                updateAvailable: false,
+                releaseUrl: "",
+                versionError: "状态读取失败",
+                updateError: "Codex CLI 更新检查失败",
+              };
+            }
+
+            // 场景 C：初始双失败
+            return {
+              currentVersion: null,
+              installedVersion: null,
+              runningVersion: null,
+              runtimeStatus: "unknown",
+              activationState: "manual",
+              activationMessage: "运行状态暂不可用",
+              latestVersion: null,
+              updateAvailable: false,
+              releaseUrl: "",
+              versionError: "Codex CLI 版本读取失败",
+              updateError: "Codex CLI 更新检查失败",
+            };
           });
         }
       } finally {
@@ -195,6 +330,7 @@ export function NewSessionBrandHeader({
   }, [executionEngine, codexStatus]);
 
   const getReleaseLabel = releaseNotesLabel ?? ((version: string) => t("appUpdate.releaseNotes", { version }));
+  const isPending = codexStatus === undefined && fetchedCodexStatus === null;
   const installedCodexVersion = activeCodexStatus?.installedVersion ?? activeCodexStatus?.currentVersion ?? null;
 
   return (
@@ -299,7 +435,13 @@ export function NewSessionBrandHeader({
                   onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
                   onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
                 >
-                  CLI 已安装 <span style={{ color: "var(--text)" }}>{installedCodexVersion ? `v${installedCodexVersion}` : "版本暂不可用"}</span>
+                  CLI 已安装 <span style={{ color: "var(--text)" }}>{
+                    installedCodexVersion
+                      ? (activeCodexStatus?.versionError ? `v${installedCodexVersion}（上次读取）` : `v${installedCodexVersion}`)
+                      : isPending
+                        ? "正在读取"
+                        : "版本暂不可用"
+                  }</span>
                 </a>
                 {activeCodexStatus?.updateError ? (
                   <span data-pi-element="codex-cli-update-unavailable" style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", minWidth: 0, maxWidth: 96, overflow: "hidden", textOverflow: "ellipsis", flexShrink: 1 }}>更新检查暂不可用</span>
@@ -318,11 +460,15 @@ export function NewSessionBrandHeader({
               </div>
               <div data-pi-element="codex-cli-running-version-row" style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", minWidth: 0, maxWidth: "100%" }}>
                 <span data-pi-element="codex-cli-running-version" style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {activeCodexStatus?.runtimeStatus === "stopped"
-                    ? "未运行"
-                    : activeCodexStatus?.runtimeStatus === "running" && activeCodexStatus.runningVersion
-                      ? `运行中 v${activeCodexStatus.runningVersion}`
-                      : "运行状态暂不可用"}
+                  {isPending
+                    ? "正在读取"
+                    : activeCodexStatus?.runtimeStatus === "stopped"
+                      ? "未运行"
+                      : activeCodexStatus?.runtimeStatus === "running" && activeCodexStatus.runningVersion && !activeCodexStatus?.versionError
+                        ? `运行中 v${activeCodexStatus.runningVersion}`
+                        : installedCodexVersion && activeCodexStatus?.versionError
+                          ? "状态读取失败"
+                          : "运行状态暂不可用"}
                 </span>
               </div>
               {activeCodexStatus && ["waiting_for_idle", "switching", "error"].includes(activeCodexStatus.activationState ?? "") ? (

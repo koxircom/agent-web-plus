@@ -55,6 +55,7 @@ export interface UserMessage {
   role: "user";
   content: string | (TextContent | ImageContent)[];
   timestamp?: number;
+  forkable?: boolean;
 }
 
 export interface AgentUsage {
@@ -416,6 +417,12 @@ export interface SessionInfo {
   transient?: boolean;
   /** Client-only placeholder while the first submission is being prepared. */
   submissionPending?: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+  nativeMetadata?: {
+    desktopShared: boolean;
+    pinningSupported: boolean;
+  };
 }
 
 export interface SessionContext {

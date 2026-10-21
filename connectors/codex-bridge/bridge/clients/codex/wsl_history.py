@@ -4,6 +4,7 @@ import time
 import uuid
 from pathlib import Path
 
+from bridge.clients.codex.native_metadata import PINNED_SECTION_ID
 from bridge.features.sessions.model import normalize_state
 from bridge.features.sessions.store import SessionStore
 from bridge.features.sessions.timeline import Timeline
@@ -118,11 +119,19 @@ class WslHistory(SessionStore):
                 projects[r['cwd']] = self.workspace(r['cwd'])
             project = projects[r['cwd']]
             path = self.rollout_path(r)
-            result.append({'id': r['id'], 'title': r.get('name') or r['title'] or '未命名聊天',
+            has_section = 'thread_section_id' in r
+            pinned = bool(has_section and r.get('thread_section_id') == PINNED_SECTION_ID)
+            title = r.get('name') or r['title'] or '未命名聊天'
+            result.append({'id': r['id'], 'title': title, 'name': title,
                  'cwd': r['cwd'], 'host': 'local', 'hostLabel': 'WSL Codex',
                  'projectName': project['name'], 'projectKey': project['key'],
                  'recency': r.get('recency_at_ms') or (r.get('recency_at') or r['updated_at']) * 1000,
                  'updatedAt': r['updated_at'], 'path': path, 'archived': bool(r['archived']),
+                 'pinned': pinned,
+                 'nativeMetadata': {
+                     'desktopShared': True,
+                     'pinningSupported': bool(has_section),
+                 },
                  'connected': False, 'historyOnly': False, 'resumableHistory': True})
         return result
 

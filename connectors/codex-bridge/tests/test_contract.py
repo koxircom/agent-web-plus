@@ -24,6 +24,7 @@ class ContractTests(unittest.TestCase):
             actions=threading.RLock()
             def refresh_shared_state(self):self_test.assertTrue(self.actions._is_owned())
             def view(self):return {'status':'active','requests':[]}
+            def composer_state(self):return {'version':1,'mode':'normal','capabilities':{'goal':False,'plan':False}}
             def send(self,*args,**kwargs):
                 self_test.assertTrue(self.actions._is_owned())
                 return kwargs

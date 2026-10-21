@@ -28,6 +28,11 @@ from bridge.features.workspace.project_scopes import (
 
 from bridge.app.service import Bridge
 from bridge.clients.codex.catalog import Catalog
+from bridge.clients.codex.native_metadata import (
+    execute_archive_action,
+    execute_pin_action,
+    execute_rename,
+)
 from bridge.clients.codex.native_queue import NativeQueue, merge as merge_native_queue
 from bridge.clients.codex.errors import ActiveWriterConflict, is_active_writer_error
 from bridge.clients.codex.wsl_history import WslHistory
@@ -1054,8 +1059,9 @@ class StandaloneBridge(Bridge):
         return value if isinstance(value, str) and value else None
 
     def _with_title_override(self, identifier, result):
-        title = self._title_override(identifier)
-        return {**result, 'title': title} if title else result
+        # Keep legacy saved overrides recoverable, but never let them obscure
+        # a current native name (including a rename performed in Desktop).
+        return result
 
     def _history_backend(self):
         if not self.history_home:
@@ -1231,6 +1237,11 @@ class StandaloneBridge(Bridge):
             return
         chat = self.live.get(params.get('threadId'))
         if chat and chat.backend is backend:
+            if method == 'thread/name/updated' and isinstance(params.get('threadName'), str):
+                with chat.condition:
+                    chat.state['name'] = params['threadName']
+                    chat.state['title'] = params['threadName']
+                    chat.changed()
             chat._event(message)
         elif 'id' in message and not getattr(backend, 'shared', False):
             backend.write({'id': message['id'], 'error': {'code': -32601, 'message': '此请求不属于网页管理的会话'}})
@@ -1593,26 +1604,21 @@ class StandaloneBridge(Bridge):
     def list(self, query='', limit=100, offset=0, archived=False):
         with self.registry_lock:
             entries = copy.deepcopy(self.records['threads'])
-        rows = []
-        for identifier, entry in entries.items():
-            title = self._title_override(identifier) or entry['title']
-            if bool(entry.get('archived')) != archived or query.casefold() not in title.casefold():
+        # Read each configured native store. A stale registry entry must never
+        # resurrect a thread deleted/archived/renamed by Desktop.
+        rows_by_id = {}
+        for store, shared in ((getattr(self, 'web_history', None), False), (self.history, True)):
+            if store is None or (not shared and not any(entry.get('runtime') == 'web' for entry in entries.values())):
                 continue
-            chat = self.live.get(identifier)
-            project = next(item for item in self.workspaces
-                           if Path(entry['cwd']).resolve().is_relative_to(item['path']))
-            rows.append({'id': identifier, 'title': title, 'name': title, 'cwd': entry['cwd'],
-                         'host': 'local', 'hostLabel': 'WSL Codex', 'projectName': project['name'],
-                         'projectKey': project['key'], 'recency': entry['updatedAt'] * 1000, 'updatedAt': entry['updatedAt'],
-                         'path': self._thread_path(identifier, entry),
-                         'archived': archived, 'connected': bool(chat and chat.connected)})
-        if self.history:
-            for row in self.history.list(query, limit + offset, archived=archived):
-                if row['id'] in entries:
+            for row in store.list(query, limit + offset, archived=archived):
+                identifier = row['id']
+                if not shared and (identifier not in entries or entries[identifier].get('runtime') != 'web'):
                     continue
-                title = self._title_override(row['id']) or row['title']
-                rows.append({**row, 'title': title, 'name': title})
-        rows.sort(key=lambda row: (row['recency'], row['id']), reverse=True)
+                chat = self.live.get(identifier)
+                rows_by_id[identifier] = {**row,
+                    'connected': bool(chat and chat.connected),
+                    'nativeMetadata': {**row.get('nativeMetadata', {}), 'desktopShared': shared}}
+        rows = sorted(rows_by_id.values(), key=lambda row: (row['recency'], row['id']), reverse=True)
         return rows[offset:offset + limit]
 
     def activity(self, identifiers):
@@ -1697,7 +1703,7 @@ class StandaloneBridge(Bridge):
                                                    **({'uploadId': a['id']} if a.get('image') else {})}
                                                   for a in copy.deepcopy(submission.get('attachments', []))]
                 self._annotate_upload_attachments(chat, turn['messages'])
-                turn['actionable'] = False
+                turn['actionable'] = bool(turn.get('id')) and turn.get('id') != 'history'
             chat.timeline.update(self._with_title_override(thread_id, view))
             if mode == 'detail':
                 result = chat.timeline.detail(**options)
@@ -1917,30 +1923,8 @@ class StandaloneBridge(Bridge):
         return result
 
     def rename(self, thread_id, title):
-        self._scoped_record(thread_id)
-        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 120:
-            raise ValueError('请输入 1–120 字的聊天名称')
-        title = title.strip()
-        chat = self.live.get(thread_id)
-        if chat:
-            with chat.actions:
-                chat.backend.request('thread/name/set', {'threadId': thread_id, 'name': title})
-                with self.registry_lock:
-                    entry = self.records['threads'].get(thread_id)
-                    if entry is not None:
-                        entry['title'] = title
-                        self.records['titleOverrides'].pop(thread_id, None)
-                    else:
-                        self.records['titleOverrides'][thread_id] = title
-                    self.save()
-                with chat.condition:
-                    chat.state['title'] = title
-                    chat.changed()
-        else:
-            with self.registry_lock:
-                self.records['titleOverrides'][thread_id] = title
-                self.save()
-        return self.view(thread_id)
+        entry = self._scoped_record(thread_id)
+        return execute_rename(self, thread_id, title, entry)
 
     def linux_permission_options(self, thread_id):
         if thread_id not in self.records['threads'] and self.history:
@@ -1954,14 +1938,17 @@ class StandaloneBridge(Bridge):
         raise ValueError('此入口沿用 WSL 配置，权限变更请由后台服务管理员处理')
 
     def message_action(self, thread_id, body):
-        if body.get('action') == 'delete':
+        action = body.get('action')
+        if action == 'delete':
             return self.delete_thread(thread_id)
-        self._adopt_record(thread_id)
-        if body.get('action') in ('archive', 'unarchive'):
-            with self.registry_lock:
-                self.records['threads'][thread_id]['archived'] = body['action'] == 'archive'
-                self.save()
-            return {'ok': True}
+        entry = self._scoped_record(thread_id)
+        if action in ('pin', 'unpin'):
+            return execute_pin_action(self, thread_id, action, entry)
+        if action in ('archive', 'unarchive'):
+            return execute_archive_action(self, thread_id, action, entry)
+        if action == 'fork':
+            from bridge.clients.codex.fork_helper import execute_fork_action
+            return execute_fork_action(self, thread_id, body, entry)
         raise ValueError('独立入口暂不支持改写已有轮次；请新建聊天')
 
     def delete_thread(self, thread_id):
@@ -1985,14 +1972,26 @@ class StandaloneBridge(Bridge):
             try:
                 # Resume metadata only: unloaded history has no reliable status
                 # from thread/read. This never starts a model turn.
-                thread = backend.request('thread/resume', {'threadId': thread_id, 'excludeTurns': True})['thread']
-                if thread.get('status', {}).get('type') != 'idle':
-                    raise ValueError('会话正在执行任务或等待回复，请结束当前任务后再删除')
-                queued = backend.request('thread/queue/list', {'threadId': thread_id}, timeout=5)
-                if not isinstance(queued.get('data'), list):
-                    raise ValueError('无法核对待发送消息，尚未删除会话，请稍后重试')
-                if queued['data'] or queued.get('nextCursor') is not None:
-                    raise ValueError('会话还有待发送消息，请处理队列后再删除')
+                native_store = self.history if entry.get('runtime') == 'history' else self.web_history
+                try:
+                    archived = bool(native_store.get(thread_id).get('archived'))
+                except KeyError:
+                    archived = False  # Exact native no-rollout confirmation below remains mandatory.
+                if not archived:
+                    thread = backend.request('thread/resume', {'threadId': thread_id, 'excludeTurns': True})['thread']
+                    if Path(thread.get('cwd', '')).resolve() != Path(entry['cwd']).resolve():
+                        raise PermissionError('原生会话目录与已授权目录不一致')
+                    if thread.get('status', {}).get('type') != 'idle':
+                        raise ValueError('会话正在执行任务或等待回复，请结束当前任务后再删除')
+                    queued = backend.request('thread/queue/list', {'threadId': thread_id}, timeout=5)
+                    if not isinstance(queued.get('data'), list):
+                        raise ValueError('无法核对待发送消息，尚未删除会话，请稍后重试')
+                    if queued['data'] or queued.get('nextCursor') is not None:
+                        raise ValueError('会话还有待发送消息，请处理队列后再删除')
+                # Native archive unloads execution; resume/queue APIs reject it.
+                # Local uncertain submissions were rejected above. Let the same
+                # native owner perform its archived-thread deletion atomically,
+                # without unarchiving/waking it or touching rollout files.
                 backend.request('thread/delete', {'threadId': thread_id}, timeout=15)
             except Exception as error:
                 if goal_rpc_unsupported(error):

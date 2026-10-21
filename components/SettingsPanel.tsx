@@ -307,7 +307,7 @@ function GeneralSettings({
       const data = await response.json() as ToolSettingsResponse & { error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       setShellSettings(data);
-      if (sessionId) {
+      if (sessionId && !sessionId.startsWith("codex:")) {
         await sendAgentCommand(sessionId, { type: "reload" });
         onSessionReloaded();
       }

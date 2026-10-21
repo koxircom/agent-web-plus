@@ -11,6 +11,8 @@ export interface CodexRow {
   key: string; requestId?: string; deliveryConfirmed?: boolean; turnId: string; order: number; version: string; role: string;
   kind?: string; status?: string; title?: string; text: string; truncated?: boolean; turnStatus?: string;
   attachments?: { name?: string; type?: string; uploadId?: string; path?: string }[];
+  timestamp?: number | string;
+  editable?: boolean; forkable?: boolean;
 }
 export interface CodexComposerState {
   revision?: number;
@@ -61,29 +63,52 @@ export function projectCodexUsage(meta:CodexMeta):SessionUsageSnapshot {
     ?{input:raw.inputTokens-raw.cachedInputTokens,output:raw.outputTokens,cacheRead:raw.cachedInputTokens,cacheWrite:0,total:raw.totalTokens}:null;
   return {contextUsage,tokens};
 }
-export function assistantText(meta: CodexMeta, text: string): AssistantMessage {
+export function normalizeCodexTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return undefined;
+    return value < 100_000_000_000 ? Math.round(value * 1000) : Math.round(value);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (/^\d+$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (!Number.isFinite(num) || num <= 0) return undefined;
+      return num < 100_000_000_000 ? Math.round(num * 1000) : Math.round(num);
+    }
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  }
+  return undefined;
+}
+export function assistantText(meta: CodexMeta, text: string, timestamp?: unknown): AssistantMessage {
+  const ts = normalizeCodexTimestamp(timestamp);
   return { role: "assistant", content: [{ type: "text", text }],
-           model: meta.model || "Codex", provider: "codex", stopReason: meta.status === "active" ? undefined : "stop" };
+           model: meta.model || "Codex", provider: "codex", stopReason: meta.status === "active" ? undefined : "stop",
+           ...(ts !== undefined ? { timestamp: ts } : {}) };
 }
 export function projectCodexRow(row: CodexRow, meta: CodexMeta, epoch?: string): AgentMessage[] {
+  const ts = normalizeCodexTimestamp(row.timestamp);
+  const timeProp = ts !== undefined ? { timestamp: ts } : {};
   if (row.role === "user") {
     const content: import("../types").UserMessage["content"] = [{ type: "text", text: row.text }];
     const images = row.attachments?.filter(a => a.uploadId && a.type === "localImage") || [];
     for (const image of images) content.push({ type: "image", source: { type: "url",
       url: `/api/execution-engines/codex-image?thread=${encodeURIComponent(meta.id)}&upload=${encodeURIComponent(image.uploadId!)}` } });
-    return [{ role: "user", content }];
+    return [{ role: "user", content, ...(row.forkable !== undefined ? { forkable: row.forkable } : {}), ...timeProp }];
   }
-  if (row.role === "assistant") return [assistantText(meta, row.text)];
-  if (row.role === "activity" && row.kind === "reasoning") return [{ ...assistantText(meta, ""), content: [{ type: "thinking", thinking: row.text }] }];
+  if (row.role === "assistant") return [assistantText(meta, row.text, row.timestamp)];
+  if (row.role === "activity" && row.kind === "reasoning") return [{ ...assistantText(meta, "", row.timestamp), content: [{ type: "thinking", thinking: row.text }] }];
   if (row.role === "activity") {
     const name = row.kind === "commandExecution" ? "bash" : "codex_tool";
-    return [{ ...assistantText(meta, ""), content: [{ type: "toolCall", toolCallId: row.key,
+    return [{ ...assistantText(meta, "", row.timestamp), content: [{ type: "toolCall", toolCallId: row.key,
               toolName: name, input: { command: row.text, description: row.title || "Codex 工具" } }] },
             { role: "toolResult", toolCallId: row.key, toolName: name,
               content: [{ type: "text", text: row.text }], inProgress: row.status === "inProgress", isError: row.status === "failed",
-              ...(row.truncated && epoch ? { deferredResult: { entryId: `${epoch}.${row.key}`, revision: row.version } } : {}) }];
+              ...(row.truncated && epoch ? { deferredResult: { entryId: `${epoch}.${row.key}`, revision: row.version } } : {}),
+              ...timeProp }];
   }
-  return [{ role: "custom", customType: "codex", display: true, content: row.text }];
+  return [{ role: "custom", customType: "codex", display: true, content: row.text, ...timeProp }];
 }
 export function projectCodexPage(page: CodexPage, id: string) {
   const messages: AgentMessage[] = [], entryIds: string[] = [];
