@@ -110,6 +110,65 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return canonicalModel(id, null, null).name;
   }
 
+  function resolveRate(pricing, rawModel, provider, canonicalKey, bucketEngine) {
+    if (!pricing || typeof pricing !== "object" || !pricing.models || typeof pricing.models !== "object") {
+      return null;
+    }
+    if (pricing.version !== 1 || pricing.currency !== "USD" || pricing.unit !== "per_1m_tokens") {
+      return null;
+    }
+    const models = pricing.models;
+    const raw = typeof rawModel === "string" ? rawModel.trim() : "";
+    const clean = raw.includes("/") ? raw.split("/").pop().trim() : raw;
+    const full = (provider && provider !== "unknown") ? `${provider}/${clean}` : raw;
+
+    const candidateKeys = [raw, clean, full, canonicalKey].filter(Boolean);
+    let matched = null;
+    let foundKey = false;
+    for (const key of candidateKeys) {
+      if (Object.prototype.hasOwnProperty.call(models, key)) {
+        matched = models[key];
+        foundKey = true;
+        break;
+      }
+    }
+
+    if (foundKey) {
+      if (matched && typeof matched === "object") {
+        const input = matched.input;
+        const output = matched.output;
+        const cacheRead = matched.cacheRead;
+        const cacheWrite = matched.cacheWrite;
+        const isValid = v => typeof v === "number" && Number.isFinite(v) && v >= 0;
+        if (isValid(input) && isValid(output) && isValid(cacheRead) && isValid(cacheWrite)) {
+          return {
+            rates: [input, output, cacheRead, cacheWrite],
+            source: matched.source || "pricing",
+            tiered: Boolean(matched.tiered),
+            modelId: matched.modelId || raw,
+          };
+        }
+      }
+      // 命中显式条目但非法（缺失/非数字/负数/非法属性等），禁止静默回退 STANDARD 费率
+      return null;
+    }
+
+    const isCodex = bucketEngine === "codex" || (provider && String(provider).toLowerCase() === "openai-codex");
+    if (!isCodex) {
+      const stdRate = STANDARD_RATES[canonicalKey] || STANDARD_RATES[clean] || STANDARD_RATES[raw];
+      if (Array.isArray(stdRate) && stdRate.length >= 3) {
+        return {
+          rates: stdRate,
+          source: "fallback",
+          tiered: false,
+          modelId: canonicalKey || clean || raw,
+        };
+      }
+    }
+
+    return null;
+  }
+
   // Only validated Codex lineage changes the conversation dimension. Physical
   // execution buckets, dates, roles and Pi's existing ownership stay intact.
   function conversationId(ledger, id) {
@@ -282,20 +341,58 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
 
       // 智能价格核算：有原生上报优先原值；旧桶整个桶 cost=0 时全桶补价；不得对 cost>0 且部分 unpriced 用比例近似冒充精确
-      let effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
+      let effectiveCostNano = 0;
+      let effectiveEstimatedCostNano = 0;
       let effectiveUnpriced = item.unpricedTokens || 0;
-      if (bucketEngine !== "codex" && item.totalTokens > 0) {
-        const rate = STANDARD_RATES[cKey];
-        if (rate) {
-          if (effectiveCostNano <= 0) {
+      let isExplicitEstimated = false;
+
+      if (!options.pricing) {
+        effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
+        if (bucketEngine !== "codex" && item.totalTokens > 0) {
+          const rate = STANDARD_RATES[cKey];
+          if (rate) {
+            if (effectiveCostNano <= 0) {
+              const estUsd = ((item.inputTokens || 0) * rate[0] + (item.outputTokens || 0) * rate[1] + (item.cacheReadTokens || 0) * rate[2] + (item.cacheWriteTokens || 0) * (rate[3] || 0)) / 1e6;
+              effectiveCostNano = Math.round(estUsd * 1e9);
+              effectiveEstimatedCostNano = effectiveCostNano;
+              effectiveUnpriced = 0;
+              isExplicitEstimated = true;
+            }
+          }
+        }
+      } else {
+        if ((item.costNano || 0) > 0) {
+          effectiveCostNano = item.costNano;
+          effectiveEstimatedCostNano = 0;
+          effectiveUnpriced = item.unpricedTokens || 0;
+        } else if (item.totalTokens > 0) {
+          const resolved = resolveRate(options.pricing, b.model, b.provider, cKey, bucketEngine);
+          if (resolved && resolved.rates) {
+            const rate = resolved.rates;
+            // 阶梯费率按独立 Bucket 估算，不按历史跨调用累计触发 >272k 档位
             const estUsd = ((item.inputTokens || 0) * rate[0] + (item.outputTokens || 0) * rate[1] + (item.cacheReadTokens || 0) * rate[2] + (item.cacheWriteTokens || 0) * (rate[3] || 0)) / 1e6;
             effectiveCostNano = Math.round(estUsd * 1e9);
+            effectiveEstimatedCostNano = effectiveCostNano;
             effectiveUnpriced = 0;
+            isExplicitEstimated = true;
+          } else {
+            effectiveCostNano = 0;
+            effectiveEstimatedCostNano = 0;
+            effectiveUnpriced = item.totalTokens;
           }
         }
       }
 
-      item = { ...item, costNano: effectiveCostNano, unpricedTokens: effectiveUnpriced };
+      const isPricedFree = Boolean(isExplicitEstimated && effectiveCostNano === 0 && effectiveUnpriced === 0 && item.totalTokens > 0);
+
+      item = {
+        ...item,
+        costNano: effectiveCostNano,
+        estimatedCostNano: effectiveEstimatedCostNano,
+        unpricedTokens: effectiveUnpriced,
+        isEstimated: isExplicitEstimated,
+        isExplicitFree: isPricedFree,
+      };
 
       const matchRole = !options.role || options.role === "all" || b.role === options.role;
 
@@ -303,6 +400,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (matchExecutionCandidate && matchRole) {
         add(total, item);
         add(roles[item.role], item);
+        total.estimatedCostNano = (total.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        roles[item.role].estimatedCostNano = (roles[item.role].estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        if (isExplicitEstimated) {
+          total.hasEstimated = true;
+          roles[item.role].hasEstimated = true;
+        }
+        if (isPricedFree) {
+          total.hasExplicitFree = true;
+          roles[item.role].hasExplicitFree = true;
+        }
         if (bucketEngine === "codex") {
           total.codexTokens = (total.codexTokens || 0) + item.totalTokens;
           roles[item.role].codexTokens = (roles[item.role].codexTokens || 0) + item.totalTokens;
@@ -318,11 +425,22 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             roles: { main: empty(), subagent: empty(), system: empty() },
             dispatchedSubagents: { tokens: 0, calls: 0, messages: 0, pricingComplete: true },
             workerSubagents: { tokens: 0, calls: 0, messages: 0 },
+            estimatedCostNano: 0,
           });
         }
         const m = models.get(cKey);
         add(m, item);
         add(m.roles[item.role], item);
+        m.estimatedCostNano = (m.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        m.roles[item.role].estimatedCostNano = (m.roles[item.role].estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        if (isExplicitEstimated) {
+          m.hasEstimated = true;
+          m.roles[item.role].hasEstimated = true;
+        }
+        if (isPricedFree) {
+          m.hasExplicitFree = true;
+          m.roles[item.role].hasExplicitFree = true;
+        }
         if (bucketEngine === "codex") {
           m.codexTokens = (m.codexTokens || 0) + item.totalTokens;
           m.roles[item.role].codexTokens = (m.roles[item.role].codexTokens || 0) + item.totalTokens;
@@ -336,14 +454,20 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           m.workerSubagents.tokens += item.totalTokens;
           m.workerSubagents.calls += item.calls;
           m.workerSubagents.messages += item.messageCount;
+          if (effectiveEstimatedCostNano > 0) {
+            m.workerSubagents.estimatedCostNano = (m.workerSubagents.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+          }
         }
 
         if (!sessions.has(groupId)) {
           sessions.set(groupId, { ...(ledger.sessions?.[groupId] || {}), ...empty(), id: groupId,
-            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map() });
+            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map(), estimatedCostNano: 0 });
         }
         const group = sessions.get(groupId);
         add(group, item);
+        group.estimatedCostNano = (group.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        if (isExplicitEstimated) group.hasEstimated = true;
+        if (isPricedFree) group.hasExplicitFree = true;
         if (bucketEngine === "codex") {
           group.codexTokens = (group.codexTokens || 0) + item.totalTokens;
           if (item.role === "subagent") {
@@ -362,12 +486,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             detail = {
               ...empty(), sessionId: item.sessionId,
               name: childSession.name || childSession.title || item.sessionId,
-              day: detailDay, codexTokens: 0,
+              day: detailDay, codexTokens: 0, estimatedCostNano: 0,
             };
             group.subtaskDetails.set(detailKey, detail);
           }
           add(detail, item);
           detail.codexTokens += item.totalTokens;
+          detail.estimatedCostNano = (detail.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+          if (isExplicitEstimated) detail.hasEstimated = true;
+          if (isPricedFree) detail.hasExplicitFree = true;
         }
       }
 
@@ -399,23 +526,55 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         // 子 Agent 实际费用：优先使用已按事件精确聚合的 item.costNano（item.costNano 是唯一实际费用入口）
         // 只有 unpricedTokens === 0 才算该子桶完整定价。
         // 若任何选中调度子桶未完整定价，整个 controller 的 savings 标记为 pricingComplete=false
-        const mainRate = STANDARD_RATES[ctrl.key];
-        const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
-        const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+        if (!options.pricing) {
+          const mainRate = STANDARD_RATES[ctrl.key];
+          const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
+          const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
 
-        if (isSubPriced && hasHypMainCost) {
-          const actualSubCost = (item.costNano || 0) / 1e9;
-          const mrCw = mainRate[3] || 0;
-          const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
-          cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
-          cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
+          if (isSubPriced && hasHypMainCost) {
+            const actualSubCost = (item.costNano || 0) / 1e9;
+            const mrCw = mainRate[3] || 0;
+            const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
+            cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
+            cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
+          } else {
+            cm.dispatchedSubagents.pricingComplete = false;
+          }
         } else {
-          cm.dispatchedSubagents.pricingComplete = false;
+          const resolvedCtrl = resolveRate(options.pricing, b.controllerModel, b.controllerProvider, ctrl.key, bucketEngine);
+          const mainRate = resolvedCtrl ? resolvedCtrl.rates : null;
+          const isSubPriced = (item.unpricedTokens || 0) === 0 && (item.costNano > 0 || item.isExplicitFree);
+          const hasHypMainCost = Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+
+          if (isSubPriced && hasHypMainCost) {
+            const actualSubCost = (item.costNano || 0) / 1e9;
+            const mrCw = mainRate[3] || 0;
+            const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
+            cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
+            cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
+            if (bucketEngine === "codex" || item.estimatedCostNano > 0 || (resolvedCtrl && resolvedCtrl.source !== "pi-sdk") || item.isExplicitFree) {
+              cm.dispatchedSubagents.isEstimated = true;
+            }
+          } else {
+            cm.dispatchedSubagents.pricingComplete = false;
+          }
         }
       }
     }
 
+    function attachDisplayFlags(target) {
+      if (!target) return;
+      if (target.totalTokens > 0 && target.unpricedTokens === 0 && target.costNano === 0 && (target.hasEstimated || target.hasExplicitFree)) {
+        target.isExplicitFree = true;
+      }
+    }
+
+    attachDisplayFlags(total);
+    for (const r of Object.values(roles)) attachDisplayFlags(r);
+
     const modelBreakdowns = [...models.values()].map(m => {
+      attachDisplayFlags(m);
+      for (const r of Object.values(m.roles)) attachDisplayFlags(r);
       const d = m.dispatchedSubagents;
       if (d) {
         if (d.calls > 0 && d.pricingComplete && d.hypotheticalCost > 0) {
@@ -425,6 +584,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           d.allMainTotalCost = mainCost + d.hypotheticalCost;
           d.actualTotalCost = mainCost + d.actualCost;
           d.overallSavedRatio = d.allMainTotalCost > 0 ? ((d.savedCost / d.allMainTotalCost) * 100).toFixed(1) : d.subSavedRatio;
+          d.isEstimated = Boolean(d.isEstimated || m.estimatedCostNano > 0 || m.isExplicitFree);
         } else {
           d.pricingComplete = false;
           d.savedCost = 0;
@@ -453,12 +613,18 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       allModels: [...allModels],
       sessionCount: sessions.size,
       physicalSessionCount: physicalSessions.size,
-      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => ({
-        ...session,
-        subagentCount: subagentIds.size,
-        subtasks: [...subtaskDetails.values()].sort((a, b) =>
-          b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
-      })).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
+      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => {
+        attachDisplayFlags(session);
+        return {
+          ...session,
+          subagentCount: subagentIds.size,
+          subtasks: [...subtaskDetails.values()].map(st => {
+            attachDisplayFlags(st);
+            return st;
+          }).sort((a, b) =>
+            b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
+        };
+      }).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
       timeCoverage: { excludedTokens, excludedRecords },
     };
   }
@@ -537,14 +703,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return a;
   }
 
-  return { fields, empty, add, day, name, canonicalModel, STANDARD_RATES, aggregate, validate };
+  return { fields, empty, add, day, name, canonicalModel, STANDARD_RATES, aggregate, validate, resolveRate };
 });
 
 ;
 /* Optional resources share one request and publish no UI ownership. */
 (function (root) {
   "use strict";
-  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-f4a6b4b140d01297.js","integrity":"sha256-9Ka0sUDQEpfzhWcQFqe/BEXyO7kHkgsTsP9rGo/kt6I=","bytes":72995},"image-editor":{"path":"/pi-web-assets/image-editor-d639e1103e1c3401.js","integrity":"sha256-1jnhED4cNAE9/iHWC+lG0Ye0Fjtb5jHV3w5TJbkiFOE=","bytes":54470}};
+  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-8ca136474ddf8057.js","integrity":"sha256-jKE2R03fgFccAMOvI9mR85KPdLtk5RLePjqQ7xkbPBs=","bytes":79387},"image-editor":{"path":"/pi-web-assets/image-editor-d639e1103e1c3401.js","integrity":"sha256-1jnhED4cNAE9/iHWC+lG0Ye0Fjtb5jHV3w5TJbkiFOE=","bytes":54470}};
   const pending = new Map();
   // Hot reloads may change an optional asset while keeping the same window.
   // Reuse only an export stamped with this exact content-addressed path.
@@ -7869,16 +8035,30 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function deleteArchivedSession(sessionId) {
     if (!sessionId) return false;
+    const isCodex = String(sessionId).startsWith("codex:");
     markSessionAsDeleted(sessionId);
 
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
       });
-      if (!resp || (!resp.ok && resp.status !== 404)) {
-        restoreSessionDeleteState(sessionId);
-        const detail = resp ? await resp.json().catch(() => ({})) : {};
-        throw new Error(typeof detail.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
+      if (isCodex) {
+        if (!resp || !resp.ok) {
+          restoreSessionDeleteState(sessionId);
+          const detail = resp ? await resp.json().catch(() => ({})) : {};
+          throw new Error(typeof detail?.error === "string" ? detail.error : (resp ? `删除失败 (HTTP ${resp.status})` : "无法连接执行端，请稍后重试"));
+        }
+        const data = await resp.json().catch(() => ({}));
+        if (!data || data.ok !== true) {
+          restoreSessionDeleteState(sessionId);
+          throw new Error(typeof data?.error === "string" ? data.error : "删除未确认，执行端未返回确认标记");
+        }
+      } else {
+        if (!resp || (!resp.ok && resp.status !== 404)) {
+          restoreSessionDeleteState(sessionId);
+          const detail = resp ? await resp.json().catch(() => ({})) : {};
+          throw new Error(typeof detail?.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
+        }
       }
 
       markSessionDeleteConfirmed(sessionId);
@@ -37215,6 +37395,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         return () => {
           host.classList.remove("pi-enh-archived-panel");
           host.innerHTML = "";
+          cleanupArchivedPanelHost();
         };
       }),
       abi.registerRenderer("usage", (host, context) => {
@@ -38255,6 +38436,238 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   isDateCleanPanelOpen = false;
   archivedDateCutoffValue = "";
 
+  let currentArchivedEngine = "pi";
+  let hasUserSelectedArchivedEngine = false;
+  let codexArchivedEntries = null;
+  let codexArchivedLoading = false;
+  let codexArchivedLoadingMore = false;
+  let codexArchivedError = null;
+  let codexArchivedLoadMoreError = null;
+  let codexArchivedHasMore = false;
+  let codexArchivedRawOffset = 0;
+  let codexArchivedAbortController = null;
+  let codexArchivedEpoch = 0;
+
+  function safeEscapeHtml(str) {
+    if (typeof escapeHtml === "function") return escapeHtml(str);
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function getCurrentArchivedEngine() {
+    return currentArchivedEngine || "pi";
+  }
+
+  function createArchivedRequestSignal(ownerSignal, timeoutMs = 15000) {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function" && typeof AbortSignal.timeout === "function") {
+      try {
+        return AbortSignal.any([ownerSignal, AbortSignal.timeout(timeoutMs)]);
+      } catch (_) {}
+    }
+    const timeoutCtrl = new AbortController();
+    const timer = setTimeout(() => {
+      try {
+        timeoutCtrl.abort(new DOMException("The operation timed out.", "TimeoutError"));
+      } catch (_) {}
+    }, timeoutMs);
+    if (ownerSignal) {
+      if (ownerSignal.aborted) {
+        clearTimeout(timer);
+        try { timeoutCtrl.abort(ownerSignal.reason); } catch (_) {}
+      } else {
+        ownerSignal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          try { timeoutCtrl.abort(ownerSignal.reason); } catch (_) {}
+        }, { once: true });
+      }
+    }
+    return timeoutCtrl.signal;
+  }
+
+  function invalidateCodexArchivedEntries() {
+    codexArchivedEntries = null;
+    codexArchivedLoading = false;
+    codexArchivedLoadingMore = false;
+    codexArchivedError = null;
+    codexArchivedLoadMoreError = null;
+    codexArchivedHasMore = false;
+    codexArchivedRawOffset = 0;
+    if (codexArchivedAbortController) {
+      try { codexArchivedAbortController.abort(); } catch (_) {}
+      codexArchivedAbortController = null;
+    }
+    codexArchivedEpoch++;
+  }
+
+  function cleanupArchivedPanelHost() {
+    invalidateCodexArchivedEntries();
+    hasUserSelectedArchivedEngine = false;
+    selectedArchivedIds.clear();
+    lastCheckedArchivedIndex = null;
+    archivedPanelSearchQuery = "";
+    isDateCleanPanelOpen = false;
+  }
+
+  function inferNativeEngineContext(panel, nav) {
+    const navSessionId = nav?.nav?.sessionId || nav?.sessionId;
+    if (typeof navSessionId === "string" && navSessionId.length > 0) {
+      return navSessionId.startsWith("codex:") ? "codex" : "pi";
+    }
+    if (typeof window !== "undefined" && window.location) {
+      try {
+        const engParam = new URLSearchParams(window.location.search).get("engine");
+        if (engParam === "codex" || engParam === "pi") return engParam;
+      } catch (_) {}
+    }
+    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_EXECUTION_ENGINE__ === "function") {
+      try {
+        const eng = window.__PI_ENH_GET_EXECUTION_ENGINE__();
+        if (eng === "codex" || eng === "pi") return eng;
+      } catch (_) {}
+    }
+    return "pi";
+  }
+
+  async function fetchCodexArchivedSessions(panel, nav, isLoadMore = false) {
+    if (isLoadMore) {
+      if (codexArchivedLoadingMore || !codexArchivedHasMore || codexArchivedLoading) return;
+      codexArchivedLoadingMore = true;
+      codexArchivedLoadMoreError = null;
+    } else {
+      if (codexArchivedLoading) return;
+      if (codexArchivedAbortController) {
+        try { codexArchivedAbortController.abort(); } catch (_) {}
+      }
+      codexArchivedAbortController = new AbortController();
+      codexArchivedLoading = true;
+      codexArchivedError = null;
+      codexArchivedRawOffset = 0;
+    }
+
+    const currentEpoch = isLoadMore ? codexArchivedEpoch : ++codexArchivedEpoch;
+    if (!codexArchivedAbortController) codexArchivedAbortController = new AbortController();
+    const ownerController = codexArchivedAbortController;
+    const signal = createArchivedRequestSignal(ownerController?.signal, 15000);
+    const offset = isLoadMore ? codexArchivedRawOffset : 0;
+    const targetUrl = `/api/sessions?engine=codex&archived=true&offset=${offset}&limit=100`;
+
+    if (panel && panel.isConnected && getCurrentArchivedEngine() === "codex") {
+      renderArchivedPanel(panel, nav);
+    }
+
+    try {
+      const resp = await fetch(targetUrl, {
+        signal,
+        headers: { "Accept": "application/json" },
+      });
+      if (ownerController?.signal.aborted || currentEpoch !== codexArchivedEpoch) return;
+      if (!resp.ok) {
+        throw new Error(`获取 Codex 已归档会话失败 (HTTP ${resp.status})`);
+      }
+      const data = await resp.json().catch(() => null);
+      if (ownerController?.signal.aborted || currentEpoch !== codexArchivedEpoch) return;
+
+      if (!data || typeof data !== "object" || !Array.isArray(data.sessions)) {
+        throw new Error("Codex 返回数据格式异常，缺少会话列表");
+      }
+
+      const rawSessions = data.sessions;
+      const normalized = [];
+      for (const s of rawSessions) {
+        if (!s || typeof s !== "object" || typeof s.id !== "string" || !s.id.startsWith("codex:") || s.archived !== true) {
+          throw new Error("Codex 返回会话项格式损坏或缺少归档标记");
+        }
+        normalized.push({
+          id: s.id,
+          name: String(s.title || s.name || s.id || ""),
+          cwd: String(s.cwd || ""),
+          updatedAt: s.updatedAt || s.lastModified || s.modified || s.time || null,
+          archived: s.archived,
+        });
+      }
+
+      if (isLoadMore) {
+        const existingIds = new Set((codexArchivedEntries || []).map((e) => e.id));
+        const appendItems = normalized.filter((e) => !existingIds.has(e.id));
+        codexArchivedRawOffset += rawSessions.length;
+        if (rawSessions.length >= 100 && appendItems.length === 0) {
+          codexArchivedHasMore = false;
+          codexArchivedLoadMoreError = "会话目录发生变动，请刷新列表";
+        } else {
+          codexArchivedEntries = [...(codexArchivedEntries || []), ...appendItems];
+          codexArchivedHasMore = rawSessions.length >= 100;
+        }
+        codexArchivedLoadingMore = false;
+      } else {
+        codexArchivedRawOffset = rawSessions.length;
+        codexArchivedEntries = normalized;
+        codexArchivedHasMore = rawSessions.length >= 100;
+        codexArchivedLoading = false;
+      }
+    } catch (err) {
+      if (ownerController?.signal.aborted || currentEpoch !== codexArchivedEpoch) return;
+      if (isLoadMore) {
+        codexArchivedLoadingMore = false;
+        codexArchivedLoadMoreError = err?.message || "加载更多失败，请重试";
+      } else {
+        codexArchivedLoading = false;
+        codexArchivedError = err?.message || "无法加载 Codex 已归档会话，请重试";
+      }
+    } finally {
+      if (!ownerController?.signal.aborted && currentEpoch === codexArchivedEpoch) {
+        if (isLoadMore) codexArchivedLoadingMore = false;
+        else codexArchivedLoading = false;
+      }
+    }
+
+    if (panel && panel.isConnected && getCurrentArchivedEngine() === "codex" && currentEpoch === codexArchivedEpoch) {
+      renderArchivedPanel(panel, nav);
+    }
+  }
+
+  function switchArchivedEngine(newEngine, panel, nav) {
+    if (newEngine !== "pi" && newEngine !== "codex") return;
+    if (newEngine === currentArchivedEngine) return;
+    hasUserSelectedArchivedEngine = true;
+    currentArchivedEngine = newEngine;
+    selectedArchivedIds.clear();
+    lastCheckedArchivedIndex = null;
+    archivedPanelSearchQuery = "";
+    isDateCleanPanelOpen = false;
+
+    codexArchivedLoading = false;
+    codexArchivedLoadingMore = false;
+    if (codexArchivedAbortController) {
+      try { codexArchivedAbortController.abort(); } catch (_) {}
+      codexArchivedAbortController = null;
+    }
+    codexArchivedEpoch++;
+
+    if (newEngine === "codex") {
+      if (codexArchivedEntries === null && !codexArchivedLoading) {
+        fetchCodexArchivedSessions(panel, nav, false);
+      }
+    }
+    if (panel && panel.isConnected) {
+      renderArchivedPanel(panel, nav);
+    }
+  }
+
+  async function performDeleteArchivedSession(sessionId) {
+    const fn = (typeof deleteArchivedSession === "function")
+      ? deleteArchivedSession
+      : (typeof window !== "undefined" && typeof window.__PI_ENH_DELETE_ARCHIVED_SESSION__ === "function"
+        ? window.__PI_ENH_DELETE_ARCHIVED_SESSION__
+        : null);
+    if (!fn) throw new Error("会话删除服务不可用");
+    return await fn(sessionId);
+  }
+
   function getDefaultArchivedDateCutoff() {
     const d = new Date(Date.now() - 30 * 86400000);
     const yyyy = d.getFullYear();
@@ -38292,7 +38705,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   }
 
   async function executeBatchDeleteArchived(targetIds, panel, nav, triggerBtn) {
+    console.log("[DEBUG BATCH DELETE]", targetIds);
     if (!targetIds || targetIds.length === 0) return;
+    const isCodex = getCurrentArchivedEngine() === "codex";
+    const opHost = panel;
+    const opEngine = getCurrentArchivedEngine();
+    const opEpoch = codexArchivedEpoch;
+
     const initialBtnHtml = triggerBtn ? triggerBtn.innerHTML : "";
     if (triggerBtn) {
       triggerBtn.disabled = true;
@@ -38312,10 +38731,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           triggerBtn.innerHTML = `<span style="font-size: 11.5px;">正在删除 (${i + 1}/${targetIds.length})...</span>`;
         }
         try {
-          await deleteArchivedSession(sid);
-          successCount++;
-          succeededIds.add(sid);
-          selectedArchivedIds.delete(sid);
+          const ok = await performDeleteArchivedSession(sid);
+          if (ok === true) {
+            successCount++;
+            succeededIds.add(sid);
+          } else {
+            failCount++;
+          }
         } catch (err) {
           failCount++;
           console.warn("[pi-enh] 批量删除底层实体清理提示:", sid, err);
@@ -38323,13 +38745,20 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
 
       if (succeededIds.size > 0) {
-        const archivedEntriesBefore = readStoredArchivedEntries();
-        const nextEntries = archivedEntriesBefore.filter((e) => e && !succeededIds.has(e.id));
-        writeStoredArchivedEntries(nextEntries);
-        if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
-          window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => (typeof e === "string" ? !succeededIds.has(e) : !succeededIds.has(e?.id)));
+        if (opEngine === "codex") {
+          if (Array.isArray(codexArchivedEntries)) {
+            codexArchivedEntries = codexArchivedEntries.filter((e) => !succeededIds.has(e.id));
+          }
+          codexArchivedRawOffset = 0;
+        } else {
+          const archivedEntriesBefore = readStoredArchivedEntries();
+          const nextEntries = archivedEntriesBefore.filter((e) => e && !succeededIds.has(e.id) && !e.id.startsWith("codex:"));
+          writeStoredArchivedEntries(nextEntries);
+          if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
+            window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => (typeof e === "string" ? !succeededIds.has(e) : !succeededIds.has(e?.id)));
+          }
+          void persistArchivedSessionsToServer(nextEntries, undefined, true);
         }
-        void persistArchivedSessionsToServer(nextEntries, undefined, true);
       }
     } finally {
       if (triggerBtn) {
@@ -38337,23 +38766,51 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         triggerBtn.innerHTML = initialBtnHtml;
       }
       requestSessionListRefresh(false, true);
-      if (panel && nav) {
-        renderArchivedPanel(panel, nav);
-      }
-    }
 
-    if (failCount === 0) {
-      showToast(`已成功删除 ${successCount} 个已归档会话`, sessionDeleteIcon);
-    } else if (successCount === 0) {
-      showToast(`删除失败：${failCount} 个会话未能删除，已保留选中`, sessionDeleteIcon);
-    } else {
-      showToast(`批量删除完成：成功 ${successCount} 个，失败 ${failCount} 个（已保留选中）`, sessionDeleteIcon);
+      const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+      if (isStillCurrent) {
+        for (const sid of succeededIds) {
+          selectedArchivedIds.delete(sid);
+        }
+        if (opEngine === "codex" && succeededIds.size > 0) {
+          fetchCodexArchivedSessions(opHost, nav, false);
+        } else {
+          renderArchivedPanel(opHost, nav);
+        }
+        if (failCount === 0) {
+          showToast(`已成功删除 ${successCount} 个已归档会话`, sessionDeleteIcon);
+        } else if (successCount === 0) {
+          showToast(`删除失败：${failCount} 个会话未能删除，已保留选中`, sessionDeleteIcon);
+        } else {
+          showToast(`批量删除完成：成功 ${successCount} 个，失败 ${failCount} 个（已保留选中）`, sessionDeleteIcon);
+        }
+      }
     }
   }
 
   function formatArchiveDate(archivedAt) {
     if (!archivedAt) return "";
     const d = new Date(archivedAt);
+    if (isNaN(d.getTime())) return "";
+    const now = new Date();
+    const isSameYear = d.getFullYear() === now.getFullYear();
+    const m = d.getMonth() + 1;
+    const day = d.getDate();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const isToday = isSameYear && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    if (isToday) return `今天 ${hh}:${mm}`;
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday = isSameYear && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate();
+    if (isYesterday) return `昨天 ${hh}:${mm}`;
+    if (isSameYear) return `${m}/${day} ${hh}:${mm}`;
+    return `${d.getFullYear()}/${m}/${day} ${hh}:${mm}`;
+  }
+
+  function formatGenericDate(rawTime) {
+    if (!rawTime) return "";
+    const d = new Date(rawTime);
     if (isNaN(d.getTime())) return "";
     const now = new Date();
     const isSameYear = d.getFullYear() === now.getFullYear();
@@ -38386,10 +38843,30 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   function renderArchivedPanel(panel, nav) {
     if (!panel) return;
     if (!panel.classList.contains("pi-enh-archived-panel")) panel.classList.add("pi-enh-archived-panel");
-    const allEntries = readStoredArchivedEntries();
-    const needsTitleSync = allEntries.some((e) => !e.name || e.name === e.id || !knownSessionTitles.has(e.id));
-    if (needsTitleSync) {
-      addManagedTimeout(syncArchivedTitles, 0);
+
+    if (!hasUserSelectedArchivedEngine) {
+      currentArchivedEngine = inferNativeEngineContext(panel, nav);
+    }
+    const isCodex = currentArchivedEngine === "codex";
+    const isPi = !isCodex;
+
+    if (isCodex && codexArchivedEntries === null && !codexArchivedLoading && !codexArchivedError) {
+      addManagedTimeout(() => {
+        if (panel && panel.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEntries === null && !codexArchivedLoading) {
+          fetchCodexArchivedSessions(panel, nav, false);
+        }
+      }, 0);
+    }
+
+    const allEntries = isCodex
+      ? (Array.isArray(codexArchivedEntries) ? codexArchivedEntries : [])
+      : readStoredArchivedEntries().filter((e) => e && e.id && !e.id.startsWith("codex:"));
+
+    if (isPi) {
+      const needsTitleSync = allEntries.some((e) => !e.name || e.name === e.id || !knownSessionTitles.has(e.id));
+      if (needsTitleSync) {
+        addManagedTimeout(syncArchivedTitles, 0);
+      }
     }
 
     // 清除已不在列表中的失效勾选项
@@ -38401,17 +38878,28 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     const query = archivedPanelSearchQuery.trim().toLowerCase();
     const filteredEntries = allEntries.filter((entry) => {
       if (!query) return true;
-      const title = (knownSessionTitles.get(entry.id) || entry.name || "").toLowerCase();
+      const title = (isPi ? (knownSessionTitles.get(entry.id) || entry.name || "") : (entry.name || "")).toLowerCase();
       const id = (entry.id || "").toLowerCase();
       const cwd = (entry.cwd || "").toLowerCase();
       return title.includes(query) || id.includes(query) || cwd.includes(query);
     });
 
     const isSearching = Boolean(query);
-    const countBadgeText = isSearching ? `显示 ${filteredEntries.length} / ${allEntries.length} 个` : `共 ${allEntries.length} 个`;
+    let countBadgeText = "";
+    if (isCodex && codexArchivedLoading) {
+      countBadgeText = "正在加载…";
+    } else if (isCodex && codexArchivedError) {
+      countBadgeText = "加载失败";
+    } else if (isSearching) {
+      countBadgeText = `显示 ${filteredEntries.length} / ${allEntries.length} 个`;
+    } else if (isCodex && codexArchivedHasMore) {
+      countBadgeText = `已加载 ${allEntries.length} 个+`;
+    } else {
+      countBadgeText = `共 ${allEntries.length} 个`;
+    }
 
     const effectiveDateValue = archivedDateCutoffValue || getDefaultArchivedDateCutoff();
-    const idsBeforeDate = getSessionIdsBeforeDate(effectiveDateValue, allEntries);
+    const idsBeforeDate = isPi ? getSessionIdsBeforeDate(effectiveDateValue, allEntries) : [];
     const beforeDateCount = idsBeforeDate.length;
 
     const selectedCount = selectedArchivedIds.size;
@@ -38421,28 +38909,46 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     panel.innerHTML = `
       <div class="settings-general-container" style="display: flex; flex-direction: column; gap: 10px; min-height: 100%;">
         <div class="pi-enh-archived-toolbar">
-          <div class="pi-enh-archived-header-row">
-            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div class="pi-enh-archived-header-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
               <h2 class="settings-general-title" style="margin: 0; font-size: 15px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px;">
                 <span>已归档</span>
-                <span style="font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 500;" data-archived-count>${countBadgeText}</span>
+                <span style="font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 500;" data-archived-count>${safeEscapeHtml(countBadgeText)}</span>
               </h2>
+
+              <div class="pi-enh-archived-engine-tabs" role="tablist" aria-label="归档引擎" style="display: inline-flex; align-items: center; gap: 3px; padding: 2px; border-radius: 7px; background: var(--bg-panel, rgba(255,255,255,0.06)); border: 1px solid var(--border, #27272a);">
+                <button type="button" role="tab" class="pi-enh-btn-sm${isPi ? " is-active" : ""}" data-action="switch-archived-engine" data-engine="pi" aria-selected="${isPi}" style="padding: 3px 10px; font-size: 11.5px; border-radius: 5px; cursor: pointer; border: none; ${isPi ? "background: var(--bg-selected, rgba(255,255,255,0.12)); font-weight: 600; color: var(--text);" : "background: transparent; color: var(--text-muted);"}">
+                  Pi Agent
+                </button>
+                <button type="button" role="tab" class="pi-enh-btn-sm${isCodex ? " is-active" : ""}" data-action="switch-archived-engine" data-engine="codex" aria-selected="${isCodex}" style="padding: 3px 10px; font-size: 11.5px; border-radius: 5px; cursor: pointer; border: none; ${isCodex ? "background: var(--bg-selected, rgba(255,255,255,0.12)); font-weight: 600; color: var(--text);" : "background: transparent; color: var(--text-muted);"}">
+                  Codex
+                </button>
+              </div>
+
+              <button type="button" class="pi-enh-btn-sm" data-action="refresh-archived" title="刷新归档列表" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; font-size: 11.5px; border-radius: 6px; cursor: pointer;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                <span>刷新</span>
+              </button>
             </div>
+
             ${allEntries.length > 0 ? `
               <button type="button" class="pi-enh-btn-sm" data-action="restore-all-archived" style="white-space: nowrap; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; flex-shrink: 0;">
                 全部还原
               </button>
             ` : ""}
           </div>
+
           <p style="margin: 4px 0 10px; font-size: 11.5px; color: var(--text-muted); line-height: 1.45;">
-            这些会话已从侧边栏主列表中隐藏。支持批量选择、按住 Shift 连续多选、一键还原或彻底删除，亦可按日期批量清理。
+            ${isPi
+              ? "这些会话已从侧边栏主列表中隐藏。支持批量选择、按住 Shift 连续多选、一键还原或彻底删除，亦可按日期批量清理。"
+              : "Codex 原生已归档会话。支持按引擎独立加载、批量选择、按住 Shift 连续多选、一键还原或彻底删除。Codex 原生数据无归档时间标记，不支持按归档日期批量清理。"}
           </p>
 
-          ${allEntries.length > 0 ? `
+          ${(allEntries.length > 0 || isSearching) ? `
             <div style="display: flex; align-items: center; gap: 10px;">
               <label class="pi-enh-plugin-search-wrap" style="flex: 1 1 auto; width: 100%;">
                 <svg class="pi-enh-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
-                <input class="pi-enh-plugin-search" type="search" data-archived-search aria-label="搜索已归档会话" placeholder="搜索已归档会话标题、ID 或工作目录…" value="${archivedPanelSearchQuery}">
+                <input class="pi-enh-plugin-search" type="search" data-archived-search aria-label="搜索已归档会话" placeholder="搜索已归档会话标题、ID 或工作目录…" value="${safeEscapeHtml(archivedPanelSearchQuery)}">
               </label>
             </div>
 
@@ -38470,15 +38976,17 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                       取消选择
                     </button>
                   ` : ""}
-                  <button type="button" class="pi-enh-btn-sm" data-action="toggle-date-clean-panel" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; background: ${isDateCleanPanelOpen ? 'var(--bg-hover)' : 'transparent'};">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                    <span>按日期清理${isDateCleanPanelOpen ? " ▲" : " ▼"}</span>
-                  </button>
+                  ${isPi ? `
+                    <button type="button" class="pi-enh-btn-sm" data-action="toggle-date-clean-panel" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; background: ${isDateCleanPanelOpen ? 'var(--bg-hover)' : 'transparent'};">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                      <span>按日期清理${isDateCleanPanelOpen ? " ▲" : " ▼"}</span>
+                    </button>
+                  ` : ""}
                 </div>
               </div>
             </div>
 
-            ${isDateCleanPanelOpen ? `
+            ${(isPi && isDateCleanPanelOpen) ? `
               <div class="pi-enh-archived-date-panel">
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
                   <div style="font-size: 13px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 6px;">
@@ -38491,7 +38999,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                 <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                   <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text);">
                     <span>选择截止日期：</span>
-                    <input type="date" class="pi-enh-archived-date-input" data-archived-date-input value="${effectiveDateValue}">
+                    <input type="date" class="pi-enh-archived-date-input" data-archived-date-input value="${safeEscapeHtml(effectiveDateValue)}">
                   </label>
 
                   <div style="display: inline-flex; align-items: center; gap: 4px;">
@@ -38521,29 +39029,69 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           ` : ""}
         </div>
 
-        ${allEntries.length === 0 ? `
+        ${isCodex && codexArchivedLoading ? `
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px; color: var(--text-muted); text-align: center;">
+            <div style="font-size: 14px; font-weight: 500; color: var(--text);">正在加载 Codex 已归档会话…</div>
+            <div style="font-size: 12px; margin-top: 5px;">正在通过原生 API 读取 Native 已归档会话</div>
+          </div>
+        ` : isCodex && codexArchivedError ? `
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px; color: var(--text-muted); text-align: center; gap: 12px;">
+            <div style="font-size: 14px; color: var(--text);">${safeEscapeHtml(codexArchivedError)}</div>
+            <button type="button" class="pi-enh-btn-sm" data-action="retry-fetch-codex" style="padding: 4px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;">
+              重试加载
+            </button>
+          </div>
+        ` : allEntries.length === 0 ? `
           <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px; color: var(--text-muted); text-align: center;">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.35; margin-bottom: 12px;">
               <path d="M21 8v13H3V8"></path><path d="M1 3h22v5H1z"></path><path d="M10 12h4"></path>
             </svg>
-            <div style="font-size: 14px; font-weight: 500; color: var(--text);">暂无已归档的会话</div>
+            <div style="font-size: 14px; font-weight: 500; color: var(--text);">${isCodex ? "暂无 Codex 已归档的会话" : "暂无已归档的会话"}</div>
             <div style="font-size: 12px; margin-top: 5px; max-width: 340px; line-height: 1.5;">
-              鼠标悬浮在左侧侧边栏会话行上，点击右侧的“⋯”按钮并选择“归档会话”，即可将不需要频繁查阅的会话收纳至此处。
+              ${isCodex
+                ? "在 Codex 会话菜单中选择“归档会话”，即可将不需要频繁查阅的会话收纳至此处。"
+                : "鼠标悬浮在左侧侧边栏会话行上，点击右侧的“⋯”按钮并选择“归档会话”，即可将不需要频繁查阅的会话收纳至此处。"}
             </div>
           </div>
         ` : isSearching && filteredEntries.length === 0 ? `
           <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; color: var(--text-muted); text-align: center;">
-            <div style="font-size: 13.5px; color: var(--text);">未找到匹配“${archivedPanelSearchQuery}”的已归档会话</div>
+            <div style="font-size: 13.5px; color: var(--text);">未找到匹配“${safeEscapeHtml(archivedPanelSearchQuery)}”的已归档会话</div>
             <div style="font-size: 12px; margin-top: 5px;">请尝试缩短关键词或搜索其他词汇。</div>
           </div>
         ` : `
           <div style="display: flex; flex-direction: column; gap: 8px; max-width: 100%;">
             ${filteredEntries.map((entry, index) => {
-              const displayName = knownSessionTitles.get(entry.id) || (entry.name && entry.name !== entry.id ? entry.name : entry.id.slice(0, 12));
-              const fullDateStr = entry.archivedAt ? new Date(entry.archivedAt).toLocaleString() : "";
-              const shortDateStr = formatArchiveDate(entry.archivedAt);
+              const displayName = isPi
+                ? (knownSessionTitles.get(entry.id) || (entry.name && entry.name !== entry.id ? entry.name : entry.id.slice(0, 12)))
+                : (entry.name || entry.id);
               const isSelected = selectedArchivedIds.has(entry.id);
               const shortCwd = formatCwdShort(entry.cwd);
+
+              let dateTagHtml = "";
+              if (isPi && entry.archivedAt) {
+                const fullDateStr = new Date(entry.archivedAt).toLocaleString();
+                const shortDateStr = formatArchiveDate(entry.archivedAt);
+                if (shortDateStr) {
+                  dateTagHtml = `
+                    <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-date" title="归档时间: ${safeEscapeHtml(fullDateStr)}">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+                      <span class="pi-enh-archived-tag-text">${safeEscapeHtml(shortDateStr)}</span>
+                    </span>
+                  `;
+                }
+              } else if (isCodex && entry.updatedAt) {
+                const fullDateStr = new Date(entry.updatedAt).toLocaleString();
+                const shortDateStr = formatGenericDate(entry.updatedAt);
+                if (shortDateStr) {
+                  dateTagHtml = `
+                    <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-date" title="最后更新: ${safeEscapeHtml(fullDateStr)}">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+                      <span class="pi-enh-archived-tag-text">最后更新: ${safeEscapeHtml(shortDateStr)}</span>
+                    </span>
+                  `;
+                }
+              }
+
               return `
                 <div class="pi-enh-archived-item${isSelected ? " is-selected" : ""}">
                   <div class="pi-enh-archived-item-main">
@@ -38552,25 +39100,20 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                     </label>
                     <div class="pi-enh-archived-title-row">
                       <svg class="pi-enh-archived-title-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                      <span class="pi-enh-archived-title" title="${escapeHtml(displayName)}（点击可展开/收起完整标题）">${escapeHtml(displayName)}</span>
+                      <span class="pi-enh-archived-title" title="${safeEscapeHtml(displayName)}（点击可展开/收起完整标题）">${safeEscapeHtml(displayName)}</span>
                     </div>
                   </div>
                   <div class="pi-enh-archived-item-footer">
                     <div class="pi-enh-archived-meta-row">
                       ${entry.cwd ? `
-                        <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-cwd" title="工作目录: ${escapeHtml(entry.cwd)}">
+                        <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-cwd" title="工作目录: ${safeEscapeHtml(entry.cwd)}">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                          <span class="pi-enh-archived-tag-text">${escapeHtml(shortCwd)}</span>
+                          <span class="pi-enh-archived-tag-text">${safeEscapeHtml(shortCwd)}</span>
                         </span>
                       ` : ""}
-                      ${shortDateStr ? `
-                        <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-date" title="归档时间: ${fullDateStr}">
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
-                          <span class="pi-enh-archived-tag-text">${shortDateStr}</span>
-                        </span>
-                      ` : ""}
-                      <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-id" title="完整会话 ID: ${entry.id}">
-                        <span class="pi-enh-archived-tag-text">ID: ${entry.id.slice(0, 8)}…</span>
+                      ${dateTagHtml}
+                      <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-id" title="完整会话 ID: ${safeEscapeHtml(entry.id)}">
+                        <span class="pi-enh-archived-tag-text">ID: ${safeEscapeHtml(entry.id.slice(0, 10))}…</span>
                       </span>
                     </div>
                     <div class="pi-enh-archived-actions">
@@ -38587,10 +39130,60 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                 </div>
               `;
             }).join("")}
+
+            ${isCodex && (codexArchivedHasMore || codexArchivedLoadMoreError) ? `
+              <div class="pi-enh-archived-load-more-row" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px; gap: 8px;">
+                ${codexArchivedLoadingMore ? `
+                  <div style="font-size: 12px; color: var(--text-muted);">正在加载更多 Codex 已归档会话…</div>
+                ` : codexArchivedLoadMoreError ? `
+                  <div style="font-size: 12px; color: var(--text-muted);">${safeEscapeHtml(codexArchivedLoadMoreError)}</div>
+                  <button type="button" class="pi-enh-btn-sm" data-action="refresh-archived" style="padding: 4px 12px; font-size: 12px; cursor: pointer;">刷新列表</button>
+                ` : `
+                  <button type="button" class="pi-enh-btn-sm" data-action="load-more-codex" style="padding: 4px 16px; font-size: 12px; cursor: pointer;">加载更多</button>
+                `}
+              </div>
+            ` : ""}
           </div>
         `}
       </div>
     `;
+
+    // 引擎切换 Tab 点击事件
+    const engineBtns = panel.querySelectorAll('[data-action="switch-archived-engine"]');
+    for (const eb of engineBtns) {
+      eb.addEventListener("click", () => {
+        const targetEng = eb.getAttribute("data-engine");
+        switchArchivedEngine(targetEng, panel, nav);
+      });
+    }
+
+    // 刷新按钮
+    const refreshBtn = panel.querySelector('[data-action="refresh-archived"]');
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        if (getCurrentArchivedEngine() === "codex") {
+          invalidateCodexArchivedEntries();
+          fetchCodexArchivedSessions(panel, nav, false);
+        } else {
+          renderArchivedPanel(panel, nav);
+        }
+        showToast("已刷新已归档会话", sessionArchiveIcon);
+      });
+    }
+
+    // Codex 加载更多与重试
+    const loadMoreBtn = panel.querySelector('[data-action="load-more-codex"]');
+    if (loadMoreBtn) {
+      loadMoreBtn.addEventListener("click", () => {
+        fetchCodexArchivedSessions(panel, nav, true);
+      });
+    }
+    const retryCodexBtn = panel.querySelector('[data-action="retry-fetch-codex"]');
+    if (retryCodexBtn) {
+      retryCodexBtn.addEventListener("click", () => {
+        fetchCodexArchivedSessions(panel, nav, false);
+      });
+    }
 
     const searchInput = panel.querySelector("[data-archived-search]");
     if (searchInput) {
@@ -38664,6 +39257,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       batchRestoreBtn.addEventListener("click", async () => {
         const idsToRestore = [...selectedArchivedIds];
         if (idsToRestore.length === 0) return;
+        const opHost = panel;
+        const opEngine = getCurrentArchivedEngine();
+        const opEpoch = codexArchivedEpoch;
         try {
           const restoreFn = (typeof restoreArchivedSessions === "function")
             ? restoreArchivedSessions
@@ -38672,34 +39268,46 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           const restoredCount = typeof result === "object" && result !== null ? (result.restoredCount ?? Number(result)) : Number(result);
           const succeeded = (result && typeof result === "object" && Array.isArray(result.succeededIds))
             ? result.succeededIds
-            : idsToRestore;
-          for (const sid of succeeded) {
-            selectedArchivedIds.delete(sid);
+            : (restoredCount > 0 ? idsToRestore : []);
+          const succSet = new Set(succeeded);
+          if (opEngine === "codex" && Array.isArray(codexArchivedEntries)) {
+            codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
           }
-          lastCheckedArchivedIndex = null;
-          invalidateCodexArchivedEntries();
           requestSessionListRefresh(false, true);
           if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
             try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
           }
-          renderArchivedPanel(panel, nav);
-          showToast(`已批量还原 ${restoredCount} 个会话`, sessionArchiveIcon);
-        } catch (err) {
-          const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
-          if (succeeded.length > 0) {
+          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+          if (isStillCurrent) {
             for (const sid of succeeded) {
               selectedArchivedIds.delete(sid);
             }
             lastCheckedArchivedIndex = null;
-            invalidateCodexArchivedEntries();
-            requestSessionListRefresh(false, true);
-            if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-              try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+            renderArchivedPanel(opHost, nav);
+            showToast(`已批量还原 ${restoredCount} 个会话`, sessionArchiveIcon);
+          }
+        } catch (err) {
+          const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
+          if (opEngine === "codex" && succeeded.length > 0 && Array.isArray(codexArchivedEntries)) {
+            const succSet = new Set(succeeded);
+            codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
+          }
+          requestSessionListRefresh(false, true);
+          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          }
+          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+          if (isStillCurrent) {
+            for (const sid of succeeded) {
+              selectedArchivedIds.delete(sid);
             }
-            renderArchivedPanel(panel, nav);
-            showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
-          } else {
-            showToast(err?.message || "批量还原未确认，已保留归档状态", undefined, 3500);
+            lastCheckedArchivedIndex = null;
+            renderArchivedPanel(opHost, nav);
+            if (succeeded.length > 0) {
+              showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
+            } else {
+              showToast(err?.message || "批量还原未确认，已保留归档状态", undefined, 3500);
+            }
           }
         }
       });
@@ -38722,7 +39330,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           batchDeleteBtn._confirmTimer = setTimeout(() => {
             batchDeleteBtn.setAttribute("data-stage", "init");
             batchDeleteBtn.classList.remove("pi-enh-archived-delete-confirming");
-            renderArchivedPanel(panel, nav);
+            if (panel && panel.isConnected) {
+              renderArchivedPanel(panel, nav);
+            }
           }, 5000);
           return;
         }
@@ -38743,25 +39353,25 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       });
     }
 
-    // 展开/收起按日期清理面板
+    // 展开/收起按日期清理面板（仅限 Pi）
     const toggleDateCleanBtn = panel.querySelector('[data-action="toggle-date-clean-panel"]');
-    if (toggleDateCleanBtn) {
+    if (toggleDateCleanBtn && isPi) {
       toggleDateCleanBtn.addEventListener("click", () => {
         isDateCleanPanelOpen = !isDateCleanPanelOpen;
         renderArchivedPanel(panel, nav);
       });
     }
 
-    // 日期选择框输入
+    // 日期选择框输入（仅限 Pi）
     const dateInput = panel.querySelector("[data-archived-date-input]");
-    if (dateInput) {
+    if (dateInput && isPi) {
       dateInput.addEventListener("change", () => {
         archivedDateCutoffValue = dateInput.value || getDefaultArchivedDateCutoff();
         renderArchivedPanel(panel, nav);
       });
     }
 
-    // 快捷天数预设
+    // 快捷天数预设（仅限 Pi）
     const presetBtns = panel.querySelectorAll('[data-action="quick-date-preset"]');
     for (const pb of presetBtns) {
       pb.addEventListener("click", () => {
@@ -38775,9 +39385,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       });
     }
 
-    // 勾选指定日期前的会话
+    // 勾选指定日期前的会话（仅限 Pi）
     const selectBeforeDateBtn = panel.querySelector('[data-action="select-before-date"]');
-    if (selectBeforeDateBtn) {
+    if (selectBeforeDateBtn && isPi) {
       selectBeforeDateBtn.addEventListener("click", () => {
         const ids = getSessionIdsBeforeDate(effectiveDateValue, allEntries);
         for (const id of ids) {
@@ -38788,9 +39398,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       });
     }
 
-    // 一键删除指定日期前的所有会话（两阶段确认）
+    // 一键删除指定日期前的所有会话（两阶段确认，仅限 Pi）
     const deleteBeforeDateBtn = panel.querySelector('[data-action="delete-before-date"]');
-    if (deleteBeforeDateBtn) {
+    if (deleteBeforeDateBtn && isPi) {
       deleteBeforeDateBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         const stage = deleteBeforeDateBtn.getAttribute("data-stage") || "init";
@@ -38808,7 +39418,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           deleteBeforeDateBtn._confirmTimer = setTimeout(() => {
             deleteBeforeDateBtn.setAttribute("data-stage", "init");
             deleteBeforeDateBtn.classList.remove("pi-enh-archived-delete-confirming");
-            renderArchivedPanel(panel, nav);
+            if (panel && panel.isConnected) {
+              renderArchivedPanel(panel, nav);
+            }
           }, 5000);
           return;
         }
@@ -38822,22 +39434,41 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       btn.addEventListener("click", async () => {
         let sessionId = "";
         try { sessionId = decodeURIComponent(btn.getAttribute("data-session-id") || ""); } catch (e) {}
+        const opHost = panel;
+        const opEngine = getCurrentArchivedEngine();
+        const opEpoch = codexArchivedEpoch;
         try {
           const restoreFn = (typeof restoreArchivedSession === "function")
             ? restoreArchivedSession
             : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSION__ : null);
           const ok = restoreFn ? await restoreFn(sessionId) : false;
-          if (!ok) return;
-          selectedArchivedIds.delete(sessionId);
-          invalidateCodexArchivedEntries();
+          if (!ok) {
+            const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+            if (isStillCurrent) {
+              showToast("还原未确认，已保留归档状态", undefined, 3500);
+            }
+            return;
+          }
+          if (opEngine === "codex") {
+            if (Array.isArray(codexArchivedEntries)) {
+              codexArchivedEntries = codexArchivedEntries.filter((e) => e.id !== sessionId);
+            }
+          }
           requestSessionListRefresh(false, true);
           if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
             try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
           }
-          renderArchivedPanel(panel, nav);
-          showToast("已还原会话", sessionArchiveIcon);
+          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+          if (isStillCurrent) {
+            selectedArchivedIds.delete(sessionId);
+            renderArchivedPanel(opHost, nav);
+            showToast("已还原会话", sessionArchiveIcon);
+          }
         } catch (err) {
-          showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
+          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+          if (isStillCurrent) {
+            showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
+          }
         }
       });
     }
@@ -38894,24 +39525,46 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         if (!sessionId) return;
 
         if (getCurrentArchivedEngine() === "codex") {
-          selectedArchivedIds.delete(sessionId);
+          const opHost = panel;
+          const opEngine = "codex";
+          const opEpoch = codexArchivedEpoch;
           (async () => {
             try {
-              await deleteArchivedSession(sessionId);
-              invalidateCodexArchivedEntries();
-              requestSessionListRefresh(false, true);
-              renderArchivedPanel(panel, nav);
-              showToast("已彻底删除会话", sessionDeleteIcon);
+              const ok = await performDeleteArchivedSession(sessionId);
+              if (ok === true) {
+                if (Array.isArray(codexArchivedEntries)) {
+                  codexArchivedEntries = codexArchivedEntries.filter((e) => e.id !== sessionId);
+                }
+                codexArchivedRawOffset = 0;
+                requestSessionListRefresh(false, true);
+                const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
+                if (isStillCurrent) {
+                  selectedArchivedIds.delete(sessionId);
+                  fetchCodexArchivedSessions(opHost, nav, false);
+                  showToast("已彻底删除会话", sessionDeleteIcon);
+                }
+              } else {
+                const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
+                if (isStillCurrent) {
+                  showToast("删除会话未确认，已保留状态", undefined, 3500);
+                }
+              }
             } catch (err) {
-              showToast(err?.message || "删除会话未确认，已保留状态", undefined, 3500);
+              const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
+              if (isStillCurrent) {
+                renderArchivedPanel(opHost, nav);
+                showToast(err?.message || "删除会话未确认，已保留状态", undefined, 3500);
+              }
             }
           })();
           return;
         }
 
-        // 彻底移出归档列表：本地 localStorage、全局 manifest 及选中态全部立即清理
+        // Pi 模式：彻底移出归档列表
+        const opHost = panel;
+        const opEngine = "pi";
         const archivedEntriesBeforeDelete = readStoredArchivedEntries();
-        const nextEntries = archivedEntriesBeforeDelete.filter((entry) => entry && entry.id !== sessionId);
+        const nextEntries = archivedEntriesBeforeDelete.filter((entry) => entry && entry.id !== sessionId && !entry.id.startsWith("codex:"));
         writeStoredArchivedEntries(nextEntries);
         if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
           window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((entry) => (typeof entry === "string" ? entry !== sessionId : entry?.id !== sessionId));
@@ -38921,15 +39574,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         showToast("已删除归档会话", sessionDeleteIcon);
 
         (async () => {
-          // 立即无防抖写回权威服务端 models-config
           try {
             await persistArchivedSessionsToServer(nextEntries, undefined, true);
           } catch (e) {
             console.warn("[pi-enh] 归档删除服务端同步异常:", e);
           }
-          // 异步清理底层磁盘实体文件（非阻塞，绝不反向复活已删除条目）
           try {
-            await deleteArchivedSession(sessionId);
+            await performDeleteArchivedSession(sessionId);
           } catch (err) {
             console.warn("[pi-enh] 会话底层实体文件清理提示 (非阻塞):", err);
           }
@@ -38952,6 +39603,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       const all = allEntries;
       if (all.length === 0) return;
       const allIds = all.map((item) => item.id).filter(Boolean);
+      const opHost = panel;
+      const opEngine = getCurrentArchivedEngine();
+      const opEpoch = codexArchivedEpoch;
       try {
         const restoreFn = (typeof restoreArchivedSessions === "function")
           ? restoreArchivedSessions
@@ -38960,34 +39614,46 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         const restoredCount = typeof result === "object" && result !== null ? (result.restoredCount ?? Number(result)) : Number(result);
         const succeeded = (result && typeof result === "object" && Array.isArray(result.succeededIds))
           ? result.succeededIds
-          : allIds;
-        for (const sid of succeeded) {
-          selectedArchivedIds.delete(sid);
+          : (restoredCount > 0 ? allIds : []);
+        const succSet = new Set(succeeded);
+        if (opEngine === "codex" && Array.isArray(codexArchivedEntries)) {
+          codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
         }
-        lastCheckedArchivedIndex = null;
-        invalidateCodexArchivedEntries();
         requestSessionListRefresh(false, true);
         if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
           try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
         }
-        renderArchivedPanel(panel, nav);
-        showToast(`已全部还原 ${restoredCount} 个会话`, sessionArchiveIcon);
-      } catch (err) {
-        const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
-        if (succeeded.length > 0) {
+        const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+        if (isStillCurrent) {
           for (const sid of succeeded) {
             selectedArchivedIds.delete(sid);
           }
           lastCheckedArchivedIndex = null;
-          invalidateCodexArchivedEntries();
-          requestSessionListRefresh(false, true);
-          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+          renderArchivedPanel(opHost, nav);
+          showToast(`已全部还原 ${restoredCount} 个会话`, sessionArchiveIcon);
+        }
+      } catch (err) {
+        const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
+        if (opEngine === "codex" && succeeded.length > 0 && Array.isArray(codexArchivedEntries)) {
+          const succSet = new Set(succeeded);
+          codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
+        }
+        requestSessionListRefresh(false, true);
+        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
+        }
+        const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
+        if (isStillCurrent) {
+          for (const sid of succeeded) {
+            selectedArchivedIds.delete(sid);
           }
-          renderArchivedPanel(panel, nav);
-          showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
-        } else {
-          showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
+          lastCheckedArchivedIndex = null;
+          renderArchivedPanel(opHost, nav);
+          if (succeeded.length > 0) {
+            showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
+          } else {
+            showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
+          }
         }
       }
     });
@@ -39015,7 +39681,8 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     if (panel) renderArchivedPanel(panel, nav);
   };
   window.__PI_ENH_SELECT_ARCHIVED_BEFORE_DATE__ = (dateStr) => {
-    const allEntries = readStoredArchivedEntries();
+    if (getCurrentArchivedEngine() === "codex") return [];
+    const allEntries = readStoredArchivedEntries().filter((e) => e && e.id && !e.id.startsWith("codex:"));
     const ids = getSessionIdsBeforeDate(dateStr, allEntries);
     for (const id of ids) selectedArchivedIds.add(id);
     const panel = document.querySelector(".pi-enh-archived-panel");
@@ -39030,10 +39697,16 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     if (panel) renderArchivedPanel(panel, nav);
   };
   window.__PI_ENH_TOGGLE_DATE_CLEAN_PANEL__ = (force) => {
+    if (getCurrentArchivedEngine() === "codex") return;
     isDateCleanPanelOpen = force !== undefined ? Boolean(force) : !isDateCleanPanelOpen;
     const panel = document.querySelector(".pi-enh-archived-panel");
     const nav = document.querySelector(".settings-section-tabs");
     if (panel) renderArchivedPanel(panel, nav);
+  };
+  window.__PI_ENH_SET_ARCHIVED_ENGINE__ = (engine) => {
+    const panel = document.querySelector(".pi-enh-archived-panel");
+    const nav = document.querySelector(".settings-section-tabs");
+    switchArchivedEngine(engine, panel, nav);
   };
   window.__PI_ENH_EXECUTE_BATCH_DELETE_ARCHIVED__ = executeBatchDeleteArchived;
 

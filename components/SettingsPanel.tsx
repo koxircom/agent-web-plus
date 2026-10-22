@@ -212,6 +212,7 @@ function SettingsRow({
 }
 
 interface SettingsHostContextProps {
+  active?: boolean;
   onClose: () => void;
   activateSection: (id: string) => boolean;
   availableSections: readonly string[];
@@ -1175,6 +1176,7 @@ export function SettingsPanel({
               <ExtensionSectionHost
                 key={ext.id}
                 definition={ext}
+                active={ext.id !== "archived" || section === ext.id}
                 onClose={onClose}
                 activateSection={activateSectionById}
                 availableSections={availableSectionIds}

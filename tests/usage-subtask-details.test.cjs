@@ -88,7 +88,7 @@ test("subtask details inherit engine, role, model, and Beijing date filters", ()
   assert.equal(core.aggregate(ledger, { engine: "pi" }).topSessions.length, 0);
 });
 
-test("24-hour filtering includes only matched timeline usage and the panel states Codex fees are unavailable", () => {
+test("24-hour filtering includes only matched timeline usage and subtask costs share the validated pricing formatter", () => {
   const parent = "codex:parent";
   const child = "codex:child";
   const ledger = {
@@ -117,5 +117,5 @@ test("24-hour filtering includes only matched timeline usage and the panel state
   const panelSource = fs.readFileSync(path.join(__dirname, "../enhancements/pi-usage-panel.js"), "utf8");
   assert.match(panelSource, /data-usage-subtask-details/);
   assert.match(panelSource, /调用日期（北京时间）/);
-  assert.match(panelSource, /<td[^>]*>Codex 未提供费用<\/td>/);
+  assert.match(panelSource, /formatCostWithBadge\(task, "codex", ledger\.pricing\)/);
 });

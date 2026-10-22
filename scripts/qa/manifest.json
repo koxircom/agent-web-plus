@@ -515,6 +515,35 @@
             "tests/codex-status-loading.pw.mjs"
           ],
           "timeoutSeconds": 180
+        },
+        {
+          "name": "release-codex-pricing",
+          "command": [
+            "node",
+            "scripts/qa/codex-pricing.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-pricing.cjs",
+            "lib/model-catalog-refresh.test.mjs",
+            "lib/usage-pricing.test.mjs",
+            "lib/usage-pricing-routes.test.mjs",
+            "tests/codex-pricing.test.mjs",
+            "tests/codex-pricing.pw.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-codex-archived-panel",
+          "command": [
+            "node",
+            "scripts/qa/codex-archived-panel.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-archived-panel.cjs",
+            "tests/codex-archived-panel.pw.mjs",
+            "enhancements/modules/08-settings-panels-and-lifecycle.js"
+          ],
+          "timeoutSeconds": 180
         }
       ]
     }

@@ -45,6 +45,17 @@ export const BRAND_SVG_CONSTANTS = {
   },
 } as const;
 
+// 欢迎页沿用原生字标/图标比例；长品牌名需要相应加宽画布。
+export const WELCOME_BRAND_SVG_CONSTANTS = {
+  ...BRAND_SVG_CONSTANTS,
+  viewBox: "0 0 1080 186",
+  wordmark: {
+    ...BRAND_SVG_CONSTANTS.wordmark,
+    fontSize: 94,
+    plusX: 803,
+  },
+} as const;
+
 /**
  * 单独圆盘图标（用于方形 App 图标、登录页图标等）的 viewBox 与路径
  * 居中于 200x200 画布

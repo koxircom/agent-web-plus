@@ -6807,16 +6807,30 @@
 
   async function deleteArchivedSession(sessionId) {
     if (!sessionId) return false;
+    const isCodex = String(sessionId).startsWith("codex:");
     markSessionAsDeleted(sessionId);
 
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
       });
-      if (!resp || (!resp.ok && resp.status !== 404)) {
-        restoreSessionDeleteState(sessionId);
-        const detail = resp ? await resp.json().catch(() => ({})) : {};
-        throw new Error(typeof detail.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
+      if (isCodex) {
+        if (!resp || !resp.ok) {
+          restoreSessionDeleteState(sessionId);
+          const detail = resp ? await resp.json().catch(() => ({})) : {};
+          throw new Error(typeof detail?.error === "string" ? detail.error : (resp ? `删除失败 (HTTP ${resp.status})` : "无法连接执行端，请稍后重试"));
+        }
+        const data = await resp.json().catch(() => ({}));
+        if (!data || data.ok !== true) {
+          restoreSessionDeleteState(sessionId);
+          throw new Error(typeof data?.error === "string" ? data.error : "删除未确认，执行端未返回确认标记");
+        }
+      } else {
+        if (!resp || (!resp.ok && resp.status !== 404)) {
+          restoreSessionDeleteState(sessionId);
+          const detail = resp ? await resp.json().catch(() => ({})) : {};
+          throw new Error(typeof detail?.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
+        }
       }
 
       markSessionDeleteConfirmed(sessionId);

@@ -96,7 +96,9 @@ test('both engines share a bottom-aligned two-column header with a shrinking SVG
     assert.match(html, /display:grid;grid-template-columns:minmax\(0, 1fr\) auto;align-items:end/);
     assert.match(html, /width:100%/);
     assert.match(html, /height:auto/);
-    assert.match(html, /max-width:200px/);
+    assert.match(html, /width:clamp\(215px, 42cqw, 300px\)/);
+    assert.match(html, /viewBox="0 0 1080 186"/);
+    assert.match(html, /font-size="94"/);
     assert.doesNotMatch(html, /1 1 200px/);
   }
 });

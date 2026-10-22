@@ -178,7 +178,13 @@ export async function listCodexSessions(options?: ListCodexSessionsOptions | Abo
     if (typeof offset === "number") query.set("offset", String(offset));
     if (typeof limit === "number") query.set("limit", String(limit));
     const result = await codexBridgeJson(`/api/sessions?${query.toString()}`, undefined, { connectionIdentity: identity, signal });
-    const rows: CatalogRow[] = Array.isArray(result.sessions) ? result.sessions : [];
+    if (!result || typeof result !== "object" || !Array.isArray(result.sessions)) {
+      throw new CodexBridgeError("Codex 执行端返回格式异常，缺少会话列表数组", 502, "codex_malformed_response");
+    }
+    if (Array.isArray(result.unavailableHosts) && result.unavailableHosts.length > 0) {
+      throw new CodexBridgeError(`Codex 执行端部分或全部节点不可用 (${result.unavailableHosts.join(", ")})`, 503, "codex_unavailable_hosts");
+    }
+    const rows: CatalogRow[] = result.sessions;
     if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
     return {
       sessions: rows.map(mapCodexSession),

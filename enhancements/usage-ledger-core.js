@@ -108,6 +108,65 @@
     return canonicalModel(id, null, null).name;
   }
 
+  function resolveRate(pricing, rawModel, provider, canonicalKey, bucketEngine) {
+    if (!pricing || typeof pricing !== "object" || !pricing.models || typeof pricing.models !== "object") {
+      return null;
+    }
+    if (pricing.version !== 1 || pricing.currency !== "USD" || pricing.unit !== "per_1m_tokens") {
+      return null;
+    }
+    const models = pricing.models;
+    const raw = typeof rawModel === "string" ? rawModel.trim() : "";
+    const clean = raw.includes("/") ? raw.split("/").pop().trim() : raw;
+    const full = (provider && provider !== "unknown") ? `${provider}/${clean}` : raw;
+
+    const candidateKeys = [raw, clean, full, canonicalKey].filter(Boolean);
+    let matched = null;
+    let foundKey = false;
+    for (const key of candidateKeys) {
+      if (Object.prototype.hasOwnProperty.call(models, key)) {
+        matched = models[key];
+        foundKey = true;
+        break;
+      }
+    }
+
+    if (foundKey) {
+      if (matched && typeof matched === "object") {
+        const input = matched.input;
+        const output = matched.output;
+        const cacheRead = matched.cacheRead;
+        const cacheWrite = matched.cacheWrite;
+        const isValid = v => typeof v === "number" && Number.isFinite(v) && v >= 0;
+        if (isValid(input) && isValid(output) && isValid(cacheRead) && isValid(cacheWrite)) {
+          return {
+            rates: [input, output, cacheRead, cacheWrite],
+            source: matched.source || "pricing",
+            tiered: Boolean(matched.tiered),
+            modelId: matched.modelId || raw,
+          };
+        }
+      }
+      // 命中显式条目但非法（缺失/非数字/负数/非法属性等），禁止静默回退 STANDARD 费率
+      return null;
+    }
+
+    const isCodex = bucketEngine === "codex" || (provider && String(provider).toLowerCase() === "openai-codex");
+    if (!isCodex) {
+      const stdRate = STANDARD_RATES[canonicalKey] || STANDARD_RATES[clean] || STANDARD_RATES[raw];
+      if (Array.isArray(stdRate) && stdRate.length >= 3) {
+        return {
+          rates: stdRate,
+          source: "fallback",
+          tiered: false,
+          modelId: canonicalKey || clean || raw,
+        };
+      }
+    }
+
+    return null;
+  }
+
   // Only validated Codex lineage changes the conversation dimension. Physical
   // execution buckets, dates, roles and Pi's existing ownership stay intact.
   function conversationId(ledger, id) {
@@ -280,20 +339,58 @@
       }
 
       // 智能价格核算：有原生上报优先原值；旧桶整个桶 cost=0 时全桶补价；不得对 cost>0 且部分 unpriced 用比例近似冒充精确
-      let effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
+      let effectiveCostNano = 0;
+      let effectiveEstimatedCostNano = 0;
       let effectiveUnpriced = item.unpricedTokens || 0;
-      if (bucketEngine !== "codex" && item.totalTokens > 0) {
-        const rate = STANDARD_RATES[cKey];
-        if (rate) {
-          if (effectiveCostNano <= 0) {
+      let isExplicitEstimated = false;
+
+      if (!options.pricing) {
+        effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
+        if (bucketEngine !== "codex" && item.totalTokens > 0) {
+          const rate = STANDARD_RATES[cKey];
+          if (rate) {
+            if (effectiveCostNano <= 0) {
+              const estUsd = ((item.inputTokens || 0) * rate[0] + (item.outputTokens || 0) * rate[1] + (item.cacheReadTokens || 0) * rate[2] + (item.cacheWriteTokens || 0) * (rate[3] || 0)) / 1e6;
+              effectiveCostNano = Math.round(estUsd * 1e9);
+              effectiveEstimatedCostNano = effectiveCostNano;
+              effectiveUnpriced = 0;
+              isExplicitEstimated = true;
+            }
+          }
+        }
+      } else {
+        if ((item.costNano || 0) > 0) {
+          effectiveCostNano = item.costNano;
+          effectiveEstimatedCostNano = 0;
+          effectiveUnpriced = item.unpricedTokens || 0;
+        } else if (item.totalTokens > 0) {
+          const resolved = resolveRate(options.pricing, b.model, b.provider, cKey, bucketEngine);
+          if (resolved && resolved.rates) {
+            const rate = resolved.rates;
+            // 阶梯费率按独立 Bucket 估算，不按历史跨调用累计触发 >272k 档位
             const estUsd = ((item.inputTokens || 0) * rate[0] + (item.outputTokens || 0) * rate[1] + (item.cacheReadTokens || 0) * rate[2] + (item.cacheWriteTokens || 0) * (rate[3] || 0)) / 1e6;
             effectiveCostNano = Math.round(estUsd * 1e9);
+            effectiveEstimatedCostNano = effectiveCostNano;
             effectiveUnpriced = 0;
+            isExplicitEstimated = true;
+          } else {
+            effectiveCostNano = 0;
+            effectiveEstimatedCostNano = 0;
+            effectiveUnpriced = item.totalTokens;
           }
         }
       }
 
-      item = { ...item, costNano: effectiveCostNano, unpricedTokens: effectiveUnpriced };
+      const isPricedFree = Boolean(isExplicitEstimated && effectiveCostNano === 0 && effectiveUnpriced === 0 && item.totalTokens > 0);
+
+      item = {
+        ...item,
+        costNano: effectiveCostNano,
+        estimatedCostNano: effectiveEstimatedCostNano,
+        unpricedTokens: effectiveUnpriced,
+        isEstimated: isExplicitEstimated,
+        isExplicitFree: isPricedFree,
+      };
 
       const matchRole = !options.role || options.role === "all" || b.role === options.role;
 
@@ -301,6 +398,16 @@
       if (matchExecutionCandidate && matchRole) {
         add(total, item);
         add(roles[item.role], item);
+        total.estimatedCostNano = (total.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        roles[item.role].estimatedCostNano = (roles[item.role].estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        if (isExplicitEstimated) {
+          total.hasEstimated = true;
+          roles[item.role].hasEstimated = true;
+        }
+        if (isPricedFree) {
+          total.hasExplicitFree = true;
+          roles[item.role].hasExplicitFree = true;
+        }
         if (bucketEngine === "codex") {
           total.codexTokens = (total.codexTokens || 0) + item.totalTokens;
           roles[item.role].codexTokens = (roles[item.role].codexTokens || 0) + item.totalTokens;
@@ -316,11 +423,22 @@
             roles: { main: empty(), subagent: empty(), system: empty() },
             dispatchedSubagents: { tokens: 0, calls: 0, messages: 0, pricingComplete: true },
             workerSubagents: { tokens: 0, calls: 0, messages: 0 },
+            estimatedCostNano: 0,
           });
         }
         const m = models.get(cKey);
         add(m, item);
         add(m.roles[item.role], item);
+        m.estimatedCostNano = (m.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        m.roles[item.role].estimatedCostNano = (m.roles[item.role].estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        if (isExplicitEstimated) {
+          m.hasEstimated = true;
+          m.roles[item.role].hasEstimated = true;
+        }
+        if (isPricedFree) {
+          m.hasExplicitFree = true;
+          m.roles[item.role].hasExplicitFree = true;
+        }
         if (bucketEngine === "codex") {
           m.codexTokens = (m.codexTokens || 0) + item.totalTokens;
           m.roles[item.role].codexTokens = (m.roles[item.role].codexTokens || 0) + item.totalTokens;
@@ -334,14 +452,20 @@
           m.workerSubagents.tokens += item.totalTokens;
           m.workerSubagents.calls += item.calls;
           m.workerSubagents.messages += item.messageCount;
+          if (effectiveEstimatedCostNano > 0) {
+            m.workerSubagents.estimatedCostNano = (m.workerSubagents.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+          }
         }
 
         if (!sessions.has(groupId)) {
           sessions.set(groupId, { ...(ledger.sessions?.[groupId] || {}), ...empty(), id: groupId,
-            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map() });
+            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map(), estimatedCostNano: 0 });
         }
         const group = sessions.get(groupId);
         add(group, item);
+        group.estimatedCostNano = (group.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+        if (isExplicitEstimated) group.hasEstimated = true;
+        if (isPricedFree) group.hasExplicitFree = true;
         if (bucketEngine === "codex") {
           group.codexTokens = (group.codexTokens || 0) + item.totalTokens;
           if (item.role === "subagent") {
@@ -360,12 +484,15 @@
             detail = {
               ...empty(), sessionId: item.sessionId,
               name: childSession.name || childSession.title || item.sessionId,
-              day: detailDay, codexTokens: 0,
+              day: detailDay, codexTokens: 0, estimatedCostNano: 0,
             };
             group.subtaskDetails.set(detailKey, detail);
           }
           add(detail, item);
           detail.codexTokens += item.totalTokens;
+          detail.estimatedCostNano = (detail.estimatedCostNano || 0) + effectiveEstimatedCostNano;
+          if (isExplicitEstimated) detail.hasEstimated = true;
+          if (isPricedFree) detail.hasExplicitFree = true;
         }
       }
 
@@ -397,23 +524,55 @@
         // 子 Agent 实际费用：优先使用已按事件精确聚合的 item.costNano（item.costNano 是唯一实际费用入口）
         // 只有 unpricedTokens === 0 才算该子桶完整定价。
         // 若任何选中调度子桶未完整定价，整个 controller 的 savings 标记为 pricingComplete=false
-        const mainRate = STANDARD_RATES[ctrl.key];
-        const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
-        const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+        if (!options.pricing) {
+          const mainRate = STANDARD_RATES[ctrl.key];
+          const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
+          const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
 
-        if (isSubPriced && hasHypMainCost) {
-          const actualSubCost = (item.costNano || 0) / 1e9;
-          const mrCw = mainRate[3] || 0;
-          const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
-          cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
-          cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
+          if (isSubPriced && hasHypMainCost) {
+            const actualSubCost = (item.costNano || 0) / 1e9;
+            const mrCw = mainRate[3] || 0;
+            const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
+            cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
+            cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
+          } else {
+            cm.dispatchedSubagents.pricingComplete = false;
+          }
         } else {
-          cm.dispatchedSubagents.pricingComplete = false;
+          const resolvedCtrl = resolveRate(options.pricing, b.controllerModel, b.controllerProvider, ctrl.key, bucketEngine);
+          const mainRate = resolvedCtrl ? resolvedCtrl.rates : null;
+          const isSubPriced = (item.unpricedTokens || 0) === 0 && (item.costNano > 0 || item.isExplicitFree);
+          const hasHypMainCost = Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
+
+          if (isSubPriced && hasHypMainCost) {
+            const actualSubCost = (item.costNano || 0) / 1e9;
+            const mrCw = mainRate[3] || 0;
+            const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
+            cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
+            cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
+            if (bucketEngine === "codex" || item.estimatedCostNano > 0 || (resolvedCtrl && resolvedCtrl.source !== "pi-sdk") || item.isExplicitFree) {
+              cm.dispatchedSubagents.isEstimated = true;
+            }
+          } else {
+            cm.dispatchedSubagents.pricingComplete = false;
+          }
         }
       }
     }
 
+    function attachDisplayFlags(target) {
+      if (!target) return;
+      if (target.totalTokens > 0 && target.unpricedTokens === 0 && target.costNano === 0 && (target.hasEstimated || target.hasExplicitFree)) {
+        target.isExplicitFree = true;
+      }
+    }
+
+    attachDisplayFlags(total);
+    for (const r of Object.values(roles)) attachDisplayFlags(r);
+
     const modelBreakdowns = [...models.values()].map(m => {
+      attachDisplayFlags(m);
+      for (const r of Object.values(m.roles)) attachDisplayFlags(r);
       const d = m.dispatchedSubagents;
       if (d) {
         if (d.calls > 0 && d.pricingComplete && d.hypotheticalCost > 0) {
@@ -423,6 +582,7 @@
           d.allMainTotalCost = mainCost + d.hypotheticalCost;
           d.actualTotalCost = mainCost + d.actualCost;
           d.overallSavedRatio = d.allMainTotalCost > 0 ? ((d.savedCost / d.allMainTotalCost) * 100).toFixed(1) : d.subSavedRatio;
+          d.isEstimated = Boolean(d.isEstimated || m.estimatedCostNano > 0 || m.isExplicitFree);
         } else {
           d.pricingComplete = false;
           d.savedCost = 0;
@@ -451,12 +611,18 @@
       allModels: [...allModels],
       sessionCount: sessions.size,
       physicalSessionCount: physicalSessions.size,
-      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => ({
-        ...session,
-        subagentCount: subagentIds.size,
-        subtasks: [...subtaskDetails.values()].sort((a, b) =>
-          b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
-      })).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
+      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => {
+        attachDisplayFlags(session);
+        return {
+          ...session,
+          subagentCount: subagentIds.size,
+          subtasks: [...subtaskDetails.values()].map(st => {
+            attachDisplayFlags(st);
+            return st;
+          }).sort((a, b) =>
+            b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
+        };
+      }).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
       timeCoverage: { excludedTokens, excludedRecords },
     };
   }
@@ -535,5 +701,5 @@
     return a;
   }
 
-  return { fields, empty, add, day, name, canonicalModel, STANDARD_RATES, aggregate, validate };
+  return { fields, empty, add, day, name, canonicalModel, STANDARD_RATES, aggregate, validate, resolveRate };
 });

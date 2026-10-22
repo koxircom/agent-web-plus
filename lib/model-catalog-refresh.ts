@@ -32,11 +32,21 @@ import { invalidateModelsCache } from "@/lib/models-cache";
 /** Bounded like the background refresh the CLI starts in RPC mode. */
 const CATALOG_REFRESH_TIMEOUT_MS = 15_000;
 
+export interface CatalogModelCost {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  tiers?: readonly unknown[];
+  [key: string]: unknown;
+}
+
 /** The parts of a model that decide whether the Models panel has something new to show. */
 export interface CatalogModel {
   id: string;
   name: string;
   provider: string;
+  cost?: CatalogModelCost | null;
 }
 
 export interface CatalogRefreshResult {
@@ -54,6 +64,16 @@ export interface CatalogRefreshOptions {
   signal?: AbortSignal;
 }
 
+function serializeCatalogCost(cost?: CatalogModelCost | null): string {
+  if (!cost) return "";
+  const input = cost.input ?? "";
+  const output = cost.output ?? "";
+  const cacheRead = cost.cacheRead ?? "";
+  const cacheWrite = cost.cacheWrite ?? "";
+  const tiers = Array.isArray(cost.tiers) ? JSON.stringify(cost.tiers) : "";
+  return `${input}:${output}:${cacheRead}:${cacheWrite}:${tiers}`;
+}
+
 /**
  * Compare catalogs by what the model list actually exposes.
  *
@@ -62,7 +82,7 @@ export interface CatalogRefreshOptions {
  */
 export function modelCatalogSignature(models: readonly CatalogModel[]): string {
   return models
-    .map((model) => `${model.provider}\u0000${model.id}\u0000${model.name}`)
+    .map((model) => `${model.provider}\u0000${model.id}\u0000${model.name}\u0000${serializeCatalogCost(model.cost)}`)
     .sort()
     .join("\n");
 }

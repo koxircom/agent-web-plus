@@ -9,14 +9,76 @@
   }
   const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const tokens = n => n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-  const cost = (s, selectedEngine = "all") => {
+  const cost = (s, selectedEngine = "all", pricing = null) => {
     const codexTokens = (s.codexTokens || 0) + (s.dispatchedSubagents?.codexTokens || 0);
-    if (s.costNano > 0) {
-      return `$${(s.costNano / 1e9).toFixed(3)}${s.unpricedTokens ? " + 未定价" : ""}${codexTokens ? " + Codex 未提供费用" : ""}`;
+    const costNano = s.costNano || 0;
+    const estNano = s.estimatedCostNano || 0;
+    const unpriced = s.unpricedTokens || 0;
+    const total = s.totalTokens || 0;
+    const isPriced = Boolean(s.isExplicitFree || s.hasEstimated || estNano > 0);
+
+    if (costNano > 0) {
+      const usd = costNano / 1e9;
+      let valStr;
+      if (usd >= 1) {
+        valStr = (usd % 0.001 === 0) ? usd.toFixed(3) : usd.toFixed(4).replace(/0+$/, "");
+      } else if (usd >= 0.001) {
+        valStr = (usd % 0.001 === 0) ? usd.toFixed(3) : usd.toFixed(5).replace(/0+$/, "");
+      } else {
+        valStr = usd.toFixed(5).replace(/0+$/, "");
+      }
+      if (!valStr.includes(".")) valStr += ".000";
+      else {
+        const parts = valStr.split(".");
+        if (parts[1].length < 3) valStr = parts[0] + "." + parts[1].padEnd(3, "0");
+      }
+
+      const unpricedHint = unpriced > 0 ? " + 未定价" : "";
+      if (!pricing && !estNano && codexTokens > 0) {
+        return `$${valStr}${unpricedHint} + Codex 未提供费用`;
+      }
+      return `$${valStr}${unpricedHint}`;
     }
-    if (codexTokens > 0) return "Codex 未提供费用";
-    if (selectedEngine === "codex" && (s.totalTokens || 0) > 0) return "Codex 未提供费用";
-    return s.unpricedTokens ? "未定价" : "$0.000";
+
+    if (total > 0) {
+      if (unpriced === 0 && (s.isExplicitFree || isPriced)) {
+        return "$0.000";
+      }
+      if (!pricing && !estNano && (codexTokens > 0 || (selectedEngine === "codex" && (s.totalTokens || 0) > 0))) {
+        return "Codex 未提供费用";
+      }
+      return (unpriced > 0 || (selectedEngine === "codex" && (s.totalTokens || 0) > 0)) ? "未定价" : "$0.000";
+    }
+
+    return "$0.000";
+  };
+
+  const formatCostWithBadge = (s, selectedEngine = "all", pricing = null) => {
+    const costStr = cost(s, selectedEngine, pricing);
+    const costNano = s.costNano || 0;
+    const estNano = s.estimatedCostNano || 0;
+    const total = s.totalTokens || 0;
+    const unpriced = s.unpricedTokens || 0;
+    const isEstimated = estNano > 0 || s.isExplicitFree || (s.hasEstimated && unpriced === 0);
+
+    if (costNano > 0) {
+      if (estNano > 0) {
+        if (estNano >= costNano) {
+          return `${costStr} <span class="pi-enh-cost-badge" data-usage-cost-badge style="font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);vertical-align:middle;">参考估算</span>`;
+        }
+        return `${costStr} <span class="pi-enh-cost-badge" data-usage-cost-badge style="font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(234,179,8,0.15);color:#fde047;border:1px solid rgba(234,179,8,0.3);vertical-align:middle;">部分估算</span>`;
+      }
+      return costStr;
+    }
+
+    if (total > 0) {
+      if (unpriced === 0 && (s.isExplicitFree || isEstimated)) {
+        return `${costStr} <span class="pi-enh-cost-badge" data-usage-cost-badge style="font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-left:4px;background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);vertical-align:middle;">参考估算</span>`;
+      }
+      return costStr;
+    }
+
+    return costStr;
   };
 
   const roleNames = { main: "主会话直接用量", subagent: "子代理独立用量", system: "工具 / 压缩摘要用量" };
@@ -404,9 +466,10 @@
     return "全部历史记录";
   }
 
-  function card(label, value, hint) {
+  function card(label, value, hint, badge = "") {
     const textStyle = String(value).length > 8 ? ' style="white-space:normal;overflow-wrap:anywhere;font-size:14px"' : "";
-    return `<div class="pi-enh-kpi-pro-card"><div class="kpi-pro-label">${label}</div><div class="kpi-pro-value highlight-cyan"${textStyle}>${value}</div><div class="kpi-pro-hint">${hint}</div></div>`;
+    const badgeHtml = badge ? ` <span class="pi-enh-kpi-badge" data-usage-kpi-badge style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;vertical-align:middle;margin-left:4px;background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">${esc(badge)}</span>` : "";
+    return `<div class="pi-enh-kpi-pro-card"><div class="kpi-pro-label">${label}${badgeHtml}</div><div class="kpi-pro-value highlight-cyan"${textStyle}>${value}</div><div class="kpi-pro-hint">${hint}</div></div>`;
   }
 
   function _renderLoading(panel) {
@@ -737,7 +800,7 @@
     const beijingHours = (new Date(now + 8 * 3600000)).getUTCHours();
     const isEarlyMorning = beijingHours >= 0 && beijingHours < 6;
 
-    let stats = core.aggregate(ledger, { engine, timeRange, model, role, startDate, endDate });
+    let stats = core.aggregate(ledger, { engine, timeRange, model, role, startDate, endDate, pricing: ledger.pricing });
     if (!stats) stats = { totalTokens: 0, costNano: 0, messageCount: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, sessionCount: 0, calls: 0, roles: {}, modelBreakdowns: [], allModels: [], topSessions: [], codexTokens: 0 };
     if (!stats.roles) stats.roles = {};
     if (!Array.isArray(stats.modelBreakdowns)) stats.modelBreakdowns = [];
@@ -749,7 +812,7 @@
       persistFilters({ timeRange, model, role, startDate, endDate });
       const dynamicCore = getCore();
       stats = (dynamicCore && typeof dynamicCore.aggregate === "function")
-        ? dynamicCore.aggregate(ledger, { engine, timeRange, model, role, startDate, endDate }) || stats
+        ? dynamicCore.aggregate(ledger, { engine, timeRange, model, role, startDate, endDate, pricing: ledger.pricing }) || stats
         : stats;
     }
     const unknown = Array.isArray(ledger.unverifiedLegacy) ? ledger.unverifiedLegacy : [];
@@ -813,9 +876,35 @@
     const activeDropdownItem = dropdownRangeKeys.find(([k]) => k === timeRange);
     const dropdownLabel = isDropdownActive ? activeDropdownItem[1] : "更多";
 
-    const costHint = engine === "pi"
-      ? (stats.unpricedTokens ? `未定价用量 ${tokens(stats.unpricedTokens)}` : "按 Pi SDK 模型目录参考价与原生记录核算，非账单")
-      : (stats.unpricedTokens ? `未定价用量 ${tokens(stats.unpricedTokens)}；Codex 未提供费用，不纳入估算` : "Codex 未提供费用，不纳入估算；Pi Agent 费用按 Pi SDK 参考价与原生记录核算，非账单");
+    let costBadge = "";
+    let costHint = "";
+    if (stats.costNano > 0) {
+      if (stats.estimatedCostNano > 0) {
+        costBadge = (stats.estimatedCostNano >= stats.costNano) ? "参考估算" : "部分估算";
+        costHint = stats.unpricedTokens
+          ? `含未定价用量 ${tokens(stats.unpricedTokens)} · 按当前标准档参考价估算，非账单`
+          : "按当前标准档参考价估算，非账单（按调用独立估算，未知历史档位按标准档测算）";
+      } else {
+        costBadge = "原生费用";
+        costHint = stats.unpricedTokens
+          ? `未定价用量 ${tokens(stats.unpricedTokens)}`
+          : (engine === "pi" ? "按 Pi SDK 模型目录参考价与原生记录核算，非账单" : "原生记录费用（非账单承诺）");
+      }
+    } else {
+      if (stats.totalTokens > 0) {
+        if (stats.unpricedTokens === 0 && (stats.isExplicitFree || stats.hasEstimated)) {
+          costBadge = "参考估算";
+          costHint = "明确 0 费率参考估算，非账单（免费模型或测试费率）";
+        } else {
+          costBadge = "未定价";
+          costHint = stats.unpricedTokens
+            ? `未定价用量 ${tokens(stats.unpricedTokens)}` + (ledger.pricing ? "（缺少可用费率配置）" : "；Codex 未提供费用，不纳入估算")
+            : (ledger.pricing ? "按当前标准档参考价估算，非账单" : "Codex 未提供费用，不纳入估算；Pi Agent 费用按 Pi SDK 参考价与原生记录核算，非账单");
+        }
+      } else {
+        costHint = (engine === "pi" || ledger.pricing) ? "按当前标准档参考价估算，非账单" : "Codex 未提供费用，不纳入估算；Pi Agent 费用按 Pi SDK 参考价与原生记录核算，非账单";
+      }
+    }
 
     panel.innerHTML = `<div class="pi-enh-usage-panel-content">
       <section class="pi-enh-usage-header-pro">
@@ -899,8 +988,21 @@
           服务端快照 ${esc(ledger.snapshotId || "local")} · 生成于 ${esc(ledger.generatedAt || "未知时间")}<br>
           来源：${sourcesDesc}<br>
           按调用发生日期（北京时间）统计。${engine !== "pi" ? "Codex 自动子任务归入父会话，会话数不重复计入子任务；Token 保留每个执行任务的实际消耗。" : "运行中子任务完成回传才入账。"}
+          ${ledger.pricing ? `<br><span data-usage-pricing-provenance>价格参考：${esc(ledger.pricing.models && Object.values(ledger.pricing.models)[0]?.source || "Pi SDK / 参考价")} · 更新于 ${esc(ledger.pricing.updatedAt ? ledger.pricing.updatedAt : "尚未联网更新/内置目录")}${ledger.pricing.refresh ? ` · 刷新状态：${esc((() => {
+            const s = ledger.pricing.refresh.state;
+            if (s === "current" || s === "ok") return "最新";
+            if (s === "cached") return "已保留缓存";
+            if (s === "refreshing") return "刷新中";
+            if (s === "error" || s === "failed") return "刷新受阻";
+            if (s === "offline") return "离线模式";
+            return s || "已保留";
+          })())}` : ""}</span>` : ""}
           </p>
         </details>
+        ${(ledger.pricing?.refresh?.state === "error" || ledger.pricing?.refresh?.state === "failed") ? `
+        <div data-usage-pricing-refresh-warning style="margin:6px 0 2px;padding:6px 10px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.25);border-radius:6px;font-size:11.5px;color:#fde047;line-height:1.4;">
+          ⚠️ 价格目录刷新受阻（${esc(ledger.pricing.refresh.message || "网络请求未成功")}），已安全保留当前标准档参考价测算。
+        </div>` : ""}
         ${hasUnaccountedOrPending ? `
         <div class="pi-enh-incomplete-audit-notice" style="margin:10px 0 8px;padding:10px 14px;background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.35);border-radius:8px;font-size:12px;color:#fef08a;box-sizing:border-box;">
           <div class="pi-enh-incomplete-audit-notice-body" style="display:flex;align-items:flex-start;gap:8px;">
@@ -918,11 +1020,11 @@
         ${card("涉及会话", stats.sessionCount || 0, `${stats.messageCount || 0} 条模型回复 · ${stats.calls || 0} 个子任务`)}
         ${card("非缓存输入 Token", tokens(stats.inputTokens || 0), `输出 ${tokens(stats.outputTokens || 0)}`)}
         ${card("总 Token（含缓存）", tokens(stats.totalTokens || 0), `缓存读 ${tokens(stats.cacheReadTokens || 0)} · 命中率 ${globalHitRate}${globalWriteHint}`)}
-        ${card("预估费用 (Cost)", cost(stats, engine), costHint)}
+        ${card("预估费用 (Cost)", cost(stats, engine, ledger.pricing), costHint, costBadge)}
       </div>
 
       <p style="font-size:12px;color:#a1a1aa;line-height:1.7;">
-        💡 费用核算说明：${engine === "pi" ? "优先采用原生记录的 SDK 上报费用（如 OpenAI 旗舰模型）；对代理网关未上报价格的模型，按 Pi SDK 模型目录参考单价（如 Gemini Flash: 输入$0.10/M、输出$0.40/M、缓存$0.025/M）基准测算，非账单承诺。" : "优先采用 Pi Agent 原生费用与 Pi SDK 参考单价核算，非账单承诺；Codex 未提供费用，不纳入估算。"} 下方角色与模型卡片均严格对应同一筛选范围。
+        💡 费用核算说明：${(ledger.pricing || stats.estimatedCostNano > 0) ? "优先采用原生记录费用；Codex 与未上报价格模型按当前标准档参考价估算，非账单，未知历史档位不宣称精确。" : (engine === "pi" ? "优先采用原生记录的 SDK 上报费用（如 OpenAI 旗舰模型）；对代理网关未上报价格的模型，按 Pi SDK 模型目录参考单价（如 Gemini Flash: 输入$0.10/M、输出$0.40/M、缓存$0.025/M）基准测算，非账单承诺。" : "优先采用 Pi Agent 原生费用与 Pi SDK 参考单价核算，非账单承诺；Codex 未提供费用，不纳入估算。")} 下方角色与模型卡片均严格对应同一筛选范围。
       </p>
 
       <div class="pi-enh-model-cards-grid pi-enh-role-cards-grid" data-usage-roles>
@@ -931,7 +1033,7 @@
           return `<div class="pi-enh-model-card pi-enh-role-card" data-usage-role="${key}" data-tokens="${r.totalTokens || 0}" data-cost-nano="${r.costNano || 0}" data-messages="${r.messageCount || 0}">
             <div class="pi-enh-model-card-title">${label}</div>
             <div class="role-token-value" style="font-size:22px;margin:10px 0 6px;font-weight:700;">${tokens(r.totalTokens || 0)} Token</div>
-            <div class="role-cost-value" style="font-size:14px;font-weight:600;color:#7dd3fc;">${cost(r, engine)}</div>
+            <div class="role-cost-value" style="font-size:14px;font-weight:600;color:#7dd3fc;">${formatCostWithBadge(r, engine, ledger.pricing)}</div>
             <p class="role-meta-text" style="font-size:11.5px;color:#a1a1aa;margin-top:6px;line-height:1.45;">${r.messageCount || 0} 条模型回复 · ${r.calls || 0} 个子任务 · ${r.records || 0} 条用量记录</p>
           </div>`;
         }).join("")}
@@ -962,10 +1064,14 @@
           const savingsHtml = (m.dispatchedSubagents && m.dispatchedSubagents.savedCost > 0) ? (() => {
             const d = m.dispatchedSubagents;
             const mainCost = (mRoles.main?.costNano || 0) / 1e9;
+            const title = d.isEstimated ? "委派 Sub agent 降本参考测算" : "委派 Sub agent 降本分析";
+            const note = d.isEstimated
+              ? "* 基于当前标准档参考价估算，非账单承诺 · 未知历史档位按标准档测算"
+              : "* 子任务自身少花 " + d.subSavedRatio + "% · 筛选期整体少花 " + d.overallSavedRatio + "%（筛选期范围基准测算，非实际账单承诺）";
             return `
           <div class="pi-enh-subagent-savings-panel">
             <div class="pi-enh-savings-header">
-              <span class="pi-enh-savings-title">委派 Sub agent 降本分析</span>
+              <span class="pi-enh-savings-title">${title}</span>
               <span class="pi-enh-savings-badge">节省 $${d.savedCost.toFixed(3)} (筛选期整体少花 ${d.overallSavedRatio}%)</span>
             </div>
             <div class="pi-enh-savings-breakdown">
@@ -976,7 +1082,7 @@
               <span>假设全主模型 M+H: $${(d.allMainTotalCost || d.hypotheticalCost || 0).toFixed(4)}</span>
             </div>
             <div class="pi-enh-savings-subnote">
-              * 子任务自身少花 ${d.subSavedRatio}% · 筛选期整体少花 ${d.overallSavedRatio}%（筛选期范围基准测算，非实际账单承诺）
+              ${note}
             </div>
           </div>`;
           })() : "";
@@ -1005,7 +1111,7 @@
               ["缓存读", tokens(crTok)],
               ["缓存命中率", hitRate, cwTok > 0 ? `缓存读取 / (非缓存输入 + 缓存读取) · 缓存写 ${tokens(cwTok)}` : "缓存读取 / (非缓存输入 + 缓存读取)"],
               ["总计消耗", tokens(m.totalTokens || 0)],
-              ["预估费用", cost(m, engine)],
+              ["预估费用", formatCostWithBadge(m, engine, ledger.pricing)],
             ].map(([key, val, hint]) => `<div class="metric-item"${hint ? ` title="${esc(hint)}"` : ""}><span class="lbl">${key}</span><span class="val ${key === '总计消耗' ? 'highlight' : key === '预估费用' ? 'cost' : ''}">${val}</span></div>`).join("")}
           </div>
           ${savingsHtml}
@@ -1088,7 +1194,7 @@
             <div class="pi-enh-top-session-row" data-goto-session="${esc(s.id)}">
               <span class="pi-enh-session-rank-badge">#${i + 1}</span>
               <span class="session-title">${esc(s.title || s.id)}${s.subagentCount ? `<small class="session-sub" data-usage-subagent-summary>含 ${s.subagentCount} 个自动子任务 · 子任务 ${tokens(s.subagentTokens)} Token</small>` : ""}</span>
-              <span class="session-tokens">${tokens(s.totalTokens || 0)} · ${cost(s, engine)}</span>
+              <span class="session-tokens">${tokens(s.totalTokens || 0)} · ${cost(s, engine, ledger.pricing)}</span>
             </div>
             ${subtasks.length ? `<details data-usage-subtask-details style="margin:0 8px 8px 34px;padding:7px 10px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.07);border-radius:6px;font-size:11px;">
               <summary style="cursor:pointer;color:#a1a1aa;">展开自动子任务明细 · ${subtasks.length} 行（已计入父会话总量）</summary>
@@ -1104,7 +1210,7 @@
                     <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);word-break:break-word;">${esc(task.name || task.sessionId || "未命名自动子任务")}</td>
                     <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;">${esc(task.day && task.day !== "unknown" ? task.day : "日期未知")}</td>
                     <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;font-variant-numeric:tabular-nums;">${tokens(task.totalTokens || 0)}</td>
-                    <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;color:#a1a1aa;">Codex 未提供费用</td>
+                    <td style="padding:6px 8px;border-top:1px solid rgba(255,255,255,0.06);white-space:nowrap;color:#a1a1aa;">${formatCostWithBadge(task, "codex", ledger.pricing)}</td>
                   </tr>`).join("")}</tbody>
                 </table>
               </div>

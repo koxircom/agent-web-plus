@@ -1,10 +1,11 @@
 "use client";
 
 import React from "react";
-import { BRAND_SVG_CONSTANTS, BRAND_ICON_SVG_CONSTANTS, BRAND_NAME, CODEX_BRAND_SYMBOL_PATH } from "@/lib/branding";
+import { BRAND_SVG_CONSTANTS, WELCOME_BRAND_SVG_CONSTANTS, BRAND_ICON_SVG_CONSTANTS, BRAND_NAME, CODEX_BRAND_SYMBOL_PATH } from "@/lib/branding";
 
 export interface PiWebBrandProps {
   variant?: "pi" | "codex";
+  presentation?: "compact" | "welcome";
   className?: string;
   style?: React.CSSProperties;
   width?: number | string;
@@ -22,6 +23,7 @@ export interface PiWebBrandProps {
  */
 export function PiWebBrand({
   variant = "pi",
+  presentation = "compact",
   className,
   style,
   width = 215,
@@ -29,7 +31,7 @@ export function PiWebBrand({
   ariaLabel,
   title,
 }: PiWebBrandProps) {
-  const c = BRAND_SVG_CONSTANTS;
+  const c = presentation === "welcome" ? WELCOME_BRAND_SVG_CONSTANTS : BRAND_SVG_CONSTANTS;
   const id = React.useId();
   const codex = variant === "codex";
   const label = codex ? BRAND_NAME : `π+ ${BRAND_NAME}`;

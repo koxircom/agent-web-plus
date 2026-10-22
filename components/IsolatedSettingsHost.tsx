@@ -16,13 +16,14 @@ interface Props {
   hideWhenEmpty?: boolean;
   showLoading?: boolean;
   fill?: boolean;
+  active?: boolean;
 }
 
 const noServerRenderer = () => undefined;
 
 /** React owns the empty host; the registered renderer exclusively owns its children. */
 export function IsolatedSettingsHost(props: Props) {
-  const { id, sectionId, className, hideWhenEmpty, showLoading, fill } = props;
+  const { id, sectionId, className, hideWhenEmpty, showLoading, fill, active = true } = props;
   const { t } = useI18n();
   const hostRef = useRef<HTMLDivElement>(null);
   const [mountFailed, setMountFailed] = useState(false);
@@ -40,7 +41,7 @@ export function IsolatedSettingsHost(props: Props) {
   // Mount the renderer before paint rather than briefly showing an empty host.
   useLayoutEffect(() => {
     const host = hostRef.current;
-    if (!host || !renderer) return;
+    if (!host || !renderer || !active) return;
 
     const context: SettingsExtensionContext = {
       onClose: () => currentProps.current.onClose(),
@@ -72,7 +73,7 @@ export function IsolatedSettingsHost(props: Props) {
         host.replaceChildren();
       }
     };
-  }, [id, renderer, sectionId, mountAttempt]);
+  }, [id, renderer, sectionId, mountAttempt, active]);
 
   return (
     <>

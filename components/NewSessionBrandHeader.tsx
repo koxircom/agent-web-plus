@@ -353,6 +353,7 @@ export function NewSessionBrandHeader({
           maxWidth: "var(--chat-content-max-width, 820px)",
           margin: "0 auto",
           fontFamily: "var(--font-mono)",
+          containerType: "inline-size",
         }}
       >
         <div
@@ -370,20 +371,22 @@ export function NewSessionBrandHeader({
               rel="noopener noreferrer"
               aria-label="打开 Agent Web Plus GitHub 仓库"
               title={`打开 Agent Web Plus GitHub 仓库 (${BRAND_GITHUB_URL})`}
-              style={{ display: "block", width: "100%", maxWidth: isMobile ? 180 : 200, minWidth: 0, color: "var(--text)", textDecoration: "none" }}
+              style={{ display: "block", width: "100%", minWidth: 0, color: "var(--text)", textDecoration: "none" }}
             >
               <PiWebBrand
                 variant="codex"
-                width={isMobile ? 180 : 200}
-                height={isMobile ? 28.8 : 32}
-                style={{ width: "100%", height: "auto", maxWidth: isMobile ? 180 : 200, flexShrink: 1 }}
+                presentation="welcome"
+                width={300}
+                height={300 * 186 / 1080}
+                style={{ width: "clamp(215px, 42cqw, 300px)", height: "auto", maxWidth: "100%", flexShrink: 1 }}
               />
             </a>
           ) : (
             <PiWebBrand
-              width={isMobile ? 180 : 200}
-              height={isMobile ? 28.8 : 32}
-              style={{ width: "100%", height: "auto", maxWidth: isMobile ? 180 : 200, flexShrink: 1 }}
+              presentation="welcome"
+              width={300}
+              height={300 * 186 / 1080}
+              style={{ width: "clamp(215px, 42cqw, 300px)", height: "auto", maxWidth: "100%", flexShrink: 1 }}
             />
           )}
         </div>

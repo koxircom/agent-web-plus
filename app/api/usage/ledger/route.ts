@@ -1,5 +1,6 @@
 import { getUsageLedger, refreshUsageLedger, type UsageLedgerMode } from "@/lib/usage-ledger-service";
 import { readUsageByEngine } from "@/lib/usage-ledger-engines";
+import { getUsagePricing } from "@/lib/usage-pricing";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,14 @@ function responseHeaders(mode: UsageLedgerMode) {
 async function respond(operation: typeof getUsageLedger, refreshCodex = false) {
   try {
     const { ledger, mode } = await readUsageByEngine(operation, undefined, refreshCodex);
-    return Response.json(ledger, { headers: responseHeaders(mode) });
+    let pricing;
+    try {
+      pricing = await getUsagePricing();
+    } catch (pricingError) {
+      console.warn("[usage-ledger] Failed to resolve pricing snapshot:", pricingError);
+    }
+    const responsePayload = pricing ? { ...ledger, pricing } : ledger;
+    return Response.json(responsePayload, { headers: responseHeaders(mode) });
   } catch (error) {
     console.error("[usage-ledger] Snapshot request failed:", error);
     const mode = modeForError(error);
