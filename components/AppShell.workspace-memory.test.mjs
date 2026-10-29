@@ -99,6 +99,8 @@ test("New restores the draft after session navigation and workspace auto-restore
         suppressCwdBumpRef: { current: false },
         branchLeafChangeFnRef: { current: null },
         liveFollowFrameRef: { current: null },
+        historyRecoveryTimerRef: { current: null },
+        historyRecoveryPendingDirtySidRef: { current: null },
         bashRecoveryIdRef: { current: 0 },
         isSessionMemoryCacheEnabled: () => false,
         cancelEventStreamGrace() {},

@@ -247,6 +247,16 @@ export type ExtensionUiResponse =
   | { type: "extension_ui_response"; id: string; confirmed: boolean }
   | { type: "extension_ui_response"; id: string; cancelled: true };
 
+export type ExtensionUiCommandAck =
+  | { id: string; status: "closed" }
+  | { id: string; status: "pending"; request: ExtensionUiRequest };
+
+export type ExtensionUiDeliveryResult =
+  | { status: "closed" }
+  | { status: "pending"; request?: ExtensionUiRequest }
+  | { status: "uncertain"; message: string }
+  | { status: "expired" };
+
 export interface ExtensionStatusItem {
   key: string;
   text: string;
@@ -419,6 +429,7 @@ export interface SessionInfo {
   submissionPending?: boolean;
   pinned?: boolean;
   archived?: boolean;
+  titleNaming?: { status: "failed"; message: string } | null;
   nativeMetadata?: {
     desktopShared: boolean;
     pinningSupported: boolean;

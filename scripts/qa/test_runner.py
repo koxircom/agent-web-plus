@@ -30,6 +30,9 @@ def write(path: Path, content: str) -> None:
 def run_runner(repo: Path, output: Path, fake_bin: Path, *args: str) -> subprocess.CompletedProcess:
     environment = os.environ.copy()
     environment["PATH"] = str(fake_bin) + os.pathsep + environment.get("PATH", "")
+    environment["PI_CODING_AGENT_DIR"] = str(repo / "production-agent-sentinel")
+    environment["PI_AGENT_DIR"] = environment["PI_CODING_AGENT_DIR"]
+    environment["ODOO_LAN_CONFIG_FILE"] = str(repo / "production-lan-sentinel.json")
     return subprocess.run(
         [sys.executable, str(repo / "scripts" / "qa" / "run.py"), "--output-dir", str(output), *args],
         cwd=str(repo),
@@ -91,6 +94,11 @@ from pathlib import Path
 if sys.argv[1:] == ["--version"]:
     print("v22.19.0-fake")
     raise SystemExit(0)
+agent = Path(os.environ["PI_CODING_AGENT_DIR"])
+assert agent.is_dir() and agent.name.startswith("pi-qa-agent-")
+assert os.environ["PI_AGENT_DIR"] == str(agent)
+assert Path(os.environ["ODOO_LAN_CONFIG_FILE"]) == agent / "state/odoo-lan-config.json"
+print("isolated-agent-root", agent)
 counter = os.environ.get("FAKE_NODE_COUNTER")
 if counter:
     path = Path(counter)
@@ -159,6 +167,9 @@ raise SystemExit(7 if "--fail" in sys.argv else 0)
         first_state = state(output)
         require(shard_status(first_state, "pass")["status"] == "passed", "initial pass did not pass")
         require(counter.read_text(encoding="utf-8").count("run\n") == 1, "initial pass did not run exactly once")
+        initial_log = (output / shard_status(first_state, "pass")["logPath"]).read_text()
+        sandbox = next(line.split(" ", 1)[1] for line in initial_log.splitlines() if line.startswith("isolated-agent-root "))
+        require(not Path(sandbox).exists(), "shard agent sandbox was not cleaned")
 
         resumed = run_runner(root, output, fake_bin, "--suite", "focused", "--shard", "pass", "--resume")
         require(resumed.returncode == 0, f"resume failed: {resumed.stdout}\n{resumed.stderr}")
@@ -221,6 +232,8 @@ raise SystemExit(7 if "--fail" in sys.argv else 0)
                 "installed_sdk_change_invalidates_resume",
                 "source_change_during_run_blocks_pass",
                 "source_changed_run_cannot_resume_cache",
+                "ambient_agent_and_lan_configuration_isolated",
+                "shard_sandbox_cleanup",
                 "failure_collection_continues",
                 "missing_file_blocked",
             ],

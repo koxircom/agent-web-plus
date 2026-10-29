@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { AskUserQuestion, ExtensionUiRequest } from "@/lib/types";
+import type { AskUserQuestion, ExtensionUiDeliveryResult, ExtensionUiRequest } from "@/lib/types";
 import { buildAskAnswerInputs, readAskTerminal } from "@/lib/ask-user";
 import { isEnhancementPluginFastActive } from "@/lib/enhancement-settings.generated";
 import { allowsAutomaticEditableFocus } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 
 type Request = Extract<ExtensionUiRequest, { method: "custom" }>;
-type Input = (request: Request, data: string | string[]) => Promise<boolean | undefined>;
+type Input = (request: Request, data: string | string[]) => Promise<ExtensionUiDeliveryResult | boolean | undefined>;
+type Checker = (requestId: string) => Promise<ExtensionUiDeliveryResult | undefined>;
 
 export function ExtensionWaitingCount({ count }: { count: number }) {
   const { t } = useI18n();
@@ -28,7 +29,7 @@ function subscribePreference(listener: () => void) {
 }
 
 /** Keep the legacy switch, with React owning both renderer and cleanup. */
-export function AskUserSurface({ request, onInput, fallback, waitingCount = 0 }: { request: Request; onInput: Input; fallback: React.ReactNode; waitingCount?: number }) {
+export function AskUserSurface({ request, onInput, onCheck, fallback, waitingCount = 0 }: { request: Request; onInput: Input; onCheck?: Checker; fallback: React.ReactNode; waitingCount?: number }) {
   const enabled = useSyncExternalStore(subscribePreference, () => isEnhancementPluginFastActive("ask-user-web-native"), () => true);
   const terminal = readAskTerminal(request.lines);
   const question: AskUserQuestion | undefined = request.askUser ?? (terminal.question && /\bask_user\b/.test(terminal.text) ? {
@@ -37,24 +38,26 @@ export function AskUserSurface({ request, onInput, fallback, waitingCount = 0 }:
     allowMultiple: /\d+\.\s+\[/.test(terminal.text),
     allowFreeform: terminal.freeform, allowComment: terminal.comment,
   } : undefined);
-  return enabled && question ? <AskUserPanel key={request.id} request={request} question={question} waitingCount={waitingCount} onInput={onInput} /> : fallback;
+  return enabled && question ? <AskUserPanel key={request.id} request={request} question={question} waitingCount={waitingCount} onInput={onInput} onCheck={onCheck} /> : fallback;
 }
 
 // The same question surface handles plain input/editor requests, without a terminal overlay.
 type TextRequest = Extract<ExtensionUiRequest, { method: "input" | "editor" }>;
 type TextResponse = { value: string } | { cancelled: true };
-type TextResponder = (request: TextRequest, response: TextResponse) => void | Promise<boolean>;
-export function AskUserTextPanel(props: { request: TextRequest; onRespond: TextResponder; waitingCount?: number }) {
+type TextResponder = (request: TextRequest, response: TextResponse) => void | boolean | Promise<ExtensionUiDeliveryResult | boolean | undefined>;
+export function AskUserTextPanel(props: { request: TextRequest; onRespond: TextResponder; onCheck?: Checker; waitingCount?: number }) {
   return props.request.method === "input" && props.request.askUser
-    ? <AskUserPanel request={props.request} question={props.request.askUser} waitingCount={props.waitingCount} onReply={props.onRespond} />
+    ? <AskUserPanel request={props.request} question={props.request.askUser} waitingCount={props.waitingCount} onReply={props.onRespond} onCheck={props.onCheck} />
     : <AskUserPlainTextPanel {...props} />;
 }
-function AskUserPlainTextPanel({ request, onRespond, waitingCount = 0 }: { request: TextRequest; onRespond: TextResponder; waitingCount?: number }) {
+function AskUserPlainTextPanel({ request, onRespond, onCheck, waitingCount = 0 }: { request: TextRequest; onRespond: TextResponder; onCheck?: Checker; waitingCount?: number }) {
   const [value, setValue] = useState(request.method === "editor" ? request.prefill ?? "" : "");
   const [now, setNow] = useState(() => Date.now());
   const sending = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
+  const [checking, setChecking] = useState(false);
   useEffect(() => {
     if (request.expiresAt === undefined) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -68,17 +71,52 @@ function AskUserPlainTextPanel({ request, onRespond, waitingCount = 0 }: { reque
   const expiresHint = error || (busy ? "正在提交，等待确认…" : request.expiresAt === undefined ? "" : `${Math.max(0, Math.ceil((request.expiresAt - now) / 1000))} 秒后到期`);
   const respond = async (skip = false) => {
     if (sending.current || (!skip && !canSend)) return;
-    sending.current = true; setBusy(true); setError("");
+    sending.current = true; setBusy(true); setError(""); setUncertain(false);
     try {
-      if ((await onRespond(request, skip ? { cancelled: true } : { value })) === false) throw new Error("回答未确认送达，请检查连接后重试。");
+      const res = await onRespond(request, skip ? { cancelled: true } : { value });
+      if (res === false) throw new Error("回答未确认送达，请检查连接后重试。");
+      if (typeof res === "object" && res !== null) {
+        if (res.status === "closed") {
+          sending.current = false; setBusy(false); setUncertain(false);
+          return;
+        }
+        if (res.status === "pending") {
+          sending.current = false; setBusy(false); setUncertain(false);
+          setError("");
+          return;
+        }
+        if (res.status === "uncertain") {
+          sending.current = false; setBusy(false);
+          setUncertain(true);
+          setError(res.message || "结果待确认，未重复发送");
+          return;
+        }
+      }
+      sending.current = false; setBusy(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "回答发送失败");
       sending.current = false; setBusy(false);
     }
   };
+  const handleCheck = async () => {
+    if (checking || !onCheck) return;
+    setChecking(true);
+    try {
+      const res = await onCheck(request.id);
+      if (res?.status === "closed") {
+        setUncertain(false);
+      } else {
+        setError("结果待确认，未重复发送");
+      }
+    } catch {
+      setError("结果待确认，未重复发送");
+    } finally {
+      setChecking(false);
+    }
+  };
   return <div className="pi-native-extension-host pi-native-ask-host">
     <section className="pi-native-ask-card" role="dialog" aria-label={title} onKeyDown={event => {
-      if (event.nativeEvent.isComposing || event.repeat) return;
+      if (event.nativeEvent.isComposing || event.repeat || busy || uncertain) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); return; }
       if (event.key === "Enter") {
         if ((event.target as HTMLElement).matches("input")) {
@@ -94,7 +132,7 @@ function AskUserPlainTextPanel({ request, onRespond, waitingCount = 0 }: { reque
           {context && <details className="pi-native-ask-context"><summary>查看背景与方案</summary><div>{context}</div></details>}
           {request.method === "editor" && (
             <div className="pi-native-ask-notes">
-              <textarea aria-label="回答" autoFocus={allowsAutomaticEditableFocus()} placeholder="输入你的回答…" rows={3} value={value} onChange={event => setValue(event.target.value)} />
+              <textarea aria-label="回答" autoFocus={allowsAutomaticEditableFocus()} placeholder="输入你的回答…" rows={3} value={value} disabled={busy || uncertain} onChange={event => { setValue(event.target.value); setError(""); }} />
             </div>
           )}
         </div>
@@ -110,14 +148,20 @@ function AskUserPlainTextPanel({ request, onRespond, waitingCount = 0 }: { reque
               autoFocus={allowsAutomaticEditableFocus()}
               placeholder={request.placeholder || "输入你的回答…"}
               value={value}
-              onChange={event => setValue(event.target.value)}
+              disabled={busy || uncertain}
+              onChange={event => { setValue(event.target.value); setError(""); }}
             />
           )}
           <div className="pi-native-ask-footer-main">
-            <button type="button" className="pi-native-ask-cancel" disabled={busy} onClick={() => respond(true)}>
+            {uncertain && (
+              <button type="button" className="pi-native-ask-cancel" disabled={checking} onClick={handleCheck}>
+                <span className="pi-native-ask-status-label">{checking ? "检查中…" : "检查状态"}</span>
+              </button>
+            )}
+            <button type="button" className="pi-native-ask-cancel" disabled={busy || uncertain} onClick={() => respond(true)}>
               <span className="pi-native-ask-button-label">取消</span>
             </button>
-            <button type="button" className="pi-native-ask-submit" disabled={!canSend || busy} onClick={() => respond()}>
+            <button type="button" className="pi-native-ask-submit" disabled={!canSend || busy || uncertain} onClick={() => respond()}>
               <span className="pi-native-ask-button-label">发送</span>
             </button>
           </div>
@@ -127,7 +171,7 @@ function AskUserPlainTextPanel({ request, onRespond, waitingCount = 0 }: { reque
   </div>;
 }
 
-export function AskUserPanel({ request, question, onInput, onReply, waitingCount = 0 }: { request: Request | TextRequest; question: AskUserQuestion; onInput?: Input; onReply?: TextResponder; waitingCount?: number }) {
+export function AskUserPanel({ request, question, onInput, onReply, onCheck, waitingCount = 0 }: { request: Request | TextRequest; question: AskUserQuestion; onInput?: Input; onReply?: TextResponder; onCheck?: Checker; waitingCount?: number }) {
   const lines = request.method === "custom" ? request.lines : [];
   const [selected, setSelected] = useState<number[]>(() => {
     const checked = readAskTerminal(lines).options.flatMap((option, index) => option.checked ? [index] : []);
@@ -136,6 +180,8 @@ export function AskUserPanel({ request, question, onInput, onReply, waitingCount
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
+  const [checking, setChecking] = useState(false);
   const sending = useRef(false);
   const firstOption = useRef<HTMLButtonElement>(null);
   const terminalMode = readAskTerminal(lines).mode;
@@ -145,22 +191,56 @@ export function AskUserPanel({ request, question, onInput, onReply, waitingCount
   const freeform = Boolean(question.allowFreeform && hasNotes);
   const hasCustomInput = question.allowFreeform || question.allowComment;
 
-  const canSubmit = !busy && (freeform || selected.length > 0);
+  const canSubmit = !busy && !uncertain && (freeform || selected.length > 0);
 
   useEffect(() => {
     if (allowsAutomaticEditableFocus()) firstOption.current?.focus({ preventScroll: true });
   }, []);
 
-  async function send(deliver: () => boolean | undefined | void | Promise<boolean | undefined | void>) {
+  async function send(deliver: () => boolean | undefined | void | Promise<ExtensionUiDeliveryResult | boolean | undefined | void>) {
     if (sending.current) return;
-    sending.current = true; setBusy(true); setError("");
+    sending.current = true; setBusy(true); setError(""); setUncertain(false);
     try {
-      if ((await deliver()) === false) throw new Error("回答未确认送达，请检查连接后重试。");
-      // Closure belongs to the server's request id, never a local timer.
-      // If the terminal opens an editor instead, allow continuing it in place.
+      const res = await deliver();
+      if (res === false) throw new Error("回答未确认送达，请检查连接后重试。");
+      if (typeof res === "object" && res !== null) {
+        if (res.status === "closed") {
+          sending.current = false; setBusy(false); setUncertain(false);
+          return;
+        }
+        if (res.status === "pending") {
+          sending.current = false; setBusy(false); setUncertain(false);
+          setError("");
+          return;
+        }
+        if (res.status === "uncertain") {
+          sending.current = false; setBusy(false);
+          setUncertain(true);
+          setError(res.message || "结果待确认，未重复发送");
+          return;
+        }
+      }
+      sending.current = false; setBusy(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "回答发送失败");
       sending.current = false; setBusy(false);
+    }
+  }
+
+  async function handleCheckStatus() {
+    if (checking || !onCheck) return;
+    setChecking(true);
+    try {
+      const res = await onCheck(request.id);
+      if (res?.status === "closed") {
+        setUncertain(false);
+      } else {
+        setError("结果待确认，未重复发送");
+      }
+    } catch {
+      setError("结果待确认，未重复发送");
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -189,7 +269,7 @@ export function AskUserPanel({ request, question, onInput, onReply, waitingCount
   }
 
   function choose(index: number, toggle = true) {
-    if (busy) return;
+    if (busy || uncertain) return;
     setError("");
     setSelected(current => question.allowMultiple
       ? current.includes(index) ? current.filter(value => value !== index) : [...current, index].sort((a, b) => a - b)
@@ -199,7 +279,7 @@ export function AskUserPanel({ request, question, onInput, onReply, waitingCount
   return <div className="pi-native-ask-host" data-pi-native-ask-owner={request.id}>
     <section className="pi-native-ask-card" role="dialog" aria-label={question.question} aria-busy={busy} data-ask-user-picker
       onKeyDown={event => {
-        if (event.nativeEvent.isComposing || event.repeat || busy) return;
+        if (event.nativeEvent.isComposing || event.repeat || busy || uncertain) return;
         const target = event.target as HTMLElement;
         if (target.matches("input")) {
           if (event.key === "Enter") { event.preventDefault(); submit(); }
@@ -227,7 +307,7 @@ export function AskUserPanel({ request, question, onInput, onReply, waitingCount
         <div className="pi-native-ask-options" role="group" aria-label={question.allowMultiple ? "多选答案" : "单选答案"}>
           {question.options.map((option, index) => {
             const isSelected = !freeform && selected.includes(index);
-            return <button key={index} ref={index === 0 ? firstOption : undefined} type="button" className="pi-native-ask-option" data-ask-option={index} aria-pressed={isSelected} disabled={busy} onClick={() => choose(index)}>
+            return <button key={index} ref={index === 0 ? firstOption : undefined} type="button" className="pi-native-ask-option" data-ask-option={index} aria-pressed={isSelected} disabled={busy || uncertain} onClick={() => choose(index)}>
               <span className="pi-native-ask-index">{index + 1}</span>
               <span className="pi-native-ask-copy"><span className="pi-native-ask-label">{option.title}</span>{option.description && <span className="pi-native-ask-description">{option.description}</span>}</span>
               <span className="pi-native-ask-check" aria-hidden="true">
@@ -251,13 +331,18 @@ export function AskUserPanel({ request, question, onInput, onReply, waitingCount
               aria-label="自定义回答"
               placeholder={question.allowFreeform ? "自定义回答…" : "补充说明…"}
               value={notes}
-              disabled={busy}
+              disabled={busy || uncertain}
               onChange={event => { setNotes(event.target.value); setError(""); }}
             />
           )}
           <div className="pi-native-ask-footer-main">
+            {uncertain && (
+              <button type="button" className="pi-native-ask-cancel" disabled={checking} onClick={handleCheckStatus}>
+                <span className="pi-native-ask-status-label">{checking ? "检查中…" : "检查状态"}</span>
+              </button>
+            )}
             {(request.method === "custom" || (request.method === "input" && request.allowDefer)) && (
-              <button type="button" className="pi-native-ask-cancel" disabled={busy} onClick={() => {
+              <button type="button" className="pi-native-ask-cancel" disabled={busy || uncertain} onClick={() => {
                 if (request.method === "custom" && onInput) void send(() => onInput(request, ["\x03"]));
                 else if (request.method !== "custom" && onReply) void send(() => onReply(request, { cancelled: true }));
               }}>

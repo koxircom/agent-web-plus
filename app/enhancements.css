@@ -2012,6 +2012,16 @@
       background: var(--bg-hover, rgba(255, 255, 255, 0.08));
       color: var(--accent, #60a5fa);
     }
+    .pi-enh-menu-item.pi-enh-menu-item-disabled {
+      opacity: 0.42 !important;
+      cursor: not-allowed !important;
+      pointer-events: none !important;
+    }
+    .pi-enh-menu-item.pi-enh-menu-item-disabled:hover {
+      background: transparent !important;
+      color: var(--text, #f4f4f5) !important;
+    }
+
     .pi-enh-menu-item svg {
       flex-shrink: 0;
       opacity: 0.85;
@@ -2078,7 +2088,27 @@
       background: transparent;
       color: var(--text-muted, #a1a1aa);
       cursor: pointer;
-      transition: background 120ms ease, color 120ms ease;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+    }
+    .pi-enh-session-row-host:hover .pi-enh-session-pinned-indicator,
+    .pi-enh-session-row-host:focus-within .pi-enh-session-pinned-indicator {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .pi-enh-session-row-host:hover .pi-enh-session-pinned-indicator[aria-busy="true"],
+    .pi-enh-session-row-host:focus-within .pi-enh-session-pinned-indicator[aria-busy="true"] {
+      opacity: 0.6;
+    }
+    @media (hover: none), (pointer: coarse) {
+      .pi-enh-session-row-host .pi-enh-session-pinned-indicator {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .pi-enh-session-row-host .pi-enh-session-pinned-indicator[aria-busy="true"] {
+        opacity: 0.6;
+      }
     }
     .pi-enh-session-pinned-indicator:hover,
     .pi-enh-session-pinned-indicator:focus-visible {
@@ -6782,5 +6812,64 @@
       font-size: 11px;
       font-weight: 400;
       line-height: 1.2;
+    }
+
+
+
+    .pi-enh-queue-count-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 17px;
+      height: 17px;
+      padding: 0 4.5px;
+      border-radius: 999px;
+      background: var(--accent, #6366f1);
+      color: #ffffff;
+      font-size: 10.5px;
+      font-weight: 700;
+      line-height: 1;
+      margin-left: 5px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      pointer-events: none;
+    }
+
+
+
+    /* 正在同步最新内容微型胶囊浮标：吸附在输入框或队列的左上方，醒目半透明微光呈现 */
+    [data-session-sync-status="syncing"] {
+      position: fixed !important;
+      left: max(16px, env(safe-area-inset-left, 16px)) !important;
+      bottom: calc(var(--pi-enh-composer-height, 120px) + 24px) !important;
+      z-index: 45 !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      width: auto !important;
+      min-width: 0 !important;
+      padding: 5px 13px 5px 10px !important;
+      border-radius: 999px !important;
+      background: rgba(17, 24, 39, 0.94) !important;
+      backdrop-filter: blur(12px) !important;
+      -webkit-backdrop-filter: blur(12px) !important;
+      border: 1px solid rgba(129, 140, 248, 0.55) !important;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3) !important;
+      color: #e0e7ff !important;
+      font-size: 11.5px !important;
+      font-weight: 600 !important;
+      line-height: 1 !important;
+      pointer-events: none !important;
+      animation: pi-sync-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    }
+
+    /* 当队列面板可见展开时，动态提高 bottom 偏移，精确居于队列栏左上方 */
+    body:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"],
+    html:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"] {
+      bottom: calc(var(--pi-enh-composer-height, 120px) + 68px) !important;
+    }
+
+    @keyframes pi-sync-pop {
+      from { opacity: 0; transform: translateY(6px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
 

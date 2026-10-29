@@ -84,6 +84,7 @@ interface Props {
   onSessionSubmissionChange?: (sourceDraftKey: string, session: SessionInfo | null) => void;
   onSessionForked?: (newSessionId: string) => void;
   modelsRefreshKey?: number;
+  sessionRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, locked: boolean) => void;
   onSystemPromptChange?: (prompt: string | null) => void;
@@ -184,7 +185,7 @@ function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = f
   );
 }
 
-export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, executionEngine = "pi", searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, executionEngine = "pi", searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, sessionRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCodexSession = executionEngine === "codex" || session?.id.startsWith("codex:") === true;
@@ -265,12 +266,12 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
 
   const {
-    loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
+    loading, historySyncing, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelsLoading, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats, navigationTotalTurns,
     slashCommands, slashCommandsLoading, queuedMessages, queueSyncStatus, unconfirmedSubmissions,
-    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused, dismissNotice,
+    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, checkPendingExtensionUi, setNoticePaused, dismissNotice,
     isAutoModelSelection,
     isAutoThinkingSelection,
     agentPhase,
@@ -288,7 +289,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   } = useAgentSession({
     executionEngine: isCodexSession ? "codex" : "pi",
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked,
-    modelsRefreshKey, chatInputRef,
+    modelsRefreshKey, sessionRefreshKey, chatInputRef,
     onBranchDataChange: isCodexSession ? undefined : onBranchDataChange,
     onSystemPromptChange: isCodexSession ? undefined : onSystemPromptChange,
     onSystemToolsChange: isCodexSession ? undefined : onSystemToolsChange,
@@ -639,6 +640,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   const pendingHistoryVisibleCountRef = useRef<number | null>(null);
   const messageContentRef = useRef<HTMLDivElement | null>(null);
   const prevScrollDistanceRef = useRef<number | null>(null);
+  const [showHistorySync, setShowHistorySync] = useState(false);
+  useEffect(() => {
+    if (!historySyncing) { setShowHistorySync(false); return; }
+    // Keep fast validations quiet, but make every slower cached read visible.
+    const timer = setTimeout(() => setShowHistorySync(true), 120);
+    return () => clearTimeout(timer);
+  }, [historySyncing]);
+
   const loadingOlderRef = useRef(false);
   const currentHistorySessionId = session?.id ?? sessionIdRef.current ?? null;
   const currentHistoryScopeRef = useRef({
@@ -1345,9 +1354,9 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
           <div className="pi-native-extension-dock">
             <div className="pi-native-extension-column">
               {extensionDialog && (extensionDialog.method === "input" || extensionDialog.method === "editor"
-                ? <AskUserTextPanel key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
+                ? <AskUserTextPanel key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} onCheck={checkPendingExtensionUi} />
                 : <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />)}
-              {extensionCustomUi && <AskUserSurface key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} fallback={<ExtensionCustomPanel request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />} />}
+              {extensionCustomUi && <AskUserSurface key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} onCheck={checkPendingExtensionUi} fallback={<ExtensionCustomPanel request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />} />}
             </div>
           </div>
       )}
@@ -1411,7 +1420,50 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
           {t("chat.loadingSession")}
         </div>
         <div className="chat-composer-footer relative shrink-0" key="chat-input-container">
-          {chatInputElement}
+          {historySyncing && showHistorySync && messages.length > 0 && (
+          <div
+            role="status"
+            aria-live="polite"
+            data-session-sync-status="syncing"
+            className="pi-enh-sync-capsule"
+            style={{
+              position: "absolute",
+              bottom: "calc(100% + 8px)",
+              left: isMobile ? 12 : 16,
+              zIndex: 35,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "5px 13px 5px 10px",
+              borderRadius: 999,
+              background: "rgba(17, 24, 39, 0.94)",
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+              border: "1px solid rgba(129, 140, 248, 0.55)",
+              boxShadow: "0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3)",
+              color: "#e0e7ff",
+              fontSize: 11.5,
+              fontWeight: 600,
+              lineHeight: 1,
+              pointerEvents: "none",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className="animate-spin motion-reduce:animate-none"
+              style={{
+                width: 12,
+                height: 12,
+                flexShrink: 0,
+                borderRadius: "50%",
+                border: "2px solid rgba(129, 140, 248, 0.3)",
+                borderTopColor: "var(--accent, #6366f1)",
+              }}
+            />
+            <span style={{ whiteSpace: "nowrap" }}>{t("chat.syncingLatest")}</span>
+          </div>
+        )}
+        {chatInputElement}
           {!isNew && !isCodexSession && (
             <div className="chat-composer-status-slot" aria-hidden="true" />
           )}
@@ -1431,30 +1483,30 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
         <div key="error-session-center" className="relative flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center p-6 text-center">
           <div
             style={{
-              width: 56,
-              height: 56,
+              width: 44,
+              height: 44,
               borderRadius: "50%",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               background: "color-mix(in srgb, #ef4444 12%, transparent)",
               color: "#ef4444",
-              marginBottom: 16,
+              marginBottom: 12,
             }}
           >
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           </div>
-          <div style={{ fontSize: 16, fontWeight: 650, color: "var(--text)", marginBottom: 8 }}>
-            {isNetwork ? "网络连接异常，无法加载会话" : "会话加载失败"}
+          <div style={{ fontSize: 15, fontWeight: 650, color: "var(--text)", marginBottom: 6 }}>
+            {isNetwork ? t("chat.networkErrorTitle") : t("chat.sessionLoadFailed")}
           </div>
-          <div style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 460, lineHeight: 1.6, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", maxWidth: 440, lineHeight: 1.5, marginBottom: 12 }}>
             {isNetwork
-              ? "未能与服务器建立连接，可能由于网络瞬断、局域网波动或设备休眠。请检查网络后点击下方按钮重试。"
-              : "加载该会话数据时遇到异常，请检查服务状态或重新尝试。"}
+              ? t("chat.networkErrorDesc")
+              : t("chat.sessionLoadFailedDesc")}
           </div>
           <div
             style={{
@@ -1464,10 +1516,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
               background: "color-mix(in srgb, #ef4444 8%, var(--bg-panel))",
               border: "1px solid color-mix(in srgb, #ef4444 25%, var(--border))",
               borderRadius: 6,
-              padding: "6px 12px",
-              maxWidth: "min(520px, 100%)",
+              padding: "6px 10px",
+              maxWidth: "min(480px, 100%)",
+              maxHeight: 120,
+              overflowY: "auto",
               overflowWrap: "anywhere",
-              marginBottom: 20,
+              wordBreak: "break-word",
+              marginBottom: 16,
+              textAlign: "left",
             }}
           >
             {error}
@@ -1479,7 +1535,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
               display: "inline-flex",
               alignItems: "center",
               gap: 8,
-              padding: "9px 18px",
+              padding: "8px 16px",
               borderRadius: 8,
               border: "1px solid var(--accent)",
               background: "var(--accent)",
@@ -1489,12 +1545,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
               cursor: "pointer",
               boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
               transition: "opacity 0.15s ease",
+              flexShrink: 0,
+              whiteSpace: "nowrap",
             }}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
             </svg>
-            <span>重新加载会话</span>
+            <span>{t("chat.reloadSession")}</span>
           </button>
         </div>
         <div className="chat-composer-footer relative shrink-0" key="chat-input-container">
@@ -1503,14 +1561,6 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
             <div className="chat-composer-status-slot" aria-hidden="true" />
           )}
         </div>
-      </div>
-    );
-  }
-
-  if (error && messages.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center text-red-400">
-        {error}
       </div>
     );
   }
@@ -1557,32 +1607,28 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
         </div>
       )}
 
-      {error && messages.length > 0 && (
+
+
+      {error && !historySyncing && messages.length > 0 && (
         <div
           key="session-offline-error-banner"
           role="alert"
           style={{
-            position: "absolute",
-            top: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 50,
             display: "flex",
             alignItems: "center",
-            gap: 10,
-            padding: "8px 14px",
-            borderRadius: 8,
-            border: "1px solid color-mix(in srgb, #f59e0b 50%, var(--border))",
-            background: "var(--bg)",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.18)",
+            gap: 8,
+            padding: "6px 14px",
+            borderBottom: "1px solid color-mix(in srgb, #f59e0b 35%, var(--border))",
+            background: "color-mix(in srgb, #f59e0b 8%, var(--bg))",
             color: "var(--text)",
             fontSize: 12,
-            maxWidth: "min(600px, calc(100vw - 32px))",
+            width: "100%",
+            flexShrink: 0,
           }}
         >
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
-          <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
-            会话同步失败，已保留缓存内容：{error}
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f59e0b", flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere", wordBreak: "break-word" }}>
+            {t("chat.syncFailedRetained", { error })}
           </span>
           <button
             type="button"
@@ -1597,9 +1643,10 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
               fontSize: 11,
               fontWeight: 600,
               flexShrink: 0,
+              whiteSpace: "nowrap",
             }}
           >
-            重试
+            {t("chat.retrySync")}
           </button>
         </div>
       )}
@@ -2343,7 +2390,7 @@ function ExtensionCustomPanel({
 }: {
   request: ExtensionCustomRequest;
   waitingCount: number;
-  onInput: (request: ExtensionCustomRequest, data: string) => void;
+  onInput: (request: ExtensionCustomRequest, data: string) => void | Promise<unknown>;
 }) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -2357,6 +2404,10 @@ function ExtensionCustomPanel({
   useEffect(() => {
     if (!collapsed) focusEditable(inputRef.current);
   }, [collapsed]);
+
+  const dispatchInput = (data: string) => {
+    void Promise.resolve(onInput(request, data)).catch(() => {});
+  };
 
   return (
     <div
@@ -2434,13 +2485,13 @@ function ExtensionCustomPanel({
             if (!data) return;
             event.preventDefault();
             event.stopPropagation();
-            onInput(request, data);
+            dispatchInput(data);
           }}
           onInput={(event) => {
             if (composingRef.current || event.nativeEvent.isComposing) return;
             const text = event.currentTarget.value;
             event.currentTarget.value = "";
-            if (text) onInput(request, text);
+            if (text) dispatchInput(text);
           }}
           onCompositionStart={() => {
             composingRef.current = true;
@@ -2451,13 +2502,13 @@ function ExtensionCustomPanel({
             queueMicrotask(() => {
               const text = input.value;
               input.value = "";
-              if (text) onInput(request, text);
+              if (text) dispatchInput(text);
             });
           }}
           onPaste={(event) => {
             event.preventDefault();
             const text = event.clipboardData.getData("text");
-            if (text) onInput(request, asBracketedPaste(text));
+            if (text) dispatchInput(asBracketedPaste(text));
           }}
           placeholder={showEditableInput ? t("chat.extensionInput") : undefined}
           style={showEditableInput ? {
@@ -2502,7 +2553,7 @@ function ExtensionCustomPanel({
               </svg>
             </button>
             <button
-              onClick={() => onInput(request, "\x03")}
+              onClick={() => dispatchInput("\x03")}
               style={{
                 padding: "5px 9px",
                 borderRadius: 6,

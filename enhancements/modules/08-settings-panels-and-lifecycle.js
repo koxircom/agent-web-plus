@@ -4507,6 +4507,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__ = getDurableStateInstanceParam;
 
   window.__PI_WEB_ENHANCEMENTS_LOADED__ = true;
+  window.dispatchEvent(new Event("pi-dom-feedback-ready"));
   runIsolatedKernelStep("initialDomSyncImmediate", () => {
     if (!isLoginPage()) {
       runAllSyncOperations();

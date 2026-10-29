@@ -28,7 +28,7 @@ const commands = [
   },
   {
     file: process.execPath,
-    args: ['tests/codex-pricing.pw.mjs'],
+    args: ['--test-concurrency=1', '--test', 'tests/codex-pricing.pw.mjs', 'tests/pricing-cache.pw.mjs'],
     cwd: root,
   },
 ];

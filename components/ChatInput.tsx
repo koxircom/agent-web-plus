@@ -268,6 +268,7 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
   }, [snapshot]);
 
   const modeLabel = snapshot.mode === "plan" ? "计划" : snapshot.mode === "goal" ? "目标" : "";
+  const modePending = !snapshot.sessionId && Boolean(modeLabel);
   const goal = snapshot.goal;
   const goalText = goal?.goal?.trim() || "";
   const goalDurationMs = goal && typeof goal.goalElapsedMs === "number"
@@ -336,12 +337,12 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
         </svg>
       </button>
       {modeLabel && (
-        <div className="chat-composer-mode-status" data-mode={snapshot.mode}>
+        <div className="chat-composer-mode-status" data-mode={snapshot.mode} data-pending={modePending || undefined}>
           <button
             type="button"
             className="chat-composer-mode-chip chat-composer-control-capsule"
             aria-label={`退出${modeLabel}模式`}
-            title={`退出${modeLabel}模式`}
+            title={modePending ? "尚未启用：首次发送时由服务端确认，当前选择仅保存在此设备" : `退出${modeLabel}模式`}
             onClick={exitMode}
           >
             <span className="chat-composer-mode-icon" aria-hidden="true">
@@ -353,7 +354,7 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
                 <path d="m5.8 5.8 4.4 4.4m0-4.4-4.4 4.4" stroke="var(--bg-panel)" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
             </span>
-            <span>{modeLabel}</span>
+            <span>{modeLabel}{modePending ? "（待启用）" : ""}</span>
           </button>
         </div>
       )}
@@ -903,6 +904,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     onQueuePreviewChange?.(queuePreviewIdentity);
     return () => onQueuePreviewChange?.(null);
   }, [queuePreviewIdentity, onQueuePreviewChange]);
+  const queuedCount = (queuedMessages?.steering?.length ?? 0) + (queuedMessages?.followUp?.length ?? 0);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
 
@@ -1280,6 +1282,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [attachedImages.length, clearInput, onBuiltinCommand]);
 
   const lastSubmissionAtRef = useRef(-Infinity);
+  const directSubmissionPendingRef = useRef(false);
   const handleStopClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     // A send button can become Stop between the two taps of one gesture.
     // Keyboard activation and the dedicated Escape shortcut remain immediate.
@@ -1288,24 +1291,34 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [onAbort]);
 
   const handleSend = useCallback(async (event?: React.MouseEvent<HTMLButtonElement>) => {
-    const msg = value.trim();
-    const currentImageCount = Math.max(attachedImages.length, attachedImagesRef.current.length);
-    const builtinAllowed = !isStreaming || offersBuiltinSlashCommandWhileStreaming(msg);
-    if (builtinAllowed && await runBuiltinCommand(msg)) return;
-    if (isStreaming) return;
-    const enhancementWindow = typeof window !== "undefined" ? window as Window & {
-      __PI_ENH_PREPARE_COMPOSER_SUBMISSION__?: (kind: "send" | "steer" | "followup", body: string) => { text: string; commit: () => void } | null;
-    } : null;
-    const submission = enhancementWindow?.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__?.("send", msg) ?? null;
-    const submittedText = (submission?.text ?? msg) || (event?.type === "click" && allowEmptyContinue && currentImageCount === 0 ? "继续" : "");
-    if (!submittedText && !currentImageCount) return;
-    if (currentImageCount > MAX_ATTACHED_IMAGES) return;
-    onAudioUnlock?.();
-    clearInput();
-    lastSubmissionAtRef.current = performance.now();
-    onSend(submittedText, attachedImages.length ? attachedImages : undefined);
-    submission?.commit();
-  }, [value, attachedImages, isStreaming, allowEmptyContinue, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+    // Claim before the first await: one physical gesture can produce two
+    // activations before React commits clearInput or the streaming state.
+    if (directSubmissionPendingRef.current) return;
+    directSubmissionPendingRef.current = true;
+    const submissionDraftKey = draftKeyRef.current;
+    const msg = valueRef.current.trim();
+    const images = attachedImagesRef.current;
+    try {
+      const currentImageCount = images.length;
+      const builtinAllowed = !isStreaming || offersBuiltinSlashCommandWhileStreaming(msg);
+      if (builtinAllowed && await runBuiltinCommand(msg)) return;
+      if (isStreaming || draftKeyRef.current !== submissionDraftKey || valueRef.current.trim() !== msg || attachedImagesRef.current !== images) return;
+      const enhancementWindow = typeof window !== "undefined" ? window as Window & {
+        __PI_ENH_PREPARE_COMPOSER_SUBMISSION__?: (kind: "send" | "steer" | "followup", body: string) => { text: string; commit: () => void } | null;
+      } : null;
+      const submission = enhancementWindow?.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__?.("send", msg) ?? null;
+      const submittedText = (submission?.text ?? msg) || (event?.type === "click" && allowEmptyContinue && currentImageCount === 0 ? "继续" : "");
+      if (!submittedText && !currentImageCount) return;
+      if (currentImageCount > MAX_ATTACHED_IMAGES) return;
+      onAudioUnlock?.();
+      clearInput();
+      lastSubmissionAtRef.current = performance.now();
+      onSend(submittedText, images.length ? images : undefined);
+      submission?.commit();
+    } finally {
+      directSubmissionPendingRef.current = false;
+    }
+  }, [isStreaming, allowEmptyContinue, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = !compact && value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -2727,7 +2740,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onPaste={handlePaste}
             placeholder={visibleSuggestion?.text ?? (
               isStreaming && (onSteer || onFollowUp)
-                ? t("chat.steerPlaceholder")
+                ? (queuedCount > 0 ? `${t("chat.steerPlaceholder")} (排队 ${queuedCount})` : t("chat.steerPlaceholder"))
                 : isStreaming ? t("chat.agentPlaceholder")
                 : isCodexActive && modesEnabled && nativeComposerMode === "plan"
                   ? "描述你的任务以生成方案…"
@@ -2801,6 +2814,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     </svg>
                   )}
                   {t("chat.followUp")}
+                  {queuedCount > 0 && (
+                    <span
+                      className="pi-enh-queue-count-badge"
+                      title={`当前队列中有 ${queuedCount} 个任务在排队`}
+                    >
+                      {queuedCount}
+                    </span>
+                  )}
                 </button>
               )}
             </div>

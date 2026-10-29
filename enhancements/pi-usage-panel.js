@@ -468,7 +468,7 @@
 
   function card(label, value, hint, badge = "") {
     const textStyle = String(value).length > 8 ? ' style="white-space:normal;overflow-wrap:anywhere;font-size:14px"' : "";
-    const badgeHtml = badge ? ` <span class="pi-enh-kpi-badge" data-usage-kpi-badge style="font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;vertical-align:middle;margin-left:4px;background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">${esc(badge)}</span>` : "";
+    const badgeHtml = badge ? ` <span class="pi-enh-kpi-badge" data-usage-kpi-badge style="white-space:nowrap;flex-shrink:0;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;vertical-align:middle;margin-left:4px;background:rgba(56,189,248,0.15);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);">${esc(badge)}</span>` : "";
     return `<div class="pi-enh-kpi-pro-card"><div class="kpi-pro-label">${label}${badgeHtml}</div><div class="kpi-pro-value highlight-cyan"${textStyle}>${value}</div><div class="kpi-pro-hint">${hint}</div></div>`;
   }
 
@@ -581,6 +581,39 @@
     return JSON.stringify([statuses.pi.status, statuses.pi.message, statuses.codex.status, statuses.codex.message]);
   }
 
+  function pricingKey(ledger) {
+    const p = ledger?.pricing;
+    if (!p || typeof p !== "object") return "";
+    const refresh = p.refresh && typeof p.refresh === "object" ? p.refresh : {};
+    const models = p.models && typeof p.models === "object" ? p.models : {};
+    const sortedModelKeys = Object.keys(models).sort();
+    const modelRates = sortedModelKeys.map(k => {
+      const m = models[k];
+      if (!m || typeof m !== "object") return [k, null];
+      return [
+        k,
+        m.input ?? null,
+        m.output ?? null,
+        m.cacheRead ?? null,
+        m.cacheWrite ?? null,
+        m.source ?? null,
+        m.provider ?? null,
+        m.modelId ?? null,
+        m.tiered ?? null,
+      ];
+    });
+    return JSON.stringify([
+      p.version ?? null,
+      p.currency ?? null,
+      p.unit ?? null,
+      p.updatedAt ?? null,
+      refresh.state ?? null,
+      refresh.attemptedAt ?? null,
+      refresh.message ?? null,
+      modelRates,
+    ]);
+  }
+
   function isPanelActive(panel, hooks) {
     return Boolean(panel?.isConnected && !(hooks && hooks.enabled && !hooks.enabled()));
   }
@@ -617,7 +650,8 @@
         const next = fresh || root.__PI_ENH_USAGE_LEDGER__ || ledger;
         const nextSnapshotKey = engineSnapshotKey(next);
         const nextStatusKey = engineStatusKey(next);
-        if (nextSnapshotKey !== poll.snapshotKey || nextStatusKey !== poll.statusKey) {
+        const nextPricingKey = pricingKey(next);
+        if (nextSnapshotKey !== poll.snapshotKey || nextStatusKey !== poll.statusKey || nextPricingKey !== poll.pricingKey) {
           enginePollErrors.delete(poll.panel);
           stopEnginePoll(poll.panel);
           render(poll.panel, poll.nav, poll.hooks);
@@ -629,6 +663,7 @@
         }
         poll.snapshotKey = nextSnapshotKey;
         poll.statusKey = nextStatusKey;
+        poll.pricingKey = nextPricingKey;
         scheduleEnginePoll(poll, next);
       } catch (error) {
         if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
@@ -636,6 +671,7 @@
           enginePollErrors.set(poll.panel, {
             snapshotKey: poll.snapshotKey,
             statusKey: poll.statusKey,
+            pricingKey: poll.pricingKey,
             message: error?.message || String(error || "未知异常"),
           });
           stopEnginePoll(poll.panel);
@@ -655,14 +691,15 @@
     }
     const snapshotKey = engineSnapshotKey(ledger);
     const statusKey = engineStatusKey(ledger);
+    const pKey = pricingKey(ledger);
     const previousError = enginePollErrors.get(panel);
-    if (previousError && previousError.snapshotKey === snapshotKey && previousError.statusKey === statusKey) return;
+    if (previousError && previousError.snapshotKey === snapshotKey && previousError.statusKey === statusKey && previousError.pricingKey === pKey) return;
     if (previousError) enginePollErrors.delete(panel);
     const existing = enginePollers.get(panel);
-    if (existing && existing.snapshotKey === snapshotKey && existing.statusKey === statusKey) return;
+    if (existing && existing.snapshotKey === snapshotKey && existing.statusKey === statusKey && existing.pricingKey === pKey) return;
     stopEnginePoll(panel);
     if (!isPanelActive(panel, hooks)) return;
-    const poll = { panel, nav, hooks, snapshotKey, statusKey, timer: null, cancelled: false };
+    const poll = { panel, nav, hooks, snapshotKey, statusKey, pricingKey: pKey, timer: null, cancelled: false };
     enginePollers.set(panel, poll);
     scheduleEnginePoll(poll, ledger);
   }
@@ -673,7 +710,7 @@
     const snapshotKey = engineSnapshotKey(ledger);
     const statusKey = engineStatusKey(ledger);
     const pollError = enginePollErrors.get(panel);
-    const currentPollError = pollError && pollError.snapshotKey === snapshotKey && pollError.statusKey === statusKey
+    const currentPollError = pollError && pollError.snapshotKey === snapshotKey && pollError.statusKey === statusKey && pollError.pricingKey === pricingKey(ledger)
       ? pollError
       : null;
     if (pollError && !currentPollError) enginePollErrors.delete(panel);
@@ -772,7 +809,7 @@
       })
         .then(fresh => {
           if (panel.isConnected && (!hooks || !hooks.enabled || hooks.enabled())) {
-            if (fresh && ledger && (fresh.snapshotId !== ledger.snapshotId || engineStatusKey(fresh) !== engineStatusKey(ledger))) {
+            if (fresh && ledger && (fresh.snapshotId !== ledger.snapshotId || engineStatusKey(fresh) !== engineStatusKey(ledger) || pricingKey(fresh) !== pricingKey(ledger))) {
               render(panel, nav, hooks);
               const statusEl = panel.querySelector("[data-usage-refresh-status]");
               if (statusEl) {
@@ -1324,6 +1361,7 @@
 
       const oldId = ledger.snapshotId;
       const oldEngineStatusKey = engineStatusKey(ledger);
+      const oldPricingKey = pricingKey(ledger);
       const postAbortCtrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const timeoutMs = getPostTimeoutMs();
       let timedOut = false;
@@ -1348,11 +1386,7 @@
           if (!panel.isConnected || (hooks && hooks.enabled && !hooks.enabled())) return;
 
           let fresh;
-          if (mode === "legacy-central") {
-            // Legacy central ledgers are refreshed by their configured server
-            // aggregator. Never guess a separate host or port in the browser.
-            throw new Error("当前服务使用旧版中心账本，请先在账本聚合服务刷新后重试。");
-          } else if (mode === "native-local") {
+          if (mode === "legacy-central" || mode === "native-local") {
             const responseLedger = apiBody?.ledger && typeof apiBody.ledger === "object" ? apiBody.ledger : apiBody;
             fresh = cacheValidatedLedger(responseLedger);
             clearTimeout(postTimer);
@@ -1368,9 +1402,19 @@
             const d = new Date();
             const pad = n => String(n).padStart(2, "0");
             const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-            nextStatusEl.textContent = fresh.snapshotId === oldId && engineStatusKey(fresh) === oldEngineStatusKey
-              ? `快照未变化，已是对齐最新 (${timeStr})`
-              : `✅ 已成功完成全量扫描与统计 (${timeStr})`;
+            const isUnchanged = fresh.snapshotId === oldId &&
+              engineStatusKey(fresh) === oldEngineStatusKey &&
+              pricingKey(fresh) === oldPricingKey;
+
+            if (mode === "legacy-central") {
+              nextStatusEl.textContent = isUnchanged
+                ? `已同步账本和参考价格、中心聚合独立维护（快照未变化，${timeStr}）`
+                : `✅ 已同步账本和参考价格、中心聚合独立维护 (${timeStr})`;
+            } else {
+              nextStatusEl.textContent = isUnchanged
+                ? `快照未变化，已是对齐最新 (${timeStr})`
+                : `✅ 已成功完成全量扫描与统计 (${timeStr})`;
+            }
           }
         } catch (err) {
           activeRescanPromise = null;

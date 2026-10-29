@@ -7,6 +7,7 @@ export interface EnhancementSidebarBridgeHandle<TSession = unknown> {
   notifySessionDeleted: (sessionId: string) => void;
   setUnreadSession: (sessionId: string, isUnread: boolean) => void;
   isSessionUnread: (sessionId: string) => boolean;
+  toggleNativeSessionPin?: (sessionId: string) => Promise<boolean>;
 }
 
 export interface EnhancementSearchResultFields {
@@ -41,6 +42,7 @@ const SIDEBAR_BRIDGE_KEYS = [
   "__PI_ENH_SESSION_DELETED__",
   "__PI_ENH_SET_UNREAD_SESSION__",
   "__PI_ENH_IS_SESSION_UNREAD__",
+  "__PI_ENH_TOGGLE_NATIVE_SESSION_PIN__",
 ] as const;
 
 /** Search membership/content identity; ordinary activity timestamps do not change it. */
@@ -173,6 +175,30 @@ function getOrCreateSidebarBridgeState(win: WindowRecord): SidebarBridgeState {
         }
       }
       return false;
+    },
+    __PI_ENH_TOGGLE_NATIVE_SESSION_PIN__: async (sessionId: string) => {
+      if (typeof sessionId !== "string" || !sessionId) {
+        throw new Error("会话 ID 无效");
+      }
+      const isCodexSession = sessionId.startsWith("codex:");
+      const list = [...handles];
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const handle = list[i];
+        const fn = handle.toggleNativeSessionPin;
+        if (typeof fn !== "function") continue;
+
+        if (isCodexSession) {
+          // 按真实 Codex pane 且含 id 选唯一 owner，绝不让 Pi pane 吃 Codex 命令
+          const engine = handle.getExecutionEngine?.();
+          if (engine !== "codex") continue;
+          const raw = handle.getRawSessions?.();
+          const hasSession = Array.isArray(raw) && raw.some((s) => (s as { id?: string })?.id === sessionId);
+          if (!hasSession) continue;
+        }
+
+        return await fn(sessionId);
+      }
+      throw new Error("无可用原生置顶处理器");
     },
   };
 
@@ -522,4 +548,18 @@ export function getEnhancementSessionStatus(sessionId: string): { status: string
     const hook = win?.__PI_ENH_GET_EFFECTIVE_PROJECT_STATUS_ENTRY__;
     return typeof hook === "function" ? hook(sessionId) : null;
   } catch { return null; }
+}
+
+export function isEnhancementPluginEnabled(
+  pluginId: string,
+  win: WindowRecord | undefined = getDefaultWindow(),
+): boolean {
+  if (!win) return true;
+  try {
+    const fn = win.__PI_ENH_IS_PLUGIN_ENABLED__;
+    if (typeof fn === "function") return Boolean(fn(pluginId));
+  } catch {
+    // Fallback to true on error
+  }
+  return true;
 }

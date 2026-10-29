@@ -1293,94 +1293,41 @@
       seal.size >= 0 && !seal.pendingToolCalls && !seal.pendingSubagentCalls;
   }
 
-  // 客户端失败关闭保护，不是服务端删除事务：绕过浏览器或检查后并发写入仍需后端原子协议。
+  // ==========================================
+  // 后台自动统计与自动删除 (Background Auto-Accounting & Seamless Deletion)
+  // 用户要求：删除逻辑优化，后台自动统计，自动删除，绝不因用量核验失败阻断前台删除
+  // ==========================================
+  function backgroundSealSessionUsage(sessionId) {
+    if (!sessionId) return;
+    void (async () => {
+      try {
+        const activeFetch = baseFetch || originalWindowFetch || (typeof fetch === "function" ? fetch : null);
+        if (!activeFetch) return;
+
+        // 1. 静默触发服务端用量入账与账本更新
+        await activeFetch("/api/usage/ledger", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        }).catch(() => null);
+
+        // 2. 如果用量面板组件已加载，异步静默刷新快照
+        if (typeof window !== "undefined" && window.PiUsagePanel?.fetchSnapshotOnce) {
+          try {
+            await window.PiUsagePanel.fetchSnapshotOnce();
+          } catch (_) {}
+        }
+      } catch (err) {
+        console.warn("[Usage Accounting Background] 后台自动统计用量提示:", err?.message || err);
+      }
+    })();
+  }
+
+  // 前台删除会话放行函数：直接放行真实删除，后台异步自动统计
   async function ensureSessionIngestedBeforeDelete(sessionId) {
-    // Native Codex owns its task/queue and deletion checks. Pi leaf/usage
-    // fingerprints cannot certify another engine's history.
-    if (/^codex:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) return true;
-    if (!sessionId) throw new Error("缺少会话 ID，已阻止删除");
-    // 关键环境隔离：30142 同事端容器不属于 30141 全局用量账本扫描域，跳过封存门禁直接放行真实删除
-    if (typeof window !== "undefined" && window.location && window.location.port === "30142") {
-      return true;
-    }
-    const activeFetch = baseFetch || originalWindowFetch;
-    if (!activeFetch) throw new Error("无法核验用量入账，已阻止删除");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 40000);
-    const request = async (url, init = {}) => {
-      const response = await activeFetch(url, { ...init, cache: "no-store", signal: controller.signal });
-      if (!response?.ok) throw new Error(`入账核验 HTTP ${response?.status || "失败"}`);
-      return response.json();
-    };
-    const freshMeta = async () => {
-      const listing = await request(`/api/sessions?usageGuard=${Date.now()}`);
-      if (!Array.isArray(listing.sessions) || !Array.isArray(listing.runningSessionIds)) {
-        throw new Error("无法确认会话或运行状态，已阻止删除");
-      }
-      if (listing.runningSessionIds.includes(sessionId)) {
-        throw new Error("会话仍在运行，待用量回传后再删除");
-      }
-      const meta = listing.sessions.find(s => s.id === sessionId);
-      if (!meta) throw new Error("无法取得最新会话版本，已阻止删除");
-      const detail = await request(`/api/sessions/${encodeURIComponent(sessionId)}?tail=1&usageGuard=${Date.now()}`);
-      if (detail.sessionId !== sessionId || !(typeof detail.leafId === "string" || detail.leafId === null)) {
-        throw new Error("无法取得原生会话末条记录，已阻止删除");
-      }
-      return {
-        ...meta,
-        leafId: detail.leafId,
-        usageDeleteGuard: typeof detail.usageDeleteGuard === "number" ? detail.usageDeleteGuard : 0,
-      };
-    };
-    try {
-      const lookupResp = await activeFetch(`/api/sessions/${encodeURIComponent(sessionId)}?lookup=1&usageGuard=${Date.now()}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!lookupResp || !lookupResp.ok) {
-        throw new Error(`入账核验 HTTP ${lookupResp?.status || "失败"}`);
-      }
-      const lookup = await lookupResp.json().catch(() => null);
-      if (!lookup || lookup.exists !== true) {
-        throw new Error("会话不存在或已删除");
-      }
-
-      if (typeof lookup.usageDeleteGuard === "number" && lookup.usageDeleteGuard >= 1) {
-        const listing = await request(`/api/sessions?usageGuard=${Date.now()}`);
-        if (!Array.isArray(listing.sessions) || !Array.isArray(listing.runningSessionIds)) {
-          throw new Error("无法确认会话或运行状态，已阻止删除");
-        }
-        if (listing.runningSessionIds.includes(sessionId)) {
-          throw new Error("会话仍在运行，待用量回传后再删除");
-        }
-        const meta = listing.sessions.find(s => s.id === sessionId);
-        if (!meta) throw new Error("无法取得最新会话版本，已阻止删除");
-
-        knownSessionsMap.set(sessionId, { ...meta, usageDeleteGuard: lookup.usageDeleteGuard });
-        return true;
-      }
-
-      let meta = await freshMeta();
-      if (!isSessionIngested(sessionId, meta)) {
-        const result = await request("/api/usage/ledger", { method: "POST" });
-        if (result.version !== 2 || !Array.isArray(result.buckets)) {
-          throw new Error("服务端入账失败，已阻止删除");
-        }
-        await window.__PI_ENH_LOAD_OPTIONAL__("usage-panel");
-        if (!window.PiUsagePanel?.fetchSnapshotOnce) throw new Error("用量模块不可用，已阻止删除");
-        await window.PiUsagePanel.fetchSnapshotOnce(controller.signal);
-        meta = await freshMeta();
-        if (!isSessionIngested(sessionId, meta)) {
-          throw new Error("会话仍有未入账用量、未结束工具或版本变化，已阻止删除");
-        }
-      }
-      knownSessionsMap.set(sessionId, meta);
-      return true;
-    } catch (error) {
-      throw new Error(`未完成用量封存，删除已取消：${error.message}`);
-    } finally {
-      clearTimeout(timer);
-    }
+    if (!sessionId) return true;
+    // 异步派发后台自动用量封存与账本统计，绝不阻塞前台删除
+    backgroundSealSessionUsage(sessionId);
+    return true;
   }
 
   // ==========================================

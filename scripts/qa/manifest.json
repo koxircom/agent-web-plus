@@ -35,7 +35,9 @@
       "instrumentation-node.ts",
       "postcss.config.mjs",
       "tailwind.config.ts",
-      "connectors"
+      "connectors",
+      "e2e/pdf-page-fragment.mjs",
+      "e2e/collaboration-center.mjs"
     ],
     "excludeDirs": [
       "node_modules",
@@ -107,6 +109,7 @@
             "lib/prompt-recovery.test.mjs",
             "lib/prompt-delivery.test.mjs",
             "lib/agent-client.test.mjs",
+            "lib/rpc-manager-extension-ui.test.mjs",
             "lib/prompt-durability.integration.test.mjs",
             "lib/prompt-settlement.integration.test.mjs",
             "lib/inline-suggestion.test.mjs",
@@ -116,6 +119,7 @@
             "lib/prompt-recovery.test.mjs",
             "lib/prompt-delivery.test.mjs",
             "lib/agent-client.test.mjs",
+            "lib/rpc-manager-extension-ui.test.mjs",
             "lib/prompt-durability.integration.test.mjs",
             "lib/prompt-settlement.integration.test.mjs",
             "lib/inline-suggestion.test.mjs",
@@ -238,6 +242,7 @@
             "lib/prompt-recovery.test.mjs",
             "lib/prompt-delivery.test.mjs",
             "lib/agent-client.test.mjs",
+            "lib/rpc-manager-extension-ui.test.mjs",
             "lib/prompt-durability.integration.test.mjs",
             "lib/prompt-settlement.integration.test.mjs",
             "lib/inline-suggestion.test.mjs",
@@ -247,6 +252,7 @@
             "lib/prompt-recovery.test.mjs",
             "lib/prompt-delivery.test.mjs",
             "lib/agent-client.test.mjs",
+            "lib/rpc-manager-extension-ui.test.mjs",
             "lib/prompt-durability.integration.test.mjs",
             "lib/prompt-settlement.integration.test.mjs",
             "lib/inline-suggestion.test.mjs",
@@ -300,11 +306,17 @@
             "--experimental-strip-types",
             "--test",
             "hooks/useAgentSession.test.mjs",
-            "lib/composer-bootstrap.test.mjs"
+            "lib/composer-bootstrap.test.mjs",
+            "lib/session-hydration-race.test.mjs",
+            "components/AppShell.engine-context.test.mjs",
+            "components/AppShell.workspace-recovery.test.mjs"
           ],
           "files": [
             "hooks/useAgentSession.test.mjs",
-            "lib/composer-bootstrap.test.mjs"
+            "lib/composer-bootstrap.test.mjs",
+            "lib/session-hydration-race.test.mjs",
+            "components/AppShell.engine-context.test.mjs",
+            "components/AppShell.workspace-recovery.test.mjs"
           ],
           "timeoutSeconds": 240
         },
@@ -413,7 +425,10 @@
         },
         {
           "name": "release-queue-edit-identity",
-          "command": ["node", "scripts/qa/queue-edit-identity.cjs"],
+          "command": [
+            "node",
+            "scripts/qa/queue-edit-identity.cjs"
+          ],
           "files": [
             "scripts/qa/queue-edit-identity.cjs",
             "tests/queue-edit-identity.pw.mjs",
@@ -428,20 +443,51 @@
         },
         {
           "name": "release-file-engine-context",
-          "command": ["node", "scripts/qa/file-engine-context.cjs"],
-          "files": ["scripts/qa/file-engine-context.cjs", "tests/file-engine-context.test.mjs", "tests/file-engine-context.pw.mjs", "tests/file-engine-page.pw.mjs"],
+          "command": [
+            "node",
+            "scripts/qa/file-engine-context.cjs"
+          ],
+          "files": [
+            "scripts/qa/file-engine-context.cjs",
+            "tests/file-engine-context.test.mjs",
+            "tests/file-engine-context.pw.mjs",
+            "tests/file-engine-page.pw.mjs",
+            "tests/suggestion-submission.pw.mjs"
+          ],
           "timeoutSeconds": 180
         },
         {
           "name": "release-codex-first-model",
-          "command": ["node", "scripts/qa/codex-first-model.cjs"],
-          "files": ["scripts/qa/codex-first-model.cjs", "lib/execution-engines/codex-first-model.test.mjs", "tests/codex-first-model.pw.mjs", "public/sw.test.mjs", "tests/brand-naming.test.mjs", "lib/turn-number.test.mjs", "tests/turn-number.pw.mjs", "tests/turn-number-page.pw.mjs"],
+          "command": [
+            "node",
+            "scripts/qa/codex-first-model.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-first-model.cjs",
+            "lib/execution-engines/codex-first-model.test.mjs",
+            "tests/codex-first-model.pw.mjs",
+            "public/sw.test.mjs",
+            "tests/brand-naming.test.mjs",
+            "lib/turn-number.test.mjs",
+            "tests/turn-number.pw.mjs",
+            "tests/turn-number-page.pw.mjs",
+            "lib/new-session-start.test.mjs",
+            "lib/codex-api-errors.test.mjs"
+          ],
           "timeoutSeconds": 180
         },
         {
           "name": "release-codex-foundations",
-          "command": ["node", "scripts/qa/codex-foundations.cjs"],
-          "files": ["scripts/qa/codex-foundations.cjs", "tests/codex-subagents-panel.pw.mjs", "tests/codex-worktree-flow.pw.mjs", "lib/execution-engines/codex-model-runtime.test.mjs"],
+          "command": [
+            "node",
+            "scripts/qa/codex-foundations.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-foundations.cjs",
+            "tests/codex-subagents-panel.pw.mjs",
+            "tests/codex-worktree-flow.pw.mjs",
+            "lib/execution-engines/codex-model-runtime.test.mjs"
+          ],
           "timeoutSeconds": 180
         },
         {
@@ -485,7 +531,14 @@
             "connectors/codex-bridge/tests/test_shared_bridge.py",
             "connectors/codex-bridge/tests/test_fork_helper.py",
             "connectors/codex-bridge/tests/test_native_metadata_sync.py",
-            "connectors/codex-bridge/tests/test_timeline_timestamp.py"
+            "connectors/codex-bridge/tests/test_title_naming.py",
+            "connectors/codex-bridge/tests/test_timeline_timestamp.py",
+            "lib/execution-engines/codex-composer.test.mjs",
+            "lib/execution-engines/codex-events.test.mjs",
+            "connectors/codex-bridge/tests/test_windows_desktop.py",
+            "connectors/codex-bridge/tests/test_windows_http_boundary.py",
+            "connectors/codex-bridge/tests/test_attachment_receipts.py",
+            "connectors/codex-bridge/tests/test_persisted_submission_receipt.py"
           ],
           "timeoutSeconds": 180
         },
@@ -517,6 +570,24 @@
           "timeoutSeconds": 180
         },
         {
+          "name": "release-ask-user-delivery",
+          "command": [
+            "node",
+            "scripts/qa/ask-user-delivery.cjs"
+          ],
+          "files": [
+            "scripts/qa/ask-user-delivery.cjs",
+            "tests/ask-user-delivery.pw.mjs",
+            "lib/extension-ui-delivery-guards.test.mjs",
+            "lib/extension-ui-transport.test.mjs",
+            "lib/agent-client.test.mjs",
+            "lib/rpc-manager-extension-ui.test.mjs",
+            "app/api/agent/state-route.test.mjs",
+            "components/AppShell.workspace-recovery.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
           "name": "release-codex-pricing",
           "command": [
             "node",
@@ -528,7 +599,8 @@
             "lib/usage-pricing.test.mjs",
             "lib/usage-pricing-routes.test.mjs",
             "tests/codex-pricing.test.mjs",
-            "tests/codex-pricing.pw.mjs"
+            "tests/codex-pricing.pw.mjs",
+            "tests/pricing-cache.pw.mjs"
           ],
           "timeoutSeconds": 180
         },
@@ -544,6 +616,241 @@
             "enhancements/modules/08-settings-panels-and-lifecycle.js"
           ],
           "timeoutSeconds": 180
+        },
+        {
+          "name": "release-codex-attention",
+          "command": [
+            "node",
+            "scripts/qa/codex-attention.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-attention.cjs",
+            "tests/codex-attention.pw.mjs",
+            "lib/execution-engines/codex-status.test.mjs",
+            "lib/execution-engines/codex-title-naming.test.mjs",
+            "tests/title-naming-feedback.pw.mjs",
+            "lib/execution-engines/codex-projection.test.mjs",
+            "lib/codex-attention.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-collaboration-relay",
+          "command": [
+            "node",
+            "scripts/qa/collaboration-relay.cjs"
+          ],
+          "files": [
+            "scripts/qa/collaboration-relay.cjs",
+            "e2e/collaboration-center.mjs",
+            "lib/collaboration-store.ts",
+            "lib/collaboration-runtime.ts",
+            "lib/collaboration-extension.ts",
+            "lib/collaboration-store.test.mjs",
+            "lib/collaboration-runtime.test.mjs",
+            "lib/collaboration-extension.test.mjs",
+            "lib/collaboration-controller.test.mjs",
+            "app/api/collaboration/route.test.mjs",
+            "components/CollaborationSettings.test.mjs",
+            "lib/lock-handoff-dispatcher.test.mjs",
+            "lib/lock-handoff-sdk.test.mjs",
+            "enhancements/tests/release-ownership.test.cjs"
+          ],
+          "timeoutSeconds": 120
+        },
+        {
+          "name": "release-codex-pin-sync",
+          "command": [
+            "node",
+            "scripts/qa/codex-pin-sync.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-pin-sync.cjs",
+            "tests/codex-pin-source-owner.pw.mjs",
+            "lib/execution-engines/codex-pin-refresh.test.mjs",
+            "lib/enhancement-sidebar-bridge.test.mjs",
+            "components/SessionSidebar.tsx",
+            "lib/enhancement-sidebar-bridge.ts",
+            "lib/session-list.ts",
+            "lib/execution-engines/codex-engine.ts",
+            "enhancements/modules/02-plugin-registry-and-settings-schema.js",
+            "enhancements/modules/04-sidebar-and-session-management.js"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-codex-bulk-delete",
+          "command": [
+            "node",
+            "scripts/qa/codex-bulk-delete.cjs"
+          ],
+          "files": [
+            "scripts/qa/codex-bulk-delete.cjs",
+            "app/api/sessions/batch-delete/route.ts",
+            "lib/session-batch-delete.ts",
+            "lib/session-batch-delete.test.mjs",
+            "lib/execution-engines/codex-engine.ts",
+            "enhancements/modules/05-composer-and-input-workflow.js",
+            "enhancements/tests/batch-session-delete.test.cjs",
+            "tests/codex-bulk-delete-progress.pw.mjs",
+            "tests/fixtures/bulk-delete-real-http.mjs",
+            "lib/session-delete-jobs.ts",
+            "lib/session-delete-jobs.test.mjs",
+            "tests/session-delete-jobs-http.test.mjs",
+            "enhancements/modules/02-plugin-registry-and-settings-schema.js",
+            "enhancements/tests/session-delete-cleanup.test.cjs",
+            "app/api/sessions/batch-delete/jobs/route.ts",
+            "app/api/sessions/batch-delete/jobs/[id]/route.ts",
+            "app/api/sessions/batch-delete/jobs/[id]/events/route.ts"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-sidebar-status-recovery",
+          "command": [
+            "node",
+            "tests/sidebar-status-recovery.pw.mjs"
+          ],
+          "files": [
+            "tests/sidebar-status-recovery.pw.mjs",
+            "components/SessionSidebar.tsx",
+            "enhancements/modules/06-chat-view-and-tool-cards.js",
+            "enhancements/modules/04-sidebar-and-session-management.js",
+            "lib/enhancement-sidebar-bridge.ts"
+          ],
+          "timeoutSeconds": 120
+        },
+        {
+          "name": "release-sidebar-engine-status",
+          "command": [
+            "node",
+            "tests/sidebar-engine-status.pw.mjs"
+          ],
+          "files": [
+            "tests/sidebar-engine-status.pw.mjs",
+            "components/SessionSidebar.tsx",
+            "enhancements/modules/04-sidebar-and-session-management.js",
+            "enhancements/tests/project-status-authority.test.cjs",
+            "lib/enhancement-sidebar-bridge.ts"
+          ],
+          "timeoutSeconds": 90
+        },
+        {
+          "name": "release-odoo-lan",
+          "command": [
+            "node",
+            "scripts/qa/odoo-lan.cjs"
+          ],
+          "files": [
+            "scripts/qa/odoo-lan.cjs",
+            "bin/odoo-addon-lock.py",
+            "bin/odoo-addon-lock.test.py",
+            "bin/odoo-lan-controller-guards.test.py",
+            "lib/odoo-lan-types.ts",
+            "lib/odoo-lan-client.ts",
+            "lib/odoo-lan-client.test.mjs",
+            "lib/odoo-lan-extension.ts",
+            "lib/odoo-lan-runtime.ts",
+            "lib/odoo-lan-service.ts",
+            "lib/odoo-lan-cancellation.ts",
+            "lib/odoo-lan-cancellation.test.mjs",
+            "lib/odoo-lan-integration.test.mjs",
+            "lib/odoo-lan-sdk.test.mjs",
+            "tests/odoo-lan-waiting-badge.pw.mjs"
+          ],
+          "timeoutSeconds": 150
+        },
+        {
+          "name": "release-session-freshness",
+          "command": [
+            "node",
+            "scripts/qa/session-freshness.cjs"
+          ],
+          "files": [
+            "scripts/qa/session-freshness.cjs",
+            "tests/session-freshness.pw.mjs",
+            "components/AppShell.tsx",
+            "components/ChatWindow.tsx",
+            "hooks/useAgentSession.ts",
+            "components/AppShell.navigation-race.test.mjs",
+            "components/AppShell.workspace-memory.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-pdf-preview",
+          "command": [
+            "node",
+            "e2e/pdf-page-fragment.mjs"
+          ],
+          "timeoutSeconds": 240,
+          "files": [
+            "e2e/pdf-page-fragment.mjs",
+            "components/PdfViewer.tsx",
+            "components/PdfViewer.module.css",
+            "components/FileViewer.tsx",
+            "scripts/prepare-pdf-assets.cjs"
+          ]
+        },
+        {
+          "name": "release-composer-file-paste",
+          "command": [
+            "node",
+            "scripts/qa/composer-file-paste.cjs"
+          ],
+          "files": [
+            "scripts/qa/composer-file-paste.cjs",
+            "tests/composer-file-paste.pw.mjs",
+            "enhancements/composer-file-upload.test.mjs",
+            "enhancements/composer-attachment-restore.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-dom-feedback",
+          "command": [
+            "node",
+            "scripts/qa/dom-feedback.cjs"
+          ],
+          "files": [
+            "components/DomFeedbackControl.tsx",
+            "components/DomFeedbackPreview.tsx",
+            "components/dom-feedback/DomFeedbackPicker.tsx",
+            "components/dom-feedback/DomFeedbackPicker.module.css",
+            "components/dom-feedback/frame-protocol.ts",
+            "components/dom-feedback/DomFeedbackPicker.test.mjs",
+            "lib/dom-feedback/target.ts",
+            "lib/dom-feedback/target.test.mjs",
+            "lib/dom-feedback/capture.ts",
+            "lib/dom-feedback/preview.ts",
+            "tests/dom-feedback.pw.mjs",
+            "scripts/qa/dom-feedback.cjs",
+            "scripts/prepare-dom-feedback-assets.cjs",
+            "lib/dom-feedback/capture.test.mjs",
+            "tests/dom-feedback-page.pw.mjs",
+            "lib/dom-feedback/source.ts",
+            "lib/dom-feedback/source.test.mjs",
+            "tests/dom-feedback-sourcemap.pw.mjs",
+            "lib/dom-feedback/source-assets.test.mjs"
+          ],
+          "timeoutSeconds": 360
+        },
+        {
+          "name": "release-sidebar-tags",
+          "command": [
+            "node",
+            "scripts/qa/sidebar-tags.cjs"
+          ],
+          "files": [
+            "components/SessionSidebar.tsx",
+            "components/SessionSidebar.variable-height.test.mjs",
+            "lib/enhancement-sidebar-bridge.ts",
+            "enhancements/modules/02-plugin-registry-and-settings-schema.js",
+            "app/enhancements.css",
+            "scripts/qa/sidebar-tags.cjs",
+            "tests/sidebar-many-tags.pw.mjs"
+          ],
+          "timeoutSeconds": 120
         }
       ]
     }

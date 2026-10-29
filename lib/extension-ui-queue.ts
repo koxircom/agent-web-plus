@@ -43,3 +43,13 @@ export function removeExtensionUiRequest<T extends { id: string }>(queue: T[], i
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.filter((item) => item.id !== id);
 }
+
+/** A late HTTP/read snapshot may refresh a still-mounted request, never revive
+ * one already closed by the authoritative event stream. */
+export function refreshPendingExtensionUiRequest<T extends { id: string }>(queue: T[], request: T): T[] {
+  return queue.some(item => item.id === request.id) ? upsertExtensionUiRequest(queue, request) : queue;
+}
+
+export function isExtensionUiDeliveryCurrent(origin: { sessionId: string | null; generation: number }, current: { sessionId: string | null; generation: number }): boolean {
+  return origin.sessionId === current.sessionId && origin.generation === current.generation;
+}

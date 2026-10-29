@@ -2,10 +2,10 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { codexConnectionIdentity, codexThreadId } from "../execution-engine-settings";
 import { CodexBridgeError, codexBridgeJson, codexBridgeRequest } from "./codex-bridge-client";
-import { assistantText, codexComposerStatuses, projectCodexPage, projectCodexUsage, projectCodexRow, projectCodexSession, publicCodexId, type CodexMeta, type CodexPage, type CodexRow, type CodexRequest } from "./codex-projection";
+import { assistantText, codexComposerStatuses, projectCodexPage, projectCodexPendingRequests, projectCodexUsage, projectCodexRow, projectCodexSession, publicCodexId, type CodexMeta, type CodexPage, type CodexRow, type CodexRequest } from "./codex-projection";
 import type { AgentEventLike } from "../agent-event-wire";
 import type { AgentMessage, SessionInfo } from "../types";
-import { acceptPromptDelivery, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery } from "../prompt-delivery";
+import { acceptPromptDelivery, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery, validPromptRequestId } from "../prompt-delivery";
 
 export async function codexProjects(): Promise<{ key: string; name: string; cwd: string }[]> {
   const result = await codexBridgeJson("/api/projects");
@@ -21,6 +21,7 @@ type CatalogRow = {
   pinned?: boolean;
   archived?: boolean;
   nativeMetadata?: { desktopShared: boolean; pinningSupported: boolean };
+  titleNaming?: SessionInfo["titleNaming"];
 };
 type CatalogCache = { identity: string; version: number; loadedAt: number; rows: CatalogRow[] };
 const catalogGlobals = globalThis as unknown as Record<symbol, CatalogCache | undefined>;
@@ -76,7 +77,7 @@ const statusFlights = (flightGlobals[statusFlightsKey] ||= new Map()) as Map<str
 
 const CODEX_STATUS_CATALOG_TTL_MS = 10_000;
 function catalogVersion(rows: CatalogRow[]) {
-  const entries = rows.map(row => [row.id, row.title, row.cwd, row.recency ?? null, row.pinned ?? null, row.archived ?? null]);
+  const entries = rows.map(row => [row.id, row.title, row.cwd, row.recency ?? null, row.pinned ?? null, row.archived ?? null, row.titleNaming ?? null]);
   return Number.parseInt(createHash("sha256").update(JSON.stringify(entries)).digest("hex").slice(0, 12), 16);
 }
 function mapCodexSession(row: CatalogRow): SessionInfo {
@@ -84,13 +85,28 @@ function mapCodexSession(row: CatalogRow): SessionInfo {
   if (row.pinned !== undefined) session.pinned = row.pinned;
   if (row.archived !== undefined) session.archived = row.archived;
   if (row.nativeMetadata !== undefined) session.nativeMetadata = row.nativeMetadata;
+  if (row.titleNaming !== undefined) session.titleNaming = row.titleNaming;
   return session;
 }
-async function loadCodexCatalog(identity: string, signal?: AbortSignal, maxAgeMs = 0): Promise<CatalogCache> {
-  const pending = catalogFlights.get(identity);
-  if (pending && !pending.controller.signal.aborted) return joinFlight(pending, signal);
-  const cached = catalogGlobals[catalogKey];
-  if (cached?.identity === identity && Date.now() - cached.loadedAt < maxAgeMs) return cached;
+async function loadCodexCatalog(identity: string, signal?: AbortSignal, maxAgeMs = 0, force = false): Promise<CatalogCache> {
+  if (force) {
+    const olderFlight = catalogFlights.get(identity);
+    if (olderFlight && !olderFlight.controller.signal.aborted) {
+      // Even an earlier forced read may already have captured pre-boundary
+      // metadata. Finish that generation, then coalesce one fresh read.
+      await joinFlight(olderFlight, signal).catch(() => {});
+    }
+    if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+    const freshFlight = catalogFlights.get(identity);
+    if (freshFlight && !freshFlight.controller.signal.aborted && freshFlight !== olderFlight) {
+      return joinFlight(freshFlight, signal);
+    }
+  } else {
+    const pending = catalogFlights.get(identity);
+    if (pending && !pending.controller.signal.aborted) return joinFlight(pending, signal);
+    const cached = catalogGlobals[catalogKey];
+    if (cached?.identity === identity && Date.now() - cached.loadedAt < maxAgeMs) return cached;
+  }
   const flight: SharedFlight<CatalogCache> = sharedFlight(catalogFlights, identity, async flightSignal => {
     const rows: CatalogRow[] = [];
     for (let offset = 0; offset < 5000; offset += 100) {
@@ -146,13 +162,17 @@ const statusRevision = (statusGlobals[statusRevisionKey] ||= new CodexStatusRevi
 async function buildCodexRunningStatus(identity: string, signal: AbortSignal) {
   const catalog = await loadCodexCatalog(identity, signal, CODEX_STATUS_CATALOG_TTL_MS);
   const activity = await codexActivity(catalog.rows, identity, signal);
+  const pending = await readCodexAttentionRequests(activity.filter(row => row.hasPendingRequests === true
+    || (row.hasPendingRequests === undefined && row.status === "active")), identity, signal);
   if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
-  const stamp = statusRevision.update(identity, activity);
+  const sessions = pending.map(session => ({ sessionId: session.sessionId, pendingRequests: projectCodexPendingRequests(session.requests) }))
+    .filter(session => session.pendingRequests.length > 0);
+  const stamp = statusRevision.update(identity, [activity, sessions]);
   return { sessionListVersion: catalog.version,
     runningSessionIds: activity.filter(r => r.status === "active").map(r => publicCodexId(r.id)),
     completionNotificationSuppressedSessionIds: [],
     statusSnapshot: { version: 1, epoch: stamp.epoch, revision: stamp.revision, executions: activity.map(r => ({ sessionId: publicCodexId(r.id), state: r.status === "active" ? "running" : "idle", runId: "" })) },
-    interactionState: { version: 1, sessions: [] } };
+    interactionState: { version: 1, sessions } };
 }
 export async function codexRunningStatus(signal?: AbortSignal) {
   const identity = await codexConnectionIdentity();
@@ -164,6 +184,7 @@ export type ListCodexSessionsOptions = {
   archived?: boolean;
   offset?: number;
   limit?: number;
+  force?: boolean;
   signal?: AbortSignal;
 };
 export async function listCodexSessions(options?: ListCodexSessionsOptions | AbortSignal) {
@@ -171,6 +192,7 @@ export async function listCodexSessions(options?: ListCodexSessionsOptions | Abo
   const isArchived = options && !(options instanceof AbortSignal) && options.archived === true;
   const offset = options && !(options instanceof AbortSignal) ? options.offset : undefined;
   const limit = options && !(options instanceof AbortSignal) ? options.limit : undefined;
+  const isForce = options && !(options instanceof AbortSignal) && options.force === true;
   const identity = await codexConnectionIdentity();
 
   if (isArchived) {
@@ -196,7 +218,7 @@ export async function listCodexSessions(options?: ListCodexSessionsOptions | Abo
 
   // The explicit session-list request is the user's refresh action; it always
   // reads the authoritative catalog instead of trusting the status TTL.
-  const catalog = await loadCodexCatalog(identity, signal);
+  const catalog = await loadCodexCatalog(identity, signal, 0, isForce);
   // Query runtime metadata only. Listing never creates or resumes a Codex thread.
   const activity = await codexActivity(catalog.rows, identity, signal);
   if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
@@ -208,6 +230,13 @@ export async function readCodexAttentionSnapshot(signal: AbortSignal) {
   const identity = await codexConnectionIdentity();
   const catalog = await loadCodexCatalog(identity, signal, CODEX_STATUS_CATALOG_TTL_MS);
   const activity = await codexActivity(catalog.rows, identity, signal);
+  const sessions = await readCodexAttentionRequests(activity, identity, signal);
+  if (await codexConnectionIdentity() !== identity) throw new Error("执行端配置已改变");
+  return sessions;
+}
+async function readCodexAttentionRequests(
+  activity: { id: string; status: string; hasPendingRequests?: boolean }[], identity: string, signal: AbortSignal | undefined,
+) {
   // Async questions can remain pending after their turn has completed.
   const active = activity.filter(row => row.status === "active" || row.hasPendingRequests);
   const sessions: Array<{ sessionId: string; title: string; requests: CodexRequest[] }> = [];
@@ -215,11 +244,13 @@ export async function readCodexAttentionSnapshot(signal: AbortSignal) {
     const batch = await Promise.all(active.slice(offset, offset + 4).map(async row => {
       const meta: CodexMeta = await codexBridgeJson(`/api/sessions/${row.id}?metadata=1`, undefined,
         { connectionIdentity: identity, signal });
+      if (row.hasPendingRequests === true && !Array.isArray(meta.requests)) {
+        throw new CodexBridgeError("Codex 待处理状态格式异常，请稍后刷新", 502, "codex_malformed_response");
+      }
       return { sessionId: publicCodexId(row.id), title: meta.title || "未命名会话", requests: meta.requests || [] };
     }));
     sessions.push(...batch);
   }
-  if (await codexConnectionIdentity() !== identity) throw new Error("执行端配置已改变");
   return sessions;
 }
 
@@ -271,12 +302,27 @@ export async function readCodexSession(id: string, request?: Request) {
   const limit = Number.isFinite(rawTail) && rawTail > 0 ? Math.min(1000, rawTail) : 50;
   return projectCodexPage(await codexSessionPage(id, { limit, signal: request?.signal }), id);
 }
-export async function codexModels(cwd?: string) {
+async function codexWorkspace(cwd?: string) {
   const projects = await codexProjects();
-  const project = cwd ? projects.filter(p => p.cwd === cwd || cwd.startsWith(p.cwd.replace(/\/$/, "") + "/"))
+  const requestedCwd = cwd;
+  let project: (typeof projects)[number] | undefined = requestedCwd ? projects.filter(p => p.cwd === requestedCwd || requestedCwd.startsWith(p.cwd.replace(/\/$/, "") + "/"))
     .sort((a, b) => b.cwd.length - a.cwd.length)[0] : projects[0];
-  if (!project) throw new Error("请选择 Codex 服务已配置的工作区");
-  const catalog = await codexBridgeJson(`/api/projects/catalog?${new URLSearchParams({ project: project.key, kind: "models", cwd: cwd || project.cwd })}`);
+  if (!project && cwd) {
+    const { validateCodexCwd } = await import("./codex-workspaces");
+    try {
+      const resolved = await validateCodexCwd(cwd);
+      project = projects.find(p => p.key === resolved.projectKey || p.cwd === resolved.projectRoot);
+      cwd = resolved.cwd;
+    } catch (error) {
+      if (!(error instanceof CodexBridgeError) || ![400, 403, 404].includes(error.status)) throw error;
+    }
+  }
+  if (!project) throw new CodexBridgeError("请选择 Codex 服务已配置的工作区", 400, "codex_workspace_required");
+  return { project, cwd: cwd || project.cwd };
+}
+export async function codexModels(cwd?: string) {
+  const workspace = await codexWorkspace(cwd);
+  const catalog = await codexBridgeJson(`/api/projects/catalog?${new URLSearchParams({ project: workspace.project.key, kind: "models", cwd: workspace.cwd })}`);
   const models = catalog.models as { id: string; name: string; efforts?: string[]; isDefault?: boolean }[];
   return { models: Object.fromEntries(models.map(m => ["codex:" + m.id, m.name])),
     modelList: models.map(m => ({ id: m.id, name: m.name, provider: "codex", input: ["text", "image"] })),
@@ -286,6 +332,12 @@ export async function codexModels(cwd?: string) {
 }
 export async function createCodexSession(cwd: string, command: Record<string, unknown>) {
   if (command.type !== "ensure_session") throw new Error("请先创建 Codex 会话，再提交消息");
+  if (!cwd.trim()) throw new CodexBridgeError("请选择 Codex 服务已配置的工作区", 400, "codex_workspace_required");
+  if (command.creationRequestId !== undefined && !validPromptRequestId(command.creationRequestId)) {
+    throw new CodexBridgeError("新会话请求标识无效", 400, "codex_creation_invalid");
+  }
+  const workspace = await codexWorkspace(cwd);
+  cwd = workspace.cwd;
   let targetModelId = typeof command.modelId === "string" && command.modelId.trim() ? command.modelId.trim() : null;
   let targetThinkingLevel = typeof command.thinkingLevel === "string" && command.thinkingLevel.trim() ? command.thinkingLevel.trim() : null;
 
@@ -306,21 +358,9 @@ export async function createCodexSession(cwd: string, command: Record<string, un
     }
   }
 
-  const projects = await codexProjects();
-  let project = projects.find(p => p.cwd === cwd || cwd.startsWith(p.cwd.replace(/\/$/, "") + "/"));
-  if (!project) {
-    try {
-      const { validateCodexCwd } = await import("./codex-workspaces");
-      const resolved = await validateCodexCwd(cwd);
-      if (resolved.projectKey) {
-        project = projects.find(p => p.key === resolved.projectKey);
-      }
-    } catch {
-      // ignore
-    }
-  }
-  if (!project) throw new Error("请选择 Codex 服务已配置的工作区");
-  const created = await codexBridgeJson("/api/sessions", { project: project.key, title: "新聊天", id: randomUUID(), cwd });
+  const creationId = typeof command.creationRequestId === "string"
+    ? submissionUuid("create:" + command.creationRequestId) : randomUUID();
+  const created = await codexBridgeJson("/api/sessions", { project: workspace.project.key, title: "新聊天", id: creationId, cwd }, { timeout: 90000 });
   const id = publicCodexId(created.id);
   const runtime = await getCodexRuntime(id);
 
@@ -378,11 +418,84 @@ const runtimeKey = Symbol.for("pi-web.codex-session-runtimes");
 const runtimes = (globals[runtimeKey] ||= new Map()) as Map<string, CodexRuntime>;
 const flightsKey = Symbol.for("pi-web.codex-session-flights");
 const flights = (globals[flightsKey] ||= new Map()) as Map<string, Promise<CodexRuntime>>;
-export async function deleteCodexSession(id: string) {
+export function isCodexUncertainDeleteError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return true;
+
+  if ("code" in error && (error as { code?: string }).code === "codex_timeout") return true;
+  if ("name" in error) {
+    const name = (error as { name?: string }).name;
+    if (name === "TimeoutError" || name === "AbortError") return true;
+  }
+
+  const message =
+    "message" in error && typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "";
+
+  if (/未确认|未在时限内确认|超时|未知|uncertain|unconfirmed|timeout|timed?\s*out/i.test(message)) {
+    return true;
+  }
+
+  if ("status" in error) {
+    const status = Number((error as { status?: number }).status);
+    if (status === 404 || status === 401 || status === 403 || status === 409 || status === 423) {
+      return false;
+    }
+    if (status === 400) {
+      const code =
+        "code" in error && typeof (error as { code?: unknown }).code === "string"
+          ? (error as { code: string }).code.toLowerCase()
+          : "";
+      const dispatched =
+        "dispatched" in error && typeof (error as { dispatched?: unknown }).dispatched === "boolean"
+          ? (error as { dispatched: boolean }).dispatched
+          : undefined;
+
+      const knownRefusalCodes = new Set([
+        "busy", "session_busy", "queued", "running", "permission_denied",
+        "auth_required", "invalid_request", "codex_operation_unsupported",
+      ]);
+      // These exact native refusals occur before thread/delete. Generic words
+      // like "queue"/"permission" inside an error do not prove non-dispatch.
+      const knownNativeRefusals = new Set([
+        "会话状态已变化，请刷新后再删除",
+        "会话还有待发送或待确认的消息，请处理队列后再删除",
+        "会话正在等待回复，请处理当前问题后再删除",
+        "会话正在执行任务或等待回复，请结束当前任务后再删除",
+        "无法核对待发送消息，尚未删除会话，请稍后重试",
+        "会话还有待发送消息，请处理队列后再删除",
+        "当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留",
+      ]);
+      return !(dispatched === false || knownRefusalCodes.has(code) || knownNativeRefusals.has(message));
+    }
+    if (status === 504 || status === 502 || status === 503 || status === 500) {
+      return true;
+    }
+  }
+  return true;
+}
+
+/** Reconcile only an authoritative missing result; never replay the destructive request. */
+export async function confirmCodexDeleteMissing(id: string, expectedConnectionIdentity: string): Promise<boolean> {
+  if (await codexConnectionIdentity() !== expectedConnectionIdentity) return false;
+  try {
+    await codexBridgeJson(`/api/sessions/${codexThreadId(id)}?metadata=1`, undefined,
+      { connectionIdentity: expectedConnectionIdentity, timeout: 10000 });
+    return false;
+  } catch (error) {
+    return error instanceof CodexBridgeError && error.status === 404 &&
+      await codexConnectionIdentity() === expectedConnectionIdentity;
+  }
+}
+
+export async function deleteCodexSession(id: string, expectedConnectionIdentity?: string) {
   const threadId = codexThreadId(id), identity = await codexConnectionIdentity();
+  if (expectedConnectionIdentity && identity !== expectedConnectionIdentity) {
+    throw new CodexBridgeError("执行端配置已改变，批量删除已停止，请重新打开会话列表", 409, "codex_session_refresh");
+  }
   const result = await codexBridgeJson(`/api/sessions/${threadId}/message-action`, { action: "delete" },
-    { connectionIdentity: identity, timeout: 30000 });
-  if (result?.ok !== true) throw new CodexBridgeError("执行端未确认删除，会话已保留", 502);
+    { connectionIdentity: expectedConnectionIdentity ?? identity, timeout: 60000 });
+  if (result?.ok !== true) throw new CodexBridgeError("执行端未确认删除结果，请刷新列表确认；不会自动重试", 502);
   if (catalogGlobals[catalogKey]?.identity === identity) catalogGlobals[catalogKey] = undefined;
   for (const pending of [catalogFlights, statusFlights]) {
     pending.get(identity)?.controller.abort();
@@ -673,7 +786,8 @@ export class CodexRuntime {
     for (const row of next.rows) {
       const prior = this.rows.get(row.key);
       this.rows.set(row.key, row);
-      if (prior?.version === row.version && (row.role === "assistant" || row.kind === "reasoning" || (prior?.turnStatus === row.turnStatus && prior?.status === row.status))) continue;
+      const sameUserReceipt = row.role !== "user" || (prior?.requestId === row.requestId && prior?.deliveryConfirmed === row.deliveryConfirmed);
+      if (prior?.version === row.version && sameUserReceipt && (row.role === "assistant" || row.kind === "reasoning" || (prior?.turnStatus === row.turnStatus && prior?.status === row.status))) continue;
       if (row.role === "assistant") {
         // Completion can precede the saved final answer, and reconnects can
         // reveal missed/corrected completed rows. Reconcile the authoritative
@@ -828,7 +942,8 @@ export class CodexRuntime {
         this.updateRequests();
         const effectiveModel = this.meta.model;
         const effectiveEffort = this.meta.effort;
-        return { model: { provider: "codex", id: effectiveModel }, thinkingLevel: effectiveEffort === "none" ? "off" : (effectiveEffort || "high"),
+        // An unopened native thread may not have a live model yet. Shared UI treats a model object as a valid ID.
+        return { model: typeof effectiveModel === "string" && effectiveModel.trim() ? { provider: "codex", id: effectiveModel } : null, thinkingLevel: effectiveEffort === "none" ? "off" : (effectiveEffort || "high"),
           isStreaming: this.isStreaming, isPromptRunning: this.isStreaming, isBashRunning: false, isCompacting: false,
           autoCompactionEnabled: false, contextUsage: projectCodexUsage(this.meta).contextUsage,
           queuedMessages: queue(this.meta), extensionStatuses: codexComposerStatuses(this.meta), extensionWidgets: [] };
@@ -876,7 +991,13 @@ export class CodexRuntime {
           result = await this.json(base + "/send", { id: submissionUuid(command.requestId), clientRequestId: command.requestId, text: command.message, attachments, mode, uiLocale: "zh-CN" });
         } catch (error) {
           // Timeout/5xx can occur after the executor accepted the turn.
-          if (!(error && typeof error === "object" && "status" in error && Number(error.status) < 500)) throw Object.assign(new Error("Codex 发送结果待确认，请核对记录，不要重复发送"), { deliveryUncertain: true });
+          const native = error && typeof error === "object" ? error as { status?: number; code?: string; dispatched?: boolean | null } : null;
+          // Native desktop unknown is HTTP 409, not proof of rejection. Its
+          // explicit outcome wins over the HTTP status and must retain identity.
+          if (native?.code === "submission_unknown" || native?.dispatched === true
+            || (native?.dispatched !== false && !(native?.status && native.status < 500))) {
+            throw Object.assign(new Error(error instanceof Error ? error.message : "Codex 发送结果待确认，请核对记录，不要重复发送"), { deliveryUncertain: true });
+          }
           throw error;
         }
         if (result.status === "failed") throw new CodexBridgeError(result.error || "Codex 拒绝发送，内容已保留", 409, "submission_rejected", false, false);

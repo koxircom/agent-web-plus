@@ -710,7 +710,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 /* Optional resources share one request and publish no UI ownership. */
 (function (root) {
   "use strict";
-  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-8ca136474ddf8057.js","integrity":"sha256-jKE2R03fgFccAMOvI9mR85KPdLtk5RLePjqQ7xkbPBs=","bytes":79387},"image-editor":{"path":"/pi-web-assets/image-editor-d639e1103e1c3401.js","integrity":"sha256-1jnhED4cNAE9/iHWC+lG0Ye0Fjtb5jHV3w5TJbkiFOE=","bytes":54470}};
+  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-151436c8dff200f2.js","integrity":"sha256-FRQ2yN/yAPLOPBWnCZxg1XB4TQKDjgbhtw/9PZ8VKOk=","bytes":80990},"image-editor":{"path":"/pi-web-assets/image-editor-d639e1103e1c3401.js","integrity":"sha256-1jnhED4cNAE9/iHWC+lG0Ye0Fjtb5jHV3w5TJbkiFOE=","bytes":54470}};
   const pending = new Map();
   // Hot reloads may change an optional asset while keeping the same window.
   // Reuse only an export stamped with this exact content-addressed path.
@@ -803,7 +803,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   };
 })(function(key) {
     return typeof localStorage !== "undefined" && localStorage ? localStorage.getItem(key) : null;
-  }, {"stop-fast-response":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"model-scope-warning":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
+  }, {"stop-fast-response":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"model-scope-warning":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"dom-feedback":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
 ;
 /**
  * Agent Web Plus Enhancements v4.3.4:
@@ -901,6 +901,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     composerModesStateMap,
     pendingNewComposerMode,
     isSessionBatchMode,
+    selectedSessionBatchIds = null,
     batchDeleteModal,
     durationTooltip,
     usageTooltip,
@@ -1341,6 +1342,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       name: "隐藏模型范围警告",
       desc: "隐藏输入区的模型范围警告，并在模型菜单对应选项后显示黄色提示图标；关闭插件后恢复原生警告。",
       category: "显示增强",
+      defaultEnabled: true,
+    },
+    {
+      id: "dom-feedback",
+      name: "界面与预览标注",
+      desc: "点击元素后添加备注，按需附局部截图；电脑默认启用，手机可手动开启。",
+      category: "交互增强",
       defaultEnabled: true,
     },
     {
@@ -1814,7 +1822,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
     { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
-    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
+    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote", "dom-feedback"] },
     { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer"] },
     { id: "composer-workflow", name: "输入与附件增强", desc: "管理编辑器快捷操作、草稿、附件和移动端输入保护。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["stop-fast-response", "quick-action-buttons", "empty-send-continue", "composer-draft-cache", "composer-file-paste", "composer-image-zoom", "mobile-enter-newline", "composer-clean-placeholder", "codex-composer-layout", "composer-model-reasoning-pill", "composer-queue-panel", "running-model-switch", "composer-markdown-format", "composer-format-toggle", "composer-compact-button", "composer-tool-preset", "composer-modes", "at-mention-plugins"] },
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
@@ -1936,7 +1944,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     for (const plugin of ENHANCEMENT_PLUGINS) {
       const legacyValue = includeLegacyPreferences ? readEnhancementStorage(`pi-enh-plugin-${plugin.id}`) : null;
-      config.features[plugin.id] = { enabled: legacyValue === null ? plugin.defaultEnabled : legacyValue === "true" };
+      config.features[plugin.id] = { enabled: legacyValue === null ? defaultFeatureEnabled(plugin) : legacyValue === "true" };
     }
     for (const [featureId, definitions] of Object.entries(ENHANCEMENT_PLUGIN_SETTINGS)) {
       config.settings[featureId] = {};
@@ -2130,7 +2138,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     Object.assign(getEnhancementConfig(), defaults);
     writeEnhancementConfig();
     for (const plugin of ENHANCEMENT_PLUGINS) {
-      try { localStorage.setItem(`pi-enh-plugin-${plugin.id}`, String(plugin.defaultEnabled)); } catch (e) {}
+      try { localStorage.setItem(`pi-enh-plugin-${plugin.id}`, String(defaultFeatureEnabled(plugin))); } catch (e) {}
       const next = isPluginEnabled(plugin.id);
       if (next !== previous.get(plugin.id)) onPluginStateChanged(plugin.id, next);
     }
@@ -2141,13 +2149,18 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     syncEnhancementPanelControls();
   }
 
+  function defaultFeatureEnabled(plugin) {
+    if (plugin.id === "dom-feedback" && window.matchMedia?.("(pointer: coarse), (hover: none)").matches) return false;
+    return plugin.defaultEnabled;
+  }
+
   function isPluginEnabled(id) {
     const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === id);
     if (!plugin) return true;
     const module = getModuleForPlugin(id);
     if (module && !isModuleEnabled(module.id)) return false;
     const enabled = getEnhancementConfig().features[id]?.enabled;
-    return typeof enabled === "boolean" ? enabled : plugin.defaultEnabled;
+    return typeof enabled === "boolean" ? enabled : defaultFeatureEnabled(plugin);
   }
 
   function setPluginEnabled(id, enabled) {
@@ -2286,11 +2299,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     } else if (id === "turn-usage-total") {
       if (!enabled) hideUsageTooltip();
       syncAllUsageBadges();
+    } else if (id === "dom-feedback") {
+      syncAnnotationComposer();
+      window.dispatchEvent(new Event("pi-dom-feedback-preferences-change"));
     } else if (id === "quick-quote") {
       if (!enabled && typeof hideQuoteBar === "function") {
         if (composerSubmissionInFlight?.snapshot) cancelComposerNativeSubmission();
         hideQuoteBar();
         removeAnnotationUi();
+        if (isPluginEnabled("dom-feedback")) syncAnnotationComposer();
       } else if (enabled && typeof syncAnnotationComposer === "function") {
         syncAnnotationComposer();
       }
@@ -4946,7 +4963,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   }
 
-  function openSessionTagsPopover(sessionId, triggerItem, event, triggerRect) {
+  function openSessionTagsPopover(sessionId, triggerItem, event, triggerRect, extraSessionIds) {
     if (activeSessionTagsPopover && activeSessionTagsPopover.getAttribute("data-session-id") === sessionId) {
       if (triggerItem) {
         activeSessionTagsTriggerItem = triggerItem;
@@ -4967,6 +4984,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (triggerItem) triggerItem.classList.add("is-submenu-open");
 
     let allTags = readSessionTagsDefinitions();
+    const targetSessionIds = (Array.isArray(extraSessionIds) && extraSessionIds.length > 0)
+      ? extraSessionIds
+      : [sessionId];
+    const isMulti = targetSessionIds.length > 1;
     let currentTagIds = new Set(getSessionTagIds(sessionId));
     let recommendedColorItem = getRecommendedTagColor(allTags);
 
@@ -5124,12 +5145,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (optionItem) {
         const tagId = optionItem.getAttribute("data-tag-id");
         if (tagId) {
-          const wasSelected = currentTagIds.has(tagId);
-          toggleSessionTag(sessionId, tagId);
-          currentTagIds = new Set(getSessionTagIds(sessionId));
           const targetTag = allTags.find((t) => t.id === tagId);
           const tagName = targetTag ? targetTag.name : "标签";
-          showToast(wasSelected ? `已移除会话「${tagName}」标签` : `已为会话打上「${tagName}」标签`);
+          if (isMulti) {
+            const anyHas = targetSessionIds.some((sid) => getSessionTagIds(sid).includes(tagId));
+            const shouldAdd = !anyHas;
+            for (const sid of targetSessionIds) {
+              const has = getSessionTagIds(sid).includes(tagId);
+              if (has !== shouldAdd) {
+                toggleSessionTag(sid, tagId);
+              }
+            }
+            showToast(shouldAdd ? `已为 ${targetSessionIds.length} 个会话打上「${tagName}」标签` : `已为 ${targetSessionIds.length} 个会话移除「${tagName}」标签`);
+          } else {
+            const wasSelected = currentTagIds.has(tagId);
+            toggleSessionTag(sessionId, tagId);
+            currentTagIds = new Set(getSessionTagIds(sessionId));
+            showToast(wasSelected ? `已移除会话「${tagName}」标签` : `已为会话打上「${tagName}」标签`);
+          }
           closeSessionTagsPopover(true);
         }
       }
@@ -5143,9 +5176,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         closeSessionTagsPopover(true);
         triggerShortcutNavigation("tags");
       } else if (action === "clear-tags") {
-        clearSessionTags(sessionId);
-        currentTagIds.clear();
-        showToast("已清除会话所有标签");
+        if (isMulti) {
+          for (const sid of targetSessionIds) {
+            clearSessionTags(sid);
+          }
+          currentTagIds.clear();
+          showToast(`已清除 ${targetSessionIds.length} 个会话的所有标签`);
+        } else {
+          clearSessionTags(sessionId);
+          currentTagIds.clear();
+          showToast("已清除会话所有标签");
+        }
         closeSessionTagsPopover(true);
       }
     });
@@ -5744,6 +5785,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function removeSessionOdooAddonsAll() {
     for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-odoo-addons='true']")) {
+      if (row.getAttribute("data-pi-native-session-odoo-addons") === "true") continue;
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
       row.removeAttribute("data-pi-enh-has-odoo-addons");
       syncSessionOdooAddonsHeight(row, row.dataset.piEnhSessionId);
@@ -5751,7 +5793,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function syncSessionOdooAddonsRow(row, sessionId) {
-    if (!row || !sessionId) return;
+    if (!row || !sessionId || row.getAttribute("data-pi-native-session-odoo-addons") === "true") return;
 
     if (!isPluginEnabled("session-odoo-addons") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
@@ -6978,7 +7020,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (archivedEntries.some((e) => e.id === sessionId)) {
         writeStoredArchivedEntries(archivedEntries.filter((e) => e.id !== sessionId));
       }
-      void restoreArchivedSession(sessionId).catch(() => {});
+      // A confirmed Codex deletion must never issue another native mutation.
+      if (!sessionId.startsWith("codex:")) void restoreArchivedSession(sessionId).catch(() => {});
       try { clearSessionTags(sessionId); } catch (e) {}
       try {
         const uIds = readUnreadSessionIds();
@@ -7674,28 +7717,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   async function toggleSessionPin(sessionId) {
     if (!sessionId) return false;
     if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
-      const isPinned = isSessionPinned(sessionId);
-      const targetAction = isPinned ? "unpin" : "pin";
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: targetAction }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "置顶操作未确认，会话状态已保留");
+      const nativeFn = (typeof window !== "undefined") ? window.__PI_ENH_TOGGLE_NATIVE_SESSION_PIN__ : null;
+      if (typeof nativeFn === "function") {
+        return await nativeFn(sessionId);
       }
-      const data = await res.json().catch(() => ({}));
-      if (data?.ok !== true || !data.session || data.session.id !== sessionId || data.session.pinned !== (targetAction === "pin")) {
-        throw new Error(data?.error || "置顶操作未获得原生确认，会话状态已保留");
-      }
-      const nextPinned = Boolean(data.session.pinned);
-      const entry = knownSessionsMap.get(sessionId);
-      if (entry) entry.pinned = nextPinned;
-      requestSessionListRefresh(false, true);
-      syncSessionOdooAddonsLayout();
-      syncSessionSectionHeaders();
-      return nextPinned;
+      throw new Error("原生置顶服务不可用");
     }
     const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
     const isPinned = pinnedIds.has(sessionId);
@@ -9399,94 +9425,41 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       seal.size >= 0 && !seal.pendingToolCalls && !seal.pendingSubagentCalls;
   }
 
-  // 客户端失败关闭保护，不是服务端删除事务：绕过浏览器或检查后并发写入仍需后端原子协议。
+  // ==========================================
+  // 后台自动统计与自动删除 (Background Auto-Accounting & Seamless Deletion)
+  // 用户要求：删除逻辑优化，后台自动统计，自动删除，绝不因用量核验失败阻断前台删除
+  // ==========================================
+  function backgroundSealSessionUsage(sessionId) {
+    if (!sessionId) return;
+    void (async () => {
+      try {
+        const activeFetch = baseFetch || originalWindowFetch || (typeof fetch === "function" ? fetch : null);
+        if (!activeFetch) return;
+
+        // 1. 静默触发服务端用量入账与账本更新
+        await activeFetch("/api/usage/ledger", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        }).catch(() => null);
+
+        // 2. 如果用量面板组件已加载，异步静默刷新快照
+        if (typeof window !== "undefined" && window.PiUsagePanel?.fetchSnapshotOnce) {
+          try {
+            await window.PiUsagePanel.fetchSnapshotOnce();
+          } catch (_) {}
+        }
+      } catch (err) {
+        console.warn("[Usage Accounting Background] 后台自动统计用量提示:", err?.message || err);
+      }
+    })();
+  }
+
+  // 前台删除会话放行函数：直接放行真实删除，后台异步自动统计
   async function ensureSessionIngestedBeforeDelete(sessionId) {
-    // Native Codex owns its task/queue and deletion checks. Pi leaf/usage
-    // fingerprints cannot certify another engine's history.
-    if (/^codex:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(sessionId)) return true;
-    if (!sessionId) throw new Error("缺少会话 ID，已阻止删除");
-    // 关键环境隔离：30142 同事端容器不属于 30141 全局用量账本扫描域，跳过封存门禁直接放行真实删除
-    if (typeof window !== "undefined" && window.location && window.location.port === "30142") {
-      return true;
-    }
-    const activeFetch = baseFetch || originalWindowFetch;
-    if (!activeFetch) throw new Error("无法核验用量入账，已阻止删除");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 40000);
-    const request = async (url, init = {}) => {
-      const response = await activeFetch(url, { ...init, cache: "no-store", signal: controller.signal });
-      if (!response?.ok) throw new Error(`入账核验 HTTP ${response?.status || "失败"}`);
-      return response.json();
-    };
-    const freshMeta = async () => {
-      const listing = await request(`/api/sessions?usageGuard=${Date.now()}`);
-      if (!Array.isArray(listing.sessions) || !Array.isArray(listing.runningSessionIds)) {
-        throw new Error("无法确认会话或运行状态，已阻止删除");
-      }
-      if (listing.runningSessionIds.includes(sessionId)) {
-        throw new Error("会话仍在运行，待用量回传后再删除");
-      }
-      const meta = listing.sessions.find(s => s.id === sessionId);
-      if (!meta) throw new Error("无法取得最新会话版本，已阻止删除");
-      const detail = await request(`/api/sessions/${encodeURIComponent(sessionId)}?tail=1&usageGuard=${Date.now()}`);
-      if (detail.sessionId !== sessionId || !(typeof detail.leafId === "string" || detail.leafId === null)) {
-        throw new Error("无法取得原生会话末条记录，已阻止删除");
-      }
-      return {
-        ...meta,
-        leafId: detail.leafId,
-        usageDeleteGuard: typeof detail.usageDeleteGuard === "number" ? detail.usageDeleteGuard : 0,
-      };
-    };
-    try {
-      const lookupResp = await activeFetch(`/api/sessions/${encodeURIComponent(sessionId)}?lookup=1&usageGuard=${Date.now()}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!lookupResp || !lookupResp.ok) {
-        throw new Error(`入账核验 HTTP ${lookupResp?.status || "失败"}`);
-      }
-      const lookup = await lookupResp.json().catch(() => null);
-      if (!lookup || lookup.exists !== true) {
-        throw new Error("会话不存在或已删除");
-      }
-
-      if (typeof lookup.usageDeleteGuard === "number" && lookup.usageDeleteGuard >= 1) {
-        const listing = await request(`/api/sessions?usageGuard=${Date.now()}`);
-        if (!Array.isArray(listing.sessions) || !Array.isArray(listing.runningSessionIds)) {
-          throw new Error("无法确认会话或运行状态，已阻止删除");
-        }
-        if (listing.runningSessionIds.includes(sessionId)) {
-          throw new Error("会话仍在运行，待用量回传后再删除");
-        }
-        const meta = listing.sessions.find(s => s.id === sessionId);
-        if (!meta) throw new Error("无法取得最新会话版本，已阻止删除");
-
-        knownSessionsMap.set(sessionId, { ...meta, usageDeleteGuard: lookup.usageDeleteGuard });
-        return true;
-      }
-
-      let meta = await freshMeta();
-      if (!isSessionIngested(sessionId, meta)) {
-        const result = await request("/api/usage/ledger", { method: "POST" });
-        if (result.version !== 2 || !Array.isArray(result.buckets)) {
-          throw new Error("服务端入账失败，已阻止删除");
-        }
-        await window.__PI_ENH_LOAD_OPTIONAL__("usage-panel");
-        if (!window.PiUsagePanel?.fetchSnapshotOnce) throw new Error("用量模块不可用，已阻止删除");
-        await window.PiUsagePanel.fetchSnapshotOnce(controller.signal);
-        meta = await freshMeta();
-        if (!isSessionIngested(sessionId, meta)) {
-          throw new Error("会话仍有未入账用量、未结束工具或版本变化，已阻止删除");
-        }
-      }
-      knownSessionsMap.set(sessionId, meta);
-      return true;
-    } catch (error) {
-      throw new Error(`未完成用量封存，删除已取消：${error.message}`);
-    } finally {
-      clearTimeout(timer);
-    }
+    if (!sessionId) return true;
+    // 异步派发后台自动用量封存与账本统计，绝不阻塞前台删除
+    backgroundSealSessionUsage(sessionId);
+    return true;
   }
 
   // ==========================================
@@ -14974,7 +14947,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function removeSessionPinArchiveControls() {
     document.documentElement.classList.remove("pi-enh-session-pin-archive-active");
     for (const selector of [".pi-enh-session-overflow", ".pi-enh-session-pinned-indicator", ".pi-enh-session-menu"]) {
-      for (const element of document.querySelectorAll(selector)) element.remove();
+      for (const element of document.querySelectorAll(selector)) {
+        if (!element.hasAttribute("data-pi-native-session-pin")) {
+          element.remove();
+        }
+      }
     }
   }
 
@@ -15330,29 +15307,39 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     for (const row of sessionRows) {
       const sessionId = row.getAttribute("data-pi-enh-session-id");
       if (!sessionId) continue;
-      const isPinned = pinnedIds.has(sessionId);
+      const isCodex = sessionId.startsWith("codex:");
       let indicator = row.querySelector(".pi-enh-session-pinned-indicator");
-      if (isPinned) {
-        // The pin marker is an action, not a passive decoration: clicking it
-        // immediately toggles the current row back to unpinned.
-        if (!indicator || indicator.tagName?.toLowerCase() !== "button") {
-          indicator?.remove();
-          indicator = document.createElement("button");
-          indicator.type = "button";
-          indicator.className = "pi-enh-session-pinned-indicator";
-          indicator.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            handleSessionPinArchiveAction(sessionId, "pin");
-          });
+
+      if (isCodex) {
+        // Codex 会话置顶标记完全由原生 React 受管，04 绝不为 Codex 会话追加、移除或重新插入原生 marker
+        if (indicator && !indicator.hasAttribute("data-pi-native-session-pin")) {
+          indicator.remove();
+          indicator = null;
         }
-        indicator.setAttribute("title", "取消置顶");
-        indicator.setAttribute("aria-label", "取消置顶");
-        indicator.setAttribute("aria-pressed", "true");
-        indicator.innerHTML = sessionPinIcon;
-      } else if (indicator) {
-        indicator.remove();
-        indicator = null;
+      } else {
+        const isPinned = pinnedIds.has(sessionId);
+        if (isPinned) {
+          // The pin marker is an action, not a passive decoration: clicking it
+          // immediately toggles the current row back to unpinned.
+          if (!indicator || indicator.tagName?.toLowerCase() !== "button") {
+            indicator?.remove();
+            indicator = document.createElement("button");
+            indicator.type = "button";
+            indicator.className = "pi-enh-session-pinned-indicator";
+            indicator.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              handleSessionPinArchiveAction(sessionId, "pin");
+            });
+          }
+          indicator.setAttribute("title", "取消置顶");
+          indicator.setAttribute("aria-label", "取消置顶");
+          indicator.setAttribute("aria-pressed", "true");
+          indicator.innerHTML = sessionPinIcon;
+        } else if (indicator && !indicator.hasAttribute("data-pi-native-session-pin")) {
+          indicator.remove();
+          indicator = null;
+        }
       }
 
       let trigger = row.querySelector(".pi-enh-session-overflow");
@@ -15383,7 +15370,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (row.children[row.children.length - 1] !== trigger) row.appendChild(trigger);
 
       // 关键修复：确保置顶图钉 indicator 紧随内容之后、排在 trigger (overflow) 之前，绝不落在第一位
-      if (isPinned && indicator) {
+      // 该段只限 Pi / 非 native 遗留 marker，原生 Codex 完全退出，绝不移动 React 节点
+      if (indicator && !indicator.hasAttribute("data-pi-native-session-pin") && !isCodex && trigger) {
         if (indicator.nextSibling !== trigger) {
           row.insertBefore(indicator, trigger);
         }
@@ -15468,32 +15456,70 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const { id, path, cwd, name, clientX, clientY, executionEngine } = event.detail || {};
     if (!id) return;
 
+    // 检查是否处于多选批量模式
+    const isBatchActive = Boolean(isSessionBatchMode && selectedSessionBatchIds && selectedSessionBatchIds.size > 0);
+    let targetSessionIds = [id];
+    if (isBatchActive) {
+      if (!selectedSessionBatchIds.has(id)) {
+        selectedSessionBatchIds.add(id);
+        if (typeof updateSingleBatchRow === "function") {
+          updateSingleBatchRow(id, true);
+        }
+        if (typeof syncSessionBatchBar === "function") {
+          syncSessionBatchBar();
+        }
+      }
+      targetSessionIds = Array.from(selectedSessionBatchIds);
+    }
+    const isMultiSelect = targetSessionIds.length > 1;
+    const multiCount = targetSessionIds.length;
+
     const isCodex = isCodexSession(id, executionEngine);
     const validRolloutPath = resolveSessionRolloutPath(id, path);
 
+    const isPinnedFn = typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function"
+      ? window.__PI_ENH_IS_SESSION_PINNED__
+      : (sid) => (typeof PINNED_SESSION_STORAGE_KEY !== "undefined" && typeof readStoredSessionIds === "function" ? readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sid) : false);
+
+    const allTargetUnread = targetSessionIds.every((sid) => isSessionUnread(sid));
+    const allTargetPinned = targetSessionIds.every((sid) => isPinnedFn(sid));
+
+    const unreadActionTitle = allTargetUnread
+      ? (isMultiSelect ? `批量标为已读 (${multiCount})` : "标为已读")
+      : (isMultiSelect ? `批量标为未读 (${multiCount})` : "标为未读");
+    const unreadIcon = allTargetUnread ? sessionReadIcon : sessionUnreadIcon;
+
+    const pinActionTitle = allTargetPinned
+      ? (isMultiSelect ? `批量取消置顶 (${multiCount})` : "取消置顶")
+      : (isMultiSelect ? `批量置顶会话 (${multiCount})` : "置顶会话");
+
+    const disabledAttr = isMultiSelect ? 'class="pi-enh-menu-item pi-enh-menu-item-disabled" style="opacity:0.42;cursor:not-allowed;pointer-events:none;"' : 'class="pi-enh-menu-item"';
+
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu";
-    const displayName = name || id.slice(0, 18) + "...";
+    const displayName = isMultiSelect
+      ? `已选 ${multiCount} 项 (批量操作)`
+      : (name || id.slice(0, 18) + "...");
 
     menu.innerHTML = `
       <div class="pi-enh-menu-header"></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="toggle-unread">
-        ${isSessionUnread(id) ? sessionReadIcon : sessionUnreadIcon}
-        <span>${isSessionUnread(id) ? "标为已读" : "标为未读"}</span>
+        ${unreadIcon}
+        <span>${unreadActionTitle}</span>
       </div>
-      <div class="pi-enh-menu-item" data-action="rename-session">
+      <div ${disabledAttr} data-action="rename-session" ${isMultiSelect ? 'title="多选状态下不支持重命名"' : ""}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
         <span>重命名会话</span>
       </div>
       ${isPluginEnabled("session-pin-archive") ? `
       <div class="pi-enh-menu-item" data-action="pin-session">
         ${sessionPinIcon}
-        <span>${((typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function") ? window.__PI_ENH_IS_SESSION_PINNED__(id) : readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(id)) ? "取消置顶" : "置顶会话"}</span>
+        <span>${pinActionTitle}</span>
       </div>
       <div class="pi-enh-menu-item" data-action="archive-session">
         ${sessionArchiveIcon}
-        <span>归档会话</span>
+        <span>${isMultiSelect ? `批量归档会话 (${multiCount})` : "归档会话"}</span>
       </div>
       ` : ""}
       ${isPluginEnabled("session-tags") ? `
@@ -15502,24 +15528,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
           <line x1="7" y1="7" x2="7.01" y2="7"></line>
         </svg>
-        <span>会话标签 (Web 偏好)</span>
+        <span>${isMultiSelect ? `批量会话标签 (${multiCount})` : "会话标签 (Web 偏好)"}</span>
         <span class="pi-enh-menu-arrow" style="margin-left:auto;opacity:0.6;font-size:11px;">▶</span>
       </div>
       ` : ""}
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="copy-id">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-        <span>复制会话 ID (Session ID)</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <span>${isMultiSelect ? `复制已选 ${multiCount} 个会话 ID` : "复制会话 ID (Session ID)"}</span>
       </div>
       <div class="pi-enh-menu-item" data-action="copy-url">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-        <span>复制会话链接 (Session URL)</span>
+        <span>${isMultiSelect ? `复制已选 ${multiCount} 个会话链接` : "复制会话链接 (Session URL)"}</span>
       </div>
       <div class="pi-enh-menu-item" data-action="copy-path">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-        <span>复制会话文件完整路径</span>
+        <span>${isMultiSelect ? `复制已选 ${multiCount} 个文件路径` : "复制会话文件完整路径"}</span>
       </div>
-      <div class="pi-enh-menu-item" data-action="copy-prompt">
+      <div ${disabledAttr} data-action="copy-prompt" ${isMultiSelect ? 'title="接力提示词仅支持单个会话"' : ""}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M10 8h4"></path><path d="M10 12h4"></path></svg>
         <span>复制 Agent 接力提示词 (Codex/其他)</span>
       </div>
@@ -15528,14 +15554,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
         <span>复制项目工作目录</span>
       </div>
-      <div class="pi-enh-menu-item" data-action="reload-session">
+      <div ${disabledAttr} data-action="reload-session" ${isMultiSelect ? 'title="从磁盘重载仅支持单个会话"' : ""}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
         <span>${isCodex ? "重新读取原生会话" : "从磁盘重载 (Alt+R)"}</span>
       </div>
       ${renderSessionColorMenuItems(id)}
     `;
     const header = menu.querySelector(".pi-enh-menu-header");
-    header.textContent = `会话: ${displayName}`;
+    header.textContent = isMultiSelect ? `已选 ${multiCount} 项 (批量操作)` : `会话: ${displayName}`;
     header.title = id;
 
     document.body.appendChild(menu);
@@ -15549,7 +15575,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     let posX = Number(clientX) || 0;
     let posY = Number(clientY) || 0;
 
-    // 水平定位：默认在鼠标右侧，若超出右边界则向左翻转或贴右边缘展示
+    // 水平定位
     if (posX + menuWidth > window.innerWidth - PADDING) {
       if (posX - menuWidth >= PADDING) {
         posX = posX - menuWidth;
@@ -15559,7 +15585,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     posX = Math.max(PADDING, posX);
 
-    // 垂直定位：默认在鼠标下方，若超出下边界则优先向上翻转，若上下均不足则贴底/视口安全约束
+    // 垂直定位
     if (posY + menuHeight > window.innerHeight - PADDING) {
       if (posY - menuHeight >= PADDING) {
         posY = posY - menuHeight;
@@ -15572,7 +15598,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     menu.style.left = `${Math.round(posX)}px`;
     menu.style.top = `${Math.round(posY)}px`;
 
-    // 鼠标悬停自动展开会话标签二级菜单 (Hover Cascading Submenu)
+    // 鼠标悬停自动展开会话标签二级菜单
     const tagsMenuItem = menu.querySelector('.pi-enh-menu-item[data-action="open-session-tags"]');
     if (tagsMenuItem) {
       tagsMenuItem.addEventListener("mouseenter", () => {
@@ -15583,7 +15609,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         if (!activeSessionTagsPopover) {
           tagsMenuItem._openSubmenuTimer = setTimeout(() => {
             const triggerRect = tagsMenuItem.getBoundingClientRect();
-            openSessionTagsPopover(id, tagsMenuItem, null, triggerRect);
+            openSessionTagsPopover(id, tagsMenuItem, null, triggerRect, isMultiSelect ? targetSessionIds : null);
           }, 120);
         } else {
           tagsMenuItem.classList.add("is-submenu-open");
@@ -15596,7 +15622,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           tagsMenuItem._openSubmenuTimer = null;
         }
         if (activeSessionTagsPopover) {
-          // 若子菜单内输入框聚焦中，绝不启动关闭定时器
           if (document.activeElement && activeSessionTagsPopover.contains(document.activeElement)) {
             return;
           }
@@ -15609,7 +15634,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         }
       });
 
-      // 鼠标移动到主菜单其他项时，迅速收起二级菜单
       const siblingItems = menu.querySelectorAll('.pi-enh-menu-item:not([data-action="open-session-tags"])');
       for (const sib of siblingItems) {
         sib.addEventListener("mouseenter", () => {
@@ -15617,7 +15641,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             clearTimeout(tagsMenuItem._openSubmenuTimer);
             tagsMenuItem._openSubmenuTimer = null;
           }
-          // 关键防护：如果子菜单内的输入框已经获得焦点（用户输入文字中），哪怕鼠标不小心滑过兄弟项，也绝不能杀死子菜单！
           if (activeSessionTagsPopover && document.activeElement && activeSessionTagsPopover.contains(document.activeElement)) {
             return;
           }
@@ -15628,65 +15651,156 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     }
 
-    menu.addEventListener("click", (e) => {
+    menu.addEventListener("click", async (e) => {
       const item = e.target.closest("[data-action]");
       if (!item) return;
       const action = item.dataset.action;
 
       if (action === "toggle-unread") {
         closeMenu();
-        const unread = toggleSessionUnread(id);
-        showToast(unread ? "已标为未读" : "已标为已读", unread ? sessionUnreadIcon : sessionReadIcon);
+        if (isMultiSelect) {
+          const targetUnread = !allTargetUnread;
+          for (const sid of targetSessionIds) {
+            toggleSessionUnread(sid, targetUnread);
+          }
+          reconcileUnreadSessions();
+          showToast(targetUnread ? `已将 ${multiCount} 个会话标为未读` : `已将 ${multiCount} 个会话标为已读`, targetUnread ? sessionUnreadIcon : sessionReadIcon);
+        } else {
+          const unread = toggleSessionUnread(id);
+          showToast(unread ? "已标为未读" : "已标为已读", unread ? sessionUnreadIcon : sessionReadIcon);
+        }
         return;
       } else if (action === "rename-session") {
+        if (isMultiSelect) return;
         closeMenu();
         triggerSessionInlineRename(id);
         return;
       } else if (action === "pin-session") {
         closeMenu();
-        void handleSessionPinArchiveAction(id, "pin");
+        if (isMultiSelect) {
+          const targetPinned = !allTargetPinned;
+          const pinFn = (typeof toggleSessionPin === "function") ? toggleSessionPin : (typeof window !== "undefined" ? window.__PI_ENH_TOGGLE_SESSION_PIN__ : null);
+          if (pinFn) {
+            for (const sid of targetSessionIds) {
+              if (isPinnedFn(sid) !== targetPinned) {
+                await pinFn(sid);
+              }
+            }
+            syncSessionPinArchiveControls();
+            requestSessionListRefresh();
+            showToast(targetPinned ? `已置顶 ${multiCount} 个会话` : `已取消置顶 ${multiCount} 个会话`, sessionPinIcon);
+          }
+        } else {
+          void handleSessionPinArchiveAction(id, "pin");
+        }
         return;
       } else if (action === "archive-session") {
         closeMenu();
-        void handleSessionPinArchiveAction(id, "archive");
+        if (isMultiSelect) {
+          const archiveFn = (typeof archiveSession === "function") ? archiveSession : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
+          if (archiveFn) {
+            let archivedCount = 0;
+            for (const sid of targetSessionIds) {
+              const row = getSessionRowById(sid);
+              const sessionName = extractSessionTitleFromRow(row, sid);
+              const ok = await archiveFn(sid, { name: sessionName });
+              if (ok) {
+                archivedCount++;
+                selectedSessionBatchIds.delete(sid);
+              }
+            }
+            syncSessionPinArchiveControls();
+            if (typeof syncSessionBatchBar === "function") syncSessionBatchBar();
+            if (typeof syncSessionBatchRowStates === "function") syncSessionBatchRowStates();
+            requestSessionListRefresh(false, true);
+            if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+              try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (_) {}
+            }
+            showToast(`已批量归档 ${archivedCount} 个会话，可在“设置 → 已归档”中还原`, sessionArchiveIcon, 4200);
+          }
+        } else {
+          void handleSessionPinArchiveAction(id, "archive");
+        }
         return;
       } else if (action === "open-session-tags") {
         e.stopPropagation();
         const triggerRect = item.getBoundingClientRect();
         if (!activeSessionTagsPopover) {
-          openSessionTagsPopover(id, item, e, triggerRect);
+          openSessionTagsPopover(id, item, e, triggerRect, isMultiSelect ? targetSessionIds : null);
         } else {
           const searchInput = activeSessionTagsPopover.querySelector(".pi-enh-tags-search-input");
           if (searchInput) searchInput.focus();
         }
         return;
       } else if (action === "copy-id") {
-        copyText(id, `已复制会话 ID: ${id.slice(0, 12)}...`);
+        if (isMultiSelect) {
+          copyText(targetSessionIds.join("\n"), `已复制已选 ${multiCount} 个会话 ID`);
+        } else {
+          copyText(id, `已复制会话 ID: ${id.slice(0, 12)}...`);
+        }
       } else if (action === "copy-url") {
         const origin = window.location ? window.location.origin : "";
-        const url = `${origin}/?session=${encodeURIComponent(id)}`;
-        copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
-      } else if (action === "copy-path") {
-        const targetPath = resolveSessionRolloutPath(id, path);
-        if (targetPath) {
-          copyText(targetPath, `已复制会话文件完整路径`);
+        if (isMultiSelect) {
+          const urls = targetSessionIds.map(sid => `${origin}/?session=${encodeURIComponent(sid)}`).join("\n");
+          copyText(urls, `已复制已选 ${multiCount} 个会话链接`);
         } else {
-          showToast(isCodex ? "该 Codex 会话暂无本地文件路径" : "会话无独立文件路径");
+          const url = `${origin}/?session=${encodeURIComponent(id)}`;
+          copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
+        }
+      } else if (action === "copy-path") {
+        if (isMultiSelect) {
+          const paths = targetSessionIds.map(sid => resolveSessionRolloutPath(sid)).filter(Boolean);
+          if (paths.length > 0) {
+            copyText(paths.join("\n"), `已复制已选 ${paths.length} 个文件路径`);
+          } else {
+            showToast("所选会话均无独立文件路径");
+          }
+        } else {
+          const targetPath = resolveSessionRolloutPath(id, path);
+          if (targetPath) {
+            copyText(targetPath, `已复制会话文件完整路径`);
+          } else {
+            showToast(isCodex ? "该 Codex 会话暂无本地文件路径" : "会话无独立文件路径");
+          }
         }
       } else if (action === "copy-prompt") {
+        if (isMultiSelect) return;
         const targetPath = resolveSessionRolloutPath(id, path);
         const prompt = `这是我之前的 ${isCodex ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${targetPath || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
-        copyText(cwd || "", `已复制工作目录`);
+        if (isMultiSelect) {
+          const cwds = Array.from(new Set(targetSessionIds.map(sid => {
+            const r = getSessionRowById(sid);
+            return r?.getAttribute("data-pi-enh-cwd") || cwd || "";
+          }).filter(Boolean)));
+          copyText(cwds.join("\n") || cwd || "", `已复制工作目录`);
+        } else {
+          copyText(cwd || "", `已复制工作目录`);
+        }
       } else if (action === "reload-session") {
+        if (isMultiSelect) return;
         void handleSessionReload(id, { executionEngine });
       } else if (action === "set-session-color") {
         const color = item.getAttribute("data-session-color") || "";
         const preset = SESSION_COLOR_PRESETS.find((candidate) => candidate.id === color);
-        if (setSessionColor(id, color)) showToast(`已设为${preset?.name || "所选"}背景`);
+        if (isMultiSelect) {
+          for (const sid of targetSessionIds) {
+            setSessionColor(sid, color);
+          }
+          showToast(`已为已选 ${multiCount} 个会话设为${preset?.name || "所选"}背景`);
+        } else {
+          if (setSessionColor(id, color)) showToast(`已设为${preset?.name || "所选"}背景`);
+        }
       } else if (action === "clear-session-color") {
-        if (clearSessionColor(id)) showToast("已清除会话背景颜色");
+        if (isMultiSelect) {
+          for (const sid of targetSessionIds) {
+            clearSessionColor(sid);
+          }
+          showToast(`已为已选 ${multiCount} 个会话清除背景颜色`);
+        } else {
+          if (clearSessionColor(id)) showToast("已清除会话背景颜色");
+        }
       }
       closeMenu();
     });
@@ -16129,6 +16243,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             quote: normalizeAnnotationText(item.quote),
             comment: normalizeAnnotationText(item.comment),
             createdAt: Number(item.createdAt) || Date.now(),
+            kind: item.kind === "dom" ? "dom" : "quote",
           }))
           .filter((item) => item.quote);
       }
@@ -16146,20 +16261,25 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return annotationItems.map((item) => ({ ...item }));
   }
 
+  function enabledAnnotations() {
+    return listAnnotations().filter(item => isPluginEnabled(item.kind === "dom" ? "dom-feedback" : "quick-quote"));
+  }
+
   function notifyAnnotationSubmissionState() {
-    const hasAnnotations = isPluginEnabled("quick-quote") && annotationItems.length > 0;
+    const hasAnnotations = enabledAnnotations().length > 0;
     if (lastAnnotationSubmissionState === hasAnnotations) return;
     lastAnnotationSubmissionState = hasAnnotations;
     window.dispatchEvent(new Event("pi-enh-composer-submission-state-change"));
   }
 
-  function addAnnotation(quote, comment) {
+  function addAnnotation(quote, comment, options) {
     ensureAnnotationSession();
     const normalizedQuote = normalizeAnnotationText(quote);
     if (!normalizedQuote) return listAnnotations();
     annotationItems.push({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       quote: normalizedQuote,
+      kind: options?.kind === "dom" ? "dom" : "quote",
       comment: normalizeAnnotationText(comment),
       createdAt: Date.now(),
     });
@@ -16204,12 +16324,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function annotationLabel() {
-    return `${listAnnotations().length} 条注释`;
+    return `${enabledAnnotations().length} 条注释`;
   }
 
   function serializeAnnotations(body) {
     const normalizedBody = String(body || "").trim();
-    const items = listAnnotations();
+    const items = enabledAnnotations();
     if (!items.length) return normalizedBody;
     const blocks = items.map((item, index) => {
       const quoteLines = item.quote
@@ -16310,12 +16430,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function syncAnnotationComposer() {
     notifyAnnotationSubmissionState();
-    if (!isPluginEnabled("quick-quote")) {
+    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) {
       removeAnnotationUi();
       return;
     }
     const textarea = getComposerTextarea();
-    const items = listAnnotations();
+    const items = enabledAnnotations();
     if (!textarea || !items.length) {
       closeAnnotationList();
       if (annotationBadge) {
@@ -16925,7 +17045,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function openAnnotationEditor(quote, itemId, rect, sourceRange) {
-    if (!isPluginEnabled("quick-quote")) return;
+    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) return;
     const existing = itemId ? listAnnotations().find((item) => item.id === itemId) : null;
     const selectedQuote = normalizeAnnotationText(existing?.quote || quote);
     if (!selectedQuote) return;
@@ -17056,7 +17176,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function openAnnotationList() {
     if (annotationList) return;
-    const items = listAnnotations();
+    const items = enabledAnnotations();
     if (!items.length) return;
     const panel = document.createElement("section");
     panel.className = "pi-enh-annotation-list";
@@ -17098,7 +17218,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         cancelAnnotationListClose();
         removeAnnotation(item.id);
         syncAnnotationComposer();
-        const remaining = listAnnotations();
+        const remaining = enabledAnnotations();
         if (!remaining.length) {
           closeAnnotationList();
           return;
@@ -17156,8 +17276,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function prepareNativeComposerSubmission(kind, body) {
-    if (!isPluginEnabled("quick-quote")) return null;
-    const snapshot = listAnnotations();
+    const snapshot = enabledAnnotations();
     if (!snapshot.length) return null;
     const sessionId = getAnnotationSessionId();
     return {
@@ -17259,9 +17378,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // ==========================================
   // Pure state model: transport, DOM and storage never decide whether a request closed.
   function createProjectStatusModel() {
-    let catalog = new Map(), entries = new Map(), epoch = null, revision = -1, catalogReady = false;
+    let catalog = new Map(), entries = new Map(), epoch = null, activeSource = null, catalogReady = false;
     let sync = { state: "connecting", at: 0 }, unread = new Set();
-    const acknowledged = new Map(), retiredEpochs = new Set();
+    const acknowledged = new Map(), streams = new Map();
     let completedRead = new Set();
     const completionKey = (id, item) => JSON.stringify([id, item.runId]);
     const isCompletedRead = (id, item) => {
@@ -17303,14 +17422,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       (projectKey === null || (others ? entry.projectKey !== key(projectKey) : entry.projectKey === key(projectKey)))
       && (!status || entry.status === status) && entry.status !== "completed"
       && !(entry.status === "interrupted" && acknowledged.get(entry.id) === entry.runId));
-    const apply = (payload, now) => {
+    const apply = (payload, now, source = "default") => {
       const interactions = payload?.interactionState, stamp = payload?.statusSnapshot;
       const reject = state => { sync = { ...sync, state }; return { accepted: false, newRequests: [] }; };
       if (interactions?.version !== 1 || stamp?.version !== 1) return reject("unsupported");
       if (!Array.isArray(interactions.sessions) || !Array.isArray(stamp.executions) || !Array.isArray(payload.runningSessionIds)
         || payload.runningSessionIds.some(id => typeof id !== "string") || !stamp.epoch || typeof stamp.epoch !== "string"
         || !Number.isSafeInteger(stamp.revision) || stamp.revision < 0) return reject("unavailable");
-      if (retiredEpochs.has(stamp.epoch) || epoch === stamp.epoch && stamp.revision < revision) return { accepted: false, newRequests: [] };
+      // Pi and Codex have independent server epochs. Visiting another engine
+      // must not retire this engine's live epoch or erase its stale-read guard.
+      const stream = streams.get(source);
+      if (stream?.retiredEpochs.has(stamp.epoch) || stream?.epoch === stamp.epoch && stamp.revision < stream.revision) return { accepted: false, newRequests: [] };
       const next = new Map(), seen = new Set(), newRequests = [];
       for (const item of stamp.executions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || next.has(item.sessionId)
@@ -17329,7 +17451,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       for (const item of interactions.sessions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || seen.has(item.sessionId) || !Array.isArray(item.pendingRequests)) return reject("unavailable");
         seen.add(item.sessionId);
-        const ids = new Set(), previous = epoch === stamp.epoch ? entries.get(item.sessionId) : null;
+        const ids = new Set(), previous = activeSource === source && epoch === stamp.epoch ? entries.get(item.sessionId) : null;
         for (const request of item.pendingRequests) {
           if (!request || typeof request.id !== "string" || !request.id || ids.has(request.id)
             || !["select", "confirm", "input", "editor", "custom"].includes(request.method)) return reject("unavailable");
@@ -17342,8 +17464,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         next.set(item.sessionId, entry);
       }
       // Commit only after the entire snapshot validates; no partial DOM transitions.
-      if (epoch && epoch !== stamp.epoch) retiredEpochs.add(epoch);
-      entries = next; epoch = stamp.epoch; revision = stamp.revision;
+      const retiredEpochs = stream?.retiredEpochs || new Set();
+      if (stream && stream.epoch !== stamp.epoch) retiredEpochs.add(stream.epoch);
+      streams.set(source, { epoch: stamp.epoch, revision: stamp.revision, retiredEpochs });
+      entries = next; epoch = stamp.epoch; activeSource = source;
       sync = { state: "live", at: now };
       return { accepted: true, newRequests };
     };
@@ -18392,7 +18516,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function receiveProjectStatus(payload, catalog = null) {
     const reconciledPayload = filterResolvedAskUserRequests(payload);
-    const result = projectStatusModel.apply(reconciledPayload, Date.now());
+    const source = window.__PI_ENH_GET_EXECUTION_ENGINE__?.() || "pi";
+    const result = projectStatusModel.apply(reconciledPayload, Date.now(), source);
     if (result.accepted) {
       projectStatusLastPayload = reconciledPayload;
       if (catalog) refreshProjectStatusCatalog(catalog);
@@ -19217,6 +19342,61 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     };
     renderAskUserBatchPrototype();
   }
+
+
+  // ==========================================
+  // 常驻版本号标识 (Persistent Version Badge)
+  // 解决升级后界面无常驻版本号、无法直观确认当前版本的问题
+  // ==========================================
+  const CURRENT_APP_VERSION = "1.4.41";
+
+  function syncPersistentVersionBadges() {
+    if (typeof document === "undefined") return;
+
+    // 1. 侧边栏顶部：在“已连接”状态旁边常驻显示版本号
+    const connEl = Array.from(document.querySelectorAll('div[role="status"] span')).find(el => el.textContent?.trim() === "已连接");
+    if (connEl && connEl.parentElement) {
+      const parent = connEl.parentElement;
+      let verSpan = parent.querySelector(".pi-enh-header-version");
+      if (!verSpan) {
+        verSpan = document.createElement("span");
+        verSpan.className = "pi-enh-header-version";
+        verSpan.style.cssText = "opacity:0.75;margin-left:3px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;";
+        verSpan.title = `Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
+        verSpan.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
+        });
+        parent.appendChild(verSpan);
+      }
+      verSpan.textContent = `· v${CURRENT_APP_VERSION}`;
+    }
+
+    // 2. 侧边栏底部：在快捷按钮栏右侧增加微型胶囊徽章
+    const bottomBtn = document.querySelector(".pi-enh-shortcut-btn, button[data-shortcut-id]");
+    if (bottomBtn && bottomBtn.parentElement) {
+      const bottomBar = bottomBtn.parentElement;
+      let badge = bottomBar.querySelector(".pi-enh-sidebar-bottom-version");
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "pi-enh-sidebar-bottom-version";
+        badge.style.cssText = "display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;background:var(--bg-hover,rgba(255,255,255,0.06));border:1px solid var(--border,rgba(255,255,255,0.12));color:var(--text-dim,#71717a);font-size:10px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.4;margin-left:auto;cursor:pointer;user-select:none;";
+        badge.title = `当前版本：Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
+        badge.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
+        });
+        bottomBar.appendChild(badge);
+      }
+      badge.textContent = `v${CURRENT_APP_VERSION}`;
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    setInterval(syncPersistentVersionBadges, 1000);
+    setTimeout(syncPersistentVersionBadges, 300);
+  }
+
   // Queue bootstrap can call the hoisted composer resolver before modes init.
   let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
   let lastTrackedModeUrlSessionId = undefined;
@@ -21017,27 +21197,33 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (!cwd) throw new Error("未检测到当前有效的工作区目录");
     if (!sessionId) throw new Error("请先创建会话，再添加文档或压缩包附件");
     // Codex 的文件通道写入已存在的项目目录；唯一文件名由上传流程生成。
-    // 会话 ID 是路由身份，不能把 codex: 前缀当成文件夹名，也不依赖浏览器本机桥接建目录。
     if (executionEngine === "codex" || sessionId.startsWith("codex:")) return { uploadDir: cwd, relativeDir: "" };
-    try {
-      const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd, sessionId }),
-      });
-      if (res?.ok) {
-        const data = await res.json();
-        const relativeDir = String(data?.relativeDir || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-        if (data?.uploadDir && relativeDir.startsWith(".pi-uploads/")) {
-          return { uploadDir: data.uploadDir, relativeDir };
+
+    // 仅当在电脑本机 (127.0.0.1 / localhost) 访问时才尝试本地 30149 桥接，避免移动端跨私有网络报错
+    const isLoopback = typeof window !== "undefined" && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost");
+    if (isLoopback) {
+      try {
+        const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd, sessionId }),
+        });
+        if (res?.ok) {
+          const data = await res.json();
+          const relativeDir = String(data?.relativeDir || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+          if (data?.uploadDir && relativeDir.startsWith(".pi-uploads/")) {
+            return { uploadDir: data.uploadDir, relativeDir };
+          }
         }
+      } catch (e) {
+        // 30149 本地桥接服务未运行或连接超时，平滑降级
       }
-    } catch (e) {
-      // 30149 本地桥接服务未运行或连接超时，平滑降级
     }
+
     const sep = String(cwd).includes("\\") ? "\\" : "/";
-    const relativeDir = `.pi-uploads/${sessionId}`;
-    const uploadDir = String(cwd).replace(/[\\/]+$/, "") + sep + ".pi-uploads" + sep + sessionId;
+    // 关键修复：移动端/降级时直接写入已存在的 .pi-uploads 根目录，避免不存在的子路径返回 404 引发 Android 流失效
+    const relativeDir = ".pi-uploads";
+    const uploadDir = String(cwd).replace(/[\\/]+$/, "") + sep + ".pi-uploads";
     return { uploadDir, relativeDir, fallback: true };
   }
 
@@ -21607,7 +21793,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return rest;
   }
 
-  function extractAttachmentsFromUserMessage(msgEl, currentSessionId) {
+  function extractAttachmentsFromUserMessage(msgEl) {
     const attachments = [];
     const seen = new Set();
     const text = msgEl ? (msgEl.textContent || "") : "";
@@ -21659,34 +21845,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     }
 
-    // 3. 检查是否有当前会话关联的上传记录
-    if (attachments.length === 0 && currentSessionId) {
-      try {
-        const raw = localStorage.getItem(SESSION_UPLOADS_KEY);
-        if (raw) {
-          const map = JSON.parse(raw);
-          const files = map[currentSessionId];
-          if (Array.isArray(files) && files.length > 0) {
-            const allUserMsgs = document.querySelectorAll(".markdown-user-message");
-            if (allUserMsgs[0] === msgEl) {
-              for (const fileAbs of files) {
-                const name = extractOriginalFilename(fileAbs);
-                if (name && !seen.has(fileAbs)) {
-                  seen.add(fileAbs);
-                  attachments.push({
-                    id: "msg-att-" + Math.random().toString(36).slice(2, 9),
-                    name: name,
-                    serverRelativePath: fileAbs,
-                    serverAbsPath: fileAbs,
-                    type: getMimeTypeFromExt(name),
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {}
-    }
+    // Upload records track file cleanup for the whole session, not ownership of this message.
+    // Only explicit references in this message may create attachment cards.
 
     return attachments;
   }
@@ -21775,7 +21935,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const userMessages = document.querySelectorAll(".markdown-user-message");
     if (!userMessages || userMessages.length === 0) return;
 
-    const currentSessionId = getCurrentSessionId();
     const cwd = window.__PI_CURRENT_SESSION_DATA__?.info?.cwd || "";
 
     for (const msgEl of userMessages) {
@@ -21789,7 +21948,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         continue;
       }
 
-      const attachments = extractAttachmentsFromUserMessage(msgEl, currentSessionId);
+      const attachments = extractAttachmentsFromUserMessage(msgEl);
       let bar = bubble.querySelector(".pi-enh-message-attachments");
 
       if (attachments.length === 0) {
@@ -23905,6 +24064,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const signature = detail.signature;
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
+    syncComposerQueueBadge(detail.entries.length);
     composerQueueLastEntriesSignature = signature;
     if (changed) composerQueueActionsState = null;
     if (!detail.entries.length) {
@@ -24333,12 +24493,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const nonImageFiles = allClipboardFiles.filter((file) =>
       !(file.type && file.type.startsWith("image/")) || isVideoFile(file.name, file.type));
 
-    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) {
-      event.preventDefault();
-      event.stopPropagation();
-      void processComposerFiles(nonImageFiles, textarea);
-      return;
-    }
+    // The attachment listener owns file paste. Both capture listeners can run on
+    // this textarea even after stopPropagation, so never upload from formatting.
+    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) return;
 
     const imageFiles = allClipboardFiles.filter((file) =>
       file.type?.startsWith("image/") && !isVideoFile(file.name, file.type));
@@ -28353,12 +28510,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // 会话列表批量管理与删除 (Session Batch Actions)
   // ==========================================
   isSessionBatchMode = false;
-  const selectedSessionBatchIds = new Set();
+  selectedSessionBatchIds = selectedSessionBatchIds || new Set();
   let lastBatchClickedSessionId = null;
   batchDeleteModal = null;
   let isBatchDragging = false;
   let batchDragTargetState = true;
   let batchDeleteInFlight = false;
+  let batchDeleteJob = null;
+  let batchDeleteObserverController = null;
+  let batchDeleteObserverGeneration = 0;
+  let batchDeleteJobEntry = null;
+  const batchDeleteJobStorageKey = "pi-enh:session-batch-delete-job";
 
   let cachedActiveSessionIds = null;
   let cachedLatestGroupsRef = null;
@@ -28722,19 +28884,116 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function closeBatchDeleteModal() {
-    if (batchDeleteInFlight) return;
     if (batchDeleteModal) {
       batchDeleteModal.remove();
       batchDeleteModal = null;
     }
+    syncBatchDeleteJobEntry();
   }
 
-  function openBatchDeleteModal() {
-    if (batchDeleteInFlight) return;
-    closeBatchDeleteModal();
-    const targetIds = Array.from(selectedSessionBatchIds);
-    if (targetIds.length === 0) return;
+  function isBatchDeleteJobTerminal(job = batchDeleteJob) {
+    return Boolean(job?.done);
+  }
 
+  function getBatchDeleteJobStorage() {
+    try { return window.localStorage; } catch (e) { return null; }
+  }
+
+  function saveBatchDeleteJobPointer(job) {
+    const storage = getBatchDeleteJobStorage();
+    if (!storage) throw new Error("浏览器不支持保存删除任务恢复指针");
+    storage.setItem(batchDeleteJobStorageKey, JSON.stringify({ id: job.id, ids: job.ids }));
+  }
+
+  function clearBatchDeleteJobPointer() {
+    try { getBatchDeleteJobStorage()?.removeItem(batchDeleteJobStorageKey); } catch (e) {}
+  }
+
+  function readBatchDeleteJobPointer() {
+    try {
+      const raw = getBatchDeleteJobStorage()?.getItem(batchDeleteJobStorageKey);
+      if (!raw) return null;
+      const value = JSON.parse(raw);
+      if (!value || typeof value.id !== "string" || !Array.isArray(value.ids) ||
+          value.ids.length === 0 || value.ids.length > 10000 ||
+          value.ids.some((id) => typeof id !== "string" || !id || id.length > 200) ||
+          new Set(value.ids).size !== value.ids.length) return null;
+      return { id: value.id, ids: value.ids };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function createBatchDeleteJobId() {
+    try {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    } catch (e) {}
+    const hex = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+    return `${hex()}${hex()}-${hex()}-4${hex().slice(1)}-${((8 + Math.floor(Math.random() * 4)).toString(16))}${hex().slice(1)}-${hex()}${hex()}${hex()}`;
+  }
+
+  function removeBatchDeleteJobEntry() {
+    const entry = batchDeleteJobEntry || document.getElementById("pi-enh-batch-delete-job-entry");
+    if (entry) entry.remove();
+    batchDeleteJobEntry = null;
+  }
+
+  function syncBatchDeleteJobEntry() {
+    if (!isPluginEnabled("session-batch-actions") || !batchDeleteJob) {
+      removeBatchDeleteJobEntry();
+      return;
+    }
+    let entry = document.getElementById("pi-enh-batch-delete-job-entry");
+    if (!entry) {
+      entry = document.createElement("button");
+      entry.id = "pi-enh-batch-delete-job-entry";
+      entry.type = "button";
+      entry.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:10020;padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg-panel);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.22);font-size:12px;cursor:pointer";
+      entry.addEventListener("click", () => openBatchDeleteJobModal());
+      document.body.appendChild(entry);
+    }
+    batchDeleteJobEntry = entry;
+    const job = batchDeleteJob;
+    const label = job.connectionState === "not_found"
+      ? "任务待核对"
+      : job.connectionState === "reconnecting"
+        ? "连接待恢复"
+        : job.done
+          ? (job.status === "completed" ? "已完成" : "结果待核对")
+          : job.status === "interrupted"
+            ? "中断待核对"
+            : "删除进行中";
+    const processed = Number.isSafeInteger(job.processed) ? job.processed : 0;
+    entry.textContent = `批量删除 ${processed}/${job.ids.length} · ${label} · 查看`;
+    entry.title = "查看或重新同步此删除任务；隐藏不会取消服务器任务";
+    entry.setAttribute("aria-label", entry.textContent);
+  }
+
+  function dismissBatchDeleteJob() {
+    if (!isBatchDeleteJobTerminal() && batchDeleteJob?.connectionState !== "not_found") return;
+    clearBatchDeleteJobPointer();
+    batchDeleteJob = null;
+    removeBatchDeleteJobEntry();
+    closeBatchDeleteModal();
+  }
+
+  function stopBatchDeleteObserver() {
+    batchDeleteObserverGeneration++;
+    if (batchDeleteJob && !batchDeleteJob.done) batchDeleteJob.attachNeeded = true;
+    if (batchDeleteObserverController) {
+      try { batchDeleteObserverController.abort(new Error("批量删除观察器已暂停")); } catch (e) {}
+    }
+    batchDeleteObserverController = null;
+    batchDeleteInFlight = false;
+  }
+
+  activeCleanups.push(() => {
+    stopBatchDeleteObserver();
+    batchDeleteJob = null; // The durable browser pointer is restored by the next runtime.
+    removeBatchDeleteJobEntry();
+  });
+
+  function createBatchDeleteModal(targetIds, view = "confirm") {
     const count = targetIds.length;
     const previewHtml = targetIds.slice(0, 6).map((sid) => {
       const title = getSessionTitleForBatch(sid);
@@ -28742,7 +29001,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }).join("");
     const overflowCount = count - 6;
     const overflowHtml = overflowCount > 0 ? `<div class="pi-enh-batch-modal-item" style="color: var(--text-muted); font-style: italic;">... 等共 ${count} 个会话</div>` : "";
-
+    const isJobView = view === "job";
+    const retryCount = isJobView ? (batchDeleteJob?.failedIds?.length || 0) + (batchDeleteJob?.notStartedIds?.length || 0) : 0;
     const backdrop = document.createElement("div");
     backdrop.id = "pi-enh-batch-delete-modal";
     backdrop.className = "pi-enh-batch-modal-backdrop";
@@ -28750,142 +29010,889 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       <div class="pi-enh-batch-modal" role="dialog" aria-modal="true" aria-labelledby="pi-enh-batch-modal-title">
         <div class="pi-enh-batch-modal-header" id="pi-enh-batch-modal-title">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-          <span>批量删除会话</span>
+          <span>${isJobView ? "批量删除任务" : "批量删除会话"}</span>
         </div>
         <div class="pi-enh-batch-modal-body">
-          <div style="font-weight: 500;">确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？</div>
-          <div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>
-          <div class="pi-enh-batch-modal-list">
-            ${previewHtml}
-            ${overflowHtml}
+          <div data-batch-delete-intro style="font-weight: 500;">${isJobView ? (batchDeleteJob?.connectionState === "not_found" ? "服务器未找到此任务；没有自动重发删除请求。" : "服务器任务会继续处理；隐藏窗口不会取消任务。") : `确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？`}</div>
+          ${isJobView ? "" : `<div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>`}
+          <div class="pi-enh-batch-modal-list">${previewHtml}${overflowHtml}</div>
+          <div id="pi-enh-batch-delete-progress-section" style="${isJobView ? "" : "display: none;"} margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; margin-bottom: 6px;">
+              <span id="pi-enh-batch-progress-status" style="font-weight: 500; color: var(--text);">${isJobView ? "正在同步服务器任务..." : "准备开始删除..."}</span>
+              <span id="pi-enh-batch-progress-counts" style="color: var(--text-muted); font-variant-numeric: tabular-nums;">0 / ${count}</span>
+            </div>
+            <div id="pi-enh-batch-delete-progressbar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="${count}" aria-label="批量删除进度" style="width: 100%; height: 8px; background: var(--bg-hover, #27272a); border-radius: 4px; overflow: hidden; position: relative;">
+              <div id="pi-enh-batch-progressbar-fill" style="width: 0%; height: 100%; background: #ef4444; border-radius: 4px; transition: width 0.15s ease-out;"></div>
+            </div>
+            <div id="pi-enh-batch-progress-details" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--text-muted);">
+              <span id="pi-enh-batch-stat-confirmed" style="color: #22c55e;">已确认: 0</span>
+              <span id="pi-enh-batch-stat-failed" style="display: none; color: #ef4444;">失败: 0</span>
+              <span id="pi-enh-batch-stat-unknown" style="display: none; color: #f59e0b;">未知/待确认: 0</span>
+            </div>
+            <div id="pi-enh-batch-progress-result-ids" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere;"></div>
           </div>
         </div>
         <div class="pi-enh-batch-modal-footer">
-          <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">取消</button>
-          <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">确认彻底删除</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">${isJobView ? (isBatchDeleteJobTerminal() ? "关闭结果" : "隐藏到后台") : "取消"}</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="hide" style="display:none;padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">隐藏到后台</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="${isJobView ? (retryCount ? "" : "display:none;") : ""} padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">${isJobView ? `选择可重试项 (${retryCount})` : "确认彻底删除"}</button>
         </div>
       </div>
     `;
-
     const cancelBtn = backdrop.querySelector('[data-action="cancel"]');
+    const hideBtn = backdrop.querySelector('[data-action="hide"]');
     const confirmBtn = backdrop.querySelector('[data-action="confirm"]');
-
-    cancelBtn?.addEventListener("click", () => {
-      closeBatchDeleteModal();
-    });
-
+    const hideOrDismiss = () => {
+      if (!batchDeleteJob) {
+        closeBatchDeleteModal();
+      } else if (isBatchDeleteJobTerminal() || batchDeleteJob.connectionState === "not_found") {
+        dismissBatchDeleteJob();
+        setSessionBatchMode(false);
+      } else {
+        setSessionBatchMode(false);
+      }
+    };
+    cancelBtn?.addEventListener("click", hideOrDismiss);
+    hideBtn?.addEventListener("click", () => setSessionBatchMode(false));
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop) {
-        closeBatchDeleteModal();
+        if (batchDeleteJob && !isBatchDeleteJobTerminal()) setSessionBatchMode(false);
+        else closeBatchDeleteModal();
       }
     });
-
-    confirmBtn?.addEventListener("click", async () => {
-      if (cancelBtn) {
-        cancelBtn.disabled = true;
-        cancelBtn.style.opacity = "0.5";
-        cancelBtn.style.pointerEvents = "none";
-      }
-      await executeBatchDeleteSessions(targetIds, confirmBtn);
-    });
-
+    if (isJobView) {
+      confirmBtn?.addEventListener("click", () => {
+        const retryIds = [...(batchDeleteJob?.failedIds || []), ...(batchDeleteJob?.notStartedIds || [])];
+        if (!retryIds.length) return;
+        dismissBatchDeleteJob();
+        selectedSessionBatchIds.clear();
+        for (const id of retryIds) selectedSessionBatchIds.add(id);
+        setSessionBatchMode(true);
+      });
+    } else {
+      confirmBtn?.addEventListener("click", async () => {
+        if (batchDeleteJob) {
+          if (!isBatchDeleteJobTerminal(batchDeleteJob)) return;
+          const retryIds = [...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
+          if (!retryIds.length) return;
+          dismissBatchDeleteJob();
+          selectedSessionBatchIds.clear();
+          for (const id of retryIds) selectedSessionBatchIds.add(id);
+          setSessionBatchMode(true);
+          return;
+        }
+        if (confirmBtn) confirmBtn.disabled = true;
+        const progressSection = backdrop.querySelector("#pi-enh-batch-delete-progress-section");
+        if (progressSection) progressSection.style.display = "block";
+        if (cancelBtn) cancelBtn.textContent = "隐藏到后台";
+        await executeBatchDeleteSessions(targetIds, confirmBtn);
+      });
+    }
     document.body.appendChild(backdrop);
     batchDeleteModal = backdrop;
-    confirmBtn?.focus();
+    if (isJobView) {
+      const progress = batchDeleteJob?.lastProgress;
+      if (progress) {
+        const status = backdrop.querySelector("#pi-enh-batch-progress-status");
+        const counts = backdrop.querySelector("#pi-enh-batch-progress-counts");
+        const progressbar = backdrop.querySelector("#pi-enh-batch-delete-progressbar");
+        const fill = backdrop.querySelector("#pi-enh-batch-progressbar-fill");
+        const confirmed = backdrop.querySelector("#pi-enh-batch-stat-confirmed");
+        const failed = backdrop.querySelector("#pi-enh-batch-stat-failed");
+        const unknown = backdrop.querySelector("#pi-enh-batch-stat-unknown");
+        const resultIds = backdrop.querySelector("#pi-enh-batch-progress-result-ids");
+        const retry = backdrop.querySelector('[data-action="confirm"]');
+        if (status) status.textContent = progress.status;
+        if (counts) counts.textContent = `${progress.processed} / ${progress.total}`;
+        if (progressbar) progressbar.setAttribute("aria-valuenow", String(progress.processed));
+        if (fill) fill.style.width = `${progress.total ? Math.min(100, Math.round(progress.processed / progress.total * 100)) : 0}%`;
+        if (confirmed) confirmed.textContent = `已确认: ${progress.confirmed}`;
+        if (failed) {
+          failed.textContent = `失败: ${progress.failed}`;
+          failed.style.display = progress.failed > 0 ? "inline" : "none";
+        }
+        if (unknown) {
+          unknown.textContent = `未知/待确认: ${progress.unknown}`;
+          unknown.style.display = progress.unknown > 0 ? "inline" : "none";
+        }
+        const unresolved = [...(batchDeleteJob.unknownIds || []), ...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
+        if (resultIds && unresolved.length) resultIds.textContent = `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`;
+        if (retry) {
+          const retryCount = (batchDeleteJob.failedIds?.length || 0) + (batchDeleteJob.notStartedIds?.length || 0);
+          retry.disabled = !batchDeleteJob.done || retryCount === 0;
+          retry.textContent = `选择可重试项 (${retryCount})`;
+          retry.style.display = batchDeleteJob.done && retryCount ? "" : "none";
+        }
+      }
+    } else {
+      confirmBtn?.focus();
+    }
+    return backdrop;
   }
 
-  async function executeBatchDeleteSessions(targetIds, confirmBtn) {
+  function openBatchDeleteModal() {
+    if (batchDeleteJob) {
+      openBatchDeleteJobModal();
+      return;
+    }
+    if (batchDeleteInFlight) return;
+    closeBatchDeleteModal();
+    const targetIds = Array.from(selectedSessionBatchIds);
+    if (targetIds.length === 0) return;
+    createBatchDeleteModal(targetIds, "confirm");
+  }
+
+  function openBatchDeleteJobModal() {
+    if (!batchDeleteJob) return;
+    closeBatchDeleteModal();
+    createBatchDeleteModal(batchDeleteJob.ids, "job");
+    if (!batchDeleteInFlight && !batchDeleteJob.done && batchDeleteJob.connectionState !== "not_found") {
+      void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
+    }
+  }
+
+  async function executeBatchDeleteSessions(targetIds, confirmBtn, options = {}) {
     if (batchDeleteInFlight || !Array.isArray(targetIds) || targetIds.length === 0) return;
     targetIds = Array.from(new Set(targetIds));
-    batchDeleteInFlight = true;
-    if (confirmBtn) {
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = `正在删除 (0/${targetIds.length})...`;
+    if (targetIds.length > 10000) {
+      showToast("一次最多可删除 10000 个会话", sessionDeleteIcon);
+      return;
     }
-    // Paint the busy state before any local bookkeeping. One request serves up
-    // to 100 sessions; do not rerender the entire sidebar for every pending ID.
+    const isResume = options.resume === true;
+    let job = isResume ? batchDeleteJob : null;
+    if (isResume) {
+      if (!job || job.id !== options.jobId || job.ids.length !== targetIds.length || job.ids.some((id, i) => id !== targetIds[i])) return;
+    } else {
+      if (batchDeleteJob) return;
+      job = {
+        id: createBatchDeleteJobId(), ids: targetIds.slice(), status: "running", serverStatus: "running",
+        processed: 0, lastSequence: 0, connectionState: "connecting", appliedDeletedIds: new Set(),
+        failedIds: [], unknownIds: [], notStartedIds: [], done: false,
+      };
+      try {
+        saveBatchDeleteJobPointer(job);
+      } catch (err) {
+        showToast(`无法保存删除任务恢复指针：${err?.message || String(err)}`, sessionDeleteIcon);
+        return;
+      }
+      batchDeleteJob = job;
+    }
+    if (!(job.appliedDeletedIds instanceof Set)) job.appliedDeletedIds = new Set();
+    job.attachNeeded = false;
+    selectedSessionBatchIds.clear();
+    syncSessionBatchBar();
+    syncSessionBatchRowStates();
+    const generation = ++batchDeleteObserverGeneration;
+    const controller = new AbortController();
+    batchDeleteObserverController = controller;
+    batchDeleteInFlight = true;
+    const totalRequested = targetIds.length;
+
+    function renderProgress({ status, processed, confirmed, failed, unknown }) {
+      job.processed = processed;
+      job.lastProgress = { status, processed, total: totalRequested, confirmed, failed, unknown };
+      const modal = batchDeleteModal || (typeof document !== "undefined" ? document.getElementById("pi-enh-batch-delete-modal") : null);
+      const progressSection = modal?.querySelector?.("#pi-enh-batch-delete-progress-section");
+      const statusEl = modal?.querySelector?.("#pi-enh-batch-progress-status");
+      const countsEl = modal?.querySelector?.("#pi-enh-batch-progress-counts");
+      const progressbarEl = modal?.querySelector?.("#pi-enh-batch-delete-progressbar");
+      const fillEl = modal?.querySelector?.("#pi-enh-batch-progressbar-fill");
+      const statConfirmedEl = modal?.querySelector?.("#pi-enh-batch-stat-confirmed");
+      const statFailedEl = modal?.querySelector?.("#pi-enh-batch-stat-failed");
+      const statUnknownEl = modal?.querySelector?.("#pi-enh-batch-stat-unknown");
+      const resultIdsEl = modal?.querySelector?.("#pi-enh-batch-progress-result-ids");
+      const introEl = modal?.querySelector?.("[data-batch-delete-intro]");
+      if (progressSection) progressSection.style.display = "block";
+      if (introEl && batchDeleteJob === job) introEl.textContent = "服务器任务继续处理；隐藏窗口不会取消任务。";
+      if (statusEl && status) statusEl.textContent = status;
+      if (countsEl) countsEl.textContent = `${processed} / ${totalRequested}`;
+      if (progressbarEl) {
+        progressbarEl.setAttribute("aria-valuenow", String(processed));
+        progressbarEl.setAttribute("aria-valuemax", String(totalRequested));
+      }
+      if (fillEl) {
+        const pct = totalRequested > 0 ? Math.min(100, Math.round((processed / totalRequested) * 100)) : 0;
+        fillEl.style.width = `${pct}%`;
+      }
+      if (statConfirmedEl) statConfirmedEl.textContent = `已确认: ${confirmed}`;
+      if (statFailedEl) {
+        statFailedEl.textContent = `失败: ${failed}`;
+        statFailedEl.style.display = failed > 0 ? "inline" : "none";
+      }
+      if (statUnknownEl) {
+        statUnknownEl.textContent = `未知/待确认: ${unknown}`;
+        statUnknownEl.style.display = unknown > 0 ? "inline" : "none";
+      }
+      const unresolved = [...(job.unknownIds || []), ...(job.failedIds || []), ...(job.notStartedIds || [])];
+      if (resultIdsEl) resultIdsEl.textContent = unresolved.length
+        ? `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`
+        : "";
+      const cancelBtn = modal?.querySelector?.('[data-action="cancel"]');
+      const modalConfirmBtn = modal?.querySelector?.('[data-action="confirm"]');
+      if (cancelBtn && batchDeleteJob === job) {
+        cancelBtn.textContent = isBatchDeleteJobTerminal(job)
+          ? "关闭结果"
+          : job.connectionState === "not_found" ? "清除记录" : "隐藏到后台";
+      }
+      if (modalConfirmBtn && batchDeleteJob === job) {
+        const retryCount = (job.failedIds?.length || 0) + (job.notStartedIds?.length || 0);
+        modalConfirmBtn.disabled = !job.done || retryCount === 0;
+        modalConfirmBtn.textContent = job.done ? `选择可重试项 (${retryCount})` : `正在删除 (${processed}/${totalRequested})...`;
+        modalConfirmBtn.style.display = job.done && retryCount ? "" : "none";
+      }
+      syncBatchDeleteJobEntry();
+    }
+
+    renderProgress({
+      status: `准备开始删除 (0/${totalRequested})...`,
+      processed: 0,
+      confirmed: 0,
+      failed: 0,
+      unknown: 0,
+    });
+
+    // Paint the busy state; pending sessions remain visible until the server confirms deletion.
     await new Promise((resolve) => setTimeout(resolve, 0));
+    if (generation !== batchDeleteObserverGeneration) return;
     const activeSessionId = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
     let shouldResetActiveView = false;
     let successCount = 0;
     const failedIds = new Set();
+    const unknownIds = new Set();
+    const notStartedIds = new Set();
     let transportFailed = false;
-    for (const sid of targetIds) markSessionAsDeleted(sid, 60000, false);
-    try { window.__PI_ENH_RERENDER_SESSIONS__?.(); } catch (e) {}
+    let jobReceivedDone = false;
+    let definitiveRejectedError = null;
+    let processedSoFar = 0;
 
-    for (let offset = 0; offset < targetIds.length; offset += 100) {
-      const ids = targetIds.slice(offset, offset + 100);
-      const controller = new AbortController();
-      const deadline = setTimeout(() => controller.abort(), 30000);
-      let results = new Map();
-      let deletedIds = [];
+    async function waitForSignal(ms) {
+      if (controller.signal.aborted) return false;
+      return await new Promise((resolve) => {
+        let timer = null;
+        const finish = (value) => {
+          if (timer) clearTimeout(timer);
+          controller.signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        };
+        const onAbort = () => finish(false);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        timer = setTimeout(() => finish(true), ms);
+      });
+    }
+
+    async function requestJobJson(url, init = {}) {
+      const requestController = new AbortController();
+      const onAbort = () => { try { requestController.abort(); } catch (e) {} };
+      if (controller.signal.aborted) onAbort();
+      else controller.signal.addEventListener("abort", onAbort, { once: true });
+      const timeout = setTimeout(() => { try { requestController.abort(new Error("job observation request timeout")); } catch (e) {} }, 15000);
       try {
-        const response = await fetch("/api/sessions/batch-delete", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }), signal: controller.signal,
-        });
+        return await fetch(url, { ...init, cache: "no-store", signal: requestController.signal });
+      } finally {
+        clearTimeout(timeout);
+        controller.signal.removeEventListener("abort", onAbort);
+      }
+    }
+
+    function assertJobMetadata(data) {
+      if (!data || data.id !== job.id || !Array.isArray(data.ids) || data.ids.length !== targetIds.length ||
+          data.ids.some((id, index) => id !== targetIds[index]) || data.total !== targetIds.length ||
+          !["running", "completed", "stopped", "interrupted"].includes(data.status) ||
+          !Number.isSafeInteger(data.processed) || data.processed < 0 || data.processed > targetIds.length ||
+          !Number.isSafeInteger(data.lastSequence) || data.lastSequence < 0) {
+        const err = new Error("服务器删除任务元数据不匹配");
+        err.permanentJobError = true;
+        throw err;
+      }
+      job.serverStatus = data.status;
+      job.metadataStatus = data.status;
+      job.lastSequence = data.lastSequence;
+      job.metadataProcessed = data.processed;
+      job.connectionState = "connected";
+      syncBatchDeleteJobEntry();
+    }
+
+    async function fetchJobMetadata() {
+      const url = `/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}`;
+      let delay = 500;
+      while (!controller.signal.aborted) {
+        try {
+          const response = await requestJobJson(url, { method: "GET" });
+          if (response.status === 404) {
+            const err = new Error("服务器未找到此删除任务");
+            err.jobNotFound = true;
+            err.permanentJobError = true;
+            throw err;
+          }
+          if (!response.ok) {
+            const err = new Error(`读取删除任务元数据失败：HTTP ${response.status}`);
+            if (response.status >= 400 && response.status < 500) err.permanentJobError = true;
+            throw err;
+          }
+          const data = await response.json();
+          assertJobMetadata(data);
+          return data;
+        } catch (err) {
+          if (controller.signal.aborted || err?.permanentJobError) throw err;
+          job.connectionState = "reconnecting";
+          renderProgress({ status: "连接中断，正在重新读取任务状态；不会重发删除请求", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+          if (!await waitForSignal(delay)) throw new Error("任务观察已暂停");
+          delay = Math.min(5000, delay * 2);
+        }
+      }
+      throw new Error("任务观察已暂停");
+    }
+
+    async function createBatchDeleteJobResponse() {
+      if (!isResume) {
+        let postError = null;
+        try {
+          const response = await requestJobJson("/api/sessions/batch-delete/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: job.id, ids: targetIds }),
+          });
+          if (!response.ok) {
+            let errorBody = null;
+            try { errorBody = await response.json(); } catch (e) {}
+            if ((response.status === 400 || response.status === 409) && errorBody?.accepted === false) {
+              const rejected = new Error(errorBody.error || `服务器拒绝创建删除任务：HTTP ${response.status}`);
+              rejected.definitiveRejected = true;
+              throw rejected;
+            }
+            postError = new Error(`创建任务回执未确认：HTTP ${response.status}`);
+          } else {
+            try {
+              const ack = await response.json();
+              if (ack?.id === job.id && Array.isArray(ack.ids) && ack.ids.length === targetIds.length && ack.ids.every((id, i) => id === targetIds[i])) {
+                job.acknowledged = true;
+              } else {
+                postError = new Error("创建任务回执格式不匹配");
+              }
+            } catch (e) {
+              postError = e;
+            }
+          }
+        } catch (err) {
+          if (err?.definitiveRejected) throw err;
+          postError = err;
+        }
+        if (postError) {
+          job.ackUncertain = true;
+          job.connectionState = "reconnecting";
+          renderProgress({ status: "创建回执未确认，正在按任务 ID 只读核对；不会重复提交", processed: 0, confirmed: 0, failed: 0, unknown: 0 });
+        }
+      }
+      await fetchJobMetadata();
+      let cursor = 0;
+      let doneQueued = false;
+      let delay = 500;
+      const encoder = new TextEncoder();
+      const apiUrl = `/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}/events`;
+      const body = new ReadableStream({
+        async pull(streamController) {
+          while (!controller.signal.aborted) {
+            try {
+              const response = await requestJobJson(`${apiUrl}?after=${cursor}`, { method: "GET" });
+              if (response.status === 404) {
+                const err = new Error("服务器未找到此删除任务事件");
+                err.jobNotFound = true;
+                err.permanentJobError = true;
+                throw err;
+              }
+              if (!response.ok) {
+                const err = new Error(`读取删除任务事件失败：HTTP ${response.status}`);
+                if (response.status >= 400 && response.status < 500) err.permanentJobError = true;
+                throw err;
+              }
+              const page = await response.json();
+              if (!page || page.id !== job.id || !Array.isArray(page.frames) ||
+                  !["running", "completed", "stopped", "interrupted"].includes(page.status) ||
+                  !Number.isSafeInteger(page.lastSequence) || page.lastSequence < cursor) {
+                const err = new Error("服务器删除任务事件页格式无效");
+                err.permanentJobError = true;
+                throw err;
+              }
+              let expectedSeq = cursor + 1;
+              const lines = [];
+              for (const entry of page.frames) {
+                if (!entry || entry.seq !== expectedSeq || entry.seq > page.lastSequence || !entry.frame || typeof entry.frame !== "object" || typeof entry.frame.type !== "string") {
+                  const err = new Error("服务器删除任务事件序号不连续");
+                  err.permanentJobError = true;
+                  throw err;
+                }
+                cursor = entry.seq;
+                expectedSeq++;
+                job.lastSequence = cursor;
+                if (entry.frame.type === "done") doneQueued = true;
+                lines.push(JSON.stringify(entry.frame));
+              }
+              job.serverStatus = page.status;
+              const wasReconnecting = job.connectionState === "reconnecting";
+              job.connectionState = "connected";
+              syncBatchDeleteJobEntry();
+              delay = 500;
+              if (lines.length) {
+                streamController.enqueue(encoder.encode(lines.join("\n") + "\n"));
+                return;
+              }
+              if (wasReconnecting) {
+                renderProgress({ status: "已重新连接，等待服务器进度", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+              }
+              if (page.status !== "running" && cursor === page.lastSequence && !doneQueued) {
+                const err = new Error("终态任务事件缺少 done 回执");
+                err.permanentJobError = true;
+                throw err;
+              }
+              if (!await waitForSignal(page.status === "running" ? 500 : 100)) {
+                streamController.error(new Error("任务观察已暂停"));
+                return;
+              }
+              streamController.enqueue(encoder.encode("\n"));
+              return;
+            } catch (err) {
+              if (controller.signal.aborted) {
+                streamController.error(err || new Error("任务观察已暂停"));
+                return;
+              }
+              if (err?.jobNotFound || err?.permanentJobError) {
+                if (err?.jobNotFound) job.connectionState = "not_found";
+                else job.connectionState = "reconnecting";
+                streamController.error(err);
+                return;
+              }
+              job.connectionState = "reconnecting";
+              renderProgress({ status: "连接中断，正在重新读取服务器进度；删除任务仍在服务器运行", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+              if (!await waitForSignal(delay)) {
+                streamController.error(new Error("任务观察已暂停"));
+                return;
+              }
+              delay = Math.min(5000, delay * 2);
+            }
+          }
+          streamController.error(new Error("任务观察已暂停"));
+        },
+      });
+      return {
+        ok: true,
+        headers: { get: () => "application/x-ndjson; charset=utf-8" },
+        body,
+      };
+    }
+
+    for (let offset = 0; offset < targetIds.length; offset += targetIds.length) {
+      const ids = targetIds;
+      const idsSet = new Set(ids);
+
+      let idleTimer = null;
+      function resetIdleDeadline() {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          if (generation !== batchDeleteObserverGeneration || batchReceivedDone) return;
+          job.connectionState = "reconnecting";
+          renderProgress({ status: "暂时未收到更新；服务器任务仍继续，正在重新连接", processed: processedSoFar + settledInBatch.size, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+        }, 75000);
+      }
+      resetIdleDeadline();
+
+      const settledInBatch = new Set();
+      const settledResultsMap = new Map();
+      const dispatchedInBatch = new Set();
+      const confirmedInBatch = new Set();
+      const cleanedCascadeIds = new Set();
+      let inFlightId = null;
+      let receivedStart = false;
+      let batchReceivedDone = false;
+      let batchStopped = false;
+      let readerRef = null;
+
+      try {
+        const response = await createBatchDeleteJobResponse();
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        if (!Array.isArray(payload.results) || !Array.isArray(payload.deletedSessionIds)) throw new Error("无效的删除回执");
-        results = new Map(payload.results.map((result) => [result.id, result]));
-        deletedIds = payload.deletedSessionIds.filter((id) => typeof id === "string" && id);
+
+        const contentType = response.headers?.get?.("content-type") || "";
+        const isNdjson = contentType.includes("application/x-ndjson") && response.body && typeof response.body.getReader === "function";
+
+        if (isNdjson) {
+          const reader = response.body.getReader();
+          readerRef = reader;
+          const Decoder = typeof TextDecoder !== "undefined" ? TextDecoder : (typeof globalThis !== "undefined" ? globalThis.TextDecoder : null);
+          const decoder = Decoder ? new Decoder() : { decode: (chunk) => String(chunk) };
+          let buffer = "";
+          const MAX_FRAME_BUFFER_BYTES = Math.min(16 * 1024 * 1024, 64 * 1024 + ids.length * 1024);
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (generation !== batchDeleteObserverGeneration) return;
+            if (done) {
+              if (!batchReceivedDone) {
+                throw new Error("流提前终止，未接收到终端 done 帧");
+              }
+              break;
+            }
+            resetIdleDeadline();
+            buffer += decoder.decode(value, { stream: true });
+            if (buffer.length > MAX_FRAME_BUFFER_BYTES && buffer.indexOf("\n") === -1) {
+              throw new Error("单帧数据超长或缓冲区溢出");
+            }
+            let newlineIdx;
+            while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+              const line = buffer.slice(0, newlineIdx).trim();
+              buffer = buffer.slice(newlineIdx + 1);
+              if (!line) continue;
+              if (line.length > MAX_FRAME_BUFFER_BYTES) {
+                throw new Error("单帧数据超长");
+              }
+
+              if (batchReceivedDone) {
+                throw new Error("已收到 done 帧后仍收到多余数据帧");
+              }
+
+              let frame;
+              try {
+                frame = JSON.parse(line);
+              } catch (parseErr) {
+                throw new Error(`畸形数据帧: ${parseErr.message}`);
+              }
+              if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
+                throw new Error("无效的数据帧格式");
+              }
+
+              if (frame.type === "start") {
+                if (receivedStart) {
+                  throw new Error("重复的 start 帧");
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("start 帧 total 计数矛盾或非法: " + frame.total);
+                }
+                receivedStart = true;
+                resetIdleDeadline();
+                renderProgress({
+                  status: "正在准备删除...",
+                  processed: processedSoFar + settledInBatch.size,
+                  confirmed: successCount,
+                  failed: failedIds.size,
+                  unknown: unknownIds.size,
+                });
+              } else if (frame.type === "item-start") {
+                if (!receivedStart) {
+                  throw new Error("未收到 start 帧前收到 item-start");
+                }
+                if (typeof frame.id !== "string" || !idsSet.has(frame.id)) {
+                  throw new Error("非法 item-start 帧 id: " + frame.id);
+                }
+                if (settledInBatch.has(frame.id) || dispatchedInBatch.has(frame.id)) {
+                  throw new Error("重复 item-start: " + frame.id);
+                }
+                if (!Number.isSafeInteger(frame.index) || ids[frame.index - 1] !== frame.id) {
+                  throw new Error("item-start 帧 index 非法: " + frame.index);
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("item-start 帧 total 矛盾: " + frame.total);
+                }
+                inFlightId = frame.id;
+                dispatchedInBatch.add(frame.id);
+                resetIdleDeadline();
+                renderProgress({
+                  status: `正在处理第 ${offset + frame.index}/${totalRequested} 个会话...`,
+                  processed: processedSoFar + settledInBatch.size,
+                  confirmed: successCount,
+                  failed: failedIds.size,
+                  unknown: unknownIds.size,
+                });
+              } else if (frame.type === "result") {
+                if (!receivedStart) {
+                  throw new Error("未收到 start 帧前收到 result");
+                }
+                if (!Number.isSafeInteger(frame.processed) || frame.processed !== settledInBatch.size + 1) {
+                  throw new Error("result 帧 processed 计数矛盾或不连续: " + frame.processed);
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("result 帧 total 计数矛盾: " + frame.total);
+                }
+                const r = frame.result;
+                if (!r || typeof r !== "object" || typeof r.id !== "string" || !idsSet.has(r.id)) {
+                  throw new Error("非法 result 帧内容");
+                }
+                if (settledInBatch.has(r.id)) {
+                  throw new Error("重复的 result 帧: " + r.id);
+                }
+                if (typeof r.ok !== "boolean" || typeof r.state !== "string") {
+                  throw new Error("result 帧缺少必要字段 ok/state");
+                }
+
+                const validStates = ["deleted", "missing", "failed", "unknown", "not_started"];
+                if (!validStates.includes(r.state)) {
+                  throw new Error("非法 state 字段: " + r.state);
+                }
+                if ((r.state === "deleted" || r.state === "missing") && r.ok !== true) {
+                  throw new Error(`state='${r.state}' 但 ok=false，帧数据矛盾`);
+                }
+                if ((r.state === "failed" || r.state === "unknown" || r.state === "not_started") && r.ok !== false) {
+                  throw new Error(`state='${r.state}' 但 ok=true，帧数据矛盾`);
+                }
+
+                if (!dispatchedInBatch.has(r.id) || r.state === "not_started") {
+                  throw new Error("result 未对应已派发项；not_started 仅由终端回执确认");
+                }
+                if (!Array.isArray(frame.deletedSessionIds) ||
+                    frame.deletedSessionIds.some((id) => typeof id !== "string" || !id || id.length > 200) ||
+                    new Set(frame.deletedSessionIds).size !== frame.deletedSessionIds.length ||
+                    (r.ok && !frame.deletedSessionIds.includes(r.id)) ||
+                    (!r.ok && frame.deletedSessionIds.length > 0) ||
+                    frame.deletedSessionIds.some((id) => id !== r.id &&
+                      (r.id.startsWith("codex:") || id.startsWith("codex:") || idsSet.has(id)))) {
+                  throw new Error("result 删除范围与逐项确认矛盾");
+                }
+                settledInBatch.add(r.id);
+                settledResultsMap.set(r.id, r);
+                if (inFlightId === r.id) inFlightId = null;
+                resetIdleDeadline();
+
+                if (r.state === "deleted" || r.state === "missing") {
+                  confirmedInBatch.add(r.id);
+                  successCount++;
+                  selectedSessionBatchIds.delete(r.id);
+                  if (!job.appliedDeletedIds.has(r.id)) {
+                    job.appliedDeletedIds.add(r.id);
+                    markSessionDeleteConfirmed(r.id);
+                    cleanupDeletedSessionEverywhere(r.id);
+                    try { window.__PI_ENH_SESSION_DELETED__?.(r.id); } catch (e) {}
+                    try { void cleanupSessionUploadedFiles(r.id).catch(() => {}); } catch (e) {}
+                  }
+                  if (r.id === activeSessionId) shouldResetActiveView = true;
+
+                  if (Array.isArray(frame.deletedSessionIds)) {
+                    for (const delId of frame.deletedSessionIds) {
+                      if (typeof delId === "string" && delId && !idsSet.has(delId) && !cleanedCascadeIds.has(delId)) {
+                        cleanedCascadeIds.add(delId);
+                        if (!job.appliedDeletedIds.has(delId)) {
+                          job.appliedDeletedIds.add(delId);
+                          markSessionDeleteConfirmed(delId);
+                          cleanupDeletedSessionEverywhere(delId);
+                          try { window.__PI_ENH_SESSION_DELETED__?.(delId); } catch (e) {}
+                        }
+                      }
+                    }
+                  }
+                } else if (r.state === "failed") {
+                  failedIds.add(r.id);
+                  restoreSessionDeleteState(r.id, false);
+                } else if (r.state === "unknown") {
+                  unknownIds.add(r.id);
+                  restoreSessionDeleteState(r.id, false);
+                  batchStopped = true;
+                } else if (r.state === "not_started") {
+                  notStartedIds.add(r.id);
+                  restoreSessionDeleteState(r.id, false);
+                }
+
+                renderProgress({
+                  status: `正在删除... (${processedSoFar + settledInBatch.size}/${totalRequested})`,
+                  processed: processedSoFar + settledInBatch.size,
+                  confirmed: successCount,
+                  failed: failedIds.size,
+                  unknown: unknownIds.size,
+                });
+              } else if (frame.type === "done") {
+                if (!receivedStart) {
+                  throw new Error("未收到 start 帧前收到 done");
+                }
+                if (batchReceivedDone) {
+                  throw new Error("重复的 done 帧");
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("done 帧 total 计数矛盾: " + frame.total);
+                }
+                if (typeof frame.stopped !== "boolean") {
+                  throw new Error("done 帧缺少合法 stopped 字段");
+                }
+                if (!Number.isSafeInteger(frame.processed) || frame.processed !== settledInBatch.size) {
+                  throw new Error("done 帧 processed 必须匹配已结算项数量");
+                }
+                if (!frame.stopped && frame.processed !== ids.length) {
+                  throw new Error("未停止批次的 done 帧 processed 必须等于 total");
+                }
+                if (frame.stopped && frame.processed !== settledInBatch.size) {
+                  throw new Error("已停止批次的 done 帧 processed 必须匹配已结算项数量");
+                }
+                if (!Array.isArray(frame.results) || frame.results.length !== ids.length) {
+                  throw new Error("done 帧 results 数组长度与本批次 ID 数量不一致");
+                }
+
+                const doneSeenIds = new Set();
+                for (const item of frame.results) {
+                  if (!item || typeof item !== "object" || typeof item.id !== "string" || !idsSet.has(item.id)) {
+                    throw new Error("done 帧包含未知或非法 ID 项: " + item?.id);
+                  }
+                  if (doneSeenIds.has(item.id)) {
+                    throw new Error("done 帧包含重复 ID 项: " + item.id);
+                  }
+                  doneSeenIds.add(item.id);
+
+                  const validStates = ["deleted", "missing", "failed", "unknown", "not_started"];
+                  if (!validStates.includes(item.state)) {
+                    throw new Error("done 帧包含非法 state: " + item.state);
+                  }
+                  if ((item.state === "deleted" || item.state === "missing") && item.ok !== true) {
+                    throw new Error(`done 帧项 state='${item.state}' 但 ok=false`);
+                  }
+                  if ((item.state === "failed" || item.state === "unknown" || item.state === "not_started") && item.ok !== false) {
+                    throw new Error(`done 帧项 state='${item.state}' 但 ok=true`);
+                  }
+
+                  if (settledResultsMap.has(item.id)) {
+                    const prev = settledResultsMap.get(item.id);
+                    if (prev.state !== item.state || prev.ok !== item.ok) {
+                      throw new Error(`done 帧与此前 result 帧矛盾: id=${item.id}`);
+                    }
+                  } else {
+                    if (!frame.stopped || item.state !== "not_started" || item.ok !== false) {
+                      throw new Error(`done 帧试图将未曾执行的项冒充为已处理: ${item.id} (${item.state})`);
+                    }
+                  }
+                }
+                if (doneSeenIds.size !== ids.length) {
+                  throw new Error("done 帧未能完整覆盖本批次全部 ID");
+                }
+
+                const allConfirmedIds = new Set([...confirmedInBatch, ...cleanedCascadeIds]);
+                if (!Array.isArray(frame.deletedSessionIds) ||
+                    frame.deletedSessionIds.length !== allConfirmedIds.size ||
+                    new Set(frame.deletedSessionIds).size !== frame.deletedSessionIds.length ||
+                    frame.deletedSessionIds.some((id) => !allConfirmedIds.has(id)) ||
+                    (unknownIds.size > 0 && !frame.stopped)) {
+                  throw new Error("done 帧删除范围或停止标志与逐项回执矛盾");
+                }
+
+                for (const item of frame.results) {
+                  if (item.state === "not_started") {
+                    notStartedIds.add(item.id);
+                    restoreSessionDeleteState(item.id, false);
+                  }
+                }
+                resetIdleDeadline();
+                batchReceivedDone = true;
+                jobReceivedDone = true;
+                job.doneFrameStopped = frame.stopped;
+                if (frame.stopped) batchStopped = true;
+                break;
+              } else {
+                throw new Error("未知数据帧类型: " + frame.type);
+              }
+            }
+            if (batchReceivedDone) {
+              if (buffer.trim()) throw new Error("已收到 done 帧后仍有未解析数据");
+              break;
+            }
+          }
+        } else {
+          throw new Error("批量删除任务传输适配器未提供 NDJSON 帧流");
+        }
       } catch (err) {
         transportFailed = true;
+        if (err?.definitiveRejected) definitiveRejectedError = err;
+        if (generation === batchDeleteObserverGeneration) {
+          job.connectionState = err?.jobNotFound ? "not_found" : "reconnecting";
+          job.attachNeeded = false;
+          try { controller.abort(err); } catch (e) {}
+        }
+        if (readerRef) {
+          try { await readerRef.cancel(); } catch (e) {}
+        }
         console.warn("[pi-enh] Batch deletion receipt unavailable:", err?.message || String(err));
       } finally {
-        clearTimeout(deadline);
-      }
-      const confirmedIds = new Set(deletedIds);
-      for (const sid of ids) {
-        if (results.get(sid)?.ok === true) confirmedIds.add(sid);
-        if (confirmedIds.has(sid)) successCount++;
-        else {
-          failedIds.add(sid);
-          restoreSessionDeleteState(sid, false);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (readerRef) {
+          try { await readerRef.cancel(); } catch (e) {}
+          try { readerRef.releaseLock(); } catch (e) {}
         }
       }
-      for (const sid of confirmedIds) {
-        markSessionDeleteConfirmed(sid);
-        selectedSessionBatchIds.delete(sid);
-        cleanupDeletedSessionEverywhere(sid);
-        try { window.__PI_ENH_SESSION_DELETED__?.(sid); } catch (e) {}
-        try { void cleanupSessionUploadedFiles(sid).catch(() => {}); } catch (e) {}
-        if (sid === activeSessionId) shouldResetActiveView = true;
+
+      if (!batchReceivedDone) {
+        transportFailed = true;
       }
-      if (confirmBtn) confirmBtn.textContent = `正在删除 (${offset + ids.length}/${targetIds.length})...`;
-      // If the connection is lost, stop submitting more destructive requests.
-      // An aborted request may have committed: refresh server truth; never
-      // automatically resend it or claim that its files were restored.
-      if (transportFailed) {
-        for (const sid of targetIds.slice(offset + ids.length)) {
-          failedIds.add(sid);
-          restoreSessionDeleteState(sid, false);
-        }
+
+      processedSoFar += settledInBatch.size;
+
+      if (transportFailed || batchStopped) {
         break;
       }
+    }
+
+    if (generation !== batchDeleteObserverGeneration) return;
+
+    if (definitiveRejectedError) {
+      clearBatchDeleteJobPointer();
+      if (batchDeleteJob === job) batchDeleteJob = null;
+      removeBatchDeleteJobEntry();
+      if (isSessionBatchMode) {
+        for (const id of targetIds) selectedSessionBatchIds.add(id);
+        syncSessionBatchBar();
+        syncSessionBatchRowStates();
+      }
+      batchDeleteInFlight = false;
+      batchDeleteObserverController = null;
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "再次确认删除";
+      }
+      const rejectionStatus = batchDeleteModal?.querySelector?.("#pi-enh-batch-progress-status");
+      const rejectionCancel = batchDeleteModal?.querySelector?.('[data-action="cancel"]');
+      if (rejectionStatus) rejectionStatus.textContent = `服务器未接受任务：${definitiveRejectedError.message}`;
+      if (rejectionCancel) rejectionCancel.textContent = "取消";
+      showToast(`服务器未接受删除任务：${definitiveRejectedError.message}。如需重试，请再次确认。`, sessionDeleteIcon);
+      return;
     }
 
     if (shouldResetActiveView) {
       try { window.history.replaceState(null, "", "/"); } catch (e) {}
     }
     batchDeleteInFlight = false;
-    closeBatchDeleteModal();
-    if (failedIds.size === 0) setSessionBatchMode(false);
-    else {
-      selectedSessionBatchIds.clear();
-      for (const sid of failedIds) selectedSessionBatchIds.add(sid);
+    batchDeleteObserverController = null;
+
+    if (!transportFailed && jobReceivedDone) {
+      job.done = true;
+      job.status = job.serverStatus === "completed" ? "completed" : job.serverStatus;
+      if (!["completed", "stopped", "interrupted"].includes(job.status)) job.status = job.doneFrameStopped ? "stopped" : "completed";
+      job.processed = totalRequested;
+      job.failedIds = [...failedIds];
+      job.unknownIds = [...unknownIds];
+      job.notStartedIds = [...notStartedIds];
+      job.connectionState = "connected";
+      renderProgress({
+        status: job.status === "completed" ? `删除任务完成 (${totalRequested}/${totalRequested})` : `任务已停止，部分结果需要核对 (${totalRequested}/${totalRequested})`,
+        processed: totalRequested,
+        confirmed: successCount,
+        failed: failedIds.size,
+        unknown: unknownIds.size,
+      });
+    } else if (transportFailed) {
+      job.connectionState = job.connectionState === "not_found" ? "not_found" : "reconnecting";
+      renderProgress({
+        status: job.connectionState === "not_found"
+          ? "服务器未找到任务；没有重发删除请求，可清除此观察记录"
+          : "暂时无法读取任务进度；服务器任务可能仍在运行，点击进度入口只会重新读取",
+        processed: job.processed || processedSoFar,
+        confirmed: successCount,
+        failed: failedIds.size,
+        unknown: unknownIds.size,
+      });
+    }
+
+    const unresolvedCount = failedIds.size + unknownIds.size + notStartedIds.size;
+    if (!transportFailed && jobReceivedDone && unresolvedCount === 0) {
+      setSessionBatchMode(false);
+      showToast(`已确认移除/不存在 ${successCount} 个会话`, sessionDeleteIcon);
+    } else if (!transportFailed && jobReceivedDone) {
       syncSessionBatchBar();
       syncSessionBatchRowStates();
       try { window.__PI_ENH_RERENDER_SESSIONS__?.(); } catch (e) {}
+      showToast(`已确认移除/不存在 ${successCount} 个，${failedIds.size + notStartedIds.size} 个可显式选择重试，${unknownIds.size} 个结果待核对。`, sessionDeleteIcon);
+    } else if (transportFailed) {
+      showToast("进度观察暂时中断；未把未收到回执的项目标为失败或未知，服务器任务仍可通过进度入口重新同步。", sessionDeleteIcon);
     }
-    requestSessionListRefresh(false, true);
-    if (transportFailed) {
-      showToast(`连接中断或等待超时：已确认删除 ${successCount} 个，${failedIds.size} 个结果待确认。刷新列表后可重试。`, sessionDeleteIcon);
-    } else if (failedIds.size) {
-      showToast(`已删除 ${successCount} 个，${failedIds.size} 个未删除，已保留选择，可重试。`, sessionDeleteIcon);
-    } else {
-      showToast(`已成功彻底删除 ${successCount} 个会话`, sessionDeleteIcon);
-    }
+    if (processedSoFar > 0 || jobReceivedDone) requestSessionListRefresh(false, true);
   }
 
   // 鼠标点击捕获监听：快捷激活批量模式与单选/连选
@@ -28986,15 +29993,183 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   addManagedListener(window, "mouseup", () => {
     isBatchDragging = false;
   }, true);
+  // 移动端触摸滑选支持 (Mobile Touch Drag / Swipe Select)
+  let isBatchTouchDragging = false;
+  let batchTouchTargetState = true;
+  let batchTouchAutoScrollRaf = null;
+
+  function stopBatchTouchAutoScroll() {
+    if (batchTouchAutoScrollRaf) {
+      cancelAnimationFrame(batchTouchAutoScrollRaf);
+      batchTouchAutoScrollRaf = null;
+    }
+  }
+
+  function handleBatchTouchAutoScroll(clientY, scrollContainer) {
+    if (!scrollContainer) return;
+    const rect = scrollContainer.getBoundingClientRect();
+    const threshold = 48;
+    const maxSpeed = 12;
+    let delta = 0;
+
+    if (clientY < rect.top + threshold) {
+      const ratio = Math.max(0, (rect.top + threshold - clientY) / threshold);
+      delta = -Math.round(ratio * maxSpeed);
+    } else if (clientY > rect.bottom - threshold) {
+      const ratio = Math.max(0, (clientY - (rect.bottom - threshold)) / threshold);
+      delta = Math.round(ratio * maxSpeed);
+    }
+
+    if (delta !== 0) {
+      scrollContainer.scrollTop += delta;
+      if (!batchTouchAutoScrollRaf) {
+        batchTouchAutoScrollRaf = requestAnimationFrame(() => {
+          batchTouchAutoScrollRaf = null;
+          if (isBatchTouchDragging) {
+            handleBatchTouchAutoScroll(clientY, scrollContainer);
+          }
+        });
+      }
+    } else {
+      stopBatchTouchAutoScroll();
+    }
+  }
+
+  addManagedListener(document, "touchstart", (event) => {
+    if (!isSessionBatchMode || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const target = event.target;
+    if (!target) return;
+
+    const checkboxWrap = target.closest(".pi-enh-session-batch-checkbox-wrap");
+    const row = target.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    if (!row || target.closest(".pi-enh-session-overflow, .pi-enh-session-menu, [data-session-action]")) return;
+
+    const sessionId = row.getAttribute("data-pi-enh-session-id");
+    if (!sessionId) return;
+
+    if (checkboxWrap) {
+      isBatchTouchDragging = true;
+      const currentlyChecked = selectedSessionBatchIds.has(sessionId);
+      batchTouchTargetState = !currentlyChecked;
+
+      if (batchTouchTargetState) {
+        selectedSessionBatchIds.add(sessionId);
+      } else {
+        selectedSessionBatchIds.delete(sessionId);
+      }
+      lastBatchClickedSessionId = sessionId;
+
+      withMutationGuard(() => {
+        updateSingleBatchRow(sessionId, batchTouchTargetState, row);
+        syncSessionBatchBar();
+      });
+
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        try { navigator.vibrate(10); } catch (_) {}
+      }
+    }
+  }, { passive: true, capture: true });
+
+  addManagedListener(document, "touchmove", (event) => {
+    if (!isSessionBatchMode || !isBatchTouchDragging || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (!el) return;
+
+    const row = el.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    if (row) {
+      const sessionId = row.getAttribute("data-pi-enh-session-id");
+      if (sessionId) {
+        const currentlySelected = selectedSessionBatchIds.has(sessionId);
+        if (currentlySelected !== batchTouchTargetState) {
+          if (batchTouchTargetState) {
+            selectedSessionBatchIds.add(sessionId);
+          } else {
+            selectedSessionBatchIds.delete(sessionId);
+          }
+          lastBatchClickedSessionId = sessionId;
+
+          withMutationGuard(() => {
+            updateSingleBatchRow(sessionId, batchTouchTargetState, row);
+            syncSessionBatchBar();
+          });
+
+          if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+            try { navigator.vibrate(8); } catch (_) {}
+          }
+        }
+      }
+    }
+
+    const scrollContainer = row?.parentElement || document.querySelector(".sidebar-container div.overflow-y-auto") || document.querySelector(".sessions-sidebar div.overflow-y-auto") || document.querySelector(".pi-enh-session-row-host")?.parentElement;
+    handleBatchTouchAutoScroll(touch.clientY, scrollContainer);
+  }, { passive: false, capture: true });
+
+  const endBatchTouch = () => {
+    if (isBatchTouchDragging) {
+      isBatchTouchDragging = false;
+      stopBatchTouchAutoScroll();
+      withMutationGuard(() => {
+        syncSessionBatchBar();
+      });
+    }
+  };
+
+  addManagedListener(window, "touchend", endBatchTouch, true);
+  addManagedListener(window, "touchcancel", endBatchTouch, true);
+
+
+  function restoreBatchDeleteJobPointer() {
+    if (batchDeleteJob || !isPluginEnabled("session-batch-actions")) return;
+    const pointer = readBatchDeleteJobPointer();
+    if (!pointer) return;
+    batchDeleteJob = {
+      ...pointer,
+      status: "running",
+      serverStatus: "running",
+      processed: 0,
+      lastSequence: 0,
+      connectionState: "connecting",
+      attachNeeded: true,
+      appliedDeletedIds: new Set(),
+      failedIds: [],
+      unknownIds: [],
+      notStartedIds: [],
+      done: false,
+    };
+    syncBatchDeleteJobEntry();
+  }
+
+  addManagedListener(window, "online", () => {
+    if (!isPluginEnabled("session-batch-actions") || !batchDeleteJob || batchDeleteJob.done || batchDeleteInFlight || batchDeleteJob.connectionState === "not_found") return;
+    void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
+  });
 
   function syncSessionBatchActions() {
     if (!isPluginEnabled("session-batch-actions")) {
+      stopBatchDeleteObserver();
+      if (batchDeleteModal) {
+        batchDeleteModal.remove();
+        batchDeleteModal = null;
+      }
+      removeBatchDeleteJobEntry();
       if (isSessionBatchMode) setSessionBatchMode(false);
       removeSessionBatchTrigger();
       removeSessionBatchBar();
       return;
     }
     syncSessionBatchTriggerButton();
+    restoreBatchDeleteJobPointer();
+    syncBatchDeleteJobEntry();
+    if (batchDeleteJob && batchDeleteJob.attachNeeded && !batchDeleteInFlight && !batchDeleteJob.done && batchDeleteJob.connectionState !== "not_found") {
+      void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
+    }
     if (isSessionBatchMode) {
       syncSessionBatchBar();
       syncSessionBatchRowStates();
@@ -29438,6 +30613,389 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
+
+
+  // ==========================================
+  // 手机端/输入框排队任务微型数字气泡与状态胶囊 (Mini Queue Badge & Status Capsule)
+  // 彻底满足：即使输入框上方队列面板被用户收起或在手机小屏幕下，打字前后都能直观感知当前队列任务数
+  // ==========================================
+  function syncComposerQueueBadge(count) {
+    const qCount = Math.max(0, Number(count) || 0);
+
+    // 1. 输入框底部工具栏微型排队胶囊（在模型标签或停止按钮旁）
+    const toolbar = document.querySelector(".chat-input-controls, [data-pi-native-composer-host] .flex.items-center.justify-between, .chat-input .flex.items-center");
+    if (toolbar) {
+      let capsule = toolbar.querySelector(".pi-enh-queue-status-capsule");
+      if (qCount > 0) {
+        if (!capsule) {
+          capsule = document.createElement("span");
+          capsule.className = "pi-enh-queue-status-capsule";
+          capsule.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.38);color:#c7d2fe;font-size:11px;font-weight:600;line-height:1;margin-right:6px;cursor:pointer;";
+          capsule.addEventListener("click", () => {
+            const queuePanel = document.querySelector(".pi-enh-queue-panel");
+            if (queuePanel) {
+              queuePanel.hidden = false;
+              queuePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          });
+          const rightGroup = toolbar.lastElementChild;
+          if (rightGroup) {
+            rightGroup.insertBefore(capsule, rightGroup.firstElementChild);
+          } else {
+            toolbar.appendChild(capsule);
+          }
+        }
+        capsule.innerHTML = `<span style="width:5px;height:5px;border-radius:50%;background:#818cf8;display:inline-block;"></span><span>排队 (${qCount})</span>`;
+        capsule.title = `当前队列中有 ${qCount} 个任务在排队等待执行；点击查看`;
+        capsule.style.display = "inline-flex";
+      } else if (capsule) {
+        capsule.remove();
+      }
+    }
+
+    // 2. 右下角排队/后续消息按钮内的微型数字徽标
+    const followupBtn = document.querySelector(".chat-composer-followup, button.pi-enh-cursor-followup, button[title*='排队'], button[title*='后续消息']");
+    if (followupBtn) {
+      let badge = followupBtn.querySelector(".pi-enh-queue-count-badge");
+      if (qCount > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "pi-enh-queue-count-badge";
+          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
+          followupBtn.appendChild(badge);
+        }
+        badge.textContent = String(qCount);
+        badge.title = `当前队列中有 ${qCount} 个任务在排队等待执行`;
+        badge.style.display = "inline-flex";
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+
+    // 3. 引导按钮（如果存在）
+    const steerBtn = document.querySelector(".chat-composer-steer, button.pi-enh-cursor-steer");
+    if (steerBtn && !followupBtn) {
+      let badge = steerBtn.querySelector(".pi-enh-queue-count-badge");
+      if (qCount > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "pi-enh-queue-count-badge";
+          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
+          steerBtn.appendChild(badge);
+        }
+        badge.textContent = String(qCount);
+        badge.title = `当前队列中有 ${qCount} 个任务在排队`;
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+
+    // 4. 输入框 textarea placeholder 动态提示
+    const textarea = document.querySelector("textarea.chat-input-textarea, .chat-input textarea, textarea");
+    if (textarea && textarea.placeholder && (textarea.placeholder.includes("引导") || textarea.placeholder.includes("排队"))) {
+      const basePlaceholder = textarea.placeholder.replace(/\s*\([^\)]*排队[^\)]*\)/g, "").trim();
+      if (qCount > 0) {
+        textarea.placeholder = `${basePlaceholder} (排队 ${qCount})`;
+      } else {
+        textarea.placeholder = basePlaceholder;
+      }
+    }
+  }
+
+  // ==========================================
+  // 跨设备排队任务实时同步守护器 (Cross-Device Realtime Queue Watchdog)
+  // ==========================================
+  let queueSyncWatchdogTimer = null;
+  let lastKnownQueuedSignature = "";
+
+  async function checkServerQueueStatus(forceTrigger = false) {
+    const sid = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
+    if (!sid || (typeof document !== "undefined" && document.visibilityState !== "visible")) return;
+
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`, {
+        headers: { "Cache-Control": "no-cache" },
+        cache: "no-store"
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const state = data?.state;
+      const q = state?.queuedMessages;
+
+      const steering = Array.isArray(q?.steering) ? q.steering : [];
+      const followUp = Array.isArray(q?.followUp) ? q.followUp : [];
+      const totalQueueCount = steering.length + followUp.length;
+
+      // 实时更新微型数字气泡与状态胶囊
+      syncComposerQueueBadge(totalQueueCount);
+
+      const sig = JSON.stringify([steering, followUp]);
+      if (sig !== lastKnownQueuedSignature || forceTrigger) {
+        lastKnownQueuedSignature = sig;
+        window.dispatchEvent(new CustomEvent("pi:native-queue-ready"));
+      }
+
+      if (data?.running && !queueSyncWatchdogTimer) {
+        startQueueSyncWatchdog();
+      } else if (!data?.running && !steering.length && !followUp.length && queueSyncWatchdogTimer) {
+        stopQueueSyncWatchdog();
+      }
+    } catch (_) {}
+  }
+
+  function startQueueSyncWatchdog() {
+    stopQueueSyncWatchdog();
+    queueSyncWatchdogTimer = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void checkServerQueueStatus(false);
+      }
+    }, 2000);
+  }
+
+  function stopQueueSyncWatchdog() {
+    if (queueSyncWatchdogTimer) {
+      clearInterval(queueSyncWatchdogTimer);
+      queueSyncWatchdogTimer = null;
+    }
+  }
+
+  addManagedListener(document, "visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void checkServerQueueStatus(true);
+    }
+  });
+  addManagedListener(window, "focus", () => {
+    void checkServerQueueStatus(true);
+  });
+  addManagedListener(window, "pageshow", () => {
+    void checkServerQueueStatus(true);
+  });
+  addManagedListener(window, "online", () => {
+    void checkServerQueueStatus(true);
+  });
+
+  // 页面首屏就绪后，立即主动探活一次排队状态并启动守护
+  if (typeof window !== "undefined") {
+    setTimeout(() => {
+      void checkServerQueueStatus(true);
+    }, 800);
+  }
+
+
+  // ==========================================
+  // 动态对齐“正在同步最新内容”胶囊位置到队列或输入框左上方
+  // 醒目半透明微光呈现，彻底告别顶部暗淡小字
+  // ==========================================
+  function injectSyncCapsuleStyles() {
+    if (typeof document === "undefined" || !document.head || document.getElementById("pi-enh-sync-capsule-style")) return;
+    const style = document.createElement("style");
+    style.id = "pi-enh-sync-capsule-style";
+    style.textContent = `
+      [data-session-sync-status="syncing"] {
+        position: fixed !important;
+        left: max(16px, env(safe-area-inset-left, 16px)) !important;
+        bottom: calc(var(--pi-enh-composer-height, 120px) + 24px) !important;
+        z-index: 55 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        padding: 5px 13px 5px 10px !important;
+        border-radius: 999px !important;
+        background: rgba(17, 24, 39, 0.94) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+        border: 1px solid rgba(129, 140, 248, 0.55) !important;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3) !important;
+        color: #e0e7ff !important;
+        font-size: 11.5px !important;
+        font-weight: 600 !important;
+        line-height: 1 !important;
+        pointer-events: none !important;
+        animation: pi-sync-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+      }
+      body:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"],
+      html:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"] {
+        bottom: calc(var(--pi-enh-composer-height, 120px) + 68px) !important;
+      }
+      @keyframes pi-sync-pop {
+        from { opacity: 0; transform: translateY(6px) scale(0.96); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function alignSyncingCapsule() {
+    if (typeof document === "undefined") return;
+    const capsule = document.querySelector('[data-session-sync-status="syncing"]');
+    if (!capsule) return;
+
+    injectSyncCapsuleStyles();
+
+    const queuePanel = document.querySelector('.pi-enh-queue-panel:not([hidden])');
+    const composer = document.querySelector('[data-pi-native-composer-host], .chat-input, form.chat-input');
+    const targetAnchor = queuePanel || composer;
+
+    if (targetAnchor) {
+      const rect = targetAnchor.getBoundingClientRect();
+      const bottomOffset = window.innerHeight - rect.top + 8;
+      capsule.style.setProperty("position", "fixed", "important");
+      capsule.style.setProperty("bottom", `${bottomOffset}px`, "important");
+      capsule.style.setProperty("left", `${Math.max(16, rect.left)}px`, "important");
+      capsule.style.setProperty("display", "inline-flex", "important");
+      capsule.style.setProperty("width", "auto", "important");
+      capsule.style.setProperty("border-radius", "999px", "important");
+      capsule.style.setProperty("background", "rgba(17, 24, 39, 0.94)", "important");
+      capsule.style.setProperty("border", "1px solid rgba(129, 140, 248, 0.55)", "important");
+      capsule.style.setProperty("box-shadow", "0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3)", "important");
+      capsule.style.setProperty("color", "#e0e7ff", "important");
+      capsule.style.setProperty("font-size", "11.5px", "important");
+      capsule.style.setProperty("font-weight", "600", "important");
+      capsule.style.setProperty("padding", "5px 13px 5px 10px", "important");
+      capsule.style.setProperty("z-index", "55", "important");
+    }
+  }
+
+  window.__PI_ENH_ALIGN_SYNC_CAPSULE__ = alignSyncingCapsule;
+
+  if (typeof window !== "undefined") {
+    injectSyncCapsuleStyles();
+    setInterval(alignSyncingCapsule, 200);
+    window.addEventListener("resize", alignSyncingCapsule, { passive: true });
+    window.addEventListener("scroll", alignSyncingCapsule, { passive: true, capture: true });
+  }
+
+
+  // ==========================================
+  // 模型错误自动恢复与网络消除看门狗 (Model Error Auto-Recovery Watchdog)
+  // 彻底解决：网络波动导致出现“暂时无法获取模型”红色警告后，网络恢复时必须手动刷新才能消除的缺陷
+  // ==========================================
+  let modelErrorHealingTimer = null;
+  let isHealingModelError = false;
+
+  async function checkAndHealModelError() {
+    if (typeof document === "undefined" || isHealingModelError) return;
+    
+    // 检查页面上是否存在模型错误横幅
+    const errorBanner = Array.from(document.querySelectorAll('.chat-composer-banner-stack > *, [data-pi-native-composer-host] *, .pi-test-model-error-banner')).find(el => {
+      const txt = el.textContent || "";
+      return txt.includes("暂时无法获取模型") || (txt.includes("模型错误") && txt.includes("稍后重试"));
+    });
+
+    if (!errorBanner) {
+      if (modelErrorHealingTimer) {
+        clearInterval(modelErrorHealingTimer);
+        modelErrorHealingTimer = null;
+      }
+      return;
+    }
+
+    // 给红色错误横幅增加轻量关闭按钮（如果尚未添加）
+    if (!errorBanner.querySelector(".pi-enh-model-error-dismiss")) {
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "pi-enh-model-error-dismiss";
+      closeBtn.innerHTML = "×";
+      closeBtn.style.cssText = "float:right;background:none;border:none;color:inherit;font-size:16px;cursor:pointer;opacity:0.7;padding:0 4px;line-height:1;";
+      closeBtn.title = "关闭警告";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        errorBanner.remove();
+        if (modelErrorHealingTimer) {
+          clearInterval(modelErrorHealingTimer);
+          modelErrorHealingTimer = null;
+        }
+      });
+      errorBanner.insertBefore(closeBtn, errorBanner.firstElementChild);
+    }
+
+    // 发现存在模型错误横幅，发起自愈探活
+    isHealingModelError = true;
+    try {
+      const sessionId = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : "";
+      const engine = typeof getComposerExecutionEngineHint === "function" ? getComposerExecutionEngineHint(sessionId) : "pi";
+      const query = new URLSearchParams({ engine });
+      if (sessionId) query.set("sessionId", sessionId);
+
+      // 关键修复：显式附带有效的工作区 cwd，彻底解决因缺失 cwd 返回 403 无法自愈的问题
+      let cwd = "";
+      if (typeof getEffectiveComposerCwd === "function") {
+        try { cwd = await getEffectiveComposerCwd(); } catch (_) {}
+      }
+      if (!cwd && typeof window !== "undefined") {
+        const domCwd = document.querySelector("[data-current-cwd]")?.getAttribute("data-current-cwd");
+        if (domCwd) cwd = domCwd;
+      }
+      if (!cwd) cwd = "D:/Pi/work";
+      query.set("cwd", cwd);
+
+      const res = await fetch(`/api/models?${query}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && !data.modelError && (data.modelList?.length || Object.keys(data.models || {}).length)) {
+          // 网络已完全恢复且成功获取模型列表：平滑自动消除红色警告横幅！
+          errorBanner.style.transition = "opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease";
+          errorBanner.style.opacity = "0";
+          errorBanner.style.maxHeight = "0px";
+          errorBanner.style.margin = "0px";
+          errorBanner.style.overflow = "hidden";
+          setTimeout(() => {
+            errorBanner.remove();
+          }, 260);
+
+          // 停止探活定时器
+          if (modelErrorHealingTimer) {
+            clearInterval(modelErrorHealingTimer);
+            modelErrorHealingTimer = null;
+          }
+
+          showToast("网络已恢复，模型连接正常", null, 2500);
+        }
+      }
+    } catch (_) {
+      // 依然处于离线或弱网态，保留下次重试
+    } finally {
+      isHealingModelError = false;
+    }
+  }
+
+  function startModelErrorHealWatchdog() {
+    if (!modelErrorHealingTimer) {
+      modelErrorHealingTimer = setInterval(checkAndHealModelError, 3500);
+    }
+  }
+
+  addManagedListener(window, "online", () => {
+    void checkAndHealModelError();
+  });
+  addManagedListener(document, "visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void checkAndHealModelError();
+    }
+  });
+  addManagedListener(window, "focus", () => {
+    void checkAndHealModelError();
+  });
+
+    if (typeof window !== "undefined") {
+    setInterval(() => {
+      const hasBanner = document.querySelector('.chat-composer-banner-stack, [data-pi-native-composer-host]');
+      if (hasBanner && !modelErrorHealingTimer) {
+        const txt = hasBanner.textContent || "";
+        if (txt.includes("暂时无法获取模型")) {
+          startModelErrorHealWatchdog();
+          void checkAndHealModelError();
+        }
+      }
+    }, 2500);
+  }
+
   // ==========================================
   // 3. Task Total Duration & Turn Usage Tooltips (点击展开耗时拆解与消耗明细气泡)
   // ==========================================
@@ -33596,10 +35154,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   });
   addManagedListener(window, "pageshow", (event) => {
     // 页面从 BFCache 或后台恢复
-    if (event.persisted) {
-      if (document.visibilityState !== "hidden") {
-        setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
+    if (document.visibilityState !== "hidden") {
+      setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
+      if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
+        try {
+          window.__PI_WEB_REFRESH_PROJECT_STATUS__();
+        } catch (e) {}
       }
+    }
+    if (event.persisted) {
       const currentId = getActiveSessionId() || getCurrentSessionId();
       if (currentId) {
         if (typeof scheduleTerminalSyncCheck === "function") {
@@ -41657,6 +43220,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__ = getDurableStateInstanceParam;
 
   window.__PI_WEB_ENHANCEMENTS_LOADED__ = true;
+  window.dispatchEvent(new Event("pi-dom-feedback-ready"));
   runIsolatedKernelStep("initialDomSyncImmediate", () => {
     if (!isLoginPage()) {
       runAllSyncOperations();

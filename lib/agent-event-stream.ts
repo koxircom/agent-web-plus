@@ -281,6 +281,17 @@ export function createAgentEventStream(
               .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
               .map((event) => event.id as string),
           });
+          // 立即向刚连入或重连的客户端（如手机移动端）推送当前排队队列快照，彻底解决跨设备排队同步不及时
+          try {
+            const queueSnapshot = typeof (session as any).clientQueuedMessages === "function"
+              ? (session as any).clientQueuedMessages()
+              : (session as any).queuedMessages;
+            if (queueSnapshot && ((queueSnapshot.steering?.length ?? 0) > 0 || (queueSnapshot.followUp?.length ?? 0) > 0)) {
+              encode({ type: "queue_update", ...queueSnapshot });
+            }
+          } catch (e) {
+            console.error("[pi-web] failed to push initial queue snapshot:", e);
+          }
           for (const event of bufferedEvents) forwardEvent(event, snapshot);
           if (snapshot !== undefined && snapshot !== null) {
             encode({ type: "message_start", message: snapshot });

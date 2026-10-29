@@ -11,7 +11,8 @@ EXCLUDED = {'.git', 'node_modules', '.next', '__pycache__', '.quality-runs'}
 FORBIDDEN_DIRS = {'runtime', 'acceptance', '.codex', '.pi', 'sessions', 'state'}
 TOKEN = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,})\b')
 HOME = re.compile(r'(?<![\w./-])(?:(?:file://)?/home/|(?:\.\./)+home/|/Users/|[A-Za-z]:[/\\]+Users[/\\]+)([\w.-]+)')
-DEMO_USERS = {'demo', 'user', 'example', 'test', 'testuser', 'alice', 'bob', 'alex', 'runner', 'node', 'someone', 'me', 'username', 'xxx', 'you'}
+# Emscripten's browser-only virtual filesystem uses the synthetic web_user account.
+DEMO_USERS = {'web_user', 'demo', 'user', 'example', 'test', 'testuser', 'alice', 'bob', 'alex', 'runner', 'node', 'someone', 'me', 'username', 'xxx', 'you'}
 PRIVATE_URL = re.compile(r'https?://(?:10(?:[.]\d{1,3}){3}|192[.]168(?:[.]\d{1,3}){2}|172[.](?:1[6-9]|2\d|3[01])(?:[.]\d{1,3}){2})(?=[:/"\s]|$)')
 SECRET_FIELDS = {'apikey', 'api_key', 'access_token', 'refresh_token', 'authorization', 'client_secret', 'password'}
 PRIVATE_KEY = re.compile(r'-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----')

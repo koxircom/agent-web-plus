@@ -79,7 +79,7 @@ export function buildAskAnswerInputs(question: AskUserQuestion, lines: string[],
   if (terminal.mode !== "select") return [asBracketedPaste(notes), "\r"];
   // Terminal viewports can omit the off-screen comment/freeform rows.
   // Complete tool metadata, not clipped terminal lines, defines the item count.
-  const count = question.options.length + Number(question.allowComment) + Number(question.allowFreeform);
+  const count = question.options.length + Number(Boolean(question.allowComment)) + Number(Boolean(question.allowFreeform));
   let cursor = terminal.cursor;
   const move = (target: number) => {
     const delta = (target - cursor + count) % count;
@@ -87,7 +87,7 @@ export function buildAskAnswerInputs(question: AskUserQuestion, lines: string[],
   };
   if (freeform) {
     if (!question.allowFreeform || !notes.trim()) throw new Error("请输入自定义回答");
-    move(question.options.length + Number(question.allowComment));
+    move(question.options.length + Number(Boolean(question.allowComment)));
     return [...inputs, "\r", asBracketedPaste(notes), "\r"];
   }
   if (!selected.length || selected.some(index => !Number.isInteger(index) || index < 0 || index >= question.options.length)) throw new Error("请选择一个答案");

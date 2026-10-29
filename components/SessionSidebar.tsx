@@ -19,7 +19,6 @@ import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { formatRelativeTime } from "@/lib/i18n/format";
 import {
   createSidebarShortcutsFallbackHandler,
-  getEnhancementSessionHeadersHeight,
   getEnhancementProjectActivity,
   getEnhancementSessionStatus,
   type EnhancementProjectActivity,
@@ -28,6 +27,7 @@ import {
   hasEnhancementSessionLayout,
   getEnhancementSessionItemTop,
   getEnhancementSessionOdooAddons,
+  isEnhancementPluginEnabled,
   processEnhancementSessionGroups,
   registerEnhancementOpenSettings,
   registerEnhancementSidebarBridge,
@@ -41,8 +41,7 @@ import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { SessionSearch } from "./SessionSearch";
 import { ExecutionEngineSwitcher } from "./ExecutionEngineSwitcher";
 
-// Fixed row height for the session list. SessionItem renders at exactly this
-// height, so the list can be windowed (only the visible slice is mounted).
+// Base row height; decorations extend it through the shared layout owner.
 const SESSION_LIST_ITEM_HEIGHT = 54;
 
 interface FileManagerAvailability {
@@ -57,10 +56,25 @@ const FILE_MANAGER_ERROR_KEYS: Record<string, string> = {
   "unsupported-platform": "sidebar.openInExplorerUnsupported",
 };
 
-export function getSessionListIndices(count: number, scrollTop: number, viewportHeight: number, focusedIndex = -1): number[] {
+export function getSessionListIndices(count: number, scrollTop: number, viewportHeight: number, focusedIndex = -1, itemTops?: readonly number[]): number[] {
   const overscan = 8;
-  const visibleCount = Math.ceil((viewportHeight || 600) / SESSION_LIST_ITEM_HEIGHT) + overscan * 2;
-  const start = Math.max(0, Math.min(Math.floor(scrollTop / SESSION_LIST_ITEM_HEIGHT) - overscan, count - visibleCount));
+  let firstVisible = Math.floor(scrollTop / SESSION_LIST_ITEM_HEIGHT);
+  let visibleCount = Math.ceil((viewportHeight || 600) / SESSION_LIST_ITEM_HEIGHT) + overscan * 2;
+  if (itemTops && itemTops.length === count + 1 && count > 0) {
+    const bound = (value: number, upper: boolean) => {
+      let low = 0, high = itemTops.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (itemTops[mid] < value || (upper && itemTops[mid] === value)) low = mid + 1;
+        else high = mid;
+      }
+      return low;
+    };
+    firstVisible = Math.max(0, Math.min(count - 1, bound(scrollTop, true) - 1));
+    const lastVisible = Math.max(firstVisible + 1, Math.min(count, bound(scrollTop + (viewportHeight || 600), false)));
+    visibleCount = lastVisible - firstVisible + overscan * 2;
+  }
+  const start = Math.max(0, Math.min(firstVisible - overscan, count - visibleCount));
   const end = Math.min(count, start + visibleCount);
   const indices = Array.from({ length: end - start }, (_, offset) => start + offset);
   // Keep a focused row mounted so scrolling cannot discard an inline rename.
@@ -395,6 +409,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
   const [fileManager, setFileManager] = useState<FileManagerAvailability | null>(null);
   const [fileManagerError, setFileManagerError] = useState<string | null>(null);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set(bootstrap?.runningSessionIds ?? []));
+  const [waitingSessions, setWaitingSessions] = useState<Record<string, { status: "waiting" | "handoff"; ownerNode: string; ownerTitle: string; addon: string }>>({});
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadHydrated, setUnreadHydrated] = useState(false);
   useEffect(() => {
@@ -496,8 +511,17 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
         sessionListVersion: number;
         runningSessionIds?: string[];
         completionNotificationSuppressedSessionIds?: string[];
+        collaborationWaitingSessions?: Record<string, { status: "waiting" | "handoff"; ownerNode: string; ownerTitle: string; addon: string }>;
+        collaborationAuthorityAvailable?: boolean;
       };
       if (loadId !== sessionLoadIdRef.current) return;
+      if (data.collaborationAuthorityAvailable === false) {
+        if (data.collaborationWaitingSessions) {
+          setWaitingSessions(data.collaborationWaitingSessions);
+        }
+      } else if (data.collaborationWaitingSessions) {
+        setWaitingSessions(data.collaborationWaitingSessions);
+      }
       sessionListVersionRef.current = data.sessionListVersion;
       // Status effects can run before React commits this catalogue. Publish to
       // the existing bridge ref now so an already listed running chat is not
@@ -534,6 +558,137 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
       }
     }
   }, [executionEngine]);
+
+  const isMountedRef = useRef(true);
+  const mountGenerationRef = useRef(0);
+  useEffect(() => {
+    isMountedRef.current = true;
+    mountGenerationRef.current += 1;
+    return () => {
+      isMountedRef.current = false;
+      mountGenerationRef.current += 1;
+    };
+  }, [executionEngine]);
+
+  const [pinActionError, setPinActionError] = useState<string | null>(null);
+  const [inFlightPinSessionIds, setInFlightPinSessionIds] = useState<ReadonlySet<string>>(new Set());
+  const inFlightPinsRef = useRef<Map<string, Promise<boolean>>>(new Map());
+  useEffect(() => { setPinActionError(null); }, [executionEngine]);
+
+  const toggleNativeSessionPin = useCallback(async (sessionId: string): Promise<boolean> => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      throw new Error("会话 ID 无效");
+    }
+    const inFlight = inFlightPinsRef.current.get(sessionId);
+    if (inFlight) return inFlight;
+
+    const currentGeneration = mountGenerationRef.current;
+    const currentEngine = sidebarBridgeStateRef.current.executionEngine;
+    setPinActionError(null);
+
+    const promise = (async () => {
+      const all = sidebarBridgeStateRef.current.allSessions;
+      const target = all.find((s) => s.id === sessionId);
+      if (!target) throw new Error("会话不存在");
+      if (currentEngine !== "codex" || !isMountedRef.current ||
+          !sessionId.startsWith("codex:") || target.nativeMetadata?.pinningSupported !== true ||
+          typeof target.pinned !== "boolean") {
+        throw new Error("该会话不支持原生置顶操作");
+      }
+      const targetAction = target.pinned ? "unpin" : "pin";
+      const targetPinned = targetAction === "pin";
+
+      let res: Response;
+      try {
+        res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: targetAction }),
+        });
+      } catch (err) {
+        // 未知/网络错误之后只读 force 重取，不自动写重试
+        if (
+          isMountedRef.current &&
+          mountGenerationRef.current === currentGeneration &&
+          sidebarBridgeStateRef.current.executionEngine === currentEngine
+        ) {
+          void loadSessions(false, true);
+        }
+        throw err;
+      }
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // HTTP 错误之后只读 force 重取，不自动写重试
+        if (
+          isMountedRef.current &&
+          mountGenerationRef.current === currentGeneration &&
+          sidebarBridgeStateRef.current.executionEngine === currentEngine
+        ) {
+          void loadSessions(false, true);
+        }
+        throw new Error(data?.error || `置顶操作失败 (HTTP ${res.status})`);
+      }
+      const data = await res.json().catch(() => ({}));
+      if (
+        data?.ok !== true ||
+        !data.session ||
+        data.session.id !== sessionId ||
+        typeof data.session.pinned !== "boolean" ||
+        data.session.pinned !== targetPinned
+      ) {
+        // 未知/坏 ACK 之后只读 force 重取，不说‘会话已保留’或自动写重试
+        if (
+          isMountedRef.current &&
+          mountGenerationRef.current === currentGeneration &&
+          sidebarBridgeStateRef.current.executionEngine === currentEngine
+        ) {
+          void loadSessions(false, true);
+        }
+        throw new Error(data?.error || "置顶操作未获得原生确认");
+      }
+      const nextPinned = data.session.pinned;
+      if (
+        isMountedRef.current &&
+        mountGenerationRef.current === currentGeneration &&
+        sidebarBridgeStateRef.current.executionEngine === currentEngine
+      ) {
+        setAllSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, pinned: nextPinned } : s))
+        );
+        sidebarBridgeStateRef.current.allSessions = sidebarBridgeStateRef.current.allSessions.map((s) =>
+          s.id === sessionId ? { ...s, pinned: nextPinned } : s
+        );
+        void loadSessions(false, true);
+      }
+      return nextPinned;
+    })();
+
+    inFlightPinsRef.current.set(sessionId, promise);
+    setInFlightPinSessionIds((prev) => new Set(prev).add(sessionId));
+
+    try {
+      return await promise;
+    } catch (error) {
+      if (isMountedRef.current && mountGenerationRef.current === currentGeneration) {
+        setPinActionError(error instanceof Error ? error.message : String(error));
+      }
+      throw error;
+    } finally {
+      if (inFlightPinsRef.current.get(sessionId) === promise) {
+        inFlightPinsRef.current.delete(sessionId);
+        // Busy follows the exact mutation promise across a reused A→Pi→A view.
+        // Metadata/error ACKs remain fenced by their original view generation.
+        if (isMountedRef.current) {
+          setInFlightPinSessionIds((prev) => {
+            const next = new Set(prev);
+            next.delete(sessionId);
+            return next;
+          });
+        }
+      }
+    }
+  }, [loadSessions]);
 
   const sidebarBridgeStateRef = useRef({
     loadSessions,
@@ -578,6 +733,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
       },
       isSessionUnread: (sessionId: string) =>
         Boolean(sessionId && sidebarBridgeStateRef.current.unreadSessionIds.has(sessionId)),
+      toggleNativeSessionPin: (sessionId: string) => toggleNativeSessionPin(sessionId),
     });
   }, []);
 
@@ -687,6 +843,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
     let expiryTimer: ReturnType<typeof setTimeout> | null = null;
     const channel = typeof BroadcastChannel === "function" ? new BroadcastChannel(`pi-web-native-status-v1:${executionEngine}`) : null;
     let lastStamp: { epoch: string; revision: number } | null = null;
+    let authoritativeEpoch: string | null = null;
     const retiredEpochs = new Set<string>();
     const publish = (payload: unknown = null, catalog?: SessionInfo[]) => {
       const win = window as unknown as Record<string, unknown>;
@@ -714,23 +871,48 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
       if (!stopped && document.visibilityState === "visible") expiryTimer = setTimeout(unavailable, 12000);
     };
     const accept = (data: { runningSessionIds: string[]; completionNotificationSuppressedSessionIds?: string[];
-      statusSnapshot?: { epoch: string; revision: number; executions: { state: string; sessionId: string }[] } }, broadcast = false, catalog?: SessionInfo[]) => {
+      statusSnapshot?: { epoch: string; revision: number; executions: { state: string; sessionId: string }[] };
+      collaborationWaitingSessions?: Record<string, { status: "waiting" | "handoff"; ownerNode: string; ownerTitle: string; addon: string }>;
+      collaborationAuthorityAvailable?: boolean;
+    }, fromHttp = false, catalog?: SessionInfo[]) => {
       if (stopped || !Array.isArray(data.runningSessionIds) || data.runningSessionIds.some(id => typeof id !== "string")) return false;
       const stamp = data.statusSnapshot;
       if (stamp) {
-        if (retiredEpochs.has(stamp.epoch) || lastStamp?.epoch === stamp.epoch && stamp.revision < lastStamp.revision) return false;
-        if (lastStamp && lastStamp.epoch !== stamp.epoch) retiredEpochs.add(lastStamp.epoch);
-        lastStamp = { epoch: stamp.epoch, revision: stamp.revision };
+        if (retiredEpochs.has(stamp.epoch)) return false;
+        if (fromHttp) {
+          if (authoritativeEpoch === stamp.epoch && lastStamp && stamp.revision < lastStamp.revision) return false;
+          if (authoritativeEpoch && authoritativeEpoch !== stamp.epoch) retiredEpochs.add(authoritativeEpoch);
+          authoritativeEpoch = stamp.epoch;
+          lastStamp = { epoch: stamp.epoch, revision: stamp.revision };
+        } else {
+          // 广播不可 retire 当前服务端 epoch；异于权威 epoch 的广播直接拒绝，同 epoch 低 revision 拒绝
+          if (authoritativeEpoch && stamp.epoch !== authoritativeEpoch) return false;
+          if (lastStamp?.epoch === stamp.epoch && stamp.revision < lastStamp.revision) return false;
+          lastStamp = { epoch: stamp.epoch, revision: stamp.revision };
+        }
+      } else if (!fromHttp && authoritativeEpoch) {
+        // 既有权威下无 stamp 广播也不得覆写原生运行态
+        return false;
       }
       runningPollAuthoritativeRef.current = true;
       currentSuppressedCompletionSessionIdsRef.current = new Set(data.completionNotificationSuppressedSessionIds ?? []);
       completedReceiptIdsRef.current = new Set<string>((stamp?.executions ?? []).filter(item => item.state === "ended").map(item => item.sessionId));
       const nextIds = new Set<string>(data.runningSessionIds);
       setRunningSessionIds(prev => prev.size === nextIds.size && [...prev].every(id => nextIds.has(id)) ? prev : nextIds);
+      if (data.collaborationAuthorityAvailable === false) {
+        // 权威断线不能把 waiting{} 清成空闲，保留已知等待/unknown 橙色，绝不拖垮 native running 状态
+        if (data.collaborationWaitingSessions && typeof data.collaborationWaitingSessions === "object") {
+          setWaitingSessions(data.collaborationWaitingSessions);
+        }
+      } else if (data.collaborationWaitingSessions && typeof data.collaborationWaitingSessions === "object") {
+        setWaitingSessions(data.collaborationWaitingSessions);
+      } else {
+        setWaitingSessions({});
+      }
       setRunningStatusHealthy(true);
       publish(data, catalog);
       armExpiry();
-      if (broadcast) channel?.postMessage({ payload: data, at: Date.now(), catalog: sidebarBridgeStateRef.current.allSessions.filter(session => !session.submissionPending) });
+      if (fromHttp) channel?.postMessage({ payload: data, at: Date.now(), catalog: sidebarBridgeStateRef.current.allSessions.filter(session => !session.submissionPending) });
       return true;
     };
     if (channel) channel.onmessage = event => {
@@ -770,15 +952,43 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
         else schedule();
       }
     };
+    let boundaryRevalidateTimer: ReturnType<typeof setTimeout> | null = null;
+    const revalidateForeground = () => {
+      if (stopped || document.visibilityState !== "visible") return;
+      if (boundaryRevalidateTimer) clearTimeout(boundaryRevalidateTimer);
+      boundaryRevalidateTimer = setTimeout(() => {
+        boundaryRevalidateTimer = null;
+        if (!stopped && document.visibilityState === "visible") {
+          void loadSessions(false, true);
+        }
+      }, 50);
+    };
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         clearTimer();
         armExpiry();
         void poll();
+        if (executionEngine === "codex") {
+          revalidateForeground();
+        }
       } else {
         clearTimer();
         clearExpiry();
+        if (boundaryRevalidateTimer) {
+          clearTimeout(boundaryRevalidateTimer);
+          boundaryRevalidateTimer = null;
+        }
         controller?.abort("tab-hidden");
+      }
+    };
+    const onPageShow = () => {
+      if (document.visibilityState === "visible") {
+        clearTimer();
+        armExpiry();
+        void poll();
+        if (executionEngine === "codex") {
+          revalidateForeground();
+        }
       }
     };
     const win = window as unknown as Record<string, unknown>;
@@ -786,17 +996,20 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
     window.dispatchEvent(new Event("pi-web-project-status-owner"));
     void poll();
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
     return () => {
       stopped = true;
       clearTimer();
       controller?.abort();
       if (expiryTimer) clearTimeout(expiryTimer);
+      if (boundaryRevalidateTimer) clearTimeout(boundaryRevalidateTimer);
       channel?.close();
       if (win.__PI_WEB_REFRESH_PROJECT_STATUS__ === poll) {
         delete win.__PI_WEB_REFRESH_PROJECT_STATUS__;
         delete win.__PI_WEB_PROJECT_STATUS_SNAPSHOT__;
       }
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, [loadSessions]);
 
@@ -1284,18 +1497,24 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
   sidebarBridgeStateRef.current.sessionFamilies = sessionFamilies;
 
   const initialDecorations = bootstrap?.decorations?.state;
-  const nativeHeights = sessionFamilies.map((family) => SESSION_LIST_ITEM_HEIGHT
-    + (getEnhancementSessionTags(family.root.id, initialDecorations).length ? 18 : 0));
-  const nativeTops: number[] = [0];
-  for (const height of nativeHeights) nativeTops.push(nativeTops[nativeTops.length - 1] + height);
   const enhancedLayout = hasEnhancementSessionLayout();
-
+  // Share exact prefix coordinates with both positioning and virtualization.
+  // Recompute when decorations change, not on every scroll frame.
+  const itemTops = useMemo(() => {
+    if (enhancedLayout) return Array.from({ length: sessionFamilies.length + 1 }, (_, index) =>
+      getEnhancementSessionItemTop(index, sessionFamilies, SESSION_LIST_ITEM_HEIGHT));
+    const tops = [0];
+    for (const family of sessionFamilies) tops.push(tops[tops.length - 1] + SESSION_LIST_ITEM_HEIGHT
+      + (getEnhancementSessionTags(family.root.id, initialDecorations).length ? 18 : 0));
+    return tops;
+  }, [enhancedLayout, sessionFamilies, initialDecorations, decorationRevision]);
   const virtualIndices = useMemo(() => getSessionListIndices(
     sessionFamilies.length,
     listScrollTop,
     listViewportH,
     sessionFamilies.findIndex((family) => family.root.id === focusedSessionId),
-  ), [focusedSessionId, listScrollTop, listViewportH, sessionFamilies]);
+    itemTops,
+  ), [focusedSessionId, listScrollTop, listViewportH, sessionFamilies, itemTops]);
 
   useEffect(() => {
     const shortcutsHost = sessionPaneResizer.panelRef.current?.nextElementSibling as HTMLElement | null;
@@ -1992,6 +2211,10 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
         {error && <div role="status" data-pi-catalog-stale="true" title={error} style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
           {t(allSessions.length ? "sidebar.catalogStale" : "sidebar.catalogReadFailed")}
         </div>}
+        {pinActionError && <div role="alert" data-pi-native-pin-error="true" style={{ padding: "8px 14px", color: "#f87171", fontSize: 12, display: "flex", gap: 8, alignItems: "start" }}>
+          <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>{pinActionError}</span>
+          <button type="button" aria-label="关闭置顶提示" onClick={() => setPinActionError(null)} style={{ border: 0, background: "transparent", color: "inherit", cursor: "pointer", flexShrink: 0 }}>×</button>
+        </div>}
         <SessionSearch executionEngine={executionEngine} open={sessionSearchOpen} query={sessionSearchQuery} sessions={allSessions} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList} onUnavailableSession={handleUnavailableSearchSession}>
         <div
           ref={listScrollRef}
@@ -2018,7 +2241,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
           <div
             style={{
               position: "relative",
-              height: enhancedLayout ? sessionFamilies.length * SESSION_LIST_ITEM_HEIGHT + getEnhancementSessionHeadersHeight(sessionFamilies) : nativeTops[nativeTops.length - 1],
+              height: itemTops[itemTops.length - 1],
             }}
           >
             {virtualIndices.map((index) => {
@@ -2035,7 +2258,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
                   onBlur={() => setFocusedSessionId(null)}
                   style={{
                     position: "absolute",
-                    top: enhancedLayout ? getEnhancementSessionItemTop(index, sessionFamilies, SESSION_LIST_ITEM_HEIGHT) : nativeTops[index],
+                    top: itemTops[index],
                     left: 0,
                     right: 0,
                   }}
@@ -2047,9 +2270,12 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
                     session={displaySession}
                     isSelected={familySessions.some((session) => session.id === selectedSessionId)}
                     isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
+                    waitingInfo={waitingSessions[displaySession.id] || familySessions.map((s) => waitingSessions[s.id]).find(Boolean)}
                     isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
                     onClick={() => handleSelectSessionFromList(family.root)}
                     onRenamed={loadSessions}
+                    onTogglePin={toggleNativeSessionPin}
+                    isPinBusy={inFlightPinSessionIds.has(displaySession.id)}
                   />
                 </div>
               );
@@ -2374,9 +2600,12 @@ function SessionItem({
   session,
   isSelected,
   isRunning,
+  waitingInfo,
   isUnread,
   onClick,
   onRenamed,
+  onTogglePin,
+  isPinBusy = false,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -2388,9 +2617,12 @@ function SessionItem({
   session: SessionInfo;
   isSelected: boolean;
   isRunning?: boolean;
+  waitingInfo?: { status: "waiting" | "handoff"; ownerNode: string; ownerTitle: string; addon: string };
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
+  onTogglePin?: (sessionId: string) => Promise<boolean>;
+  isPinBusy?: boolean;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -2486,6 +2718,7 @@ function SessionItem({
   const contextMenu = useTouchContextMenu(openContextMenu, !renaming && !session.submissionPending);
   const handleContextMenu = contextMenu.onContextMenu;
 
+  const isPinArchivePluginActive = isEnhancementPluginEnabled("session-pin-archive");
   const taskStatus = getEnhancementSessionStatus(session.id);
   const rowStatus = taskStatus?.status === "completed" && !taskStatus.unread ? undefined : taskStatus?.status;
   const tags = getEnhancementSessionTags(session.id, initialDecorations);
@@ -2493,7 +2726,7 @@ function SessionItem({
   const odooAddons = getEnhancementSessionOdooAddons(session.id);
   const showOdooAddons = !renaming && odooAddons.length > 0;
 
-  // Fixed-height outer wrapper — content swaps in place so the list never reflows
+  // One React owner for title, metadata and badges; the layout owner supplies the full height.
   return (
     <div
       ref={rowRef}
@@ -2501,7 +2734,9 @@ function SessionItem({
       data-pi-enh-session-id={session.id}
       data-execution-engine={executionEngine}
       data-pi-native-session-tags="true"
+      data-pi-native-session-odoo-addons="true"
       data-pi-native-project-status="true"
+      data-pi-waiting={waitingInfo ? waitingInfo.status : undefined}
       data-pi-enh-project-status={rowStatus && rowStatus !== "idle" ? rowStatus : undefined}
       data-pi-enh-completed-unread={rowStatus === "completed" ? String(taskStatus?.unread) : undefined}
       data-pi-enh-has-tags={showTags ? "true" : undefined}
@@ -2578,9 +2813,57 @@ function SessionItem({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
+              {session.titleNaming?.status === "failed" && (
+                <span role="status" aria-label="自动命名失败" data-pi-native-title-naming="failed"
+                  title={session.titleNaming.message}
+                  style={{ flexShrink: 0, whiteSpace: "nowrap", fontSize: 10, color: "#f87171" }}>
+                  自动命名失败
+                </span>
+              )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {rowStatus === "unknown" ? (
+              {waitingInfo ? (
+                <span
+                  className="pi-native-waiting-badge"
+                  data-pi-waiting-status={waitingInfo.status}
+                  title={`${waitingInfo.ownerNode ? waitingInfo.ownerNode + " " : ""}${waitingInfo.ownerTitle ? "「" + waitingInfo.ownerTitle + "」 " : ""}持有 ${waitingInfo.addon}`}
+                  style={{
+                    color: "#f97316",
+                    fontWeight: 600,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                    flexShrink: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "#f97316",
+                      display: "inline-block",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      minWidth: 0,
+                    }}
+                  >
+                    {waitingInfo.status === "handoff"
+                      ? `准备继续 · ${waitingInfo.addon}`
+                      : `等待 ${waitingInfo.ownerNode || "群晖30141"} · ${waitingInfo.addon}`}
+                  </span>
+                </span>
+              ) : rowStatus === "unknown" ? (
                 <span title="服务端任务状态暂不可确认">状态待确认</span>
               ) : rowStatus === "attention" ? (
                 <span title="等待你的回复" style={{ color: "#f59e0b" }}>待回复</span>
@@ -2644,6 +2927,46 @@ function SessionItem({
             >
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="2 3.5 5 6.5 8 3.5" />
+              </svg>
+            </button>
+          )}
+
+          {/* Codex native pin marker */}
+          {isPinArchivePluginActive && executionEngine === "codex" && typeof session.id === "string" && session.id.startsWith("codex:") && session.pinned && (
+            <button
+              type="button"
+              data-pi-native-session-pin="true"
+              className="pi-enh-session-pinned-indicator"
+              title={isPinBusy ? "正在更新置顶状态..." : "取消置顶"}
+              aria-label={isPinBusy ? "正在更新置顶状态" : "取消置顶"}
+              aria-pressed="true"
+              aria-busy={isPinBusy ? "true" : undefined}
+              disabled={isPinBusy}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // The native sidebar command owns its visible error receipt.
+                void onTogglePin?.(session.id)?.catch(() => {});
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                padding: 0,
+                margin: 0,
+                border: "none",
+                background: "transparent",
+                color: "var(--accent)",
+                cursor: isPinBusy ? "not-allowed" : "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 17v5" />
+                <path d="M8 3h8" />
+                <path d="M9 3v5l-3 4v2h12v-2l-3-4V3" />
               </svg>
             </button>
           )}

@@ -94,6 +94,7 @@
     composerModesStateMap,
     pendingNewComposerMode,
     isSessionBatchMode,
+    selectedSessionBatchIds = null,
     batchDeleteModal,
     durationTooltip,
     usageTooltip,

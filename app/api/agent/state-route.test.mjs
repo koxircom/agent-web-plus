@@ -72,3 +72,35 @@ test('recall acknowledgements do not start a runtime and cannot remove an active
  assert.deepEqual((await (await ack()).json()).data.cancelledPromptRequestIds,[]);assert.equal(delivery.getPromptReceipt(sid,id).status,'accepted');
  delivery.recallPromptDelivery(sid,id);assert.deepEqual((await (await ack()).json()).data.cancelledPromptRequestIds,[id]);assert.equal(delivery.getPromptReceipt(sid,id).status,'cancelled');assert.equal(globalThis.__piSessions?.has(sid)??false,false);
 });
+
+test("GET /api/sessions/[id]/state?extensionUi=1 reads getter synchronously without calling get_state", async (t) => {
+  const prior = globalThis.__piSessions;
+  t.after(() => { globalThis.__piSessions = prior; });
+  const sid = "extension-ui-direct-getter";
+  const question = { type: "extension_ui_request", id: "q-1", method: "custom", lines: [] };
+  let getStateCalled = false;
+
+  globalThis.__piSessions = new Map([[sid, {
+    sessionId: sid,
+    isAlive: () => true,
+    isRunning: () => true,
+    getPendingExtensionUiRequests: () => [question],
+    send: async (cmd) => {
+      if (cmd.type === "get_state") {
+        getStateCalled = true;
+        throw new Error("get_state should not be called for extensionUi query");
+      }
+      return null;
+    },
+  }]]);
+
+  const req = new Request(`http://localhost/api/sessions/${sid}/state?extensionUi=1`);
+  const res = await getSession(req, { params: Promise.resolve({ id: sid }) });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(getStateCalled, false, "extensionUi query must not execute get_state");
+  assert.equal(data.running, true);
+  assert.equal(data.runtimeAlive, true);
+  assert.deepEqual(data.pendingExtensionUiRequests, [question]);
+});
+

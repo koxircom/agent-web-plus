@@ -754,7 +754,11 @@
   function removeSessionPinArchiveControls() {
     document.documentElement.classList.remove("pi-enh-session-pin-archive-active");
     for (const selector of [".pi-enh-session-overflow", ".pi-enh-session-pinned-indicator", ".pi-enh-session-menu"]) {
-      for (const element of document.querySelectorAll(selector)) element.remove();
+      for (const element of document.querySelectorAll(selector)) {
+        if (!element.hasAttribute("data-pi-native-session-pin")) {
+          element.remove();
+        }
+      }
     }
   }
 
@@ -1110,29 +1114,39 @@
     for (const row of sessionRows) {
       const sessionId = row.getAttribute("data-pi-enh-session-id");
       if (!sessionId) continue;
-      const isPinned = pinnedIds.has(sessionId);
+      const isCodex = sessionId.startsWith("codex:");
       let indicator = row.querySelector(".pi-enh-session-pinned-indicator");
-      if (isPinned) {
-        // The pin marker is an action, not a passive decoration: clicking it
-        // immediately toggles the current row back to unpinned.
-        if (!indicator || indicator.tagName?.toLowerCase() !== "button") {
-          indicator?.remove();
-          indicator = document.createElement("button");
-          indicator.type = "button";
-          indicator.className = "pi-enh-session-pinned-indicator";
-          indicator.addEventListener("click", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            handleSessionPinArchiveAction(sessionId, "pin");
-          });
+
+      if (isCodex) {
+        // Codex 会话置顶标记完全由原生 React 受管，04 绝不为 Codex 会话追加、移除或重新插入原生 marker
+        if (indicator && !indicator.hasAttribute("data-pi-native-session-pin")) {
+          indicator.remove();
+          indicator = null;
         }
-        indicator.setAttribute("title", "取消置顶");
-        indicator.setAttribute("aria-label", "取消置顶");
-        indicator.setAttribute("aria-pressed", "true");
-        indicator.innerHTML = sessionPinIcon;
-      } else if (indicator) {
-        indicator.remove();
-        indicator = null;
+      } else {
+        const isPinned = pinnedIds.has(sessionId);
+        if (isPinned) {
+          // The pin marker is an action, not a passive decoration: clicking it
+          // immediately toggles the current row back to unpinned.
+          if (!indicator || indicator.tagName?.toLowerCase() !== "button") {
+            indicator?.remove();
+            indicator = document.createElement("button");
+            indicator.type = "button";
+            indicator.className = "pi-enh-session-pinned-indicator";
+            indicator.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              handleSessionPinArchiveAction(sessionId, "pin");
+            });
+          }
+          indicator.setAttribute("title", "取消置顶");
+          indicator.setAttribute("aria-label", "取消置顶");
+          indicator.setAttribute("aria-pressed", "true");
+          indicator.innerHTML = sessionPinIcon;
+        } else if (indicator && !indicator.hasAttribute("data-pi-native-session-pin")) {
+          indicator.remove();
+          indicator = null;
+        }
       }
 
       let trigger = row.querySelector(".pi-enh-session-overflow");
@@ -1163,7 +1177,8 @@
       if (row.children[row.children.length - 1] !== trigger) row.appendChild(trigger);
 
       // 关键修复：确保置顶图钉 indicator 紧随内容之后、排在 trigger (overflow) 之前，绝不落在第一位
-      if (isPinned && indicator) {
+      // 该段只限 Pi / 非 native 遗留 marker，原生 Codex 完全退出，绝不移动 React 节点
+      if (indicator && !indicator.hasAttribute("data-pi-native-session-pin") && !isCodex && trigger) {
         if (indicator.nextSibling !== trigger) {
           row.insertBefore(indicator, trigger);
         }
@@ -1248,32 +1263,70 @@
     const { id, path, cwd, name, clientX, clientY, executionEngine } = event.detail || {};
     if (!id) return;
 
+    // 检查是否处于多选批量模式
+    const isBatchActive = Boolean(isSessionBatchMode && selectedSessionBatchIds && selectedSessionBatchIds.size > 0);
+    let targetSessionIds = [id];
+    if (isBatchActive) {
+      if (!selectedSessionBatchIds.has(id)) {
+        selectedSessionBatchIds.add(id);
+        if (typeof updateSingleBatchRow === "function") {
+          updateSingleBatchRow(id, true);
+        }
+        if (typeof syncSessionBatchBar === "function") {
+          syncSessionBatchBar();
+        }
+      }
+      targetSessionIds = Array.from(selectedSessionBatchIds);
+    }
+    const isMultiSelect = targetSessionIds.length > 1;
+    const multiCount = targetSessionIds.length;
+
     const isCodex = isCodexSession(id, executionEngine);
     const validRolloutPath = resolveSessionRolloutPath(id, path);
 
+    const isPinnedFn = typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function"
+      ? window.__PI_ENH_IS_SESSION_PINNED__
+      : (sid) => (typeof PINNED_SESSION_STORAGE_KEY !== "undefined" && typeof readStoredSessionIds === "function" ? readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sid) : false);
+
+    const allTargetUnread = targetSessionIds.every((sid) => isSessionUnread(sid));
+    const allTargetPinned = targetSessionIds.every((sid) => isPinnedFn(sid));
+
+    const unreadActionTitle = allTargetUnread
+      ? (isMultiSelect ? `批量标为已读 (${multiCount})` : "标为已读")
+      : (isMultiSelect ? `批量标为未读 (${multiCount})` : "标为未读");
+    const unreadIcon = allTargetUnread ? sessionReadIcon : sessionUnreadIcon;
+
+    const pinActionTitle = allTargetPinned
+      ? (isMultiSelect ? `批量取消置顶 (${multiCount})` : "取消置顶")
+      : (isMultiSelect ? `批量置顶会话 (${multiCount})` : "置顶会话");
+
+    const disabledAttr = isMultiSelect ? 'class="pi-enh-menu-item pi-enh-menu-item-disabled" style="opacity:0.42;cursor:not-allowed;pointer-events:none;"' : 'class="pi-enh-menu-item"';
+
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu";
-    const displayName = name || id.slice(0, 18) + "...";
+    const displayName = isMultiSelect
+      ? `已选 ${multiCount} 项 (批量操作)`
+      : (name || id.slice(0, 18) + "...");
 
     menu.innerHTML = `
       <div class="pi-enh-menu-header"></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="toggle-unread">
-        ${isSessionUnread(id) ? sessionReadIcon : sessionUnreadIcon}
-        <span>${isSessionUnread(id) ? "标为已读" : "标为未读"}</span>
+        ${unreadIcon}
+        <span>${unreadActionTitle}</span>
       </div>
-      <div class="pi-enh-menu-item" data-action="rename-session">
+      <div ${disabledAttr} data-action="rename-session" ${isMultiSelect ? 'title="多选状态下不支持重命名"' : ""}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
         <span>重命名会话</span>
       </div>
       ${isPluginEnabled("session-pin-archive") ? `
       <div class="pi-enh-menu-item" data-action="pin-session">
         ${sessionPinIcon}
-        <span>${((typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function") ? window.__PI_ENH_IS_SESSION_PINNED__(id) : readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(id)) ? "取消置顶" : "置顶会话"}</span>
+        <span>${pinActionTitle}</span>
       </div>
       <div class="pi-enh-menu-item" data-action="archive-session">
         ${sessionArchiveIcon}
-        <span>归档会话</span>
+        <span>${isMultiSelect ? `批量归档会话 (${multiCount})` : "归档会话"}</span>
       </div>
       ` : ""}
       ${isPluginEnabled("session-tags") ? `
@@ -1282,24 +1335,24 @@
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
           <line x1="7" y1="7" x2="7.01" y2="7"></line>
         </svg>
-        <span>会话标签 (Web 偏好)</span>
+        <span>${isMultiSelect ? `批量会话标签 (${multiCount})` : "会话标签 (Web 偏好)"}</span>
         <span class="pi-enh-menu-arrow" style="margin-left:auto;opacity:0.6;font-size:11px;">▶</span>
       </div>
       ` : ""}
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="copy-id">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-        <span>复制会话 ID (Session ID)</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <span>${isMultiSelect ? `复制已选 ${multiCount} 个会话 ID` : "复制会话 ID (Session ID)"}</span>
       </div>
       <div class="pi-enh-menu-item" data-action="copy-url">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-        <span>复制会话链接 (Session URL)</span>
+        <span>${isMultiSelect ? `复制已选 ${multiCount} 个会话链接` : "复制会话链接 (Session URL)"}</span>
       </div>
       <div class="pi-enh-menu-item" data-action="copy-path">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-        <span>复制会话文件完整路径</span>
+        <span>${isMultiSelect ? `复制已选 ${multiCount} 个文件路径` : "复制会话文件完整路径"}</span>
       </div>
-      <div class="pi-enh-menu-item" data-action="copy-prompt">
+      <div ${disabledAttr} data-action="copy-prompt" ${isMultiSelect ? 'title="接力提示词仅支持单个会话"' : ""}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M10 8h4"></path><path d="M10 12h4"></path></svg>
         <span>复制 Agent 接力提示词 (Codex/其他)</span>
       </div>
@@ -1308,14 +1361,14 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
         <span>复制项目工作目录</span>
       </div>
-      <div class="pi-enh-menu-item" data-action="reload-session">
+      <div ${disabledAttr} data-action="reload-session" ${isMultiSelect ? 'title="从磁盘重载仅支持单个会话"' : ""}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
         <span>${isCodex ? "重新读取原生会话" : "从磁盘重载 (Alt+R)"}</span>
       </div>
       ${renderSessionColorMenuItems(id)}
     `;
     const header = menu.querySelector(".pi-enh-menu-header");
-    header.textContent = `会话: ${displayName}`;
+    header.textContent = isMultiSelect ? `已选 ${multiCount} 项 (批量操作)` : `会话: ${displayName}`;
     header.title = id;
 
     document.body.appendChild(menu);
@@ -1329,7 +1382,7 @@
     let posX = Number(clientX) || 0;
     let posY = Number(clientY) || 0;
 
-    // 水平定位：默认在鼠标右侧，若超出右边界则向左翻转或贴右边缘展示
+    // 水平定位
     if (posX + menuWidth > window.innerWidth - PADDING) {
       if (posX - menuWidth >= PADDING) {
         posX = posX - menuWidth;
@@ -1339,7 +1392,7 @@
     }
     posX = Math.max(PADDING, posX);
 
-    // 垂直定位：默认在鼠标下方，若超出下边界则优先向上翻转，若上下均不足则贴底/视口安全约束
+    // 垂直定位
     if (posY + menuHeight > window.innerHeight - PADDING) {
       if (posY - menuHeight >= PADDING) {
         posY = posY - menuHeight;
@@ -1352,7 +1405,7 @@
     menu.style.left = `${Math.round(posX)}px`;
     menu.style.top = `${Math.round(posY)}px`;
 
-    // 鼠标悬停自动展开会话标签二级菜单 (Hover Cascading Submenu)
+    // 鼠标悬停自动展开会话标签二级菜单
     const tagsMenuItem = menu.querySelector('.pi-enh-menu-item[data-action="open-session-tags"]');
     if (tagsMenuItem) {
       tagsMenuItem.addEventListener("mouseenter", () => {
@@ -1363,7 +1416,7 @@
         if (!activeSessionTagsPopover) {
           tagsMenuItem._openSubmenuTimer = setTimeout(() => {
             const triggerRect = tagsMenuItem.getBoundingClientRect();
-            openSessionTagsPopover(id, tagsMenuItem, null, triggerRect);
+            openSessionTagsPopover(id, tagsMenuItem, null, triggerRect, isMultiSelect ? targetSessionIds : null);
           }, 120);
         } else {
           tagsMenuItem.classList.add("is-submenu-open");
@@ -1376,7 +1429,6 @@
           tagsMenuItem._openSubmenuTimer = null;
         }
         if (activeSessionTagsPopover) {
-          // 若子菜单内输入框聚焦中，绝不启动关闭定时器
           if (document.activeElement && activeSessionTagsPopover.contains(document.activeElement)) {
             return;
           }
@@ -1389,7 +1441,6 @@
         }
       });
 
-      // 鼠标移动到主菜单其他项时，迅速收起二级菜单
       const siblingItems = menu.querySelectorAll('.pi-enh-menu-item:not([data-action="open-session-tags"])');
       for (const sib of siblingItems) {
         sib.addEventListener("mouseenter", () => {
@@ -1397,7 +1448,6 @@
             clearTimeout(tagsMenuItem._openSubmenuTimer);
             tagsMenuItem._openSubmenuTimer = null;
           }
-          // 关键防护：如果子菜单内的输入框已经获得焦点（用户输入文字中），哪怕鼠标不小心滑过兄弟项，也绝不能杀死子菜单！
           if (activeSessionTagsPopover && document.activeElement && activeSessionTagsPopover.contains(document.activeElement)) {
             return;
           }
@@ -1408,65 +1458,156 @@
       }
     }
 
-    menu.addEventListener("click", (e) => {
+    menu.addEventListener("click", async (e) => {
       const item = e.target.closest("[data-action]");
       if (!item) return;
       const action = item.dataset.action;
 
       if (action === "toggle-unread") {
         closeMenu();
-        const unread = toggleSessionUnread(id);
-        showToast(unread ? "已标为未读" : "已标为已读", unread ? sessionUnreadIcon : sessionReadIcon);
+        if (isMultiSelect) {
+          const targetUnread = !allTargetUnread;
+          for (const sid of targetSessionIds) {
+            toggleSessionUnread(sid, targetUnread);
+          }
+          reconcileUnreadSessions();
+          showToast(targetUnread ? `已将 ${multiCount} 个会话标为未读` : `已将 ${multiCount} 个会话标为已读`, targetUnread ? sessionUnreadIcon : sessionReadIcon);
+        } else {
+          const unread = toggleSessionUnread(id);
+          showToast(unread ? "已标为未读" : "已标为已读", unread ? sessionUnreadIcon : sessionReadIcon);
+        }
         return;
       } else if (action === "rename-session") {
+        if (isMultiSelect) return;
         closeMenu();
         triggerSessionInlineRename(id);
         return;
       } else if (action === "pin-session") {
         closeMenu();
-        void handleSessionPinArchiveAction(id, "pin");
+        if (isMultiSelect) {
+          const targetPinned = !allTargetPinned;
+          const pinFn = (typeof toggleSessionPin === "function") ? toggleSessionPin : (typeof window !== "undefined" ? window.__PI_ENH_TOGGLE_SESSION_PIN__ : null);
+          if (pinFn) {
+            for (const sid of targetSessionIds) {
+              if (isPinnedFn(sid) !== targetPinned) {
+                await pinFn(sid);
+              }
+            }
+            syncSessionPinArchiveControls();
+            requestSessionListRefresh();
+            showToast(targetPinned ? `已置顶 ${multiCount} 个会话` : `已取消置顶 ${multiCount} 个会话`, sessionPinIcon);
+          }
+        } else {
+          void handleSessionPinArchiveAction(id, "pin");
+        }
         return;
       } else if (action === "archive-session") {
         closeMenu();
-        void handleSessionPinArchiveAction(id, "archive");
+        if (isMultiSelect) {
+          const archiveFn = (typeof archiveSession === "function") ? archiveSession : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
+          if (archiveFn) {
+            let archivedCount = 0;
+            for (const sid of targetSessionIds) {
+              const row = getSessionRowById(sid);
+              const sessionName = extractSessionTitleFromRow(row, sid);
+              const ok = await archiveFn(sid, { name: sessionName });
+              if (ok) {
+                archivedCount++;
+                selectedSessionBatchIds.delete(sid);
+              }
+            }
+            syncSessionPinArchiveControls();
+            if (typeof syncSessionBatchBar === "function") syncSessionBatchBar();
+            if (typeof syncSessionBatchRowStates === "function") syncSessionBatchRowStates();
+            requestSessionListRefresh(false, true);
+            if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+              try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (_) {}
+            }
+            showToast(`已批量归档 ${archivedCount} 个会话，可在“设置 → 已归档”中还原`, sessionArchiveIcon, 4200);
+          }
+        } else {
+          void handleSessionPinArchiveAction(id, "archive");
+        }
         return;
       } else if (action === "open-session-tags") {
         e.stopPropagation();
         const triggerRect = item.getBoundingClientRect();
         if (!activeSessionTagsPopover) {
-          openSessionTagsPopover(id, item, e, triggerRect);
+          openSessionTagsPopover(id, item, e, triggerRect, isMultiSelect ? targetSessionIds : null);
         } else {
           const searchInput = activeSessionTagsPopover.querySelector(".pi-enh-tags-search-input");
           if (searchInput) searchInput.focus();
         }
         return;
       } else if (action === "copy-id") {
-        copyText(id, `已复制会话 ID: ${id.slice(0, 12)}...`);
+        if (isMultiSelect) {
+          copyText(targetSessionIds.join("\n"), `已复制已选 ${multiCount} 个会话 ID`);
+        } else {
+          copyText(id, `已复制会话 ID: ${id.slice(0, 12)}...`);
+        }
       } else if (action === "copy-url") {
         const origin = window.location ? window.location.origin : "";
-        const url = `${origin}/?session=${encodeURIComponent(id)}`;
-        copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
-      } else if (action === "copy-path") {
-        const targetPath = resolveSessionRolloutPath(id, path);
-        if (targetPath) {
-          copyText(targetPath, `已复制会话文件完整路径`);
+        if (isMultiSelect) {
+          const urls = targetSessionIds.map(sid => `${origin}/?session=${encodeURIComponent(sid)}`).join("\n");
+          copyText(urls, `已复制已选 ${multiCount} 个会话链接`);
         } else {
-          showToast(isCodex ? "该 Codex 会话暂无本地文件路径" : "会话无独立文件路径");
+          const url = `${origin}/?session=${encodeURIComponent(id)}`;
+          copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
+        }
+      } else if (action === "copy-path") {
+        if (isMultiSelect) {
+          const paths = targetSessionIds.map(sid => resolveSessionRolloutPath(sid)).filter(Boolean);
+          if (paths.length > 0) {
+            copyText(paths.join("\n"), `已复制已选 ${paths.length} 个文件路径`);
+          } else {
+            showToast("所选会话均无独立文件路径");
+          }
+        } else {
+          const targetPath = resolveSessionRolloutPath(id, path);
+          if (targetPath) {
+            copyText(targetPath, `已复制会话文件完整路径`);
+          } else {
+            showToast(isCodex ? "该 Codex 会话暂无本地文件路径" : "会话无独立文件路径");
+          }
         }
       } else if (action === "copy-prompt") {
+        if (isMultiSelect) return;
         const targetPath = resolveSessionRolloutPath(id, path);
         const prompt = `这是我之前的 ${isCodex ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${targetPath || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
-        copyText(cwd || "", `已复制工作目录`);
+        if (isMultiSelect) {
+          const cwds = Array.from(new Set(targetSessionIds.map(sid => {
+            const r = getSessionRowById(sid);
+            return r?.getAttribute("data-pi-enh-cwd") || cwd || "";
+          }).filter(Boolean)));
+          copyText(cwds.join("\n") || cwd || "", `已复制工作目录`);
+        } else {
+          copyText(cwd || "", `已复制工作目录`);
+        }
       } else if (action === "reload-session") {
+        if (isMultiSelect) return;
         void handleSessionReload(id, { executionEngine });
       } else if (action === "set-session-color") {
         const color = item.getAttribute("data-session-color") || "";
         const preset = SESSION_COLOR_PRESETS.find((candidate) => candidate.id === color);
-        if (setSessionColor(id, color)) showToast(`已设为${preset?.name || "所选"}背景`);
+        if (isMultiSelect) {
+          for (const sid of targetSessionIds) {
+            setSessionColor(sid, color);
+          }
+          showToast(`已为已选 ${multiCount} 个会话设为${preset?.name || "所选"}背景`);
+        } else {
+          if (setSessionColor(id, color)) showToast(`已设为${preset?.name || "所选"}背景`);
+        }
       } else if (action === "clear-session-color") {
-        if (clearSessionColor(id)) showToast("已清除会话背景颜色");
+        if (isMultiSelect) {
+          for (const sid of targetSessionIds) {
+            clearSessionColor(sid);
+          }
+          showToast(`已为已选 ${multiCount} 个会话清除背景颜色`);
+        } else {
+          if (clearSessionColor(id)) showToast("已清除会话背景颜色");
+        }
       }
       closeMenu();
     });
@@ -1909,6 +2050,7 @@
             quote: normalizeAnnotationText(item.quote),
             comment: normalizeAnnotationText(item.comment),
             createdAt: Number(item.createdAt) || Date.now(),
+            kind: item.kind === "dom" ? "dom" : "quote",
           }))
           .filter((item) => item.quote);
       }
@@ -1926,20 +2068,25 @@
     return annotationItems.map((item) => ({ ...item }));
   }
 
+  function enabledAnnotations() {
+    return listAnnotations().filter(item => isPluginEnabled(item.kind === "dom" ? "dom-feedback" : "quick-quote"));
+  }
+
   function notifyAnnotationSubmissionState() {
-    const hasAnnotations = isPluginEnabled("quick-quote") && annotationItems.length > 0;
+    const hasAnnotations = enabledAnnotations().length > 0;
     if (lastAnnotationSubmissionState === hasAnnotations) return;
     lastAnnotationSubmissionState = hasAnnotations;
     window.dispatchEvent(new Event("pi-enh-composer-submission-state-change"));
   }
 
-  function addAnnotation(quote, comment) {
+  function addAnnotation(quote, comment, options) {
     ensureAnnotationSession();
     const normalizedQuote = normalizeAnnotationText(quote);
     if (!normalizedQuote) return listAnnotations();
     annotationItems.push({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       quote: normalizedQuote,
+      kind: options?.kind === "dom" ? "dom" : "quote",
       comment: normalizeAnnotationText(comment),
       createdAt: Date.now(),
     });
@@ -1984,12 +2131,12 @@
   }
 
   function annotationLabel() {
-    return `${listAnnotations().length} 条注释`;
+    return `${enabledAnnotations().length} 条注释`;
   }
 
   function serializeAnnotations(body) {
     const normalizedBody = String(body || "").trim();
-    const items = listAnnotations();
+    const items = enabledAnnotations();
     if (!items.length) return normalizedBody;
     const blocks = items.map((item, index) => {
       const quoteLines = item.quote
@@ -2090,12 +2237,12 @@
 
   function syncAnnotationComposer() {
     notifyAnnotationSubmissionState();
-    if (!isPluginEnabled("quick-quote")) {
+    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) {
       removeAnnotationUi();
       return;
     }
     const textarea = getComposerTextarea();
-    const items = listAnnotations();
+    const items = enabledAnnotations();
     if (!textarea || !items.length) {
       closeAnnotationList();
       if (annotationBadge) {
@@ -2705,7 +2852,7 @@
   }
 
   function openAnnotationEditor(quote, itemId, rect, sourceRange) {
-    if (!isPluginEnabled("quick-quote")) return;
+    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) return;
     const existing = itemId ? listAnnotations().find((item) => item.id === itemId) : null;
     const selectedQuote = normalizeAnnotationText(existing?.quote || quote);
     if (!selectedQuote) return;
@@ -2836,7 +2983,7 @@
 
   function openAnnotationList() {
     if (annotationList) return;
-    const items = listAnnotations();
+    const items = enabledAnnotations();
     if (!items.length) return;
     const panel = document.createElement("section");
     panel.className = "pi-enh-annotation-list";
@@ -2878,7 +3025,7 @@
         cancelAnnotationListClose();
         removeAnnotation(item.id);
         syncAnnotationComposer();
-        const remaining = listAnnotations();
+        const remaining = enabledAnnotations();
         if (!remaining.length) {
           closeAnnotationList();
           return;
@@ -2936,8 +3083,7 @@
   }
 
   function prepareNativeComposerSubmission(kind, body) {
-    if (!isPluginEnabled("quick-quote")) return null;
-    const snapshot = listAnnotations();
+    const snapshot = enabledAnnotations();
     if (!snapshot.length) return null;
     const sessionId = getAnnotationSessionId();
     return {
@@ -3039,9 +3185,9 @@
   // ==========================================
   // Pure state model: transport, DOM and storage never decide whether a request closed.
   function createProjectStatusModel() {
-    let catalog = new Map(), entries = new Map(), epoch = null, revision = -1, catalogReady = false;
+    let catalog = new Map(), entries = new Map(), epoch = null, activeSource = null, catalogReady = false;
     let sync = { state: "connecting", at: 0 }, unread = new Set();
-    const acknowledged = new Map(), retiredEpochs = new Set();
+    const acknowledged = new Map(), streams = new Map();
     let completedRead = new Set();
     const completionKey = (id, item) => JSON.stringify([id, item.runId]);
     const isCompletedRead = (id, item) => {
@@ -3083,14 +3229,17 @@
       (projectKey === null || (others ? entry.projectKey !== key(projectKey) : entry.projectKey === key(projectKey)))
       && (!status || entry.status === status) && entry.status !== "completed"
       && !(entry.status === "interrupted" && acknowledged.get(entry.id) === entry.runId));
-    const apply = (payload, now) => {
+    const apply = (payload, now, source = "default") => {
       const interactions = payload?.interactionState, stamp = payload?.statusSnapshot;
       const reject = state => { sync = { ...sync, state }; return { accepted: false, newRequests: [] }; };
       if (interactions?.version !== 1 || stamp?.version !== 1) return reject("unsupported");
       if (!Array.isArray(interactions.sessions) || !Array.isArray(stamp.executions) || !Array.isArray(payload.runningSessionIds)
         || payload.runningSessionIds.some(id => typeof id !== "string") || !stamp.epoch || typeof stamp.epoch !== "string"
         || !Number.isSafeInteger(stamp.revision) || stamp.revision < 0) return reject("unavailable");
-      if (retiredEpochs.has(stamp.epoch) || epoch === stamp.epoch && stamp.revision < revision) return { accepted: false, newRequests: [] };
+      // Pi and Codex have independent server epochs. Visiting another engine
+      // must not retire this engine's live epoch or erase its stale-read guard.
+      const stream = streams.get(source);
+      if (stream?.retiredEpochs.has(stamp.epoch) || stream?.epoch === stamp.epoch && stamp.revision < stream.revision) return { accepted: false, newRequests: [] };
       const next = new Map(), seen = new Set(), newRequests = [];
       for (const item of stamp.executions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || next.has(item.sessionId)
@@ -3109,7 +3258,7 @@
       for (const item of interactions.sessions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || seen.has(item.sessionId) || !Array.isArray(item.pendingRequests)) return reject("unavailable");
         seen.add(item.sessionId);
-        const ids = new Set(), previous = epoch === stamp.epoch ? entries.get(item.sessionId) : null;
+        const ids = new Set(), previous = activeSource === source && epoch === stamp.epoch ? entries.get(item.sessionId) : null;
         for (const request of item.pendingRequests) {
           if (!request || typeof request.id !== "string" || !request.id || ids.has(request.id)
             || !["select", "confirm", "input", "editor", "custom"].includes(request.method)) return reject("unavailable");
@@ -3122,8 +3271,10 @@
         next.set(item.sessionId, entry);
       }
       // Commit only after the entire snapshot validates; no partial DOM transitions.
-      if (epoch && epoch !== stamp.epoch) retiredEpochs.add(epoch);
-      entries = next; epoch = stamp.epoch; revision = stamp.revision;
+      const retiredEpochs = stream?.retiredEpochs || new Set();
+      if (stream && stream.epoch !== stamp.epoch) retiredEpochs.add(stream.epoch);
+      streams.set(source, { epoch: stamp.epoch, revision: stamp.revision, retiredEpochs });
+      entries = next; epoch = stamp.epoch; activeSource = source;
       sync = { state: "live", at: now };
       return { accepted: true, newRequests };
     };
@@ -4172,7 +4323,8 @@
 
   function receiveProjectStatus(payload, catalog = null) {
     const reconciledPayload = filterResolvedAskUserRequests(payload);
-    const result = projectStatusModel.apply(reconciledPayload, Date.now());
+    const source = window.__PI_ENH_GET_EXECUTION_ENGINE__?.() || "pi";
+    const result = projectStatusModel.apply(reconciledPayload, Date.now(), source);
     if (result.accepted) {
       projectStatusLastPayload = reconciledPayload;
       if (catalog) refreshProjectStatusCatalog(catalog);
@@ -4997,3 +5149,58 @@
     };
     renderAskUserBatchPrototype();
   }
+
+
+  // ==========================================
+  // 常驻版本号标识 (Persistent Version Badge)
+  // 解决升级后界面无常驻版本号、无法直观确认当前版本的问题
+  // ==========================================
+  const CURRENT_APP_VERSION = "1.4.41";
+
+  function syncPersistentVersionBadges() {
+    if (typeof document === "undefined") return;
+
+    // 1. 侧边栏顶部：在“已连接”状态旁边常驻显示版本号
+    const connEl = Array.from(document.querySelectorAll('div[role="status"] span')).find(el => el.textContent?.trim() === "已连接");
+    if (connEl && connEl.parentElement) {
+      const parent = connEl.parentElement;
+      let verSpan = parent.querySelector(".pi-enh-header-version");
+      if (!verSpan) {
+        verSpan = document.createElement("span");
+        verSpan.className = "pi-enh-header-version";
+        verSpan.style.cssText = "opacity:0.75;margin-left:3px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;";
+        verSpan.title = `Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
+        verSpan.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
+        });
+        parent.appendChild(verSpan);
+      }
+      verSpan.textContent = `· v${CURRENT_APP_VERSION}`;
+    }
+
+    // 2. 侧边栏底部：在快捷按钮栏右侧增加微型胶囊徽章
+    const bottomBtn = document.querySelector(".pi-enh-shortcut-btn, button[data-shortcut-id]");
+    if (bottomBtn && bottomBtn.parentElement) {
+      const bottomBar = bottomBtn.parentElement;
+      let badge = bottomBar.querySelector(".pi-enh-sidebar-bottom-version");
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "pi-enh-sidebar-bottom-version";
+        badge.style.cssText = "display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;background:var(--bg-hover,rgba(255,255,255,0.06));border:1px solid var(--border,rgba(255,255,255,0.12));color:var(--text-dim,#71717a);font-size:10px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.4;margin-left:auto;cursor:pointer;user-select:none;";
+        badge.title = `当前版本：Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
+        badge.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
+        });
+        bottomBar.appendChild(badge);
+      }
+      badge.textContent = `v${CURRENT_APP_VERSION}`;
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    setInterval(syncPersistentVersionBadges, 1000);
+    setTimeout(syncPersistentVersionBadges, 300);
+  }
+

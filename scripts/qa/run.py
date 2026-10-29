@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
 import shutil
 import sys
 import tempfile
@@ -326,15 +327,25 @@ def execute_shard(repo_root: Path, output_dir: Path, suite_name: str, shard: Dic
     cwd = (repo_root / shard.get("cwd", ".")).resolve()
     env = os.environ.copy()
     env.update({str(key): str(value) for key, value in (shard.get("env") or {}).items()})
+    # A shard must not inherit production SDK sessions, LAN clients or Stop fences.
+    # A test can create its own fixture configuration inside its process as needed.
+    agent_sandbox = tempfile.TemporaryDirectory(prefix="pi-qa-agent-")
+    env.update({"PI_CODING_AGENT_DIR": agent_sandbox.name,
+                "PI_AGENT_DIR": agent_sandbox.name,
+                "ODOO_LAN_CONFIG_FILE": str(Path(agent_sandbox.name) / "state/odoo-lan-config.json")})
     try:
         with log_path.open("w", encoding="utf-8", errors="replace") as log:
             log.write(f"$ {' '.join(shard['command'])}\n")
             log.flush()
-            process = subprocess.Popen(shard["command"], cwd=str(cwd), env=env, stdout=log, stderr=subprocess.STDOUT, shell=False)
+            process = subprocess.Popen(shard["command"], cwd=str(cwd), env=env, stdout=log, stderr=subprocess.STDOUT, shell=False, start_new_session=(os.name == "posix"))
             try:
                 exit_code = process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                process.kill()
+                # The manifest's hard deadline owns this isolated test group, not a service.
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
                 exit_code = process.wait()
                 make_private(log_path)
                 return {
@@ -352,6 +363,8 @@ def execute_shard(repo_root: Path, output_dir: Path, suite_name: str, shard: Dic
         make_private(log_path)
         return {"name": name, "status": "failed", "reason": "runner_exception", "error": str(error), "exitCode": None,
                 "startedAt": start, "finishedAt": now_iso(), "logPath": log_relative.as_posix(), "logSha256": log_hash(log_path)}
+    finally:
+        agent_sandbox.cleanup()
     return {
         "name": name,
         "status": "passed" if exit_code == 0 else "failed",

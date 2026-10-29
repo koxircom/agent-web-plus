@@ -30,7 +30,7 @@ function fixture() {
       const enabledExtensions = LEGACY_SETTINGS_EXTENSIONS.filter((ext) => isExtensionEnabled(ext));
       const nativeSections = [
         { id: "general" }, { id: "models" }, { id: "skills" },
-        { id: "agents" }, { id: "plugins" }, { id: "mcp" }, { id: "execution-engine" }, { id: "learning" },
+        { id: "agents" }, { id: "plugins" }, { id: "mcp" }, { id: "execution-engine" }, { id: "collaboration" }, { id: "learning" },
       ];
       const sections = useMemo(() => {
         return [ ...nativeSections, ...enabledExtensions.map((ext) => ({ id: ext.id })) ];
@@ -117,6 +117,12 @@ test("发现 module05 注入第二个 contentEditable 编辑器", () => {
 test("发现原生设置 section 被移除", () => {
   const sources = fixture();
   sources.settingsPanel = sources.settingsPanel.replace('{ id: "models" }, ', "");
+  failingCheck(checkReleaseOwnership(sources), "settings-single-navigation");
+});
+
+test("协作接力不能退回原生导航之外", () => {
+  const sources = fixture();
+  sources.settingsPanel = sources.settingsPanel.replace('{ id: "collaboration" }, ', "");
   failingCheck(checkReleaseOwnership(sources), "settings-single-navigation");
 });
 

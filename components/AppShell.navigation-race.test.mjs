@@ -86,7 +86,10 @@ function makeHarness({ sessionCatalog = [], initialSession = { id: "initial", cw
     setSidebarOpen() {},
     setNewSessionCwd(value) { context.newSessionCwd = typeof value === "function" ? value(context.newSessionCwd) : value; },
     setSelectedSession(value) { context.selectedSession = typeof value === "function" ? value(context.selectedSession) : value; },
-    setSessionKey() {},
+    sessionRemounts: 0,
+    setSessionKey() { context.sessionRemounts++; },
+    sessionRefreshKey: 0,
+    setSessionRefreshKey(value) { context.sessionRefreshKey = typeof value === "function" ? value(context.sessionRefreshKey) : value; },
     setNewSessionDraftId() {},
     setBranchTree() {},
     setBranchActiveLeafId() {},
@@ -261,4 +264,15 @@ test('an explicit Agent switch wins over the outgoing selected session',()=>{
 test('selecting an existing session aligns the dormant engine before later New',()=>{
  const c=makeHarness();c.executionEngineRef.current='codex';c.navigation.handleSelectSession({id:'pi-history',cwd:'/pi',projectKey:'/pi'});
  assert.equal(c.executionEngineRef.current,'pi');assert.equal(c.executionEngine,'pi');
+});
+
+
+test("reselecting the current session requests fresh history without remounting or forgetting the draft", () => {
+  const context = makeHarness();
+  const current = context.selectedSession;
+  context.navigation.handleSelectSession(current);
+  assert.equal(context.selectedSession, current);
+  assert.equal(context.sessionRefreshKey, 1);
+  assert.equal(context.sessionRemounts, 0);
+  assert.match(source, /sessionRefreshKey=\{sessionRefreshKey\}/);
 });

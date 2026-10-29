@@ -29,6 +29,7 @@ function harness(query, defaults = 'pi') {
     executionEngineReady: true, executionEngineRef:{current:'pi'}, executionEngineSwitchRef:{current:0}, executionEngineInitControllerRef:{current:null},
     navigationIntentRef:{current:0}, initialSessionIdRef:{current:null}, initialCwdEngineRef:{current:null}, codexProjectsRef:{current:[]},
     calls:[], urls:[], cwd:null,
+    initialCwdRetryGeneration:0, selectedSession:null, selectedSessionIdRef:{current:null}, newSessionCwdRef:{current:null},
     applyExecutionEngine(engine,cwd,reset){ context.calls.push({engine,cwd,reset});context.executionEngineRef.current=engine; },
     setCodexEnabled(){}, useEffect(fn){ context.cleanup=fn(); },
     setInitialCwdStatus(value){context.status=value;}, setInitialCwdError(){},

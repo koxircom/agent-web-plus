@@ -27,6 +27,11 @@ import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
 import { cancelSessionWakeups } from "./lock-handoff-dispatcher";
+import { cancelCollaborationWakeups } from "./collaboration-runtime";
+import { createCollaborationExtension } from "./collaboration-extension";
+import { cancelOdooLanWakeups } from "./odoo-lan-runtime";
+import { createOdooLanExtension } from "./odoo-lan-extension";
+import { resolveOdooLanClient, projectOdooWaitingSessions, type OdooWaitingSessionInfo } from "./odoo-lan-service";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
@@ -1256,6 +1261,8 @@ export class AgentSessionWrapper {
         // Stop cancels deferred lock work, but never releases a lock while a tool is still writing.
         try {
           cancelSessionWakeups(this.sessionId);
+          cancelCollaborationWakeups(this.sessionId);
+          cancelOdooLanWakeups(this.sessionId);
         } catch (error) {
           console.error("[pi-web] failed to cancel deferred lock work on Stop:", error instanceof Error ? error.message : error);
         }
@@ -1737,10 +1744,16 @@ export class AgentSessionWrapper {
 
       case "extension_ui_response": {
         this.resolveExtensionUiResponse(command as ExtensionUiResponse);
-        return null;
+        const id = (command as ExtensionUiResponse).id;
+        const pending = this.pendingUiRequests.get(id);
+        if (pending) {
+          return { id, status: "pending" as const, request: pending as unknown as ExtensionUiRequest };
+        }
+        return { id, status: "closed" as const };
       }
 
       case "extension_ui_input": {
+        const id = command.id as string;
         const data = command.data;
         if (Array.isArray(data)) {
           if (data.length === 0 || data.length > 256 || data.some(item => typeof item !== "string" || item.length > 65536)) {
@@ -1748,22 +1761,27 @@ export class AgentSessionWrapper {
           }
           // Process in order in one request. Stop at close; never replay a
           // selection through both React and synthetic keyboard events.
-          const custom = this.activeCustomUis.get(command.id as string);
+          const custom = this.activeCustomUis.get(id);
           if (!custom) throw new Error("Extension request is no longer pending");
           custom.inputBatch = true;
           try {
             for (const item of data) {
-              if (!this.activeCustomUis.has(command.id as string)) break;
-              this.handleExtensionUiInput(command.id as string, item, false);
+              if (!this.activeCustomUis.has(id)) break;
+              this.handleExtensionUiInput(id, item, false);
             }
           } finally {
             custom.inputBatch = false;
-            if (this.activeCustomUis.has(command.id as string)) this.emitCustomUiRender(command.id as string, custom);
+            if (this.activeCustomUis.has(id)) this.emitCustomUiRender(id, custom);
           }
         } else {
-          this.handleExtensionUiInput(command.id as string, data as string);
+          if (!this.activeCustomUis.has(id)) throw new Error("Extension request is no longer pending");
+          this.handleExtensionUiInput(id, data as string);
         }
-        return null;
+        const pending = this.pendingUiRequests.get(id);
+        if (pending) {
+          return { id, status: "pending" as const, request: pending as unknown as ExtensionUiRequest };
+        }
+        return { id, status: "closed" as const };
       }
 
       case "set_auto_retry": {
@@ -2843,12 +2861,63 @@ function getProjectStatusLedger(): ProjectStatusLedger {
   return globalThis.__piProjectStatusLedger ??= new ProjectStatusLedger();
 }
 export function forgetRpcProjectStatus(sessionId: string): void {
+  try {
+    cancelCollaborationWakeups(sessionId);
+    cancelOdooLanWakeups(sessionId);
+  } catch {}
   getProjectStatusLedger().forget(sessionId);
 }
 export function getRpcProjectStatusSnapshot() {
   return getProjectStatusLedger().snapshot(getRunningRpcSessionIds(), [...getRegistry().values()]
     .filter(session => session.isAlive())
     .map(session => ({ sessionId: session.sessionId, pendingRequests: session.getPendingProjectRequests() })));
+}
+
+let lastKnownWaitingSessions: Record<string, OdooWaitingSessionInfo> = {};
+
+export async function getRpcWaitingSessionsSnapshot(): Promise<{
+  sessions: Record<string, OdooWaitingSessionInfo>;
+  authorityAvailable: boolean;
+}> {
+  try {
+    const client = await resolveOdooLanClient();
+    if (client && client.isConfigured()) {
+      let snapshot = client.getCachedSnapshot();
+      if (!snapshot) {
+        try {
+          snapshot = await Promise.race([
+            client.status(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("Timeout")), 1500),
+            ),
+          ]);
+        } catch {}
+      }
+      if (snapshot && !snapshot.resources.some(resource=>resource.status==='unknown')) {
+        const projected = projectOdooWaitingSessions(snapshot, client.instanceId);
+        lastKnownWaitingSessions = projected;
+        return {
+          sessions: projected,
+          authorityAvailable: true,
+        };
+      }
+      // 权威断线或快照未就绪：保留已知等待映射，标记 authorityAvailable: false，绝不清空成空闲
+      return {
+        sessions: lastKnownWaitingSessions,
+        authorityAvailable: false,
+      };
+    }
+  } catch {
+    // 捕获配置或网络异常，返回已知等待并标记不可用，绝不拖垮 native running 状态
+    return {
+      sessions: lastKnownWaitingSessions,
+      authorityAvailable: false,
+    };
+  }
+  return {
+    sessions: {},
+    authorityAvailable: true,
+  };
 }
 
 export function getRunningRpcSessionIds(): string[] {
@@ -3021,6 +3090,8 @@ export async function startRpcSession(
               createLearningRecallExtension(sessionCwd),
               ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
+              createCollaborationExtension({ agentDir }),
+              createOdooLanExtension({ agentDir }),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,

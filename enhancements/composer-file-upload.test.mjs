@@ -14,6 +14,47 @@ const workflow = extract('  async function uploadComposerFile', '  const INLINE_
   + extract('  function resolveAttachmentApiUrl', '  let activeVideoPreviewBackdrop')
   + extract('  function openAttachmentPreview', '  function downloadAttachmentFile');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+
+test('historical file cards belong to the message, never the session upload cleanup inventory', () => {
+  const session = 'attachment-ownership-fixture';
+  const inventory = JSON.stringify({ [session]: ['/workspace/.pi-upload-12345678-old-one.txt', '/workspace/.pi-upload-87654321-old-two.txt'] });
+  let first;
+  const context = vm.createContext({
+    localStorage: { getItem: () => inventory, setItem: () => assert.fail('Rendering must not change cleanup records') },
+    SESSION_UPLOADS_KEY: 'pi-enh-session-uploads',
+    document: { querySelectorAll: () => [first] },
+    getMimeTypeFromExt: () => 'text/plain',
+  });
+  vm.runInContext(extract('  function extractOriginalFilename', '  function hideAttachmentSyntaxInMessage'), context);
+  for (const text of ['下一轮纯文字', 'old-one.txt 只是提到文件名', '历史窗口移动后新挂载的一轮']) {
+    first = { textContent: text };
+    assert.equal(context.extractAttachmentsFromUserMessage(first, session).length, 0, text);
+  }
+  for (const marker of ['[附件: @.pi-upload-12345678-owned.txt]', '[附件: owned.txt (@.pi-upload-12345678-owned.txt) - 12 B]']) {
+    first = { textContent: '请查看\n\n' + marker };
+    const cards = context.extractAttachmentsFromUserMessage(first, session);
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].name, 'owned.txt');
+    assert.equal(cards[0].serverRelativePath, '.pi-upload-12345678-owned.txt');
+  }
+  assert.equal(context.localStorage.getItem('pi-enh-session-uploads'), inventory);
+});
+
+test('committing an attachment submission leaves subsequent rounds clean without deleting uploaded files', async () => {
+  for (const session of ['pi-rounds', 'codex:rounds']) {
+    const h = harness(session);
+    Object.assign(h.context, { findComposerTextarea: () => null, revokeAttachmentPreviewUrl() {} });
+    vm.runInContext(extract('  function prepareComposerSubmission', '  window.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__'), h.context);
+    await h.context.processComposerFiles([new File(['fixture'], 'owned.txt', { type: 'text/plain' })], {});
+    const first = h.context.prepareComposerSubmission('send', '有附件');
+    assert.match(first.text, /\[附件: @/);
+    first.commit(); first.commit();
+    assert.equal(h.context.pendingComposerAttachments.length, 0);
+    for (const kind of ['send', 'steer', 'followUp']) assert.equal(h.context.prepareComposerSubmission(kind, '下一轮'), null);
+    assert.equal(h.files.length, 1, 'Cleanup inventory remains independent of pending submissions');
+    assert.equal(h.cleaned.length, 0, 'Sending must not delete user files');
+  }
+});
 function harness(sessionId, response = {}, engine = sessionId?.startsWith('codex:') ? 'codex' : 'pi') {
   const uploads = [], notices = [], files = [], cleaned = [], previews = [];
   const context = vm.createContext({
@@ -118,4 +159,65 @@ test('a new Codex composer uses its engine hint before a session exists', async 
   assert.equal(h.uploads[0].url.pathname,'/api/files/workspace');
   assert.equal(h.uploads[0].url.searchParams.has('sessionId'),false);
   assert.match(h.context.pendingComposerAttachments[0].serverRelativePath,/^\.pi-upload-/);
+});
+
+// Dispatch both real capture listeners on the same input: stopPropagation does
+// not stop another listener registered on that same target.
+function pasteHarness(order = 'file-first', enabled = {}) {
+  const h = harness('codex:paste-fixture');
+  class Textarea extends EventTarget {}
+  const textarea = new Textarea();
+  const pending = [], inserts = [];
+  const process = h.context.processComposerFiles;
+  Object.assign(h.context, {
+    HTMLTextAreaElement: Textarea, textarea, composerPasteHandler: null,
+    findComposerTextarea: () => textarea,
+    isPluginEnabled: id => enabled[id] !== false,
+    isVideoFile: name => /\.mp4$/i.test(name),
+    processComposerFiles: (...args) => { const task = process(...args); pending.push(task); return task; },
+    hasSubstantialRichFormatting: html => html.includes('<strong>'),
+    htmlToMarkdown: () => '**formatted**',
+    insertMarkdownIntoComposer: md => inserts.push(md),
+  });
+  vm.runInContext(extract('    composerPasteHandler = (event) => {', '    const getDropHighlightTarget')
+    + extract('  function handleComposerMarkdownPaste', '  function instantlyClearComposerSurface'), h.context);
+  const handlers = [h.context.composerPasteHandler, h.context.handleComposerMarkdownPaste];
+  if (order === 'markdown-first') handlers.reverse();
+  for (const listener of handlers) textarea.addEventListener('paste', listener, true);
+  return { ...h, inserts, async paste(files, { itemOnly = false, html = '', plain = '' } = {}) {
+    const event = new Event('paste', { cancelable: true, bubbles: true });
+    Object.defineProperty(event, 'clipboardData', { value: {
+      files: itemOnly ? [] : files,
+      items: files.map(file => ({ kind: 'file', type: file.type, getAsFile: () => file })),
+      getData: type => type === 'text/html' ? html : plain,
+    } });
+    textarea.dispatchEvent(event);await Promise.all(pending.splice(0));return event;
+  } };
+}
+
+for (const order of ['file-first', 'markdown-first']) {
+  for (const [name, type] of [['clip.mp4', 'video/mp4'], ['report.pdf', 'application/pdf'], ['archive.zip', 'application/zip'], ['notes.txt', 'text/plain'], ['sound.mp3', 'audio/mpeg']]) {
+    test(`${order}: one ${name} paste uploads and appends exactly once`, async () => {
+      const h = pasteHarness(order), file = new File(['original bytes'], name, { type });
+      const event = await h.paste([file]);
+      assert.equal(event.defaultPrevented, true);assert.equal(h.uploads.length, 1);assert.equal(h.context.pendingComposerAttachments.length, 1);
+      assert.equal(h.context.pendingComposerAttachments[0].name, name);
+    });
+  }
+  test(`${order}: item-only clipboard, multiple files and intentional second paste preserve multiplicity`, async () => {
+    const h = pasteHarness(order), files = [new File(['a'], 'clip.mp4', { type: 'video/mp4' }), new File(['b'], 'report.pdf', { type: 'application/pdf' })];
+    await h.paste(files, { itemOnly: true });assert.equal(h.uploads.length, 2);
+    await h.paste([files[0]]);assert.equal(h.uploads.length, 3);assert.equal(h.context.pendingComposerAttachments.length, 3);
+  });
+}
+
+test('file and Markdown switches each retain their own ownership', async () => {
+  const video = new File(['a'], 'clip.mp4', { type: 'video/mp4' });
+  const fileOnly = pasteHarness('markdown-first', { 'composer-markdown-format': false });
+  await fileOnly.paste([video]);assert.equal(fileOnly.uploads.length, 1);
+  const disabled = pasteHarness('file-first', { 'composer-file-paste': false });
+  assert.equal((await disabled.paste([video])).defaultPrevented, false);assert.equal(disabled.uploads.length, 0);
+  const images = pasteHarness();
+  assert.equal((await images.paste([new File(['png'], 'image.png', { type: 'image/png' })])).defaultPrevented, false);assert.equal(images.uploads.length, 0);
+  await images.paste([], { html: '<strong>formatted</strong>', plain: 'formatted' });assert.deepEqual(images.inserts, ['**formatted**']);assert.equal(images.uploads.length, 0);
 });

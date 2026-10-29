@@ -1798,27 +1798,33 @@
     if (!cwd) throw new Error("未检测到当前有效的工作区目录");
     if (!sessionId) throw new Error("请先创建会话，再添加文档或压缩包附件");
     // Codex 的文件通道写入已存在的项目目录；唯一文件名由上传流程生成。
-    // 会话 ID 是路由身份，不能把 codex: 前缀当成文件夹名，也不依赖浏览器本机桥接建目录。
     if (executionEngine === "codex" || sessionId.startsWith("codex:")) return { uploadDir: cwd, relativeDir: "" };
-    try {
-      const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd, sessionId }),
-      });
-      if (res?.ok) {
-        const data = await res.json();
-        const relativeDir = String(data?.relativeDir || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-        if (data?.uploadDir && relativeDir.startsWith(".pi-uploads/")) {
-          return { uploadDir: data.uploadDir, relativeDir };
+
+    // 仅当在电脑本机 (127.0.0.1 / localhost) 访问时才尝试本地 30149 桥接，避免移动端跨私有网络报错
+    const isLoopback = typeof window !== "undefined" && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost");
+    if (isLoopback) {
+      try {
+        const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd, sessionId }),
+        });
+        if (res?.ok) {
+          const data = await res.json();
+          const relativeDir = String(data?.relativeDir || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+          if (data?.uploadDir && relativeDir.startsWith(".pi-uploads/")) {
+            return { uploadDir: data.uploadDir, relativeDir };
+          }
         }
+      } catch (e) {
+        // 30149 本地桥接服务未运行或连接超时，平滑降级
       }
-    } catch (e) {
-      // 30149 本地桥接服务未运行或连接超时，平滑降级
     }
+
     const sep = String(cwd).includes("\\") ? "\\" : "/";
-    const relativeDir = `.pi-uploads/${sessionId}`;
-    const uploadDir = String(cwd).replace(/[\\/]+$/, "") + sep + ".pi-uploads" + sep + sessionId;
+    // 关键修复：移动端/降级时直接写入已存在的 .pi-uploads 根目录，避免不存在的子路径返回 404 引发 Android 流失效
+    const relativeDir = ".pi-uploads";
+    const uploadDir = String(cwd).replace(/[\\/]+$/, "") + sep + ".pi-uploads";
     return { uploadDir, relativeDir, fallback: true };
   }
 
@@ -2388,7 +2394,7 @@
     return rest;
   }
 
-  function extractAttachmentsFromUserMessage(msgEl, currentSessionId) {
+  function extractAttachmentsFromUserMessage(msgEl) {
     const attachments = [];
     const seen = new Set();
     const text = msgEl ? (msgEl.textContent || "") : "";
@@ -2440,34 +2446,8 @@
       }
     }
 
-    // 3. 检查是否有当前会话关联的上传记录
-    if (attachments.length === 0 && currentSessionId) {
-      try {
-        const raw = localStorage.getItem(SESSION_UPLOADS_KEY);
-        if (raw) {
-          const map = JSON.parse(raw);
-          const files = map[currentSessionId];
-          if (Array.isArray(files) && files.length > 0) {
-            const allUserMsgs = document.querySelectorAll(".markdown-user-message");
-            if (allUserMsgs[0] === msgEl) {
-              for (const fileAbs of files) {
-                const name = extractOriginalFilename(fileAbs);
-                if (name && !seen.has(fileAbs)) {
-                  seen.add(fileAbs);
-                  attachments.push({
-                    id: "msg-att-" + Math.random().toString(36).slice(2, 9),
-                    name: name,
-                    serverRelativePath: fileAbs,
-                    serverAbsPath: fileAbs,
-                    type: getMimeTypeFromExt(name),
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {}
-    }
+    // Upload records track file cleanup for the whole session, not ownership of this message.
+    // Only explicit references in this message may create attachment cards.
 
     return attachments;
   }
@@ -2556,7 +2536,6 @@
     const userMessages = document.querySelectorAll(".markdown-user-message");
     if (!userMessages || userMessages.length === 0) return;
 
-    const currentSessionId = getCurrentSessionId();
     const cwd = window.__PI_CURRENT_SESSION_DATA__?.info?.cwd || "";
 
     for (const msgEl of userMessages) {
@@ -2570,7 +2549,7 @@
         continue;
       }
 
-      const attachments = extractAttachmentsFromUserMessage(msgEl, currentSessionId);
+      const attachments = extractAttachmentsFromUserMessage(msgEl);
       let bar = bubble.querySelector(".pi-enh-message-attachments");
 
       if (attachments.length === 0) {
@@ -4686,6 +4665,7 @@
     const signature = detail.signature;
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
+    syncComposerQueueBadge(detail.entries.length);
     composerQueueLastEntriesSignature = signature;
     if (changed) composerQueueActionsState = null;
     if (!detail.entries.length) {
@@ -5114,12 +5094,9 @@
     const nonImageFiles = allClipboardFiles.filter((file) =>
       !(file.type && file.type.startsWith("image/")) || isVideoFile(file.name, file.type));
 
-    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) {
-      event.preventDefault();
-      event.stopPropagation();
-      void processComposerFiles(nonImageFiles, textarea);
-      return;
-    }
+    // The attachment listener owns file paste. Both capture listeners can run on
+    // this textarea even after stopPropagation, so never upload from formatting.
+    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) return;
 
     const imageFiles = allClipboardFiles.filter((file) =>
       file.type?.startsWith("image/") && !isVideoFile(file.name, file.type));
@@ -9134,12 +9111,17 @@
   // 会话列表批量管理与删除 (Session Batch Actions)
   // ==========================================
   isSessionBatchMode = false;
-  const selectedSessionBatchIds = new Set();
+  selectedSessionBatchIds = selectedSessionBatchIds || new Set();
   let lastBatchClickedSessionId = null;
   batchDeleteModal = null;
   let isBatchDragging = false;
   let batchDragTargetState = true;
   let batchDeleteInFlight = false;
+  let batchDeleteJob = null;
+  let batchDeleteObserverController = null;
+  let batchDeleteObserverGeneration = 0;
+  let batchDeleteJobEntry = null;
+  const batchDeleteJobStorageKey = "pi-enh:session-batch-delete-job";
 
   let cachedActiveSessionIds = null;
   let cachedLatestGroupsRef = null;
@@ -9503,19 +9485,116 @@
   }
 
   function closeBatchDeleteModal() {
-    if (batchDeleteInFlight) return;
     if (batchDeleteModal) {
       batchDeleteModal.remove();
       batchDeleteModal = null;
     }
+    syncBatchDeleteJobEntry();
   }
 
-  function openBatchDeleteModal() {
-    if (batchDeleteInFlight) return;
-    closeBatchDeleteModal();
-    const targetIds = Array.from(selectedSessionBatchIds);
-    if (targetIds.length === 0) return;
+  function isBatchDeleteJobTerminal(job = batchDeleteJob) {
+    return Boolean(job?.done);
+  }
 
+  function getBatchDeleteJobStorage() {
+    try { return window.localStorage; } catch (e) { return null; }
+  }
+
+  function saveBatchDeleteJobPointer(job) {
+    const storage = getBatchDeleteJobStorage();
+    if (!storage) throw new Error("浏览器不支持保存删除任务恢复指针");
+    storage.setItem(batchDeleteJobStorageKey, JSON.stringify({ id: job.id, ids: job.ids }));
+  }
+
+  function clearBatchDeleteJobPointer() {
+    try { getBatchDeleteJobStorage()?.removeItem(batchDeleteJobStorageKey); } catch (e) {}
+  }
+
+  function readBatchDeleteJobPointer() {
+    try {
+      const raw = getBatchDeleteJobStorage()?.getItem(batchDeleteJobStorageKey);
+      if (!raw) return null;
+      const value = JSON.parse(raw);
+      if (!value || typeof value.id !== "string" || !Array.isArray(value.ids) ||
+          value.ids.length === 0 || value.ids.length > 10000 ||
+          value.ids.some((id) => typeof id !== "string" || !id || id.length > 200) ||
+          new Set(value.ids).size !== value.ids.length) return null;
+      return { id: value.id, ids: value.ids };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function createBatchDeleteJobId() {
+    try {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+    } catch (e) {}
+    const hex = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
+    return `${hex()}${hex()}-${hex()}-4${hex().slice(1)}-${((8 + Math.floor(Math.random() * 4)).toString(16))}${hex().slice(1)}-${hex()}${hex()}${hex()}`;
+  }
+
+  function removeBatchDeleteJobEntry() {
+    const entry = batchDeleteJobEntry || document.getElementById("pi-enh-batch-delete-job-entry");
+    if (entry) entry.remove();
+    batchDeleteJobEntry = null;
+  }
+
+  function syncBatchDeleteJobEntry() {
+    if (!isPluginEnabled("session-batch-actions") || !batchDeleteJob) {
+      removeBatchDeleteJobEntry();
+      return;
+    }
+    let entry = document.getElementById("pi-enh-batch-delete-job-entry");
+    if (!entry) {
+      entry = document.createElement("button");
+      entry.id = "pi-enh-batch-delete-job-entry";
+      entry.type = "button";
+      entry.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:10020;padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg-panel);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.22);font-size:12px;cursor:pointer";
+      entry.addEventListener("click", () => openBatchDeleteJobModal());
+      document.body.appendChild(entry);
+    }
+    batchDeleteJobEntry = entry;
+    const job = batchDeleteJob;
+    const label = job.connectionState === "not_found"
+      ? "任务待核对"
+      : job.connectionState === "reconnecting"
+        ? "连接待恢复"
+        : job.done
+          ? (job.status === "completed" ? "已完成" : "结果待核对")
+          : job.status === "interrupted"
+            ? "中断待核对"
+            : "删除进行中";
+    const processed = Number.isSafeInteger(job.processed) ? job.processed : 0;
+    entry.textContent = `批量删除 ${processed}/${job.ids.length} · ${label} · 查看`;
+    entry.title = "查看或重新同步此删除任务；隐藏不会取消服务器任务";
+    entry.setAttribute("aria-label", entry.textContent);
+  }
+
+  function dismissBatchDeleteJob() {
+    if (!isBatchDeleteJobTerminal() && batchDeleteJob?.connectionState !== "not_found") return;
+    clearBatchDeleteJobPointer();
+    batchDeleteJob = null;
+    removeBatchDeleteJobEntry();
+    closeBatchDeleteModal();
+  }
+
+  function stopBatchDeleteObserver() {
+    batchDeleteObserverGeneration++;
+    if (batchDeleteJob && !batchDeleteJob.done) batchDeleteJob.attachNeeded = true;
+    if (batchDeleteObserverController) {
+      try { batchDeleteObserverController.abort(new Error("批量删除观察器已暂停")); } catch (e) {}
+    }
+    batchDeleteObserverController = null;
+    batchDeleteInFlight = false;
+  }
+
+  activeCleanups.push(() => {
+    stopBatchDeleteObserver();
+    batchDeleteJob = null; // The durable browser pointer is restored by the next runtime.
+    removeBatchDeleteJobEntry();
+  });
+
+  function createBatchDeleteModal(targetIds, view = "confirm") {
     const count = targetIds.length;
     const previewHtml = targetIds.slice(0, 6).map((sid) => {
       const title = getSessionTitleForBatch(sid);
@@ -9523,7 +9602,8 @@
     }).join("");
     const overflowCount = count - 6;
     const overflowHtml = overflowCount > 0 ? `<div class="pi-enh-batch-modal-item" style="color: var(--text-muted); font-style: italic;">... 等共 ${count} 个会话</div>` : "";
-
+    const isJobView = view === "job";
+    const retryCount = isJobView ? (batchDeleteJob?.failedIds?.length || 0) + (batchDeleteJob?.notStartedIds?.length || 0) : 0;
     const backdrop = document.createElement("div");
     backdrop.id = "pi-enh-batch-delete-modal";
     backdrop.className = "pi-enh-batch-modal-backdrop";
@@ -9531,142 +9611,889 @@
       <div class="pi-enh-batch-modal" role="dialog" aria-modal="true" aria-labelledby="pi-enh-batch-modal-title">
         <div class="pi-enh-batch-modal-header" id="pi-enh-batch-modal-title">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-          <span>批量删除会话</span>
+          <span>${isJobView ? "批量删除任务" : "批量删除会话"}</span>
         </div>
         <div class="pi-enh-batch-modal-body">
-          <div style="font-weight: 500;">确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？</div>
-          <div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>
-          <div class="pi-enh-batch-modal-list">
-            ${previewHtml}
-            ${overflowHtml}
+          <div data-batch-delete-intro style="font-weight: 500;">${isJobView ? (batchDeleteJob?.connectionState === "not_found" ? "服务器未找到此任务；没有自动重发删除请求。" : "服务器任务会继续处理；隐藏窗口不会取消任务。") : `确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？`}</div>
+          ${isJobView ? "" : `<div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>`}
+          <div class="pi-enh-batch-modal-list">${previewHtml}${overflowHtml}</div>
+          <div id="pi-enh-batch-delete-progress-section" style="${isJobView ? "" : "display: none;"} margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; margin-bottom: 6px;">
+              <span id="pi-enh-batch-progress-status" style="font-weight: 500; color: var(--text);">${isJobView ? "正在同步服务器任务..." : "准备开始删除..."}</span>
+              <span id="pi-enh-batch-progress-counts" style="color: var(--text-muted); font-variant-numeric: tabular-nums;">0 / ${count}</span>
+            </div>
+            <div id="pi-enh-batch-delete-progressbar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="${count}" aria-label="批量删除进度" style="width: 100%; height: 8px; background: var(--bg-hover, #27272a); border-radius: 4px; overflow: hidden; position: relative;">
+              <div id="pi-enh-batch-progressbar-fill" style="width: 0%; height: 100%; background: #ef4444; border-radius: 4px; transition: width 0.15s ease-out;"></div>
+            </div>
+            <div id="pi-enh-batch-progress-details" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--text-muted);">
+              <span id="pi-enh-batch-stat-confirmed" style="color: #22c55e;">已确认: 0</span>
+              <span id="pi-enh-batch-stat-failed" style="display: none; color: #ef4444;">失败: 0</span>
+              <span id="pi-enh-batch-stat-unknown" style="display: none; color: #f59e0b;">未知/待确认: 0</span>
+            </div>
+            <div id="pi-enh-batch-progress-result-ids" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere;"></div>
           </div>
         </div>
         <div class="pi-enh-batch-modal-footer">
-          <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">取消</button>
-          <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">确认彻底删除</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">${isJobView ? (isBatchDeleteJobTerminal() ? "关闭结果" : "隐藏到后台") : "取消"}</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="hide" style="display:none;padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">隐藏到后台</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="${isJobView ? (retryCount ? "" : "display:none;") : ""} padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">${isJobView ? `选择可重试项 (${retryCount})` : "确认彻底删除"}</button>
         </div>
       </div>
     `;
-
     const cancelBtn = backdrop.querySelector('[data-action="cancel"]');
+    const hideBtn = backdrop.querySelector('[data-action="hide"]');
     const confirmBtn = backdrop.querySelector('[data-action="confirm"]');
-
-    cancelBtn?.addEventListener("click", () => {
-      closeBatchDeleteModal();
-    });
-
+    const hideOrDismiss = () => {
+      if (!batchDeleteJob) {
+        closeBatchDeleteModal();
+      } else if (isBatchDeleteJobTerminal() || batchDeleteJob.connectionState === "not_found") {
+        dismissBatchDeleteJob();
+        setSessionBatchMode(false);
+      } else {
+        setSessionBatchMode(false);
+      }
+    };
+    cancelBtn?.addEventListener("click", hideOrDismiss);
+    hideBtn?.addEventListener("click", () => setSessionBatchMode(false));
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop) {
-        closeBatchDeleteModal();
+        if (batchDeleteJob && !isBatchDeleteJobTerminal()) setSessionBatchMode(false);
+        else closeBatchDeleteModal();
       }
     });
-
-    confirmBtn?.addEventListener("click", async () => {
-      if (cancelBtn) {
-        cancelBtn.disabled = true;
-        cancelBtn.style.opacity = "0.5";
-        cancelBtn.style.pointerEvents = "none";
-      }
-      await executeBatchDeleteSessions(targetIds, confirmBtn);
-    });
-
+    if (isJobView) {
+      confirmBtn?.addEventListener("click", () => {
+        const retryIds = [...(batchDeleteJob?.failedIds || []), ...(batchDeleteJob?.notStartedIds || [])];
+        if (!retryIds.length) return;
+        dismissBatchDeleteJob();
+        selectedSessionBatchIds.clear();
+        for (const id of retryIds) selectedSessionBatchIds.add(id);
+        setSessionBatchMode(true);
+      });
+    } else {
+      confirmBtn?.addEventListener("click", async () => {
+        if (batchDeleteJob) {
+          if (!isBatchDeleteJobTerminal(batchDeleteJob)) return;
+          const retryIds = [...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
+          if (!retryIds.length) return;
+          dismissBatchDeleteJob();
+          selectedSessionBatchIds.clear();
+          for (const id of retryIds) selectedSessionBatchIds.add(id);
+          setSessionBatchMode(true);
+          return;
+        }
+        if (confirmBtn) confirmBtn.disabled = true;
+        const progressSection = backdrop.querySelector("#pi-enh-batch-delete-progress-section");
+        if (progressSection) progressSection.style.display = "block";
+        if (cancelBtn) cancelBtn.textContent = "隐藏到后台";
+        await executeBatchDeleteSessions(targetIds, confirmBtn);
+      });
+    }
     document.body.appendChild(backdrop);
     batchDeleteModal = backdrop;
-    confirmBtn?.focus();
+    if (isJobView) {
+      const progress = batchDeleteJob?.lastProgress;
+      if (progress) {
+        const status = backdrop.querySelector("#pi-enh-batch-progress-status");
+        const counts = backdrop.querySelector("#pi-enh-batch-progress-counts");
+        const progressbar = backdrop.querySelector("#pi-enh-batch-delete-progressbar");
+        const fill = backdrop.querySelector("#pi-enh-batch-progressbar-fill");
+        const confirmed = backdrop.querySelector("#pi-enh-batch-stat-confirmed");
+        const failed = backdrop.querySelector("#pi-enh-batch-stat-failed");
+        const unknown = backdrop.querySelector("#pi-enh-batch-stat-unknown");
+        const resultIds = backdrop.querySelector("#pi-enh-batch-progress-result-ids");
+        const retry = backdrop.querySelector('[data-action="confirm"]');
+        if (status) status.textContent = progress.status;
+        if (counts) counts.textContent = `${progress.processed} / ${progress.total}`;
+        if (progressbar) progressbar.setAttribute("aria-valuenow", String(progress.processed));
+        if (fill) fill.style.width = `${progress.total ? Math.min(100, Math.round(progress.processed / progress.total * 100)) : 0}%`;
+        if (confirmed) confirmed.textContent = `已确认: ${progress.confirmed}`;
+        if (failed) {
+          failed.textContent = `失败: ${progress.failed}`;
+          failed.style.display = progress.failed > 0 ? "inline" : "none";
+        }
+        if (unknown) {
+          unknown.textContent = `未知/待确认: ${progress.unknown}`;
+          unknown.style.display = progress.unknown > 0 ? "inline" : "none";
+        }
+        const unresolved = [...(batchDeleteJob.unknownIds || []), ...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
+        if (resultIds && unresolved.length) resultIds.textContent = `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`;
+        if (retry) {
+          const retryCount = (batchDeleteJob.failedIds?.length || 0) + (batchDeleteJob.notStartedIds?.length || 0);
+          retry.disabled = !batchDeleteJob.done || retryCount === 0;
+          retry.textContent = `选择可重试项 (${retryCount})`;
+          retry.style.display = batchDeleteJob.done && retryCount ? "" : "none";
+        }
+      }
+    } else {
+      confirmBtn?.focus();
+    }
+    return backdrop;
   }
 
-  async function executeBatchDeleteSessions(targetIds, confirmBtn) {
+  function openBatchDeleteModal() {
+    if (batchDeleteJob) {
+      openBatchDeleteJobModal();
+      return;
+    }
+    if (batchDeleteInFlight) return;
+    closeBatchDeleteModal();
+    const targetIds = Array.from(selectedSessionBatchIds);
+    if (targetIds.length === 0) return;
+    createBatchDeleteModal(targetIds, "confirm");
+  }
+
+  function openBatchDeleteJobModal() {
+    if (!batchDeleteJob) return;
+    closeBatchDeleteModal();
+    createBatchDeleteModal(batchDeleteJob.ids, "job");
+    if (!batchDeleteInFlight && !batchDeleteJob.done && batchDeleteJob.connectionState !== "not_found") {
+      void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
+    }
+  }
+
+  async function executeBatchDeleteSessions(targetIds, confirmBtn, options = {}) {
     if (batchDeleteInFlight || !Array.isArray(targetIds) || targetIds.length === 0) return;
     targetIds = Array.from(new Set(targetIds));
-    batchDeleteInFlight = true;
-    if (confirmBtn) {
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = `正在删除 (0/${targetIds.length})...`;
+    if (targetIds.length > 10000) {
+      showToast("一次最多可删除 10000 个会话", sessionDeleteIcon);
+      return;
     }
-    // Paint the busy state before any local bookkeeping. One request serves up
-    // to 100 sessions; do not rerender the entire sidebar for every pending ID.
+    const isResume = options.resume === true;
+    let job = isResume ? batchDeleteJob : null;
+    if (isResume) {
+      if (!job || job.id !== options.jobId || job.ids.length !== targetIds.length || job.ids.some((id, i) => id !== targetIds[i])) return;
+    } else {
+      if (batchDeleteJob) return;
+      job = {
+        id: createBatchDeleteJobId(), ids: targetIds.slice(), status: "running", serverStatus: "running",
+        processed: 0, lastSequence: 0, connectionState: "connecting", appliedDeletedIds: new Set(),
+        failedIds: [], unknownIds: [], notStartedIds: [], done: false,
+      };
+      try {
+        saveBatchDeleteJobPointer(job);
+      } catch (err) {
+        showToast(`无法保存删除任务恢复指针：${err?.message || String(err)}`, sessionDeleteIcon);
+        return;
+      }
+      batchDeleteJob = job;
+    }
+    if (!(job.appliedDeletedIds instanceof Set)) job.appliedDeletedIds = new Set();
+    job.attachNeeded = false;
+    selectedSessionBatchIds.clear();
+    syncSessionBatchBar();
+    syncSessionBatchRowStates();
+    const generation = ++batchDeleteObserverGeneration;
+    const controller = new AbortController();
+    batchDeleteObserverController = controller;
+    batchDeleteInFlight = true;
+    const totalRequested = targetIds.length;
+
+    function renderProgress({ status, processed, confirmed, failed, unknown }) {
+      job.processed = processed;
+      job.lastProgress = { status, processed, total: totalRequested, confirmed, failed, unknown };
+      const modal = batchDeleteModal || (typeof document !== "undefined" ? document.getElementById("pi-enh-batch-delete-modal") : null);
+      const progressSection = modal?.querySelector?.("#pi-enh-batch-delete-progress-section");
+      const statusEl = modal?.querySelector?.("#pi-enh-batch-progress-status");
+      const countsEl = modal?.querySelector?.("#pi-enh-batch-progress-counts");
+      const progressbarEl = modal?.querySelector?.("#pi-enh-batch-delete-progressbar");
+      const fillEl = modal?.querySelector?.("#pi-enh-batch-progressbar-fill");
+      const statConfirmedEl = modal?.querySelector?.("#pi-enh-batch-stat-confirmed");
+      const statFailedEl = modal?.querySelector?.("#pi-enh-batch-stat-failed");
+      const statUnknownEl = modal?.querySelector?.("#pi-enh-batch-stat-unknown");
+      const resultIdsEl = modal?.querySelector?.("#pi-enh-batch-progress-result-ids");
+      const introEl = modal?.querySelector?.("[data-batch-delete-intro]");
+      if (progressSection) progressSection.style.display = "block";
+      if (introEl && batchDeleteJob === job) introEl.textContent = "服务器任务继续处理；隐藏窗口不会取消任务。";
+      if (statusEl && status) statusEl.textContent = status;
+      if (countsEl) countsEl.textContent = `${processed} / ${totalRequested}`;
+      if (progressbarEl) {
+        progressbarEl.setAttribute("aria-valuenow", String(processed));
+        progressbarEl.setAttribute("aria-valuemax", String(totalRequested));
+      }
+      if (fillEl) {
+        const pct = totalRequested > 0 ? Math.min(100, Math.round((processed / totalRequested) * 100)) : 0;
+        fillEl.style.width = `${pct}%`;
+      }
+      if (statConfirmedEl) statConfirmedEl.textContent = `已确认: ${confirmed}`;
+      if (statFailedEl) {
+        statFailedEl.textContent = `失败: ${failed}`;
+        statFailedEl.style.display = failed > 0 ? "inline" : "none";
+      }
+      if (statUnknownEl) {
+        statUnknownEl.textContent = `未知/待确认: ${unknown}`;
+        statUnknownEl.style.display = unknown > 0 ? "inline" : "none";
+      }
+      const unresolved = [...(job.unknownIds || []), ...(job.failedIds || []), ...(job.notStartedIds || [])];
+      if (resultIdsEl) resultIdsEl.textContent = unresolved.length
+        ? `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`
+        : "";
+      const cancelBtn = modal?.querySelector?.('[data-action="cancel"]');
+      const modalConfirmBtn = modal?.querySelector?.('[data-action="confirm"]');
+      if (cancelBtn && batchDeleteJob === job) {
+        cancelBtn.textContent = isBatchDeleteJobTerminal(job)
+          ? "关闭结果"
+          : job.connectionState === "not_found" ? "清除记录" : "隐藏到后台";
+      }
+      if (modalConfirmBtn && batchDeleteJob === job) {
+        const retryCount = (job.failedIds?.length || 0) + (job.notStartedIds?.length || 0);
+        modalConfirmBtn.disabled = !job.done || retryCount === 0;
+        modalConfirmBtn.textContent = job.done ? `选择可重试项 (${retryCount})` : `正在删除 (${processed}/${totalRequested})...`;
+        modalConfirmBtn.style.display = job.done && retryCount ? "" : "none";
+      }
+      syncBatchDeleteJobEntry();
+    }
+
+    renderProgress({
+      status: `准备开始删除 (0/${totalRequested})...`,
+      processed: 0,
+      confirmed: 0,
+      failed: 0,
+      unknown: 0,
+    });
+
+    // Paint the busy state; pending sessions remain visible until the server confirms deletion.
     await new Promise((resolve) => setTimeout(resolve, 0));
+    if (generation !== batchDeleteObserverGeneration) return;
     const activeSessionId = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
     let shouldResetActiveView = false;
     let successCount = 0;
     const failedIds = new Set();
+    const unknownIds = new Set();
+    const notStartedIds = new Set();
     let transportFailed = false;
-    for (const sid of targetIds) markSessionAsDeleted(sid, 60000, false);
-    try { window.__PI_ENH_RERENDER_SESSIONS__?.(); } catch (e) {}
+    let jobReceivedDone = false;
+    let definitiveRejectedError = null;
+    let processedSoFar = 0;
 
-    for (let offset = 0; offset < targetIds.length; offset += 100) {
-      const ids = targetIds.slice(offset, offset + 100);
-      const controller = new AbortController();
-      const deadline = setTimeout(() => controller.abort(), 30000);
-      let results = new Map();
-      let deletedIds = [];
+    async function waitForSignal(ms) {
+      if (controller.signal.aborted) return false;
+      return await new Promise((resolve) => {
+        let timer = null;
+        const finish = (value) => {
+          if (timer) clearTimeout(timer);
+          controller.signal.removeEventListener("abort", onAbort);
+          resolve(value);
+        };
+        const onAbort = () => finish(false);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+        timer = setTimeout(() => finish(true), ms);
+      });
+    }
+
+    async function requestJobJson(url, init = {}) {
+      const requestController = new AbortController();
+      const onAbort = () => { try { requestController.abort(); } catch (e) {} };
+      if (controller.signal.aborted) onAbort();
+      else controller.signal.addEventListener("abort", onAbort, { once: true });
+      const timeout = setTimeout(() => { try { requestController.abort(new Error("job observation request timeout")); } catch (e) {} }, 15000);
       try {
-        const response = await fetch("/api/sessions/batch-delete", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }), signal: controller.signal,
-        });
+        return await fetch(url, { ...init, cache: "no-store", signal: requestController.signal });
+      } finally {
+        clearTimeout(timeout);
+        controller.signal.removeEventListener("abort", onAbort);
+      }
+    }
+
+    function assertJobMetadata(data) {
+      if (!data || data.id !== job.id || !Array.isArray(data.ids) || data.ids.length !== targetIds.length ||
+          data.ids.some((id, index) => id !== targetIds[index]) || data.total !== targetIds.length ||
+          !["running", "completed", "stopped", "interrupted"].includes(data.status) ||
+          !Number.isSafeInteger(data.processed) || data.processed < 0 || data.processed > targetIds.length ||
+          !Number.isSafeInteger(data.lastSequence) || data.lastSequence < 0) {
+        const err = new Error("服务器删除任务元数据不匹配");
+        err.permanentJobError = true;
+        throw err;
+      }
+      job.serverStatus = data.status;
+      job.metadataStatus = data.status;
+      job.lastSequence = data.lastSequence;
+      job.metadataProcessed = data.processed;
+      job.connectionState = "connected";
+      syncBatchDeleteJobEntry();
+    }
+
+    async function fetchJobMetadata() {
+      const url = `/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}`;
+      let delay = 500;
+      while (!controller.signal.aborted) {
+        try {
+          const response = await requestJobJson(url, { method: "GET" });
+          if (response.status === 404) {
+            const err = new Error("服务器未找到此删除任务");
+            err.jobNotFound = true;
+            err.permanentJobError = true;
+            throw err;
+          }
+          if (!response.ok) {
+            const err = new Error(`读取删除任务元数据失败：HTTP ${response.status}`);
+            if (response.status >= 400 && response.status < 500) err.permanentJobError = true;
+            throw err;
+          }
+          const data = await response.json();
+          assertJobMetadata(data);
+          return data;
+        } catch (err) {
+          if (controller.signal.aborted || err?.permanentJobError) throw err;
+          job.connectionState = "reconnecting";
+          renderProgress({ status: "连接中断，正在重新读取任务状态；不会重发删除请求", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+          if (!await waitForSignal(delay)) throw new Error("任务观察已暂停");
+          delay = Math.min(5000, delay * 2);
+        }
+      }
+      throw new Error("任务观察已暂停");
+    }
+
+    async function createBatchDeleteJobResponse() {
+      if (!isResume) {
+        let postError = null;
+        try {
+          const response = await requestJobJson("/api/sessions/batch-delete/jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: job.id, ids: targetIds }),
+          });
+          if (!response.ok) {
+            let errorBody = null;
+            try { errorBody = await response.json(); } catch (e) {}
+            if ((response.status === 400 || response.status === 409) && errorBody?.accepted === false) {
+              const rejected = new Error(errorBody.error || `服务器拒绝创建删除任务：HTTP ${response.status}`);
+              rejected.definitiveRejected = true;
+              throw rejected;
+            }
+            postError = new Error(`创建任务回执未确认：HTTP ${response.status}`);
+          } else {
+            try {
+              const ack = await response.json();
+              if (ack?.id === job.id && Array.isArray(ack.ids) && ack.ids.length === targetIds.length && ack.ids.every((id, i) => id === targetIds[i])) {
+                job.acknowledged = true;
+              } else {
+                postError = new Error("创建任务回执格式不匹配");
+              }
+            } catch (e) {
+              postError = e;
+            }
+          }
+        } catch (err) {
+          if (err?.definitiveRejected) throw err;
+          postError = err;
+        }
+        if (postError) {
+          job.ackUncertain = true;
+          job.connectionState = "reconnecting";
+          renderProgress({ status: "创建回执未确认，正在按任务 ID 只读核对；不会重复提交", processed: 0, confirmed: 0, failed: 0, unknown: 0 });
+        }
+      }
+      await fetchJobMetadata();
+      let cursor = 0;
+      let doneQueued = false;
+      let delay = 500;
+      const encoder = new TextEncoder();
+      const apiUrl = `/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}/events`;
+      const body = new ReadableStream({
+        async pull(streamController) {
+          while (!controller.signal.aborted) {
+            try {
+              const response = await requestJobJson(`${apiUrl}?after=${cursor}`, { method: "GET" });
+              if (response.status === 404) {
+                const err = new Error("服务器未找到此删除任务事件");
+                err.jobNotFound = true;
+                err.permanentJobError = true;
+                throw err;
+              }
+              if (!response.ok) {
+                const err = new Error(`读取删除任务事件失败：HTTP ${response.status}`);
+                if (response.status >= 400 && response.status < 500) err.permanentJobError = true;
+                throw err;
+              }
+              const page = await response.json();
+              if (!page || page.id !== job.id || !Array.isArray(page.frames) ||
+                  !["running", "completed", "stopped", "interrupted"].includes(page.status) ||
+                  !Number.isSafeInteger(page.lastSequence) || page.lastSequence < cursor) {
+                const err = new Error("服务器删除任务事件页格式无效");
+                err.permanentJobError = true;
+                throw err;
+              }
+              let expectedSeq = cursor + 1;
+              const lines = [];
+              for (const entry of page.frames) {
+                if (!entry || entry.seq !== expectedSeq || entry.seq > page.lastSequence || !entry.frame || typeof entry.frame !== "object" || typeof entry.frame.type !== "string") {
+                  const err = new Error("服务器删除任务事件序号不连续");
+                  err.permanentJobError = true;
+                  throw err;
+                }
+                cursor = entry.seq;
+                expectedSeq++;
+                job.lastSequence = cursor;
+                if (entry.frame.type === "done") doneQueued = true;
+                lines.push(JSON.stringify(entry.frame));
+              }
+              job.serverStatus = page.status;
+              const wasReconnecting = job.connectionState === "reconnecting";
+              job.connectionState = "connected";
+              syncBatchDeleteJobEntry();
+              delay = 500;
+              if (lines.length) {
+                streamController.enqueue(encoder.encode(lines.join("\n") + "\n"));
+                return;
+              }
+              if (wasReconnecting) {
+                renderProgress({ status: "已重新连接，等待服务器进度", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+              }
+              if (page.status !== "running" && cursor === page.lastSequence && !doneQueued) {
+                const err = new Error("终态任务事件缺少 done 回执");
+                err.permanentJobError = true;
+                throw err;
+              }
+              if (!await waitForSignal(page.status === "running" ? 500 : 100)) {
+                streamController.error(new Error("任务观察已暂停"));
+                return;
+              }
+              streamController.enqueue(encoder.encode("\n"));
+              return;
+            } catch (err) {
+              if (controller.signal.aborted) {
+                streamController.error(err || new Error("任务观察已暂停"));
+                return;
+              }
+              if (err?.jobNotFound || err?.permanentJobError) {
+                if (err?.jobNotFound) job.connectionState = "not_found";
+                else job.connectionState = "reconnecting";
+                streamController.error(err);
+                return;
+              }
+              job.connectionState = "reconnecting";
+              renderProgress({ status: "连接中断，正在重新读取服务器进度；删除任务仍在服务器运行", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+              if (!await waitForSignal(delay)) {
+                streamController.error(new Error("任务观察已暂停"));
+                return;
+              }
+              delay = Math.min(5000, delay * 2);
+            }
+          }
+          streamController.error(new Error("任务观察已暂停"));
+        },
+      });
+      return {
+        ok: true,
+        headers: { get: () => "application/x-ndjson; charset=utf-8" },
+        body,
+      };
+    }
+
+    for (let offset = 0; offset < targetIds.length; offset += targetIds.length) {
+      const ids = targetIds;
+      const idsSet = new Set(ids);
+
+      let idleTimer = null;
+      function resetIdleDeadline() {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          if (generation !== batchDeleteObserverGeneration || batchReceivedDone) return;
+          job.connectionState = "reconnecting";
+          renderProgress({ status: "暂时未收到更新；服务器任务仍继续，正在重新连接", processed: processedSoFar + settledInBatch.size, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
+        }, 75000);
+      }
+      resetIdleDeadline();
+
+      const settledInBatch = new Set();
+      const settledResultsMap = new Map();
+      const dispatchedInBatch = new Set();
+      const confirmedInBatch = new Set();
+      const cleanedCascadeIds = new Set();
+      let inFlightId = null;
+      let receivedStart = false;
+      let batchReceivedDone = false;
+      let batchStopped = false;
+      let readerRef = null;
+
+      try {
+        const response = await createBatchDeleteJobResponse();
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        if (!Array.isArray(payload.results) || !Array.isArray(payload.deletedSessionIds)) throw new Error("无效的删除回执");
-        results = new Map(payload.results.map((result) => [result.id, result]));
-        deletedIds = payload.deletedSessionIds.filter((id) => typeof id === "string" && id);
+
+        const contentType = response.headers?.get?.("content-type") || "";
+        const isNdjson = contentType.includes("application/x-ndjson") && response.body && typeof response.body.getReader === "function";
+
+        if (isNdjson) {
+          const reader = response.body.getReader();
+          readerRef = reader;
+          const Decoder = typeof TextDecoder !== "undefined" ? TextDecoder : (typeof globalThis !== "undefined" ? globalThis.TextDecoder : null);
+          const decoder = Decoder ? new Decoder() : { decode: (chunk) => String(chunk) };
+          let buffer = "";
+          const MAX_FRAME_BUFFER_BYTES = Math.min(16 * 1024 * 1024, 64 * 1024 + ids.length * 1024);
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (generation !== batchDeleteObserverGeneration) return;
+            if (done) {
+              if (!batchReceivedDone) {
+                throw new Error("流提前终止，未接收到终端 done 帧");
+              }
+              break;
+            }
+            resetIdleDeadline();
+            buffer += decoder.decode(value, { stream: true });
+            if (buffer.length > MAX_FRAME_BUFFER_BYTES && buffer.indexOf("\n") === -1) {
+              throw new Error("单帧数据超长或缓冲区溢出");
+            }
+            let newlineIdx;
+            while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+              const line = buffer.slice(0, newlineIdx).trim();
+              buffer = buffer.slice(newlineIdx + 1);
+              if (!line) continue;
+              if (line.length > MAX_FRAME_BUFFER_BYTES) {
+                throw new Error("单帧数据超长");
+              }
+
+              if (batchReceivedDone) {
+                throw new Error("已收到 done 帧后仍收到多余数据帧");
+              }
+
+              let frame;
+              try {
+                frame = JSON.parse(line);
+              } catch (parseErr) {
+                throw new Error(`畸形数据帧: ${parseErr.message}`);
+              }
+              if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
+                throw new Error("无效的数据帧格式");
+              }
+
+              if (frame.type === "start") {
+                if (receivedStart) {
+                  throw new Error("重复的 start 帧");
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("start 帧 total 计数矛盾或非法: " + frame.total);
+                }
+                receivedStart = true;
+                resetIdleDeadline();
+                renderProgress({
+                  status: "正在准备删除...",
+                  processed: processedSoFar + settledInBatch.size,
+                  confirmed: successCount,
+                  failed: failedIds.size,
+                  unknown: unknownIds.size,
+                });
+              } else if (frame.type === "item-start") {
+                if (!receivedStart) {
+                  throw new Error("未收到 start 帧前收到 item-start");
+                }
+                if (typeof frame.id !== "string" || !idsSet.has(frame.id)) {
+                  throw new Error("非法 item-start 帧 id: " + frame.id);
+                }
+                if (settledInBatch.has(frame.id) || dispatchedInBatch.has(frame.id)) {
+                  throw new Error("重复 item-start: " + frame.id);
+                }
+                if (!Number.isSafeInteger(frame.index) || ids[frame.index - 1] !== frame.id) {
+                  throw new Error("item-start 帧 index 非法: " + frame.index);
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("item-start 帧 total 矛盾: " + frame.total);
+                }
+                inFlightId = frame.id;
+                dispatchedInBatch.add(frame.id);
+                resetIdleDeadline();
+                renderProgress({
+                  status: `正在处理第 ${offset + frame.index}/${totalRequested} 个会话...`,
+                  processed: processedSoFar + settledInBatch.size,
+                  confirmed: successCount,
+                  failed: failedIds.size,
+                  unknown: unknownIds.size,
+                });
+              } else if (frame.type === "result") {
+                if (!receivedStart) {
+                  throw new Error("未收到 start 帧前收到 result");
+                }
+                if (!Number.isSafeInteger(frame.processed) || frame.processed !== settledInBatch.size + 1) {
+                  throw new Error("result 帧 processed 计数矛盾或不连续: " + frame.processed);
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("result 帧 total 计数矛盾: " + frame.total);
+                }
+                const r = frame.result;
+                if (!r || typeof r !== "object" || typeof r.id !== "string" || !idsSet.has(r.id)) {
+                  throw new Error("非法 result 帧内容");
+                }
+                if (settledInBatch.has(r.id)) {
+                  throw new Error("重复的 result 帧: " + r.id);
+                }
+                if (typeof r.ok !== "boolean" || typeof r.state !== "string") {
+                  throw new Error("result 帧缺少必要字段 ok/state");
+                }
+
+                const validStates = ["deleted", "missing", "failed", "unknown", "not_started"];
+                if (!validStates.includes(r.state)) {
+                  throw new Error("非法 state 字段: " + r.state);
+                }
+                if ((r.state === "deleted" || r.state === "missing") && r.ok !== true) {
+                  throw new Error(`state='${r.state}' 但 ok=false，帧数据矛盾`);
+                }
+                if ((r.state === "failed" || r.state === "unknown" || r.state === "not_started") && r.ok !== false) {
+                  throw new Error(`state='${r.state}' 但 ok=true，帧数据矛盾`);
+                }
+
+                if (!dispatchedInBatch.has(r.id) || r.state === "not_started") {
+                  throw new Error("result 未对应已派发项；not_started 仅由终端回执确认");
+                }
+                if (!Array.isArray(frame.deletedSessionIds) ||
+                    frame.deletedSessionIds.some((id) => typeof id !== "string" || !id || id.length > 200) ||
+                    new Set(frame.deletedSessionIds).size !== frame.deletedSessionIds.length ||
+                    (r.ok && !frame.deletedSessionIds.includes(r.id)) ||
+                    (!r.ok && frame.deletedSessionIds.length > 0) ||
+                    frame.deletedSessionIds.some((id) => id !== r.id &&
+                      (r.id.startsWith("codex:") || id.startsWith("codex:") || idsSet.has(id)))) {
+                  throw new Error("result 删除范围与逐项确认矛盾");
+                }
+                settledInBatch.add(r.id);
+                settledResultsMap.set(r.id, r);
+                if (inFlightId === r.id) inFlightId = null;
+                resetIdleDeadline();
+
+                if (r.state === "deleted" || r.state === "missing") {
+                  confirmedInBatch.add(r.id);
+                  successCount++;
+                  selectedSessionBatchIds.delete(r.id);
+                  if (!job.appliedDeletedIds.has(r.id)) {
+                    job.appliedDeletedIds.add(r.id);
+                    markSessionDeleteConfirmed(r.id);
+                    cleanupDeletedSessionEverywhere(r.id);
+                    try { window.__PI_ENH_SESSION_DELETED__?.(r.id); } catch (e) {}
+                    try { void cleanupSessionUploadedFiles(r.id).catch(() => {}); } catch (e) {}
+                  }
+                  if (r.id === activeSessionId) shouldResetActiveView = true;
+
+                  if (Array.isArray(frame.deletedSessionIds)) {
+                    for (const delId of frame.deletedSessionIds) {
+                      if (typeof delId === "string" && delId && !idsSet.has(delId) && !cleanedCascadeIds.has(delId)) {
+                        cleanedCascadeIds.add(delId);
+                        if (!job.appliedDeletedIds.has(delId)) {
+                          job.appliedDeletedIds.add(delId);
+                          markSessionDeleteConfirmed(delId);
+                          cleanupDeletedSessionEverywhere(delId);
+                          try { window.__PI_ENH_SESSION_DELETED__?.(delId); } catch (e) {}
+                        }
+                      }
+                    }
+                  }
+                } else if (r.state === "failed") {
+                  failedIds.add(r.id);
+                  restoreSessionDeleteState(r.id, false);
+                } else if (r.state === "unknown") {
+                  unknownIds.add(r.id);
+                  restoreSessionDeleteState(r.id, false);
+                  batchStopped = true;
+                } else if (r.state === "not_started") {
+                  notStartedIds.add(r.id);
+                  restoreSessionDeleteState(r.id, false);
+                }
+
+                renderProgress({
+                  status: `正在删除... (${processedSoFar + settledInBatch.size}/${totalRequested})`,
+                  processed: processedSoFar + settledInBatch.size,
+                  confirmed: successCount,
+                  failed: failedIds.size,
+                  unknown: unknownIds.size,
+                });
+              } else if (frame.type === "done") {
+                if (!receivedStart) {
+                  throw new Error("未收到 start 帧前收到 done");
+                }
+                if (batchReceivedDone) {
+                  throw new Error("重复的 done 帧");
+                }
+                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
+                  throw new Error("done 帧 total 计数矛盾: " + frame.total);
+                }
+                if (typeof frame.stopped !== "boolean") {
+                  throw new Error("done 帧缺少合法 stopped 字段");
+                }
+                if (!Number.isSafeInteger(frame.processed) || frame.processed !== settledInBatch.size) {
+                  throw new Error("done 帧 processed 必须匹配已结算项数量");
+                }
+                if (!frame.stopped && frame.processed !== ids.length) {
+                  throw new Error("未停止批次的 done 帧 processed 必须等于 total");
+                }
+                if (frame.stopped && frame.processed !== settledInBatch.size) {
+                  throw new Error("已停止批次的 done 帧 processed 必须匹配已结算项数量");
+                }
+                if (!Array.isArray(frame.results) || frame.results.length !== ids.length) {
+                  throw new Error("done 帧 results 数组长度与本批次 ID 数量不一致");
+                }
+
+                const doneSeenIds = new Set();
+                for (const item of frame.results) {
+                  if (!item || typeof item !== "object" || typeof item.id !== "string" || !idsSet.has(item.id)) {
+                    throw new Error("done 帧包含未知或非法 ID 项: " + item?.id);
+                  }
+                  if (doneSeenIds.has(item.id)) {
+                    throw new Error("done 帧包含重复 ID 项: " + item.id);
+                  }
+                  doneSeenIds.add(item.id);
+
+                  const validStates = ["deleted", "missing", "failed", "unknown", "not_started"];
+                  if (!validStates.includes(item.state)) {
+                    throw new Error("done 帧包含非法 state: " + item.state);
+                  }
+                  if ((item.state === "deleted" || item.state === "missing") && item.ok !== true) {
+                    throw new Error(`done 帧项 state='${item.state}' 但 ok=false`);
+                  }
+                  if ((item.state === "failed" || item.state === "unknown" || item.state === "not_started") && item.ok !== false) {
+                    throw new Error(`done 帧项 state='${item.state}' 但 ok=true`);
+                  }
+
+                  if (settledResultsMap.has(item.id)) {
+                    const prev = settledResultsMap.get(item.id);
+                    if (prev.state !== item.state || prev.ok !== item.ok) {
+                      throw new Error(`done 帧与此前 result 帧矛盾: id=${item.id}`);
+                    }
+                  } else {
+                    if (!frame.stopped || item.state !== "not_started" || item.ok !== false) {
+                      throw new Error(`done 帧试图将未曾执行的项冒充为已处理: ${item.id} (${item.state})`);
+                    }
+                  }
+                }
+                if (doneSeenIds.size !== ids.length) {
+                  throw new Error("done 帧未能完整覆盖本批次全部 ID");
+                }
+
+                const allConfirmedIds = new Set([...confirmedInBatch, ...cleanedCascadeIds]);
+                if (!Array.isArray(frame.deletedSessionIds) ||
+                    frame.deletedSessionIds.length !== allConfirmedIds.size ||
+                    new Set(frame.deletedSessionIds).size !== frame.deletedSessionIds.length ||
+                    frame.deletedSessionIds.some((id) => !allConfirmedIds.has(id)) ||
+                    (unknownIds.size > 0 && !frame.stopped)) {
+                  throw new Error("done 帧删除范围或停止标志与逐项回执矛盾");
+                }
+
+                for (const item of frame.results) {
+                  if (item.state === "not_started") {
+                    notStartedIds.add(item.id);
+                    restoreSessionDeleteState(item.id, false);
+                  }
+                }
+                resetIdleDeadline();
+                batchReceivedDone = true;
+                jobReceivedDone = true;
+                job.doneFrameStopped = frame.stopped;
+                if (frame.stopped) batchStopped = true;
+                break;
+              } else {
+                throw new Error("未知数据帧类型: " + frame.type);
+              }
+            }
+            if (batchReceivedDone) {
+              if (buffer.trim()) throw new Error("已收到 done 帧后仍有未解析数据");
+              break;
+            }
+          }
+        } else {
+          throw new Error("批量删除任务传输适配器未提供 NDJSON 帧流");
+        }
       } catch (err) {
         transportFailed = true;
+        if (err?.definitiveRejected) definitiveRejectedError = err;
+        if (generation === batchDeleteObserverGeneration) {
+          job.connectionState = err?.jobNotFound ? "not_found" : "reconnecting";
+          job.attachNeeded = false;
+          try { controller.abort(err); } catch (e) {}
+        }
+        if (readerRef) {
+          try { await readerRef.cancel(); } catch (e) {}
+        }
         console.warn("[pi-enh] Batch deletion receipt unavailable:", err?.message || String(err));
       } finally {
-        clearTimeout(deadline);
-      }
-      const confirmedIds = new Set(deletedIds);
-      for (const sid of ids) {
-        if (results.get(sid)?.ok === true) confirmedIds.add(sid);
-        if (confirmedIds.has(sid)) successCount++;
-        else {
-          failedIds.add(sid);
-          restoreSessionDeleteState(sid, false);
+        if (idleTimer) clearTimeout(idleTimer);
+        if (readerRef) {
+          try { await readerRef.cancel(); } catch (e) {}
+          try { readerRef.releaseLock(); } catch (e) {}
         }
       }
-      for (const sid of confirmedIds) {
-        markSessionDeleteConfirmed(sid);
-        selectedSessionBatchIds.delete(sid);
-        cleanupDeletedSessionEverywhere(sid);
-        try { window.__PI_ENH_SESSION_DELETED__?.(sid); } catch (e) {}
-        try { void cleanupSessionUploadedFiles(sid).catch(() => {}); } catch (e) {}
-        if (sid === activeSessionId) shouldResetActiveView = true;
+
+      if (!batchReceivedDone) {
+        transportFailed = true;
       }
-      if (confirmBtn) confirmBtn.textContent = `正在删除 (${offset + ids.length}/${targetIds.length})...`;
-      // If the connection is lost, stop submitting more destructive requests.
-      // An aborted request may have committed: refresh server truth; never
-      // automatically resend it or claim that its files were restored.
-      if (transportFailed) {
-        for (const sid of targetIds.slice(offset + ids.length)) {
-          failedIds.add(sid);
-          restoreSessionDeleteState(sid, false);
-        }
+
+      processedSoFar += settledInBatch.size;
+
+      if (transportFailed || batchStopped) {
         break;
       }
+    }
+
+    if (generation !== batchDeleteObserverGeneration) return;
+
+    if (definitiveRejectedError) {
+      clearBatchDeleteJobPointer();
+      if (batchDeleteJob === job) batchDeleteJob = null;
+      removeBatchDeleteJobEntry();
+      if (isSessionBatchMode) {
+        for (const id of targetIds) selectedSessionBatchIds.add(id);
+        syncSessionBatchBar();
+        syncSessionBatchRowStates();
+      }
+      batchDeleteInFlight = false;
+      batchDeleteObserverController = null;
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "再次确认删除";
+      }
+      const rejectionStatus = batchDeleteModal?.querySelector?.("#pi-enh-batch-progress-status");
+      const rejectionCancel = batchDeleteModal?.querySelector?.('[data-action="cancel"]');
+      if (rejectionStatus) rejectionStatus.textContent = `服务器未接受任务：${definitiveRejectedError.message}`;
+      if (rejectionCancel) rejectionCancel.textContent = "取消";
+      showToast(`服务器未接受删除任务：${definitiveRejectedError.message}。如需重试，请再次确认。`, sessionDeleteIcon);
+      return;
     }
 
     if (shouldResetActiveView) {
       try { window.history.replaceState(null, "", "/"); } catch (e) {}
     }
     batchDeleteInFlight = false;
-    closeBatchDeleteModal();
-    if (failedIds.size === 0) setSessionBatchMode(false);
-    else {
-      selectedSessionBatchIds.clear();
-      for (const sid of failedIds) selectedSessionBatchIds.add(sid);
+    batchDeleteObserverController = null;
+
+    if (!transportFailed && jobReceivedDone) {
+      job.done = true;
+      job.status = job.serverStatus === "completed" ? "completed" : job.serverStatus;
+      if (!["completed", "stopped", "interrupted"].includes(job.status)) job.status = job.doneFrameStopped ? "stopped" : "completed";
+      job.processed = totalRequested;
+      job.failedIds = [...failedIds];
+      job.unknownIds = [...unknownIds];
+      job.notStartedIds = [...notStartedIds];
+      job.connectionState = "connected";
+      renderProgress({
+        status: job.status === "completed" ? `删除任务完成 (${totalRequested}/${totalRequested})` : `任务已停止，部分结果需要核对 (${totalRequested}/${totalRequested})`,
+        processed: totalRequested,
+        confirmed: successCount,
+        failed: failedIds.size,
+        unknown: unknownIds.size,
+      });
+    } else if (transportFailed) {
+      job.connectionState = job.connectionState === "not_found" ? "not_found" : "reconnecting";
+      renderProgress({
+        status: job.connectionState === "not_found"
+          ? "服务器未找到任务；没有重发删除请求，可清除此观察记录"
+          : "暂时无法读取任务进度；服务器任务可能仍在运行，点击进度入口只会重新读取",
+        processed: job.processed || processedSoFar,
+        confirmed: successCount,
+        failed: failedIds.size,
+        unknown: unknownIds.size,
+      });
+    }
+
+    const unresolvedCount = failedIds.size + unknownIds.size + notStartedIds.size;
+    if (!transportFailed && jobReceivedDone && unresolvedCount === 0) {
+      setSessionBatchMode(false);
+      showToast(`已确认移除/不存在 ${successCount} 个会话`, sessionDeleteIcon);
+    } else if (!transportFailed && jobReceivedDone) {
       syncSessionBatchBar();
       syncSessionBatchRowStates();
       try { window.__PI_ENH_RERENDER_SESSIONS__?.(); } catch (e) {}
+      showToast(`已确认移除/不存在 ${successCount} 个，${failedIds.size + notStartedIds.size} 个可显式选择重试，${unknownIds.size} 个结果待核对。`, sessionDeleteIcon);
+    } else if (transportFailed) {
+      showToast("进度观察暂时中断；未把未收到回执的项目标为失败或未知，服务器任务仍可通过进度入口重新同步。", sessionDeleteIcon);
     }
-    requestSessionListRefresh(false, true);
-    if (transportFailed) {
-      showToast(`连接中断或等待超时：已确认删除 ${successCount} 个，${failedIds.size} 个结果待确认。刷新列表后可重试。`, sessionDeleteIcon);
-    } else if (failedIds.size) {
-      showToast(`已删除 ${successCount} 个，${failedIds.size} 个未删除，已保留选择，可重试。`, sessionDeleteIcon);
-    } else {
-      showToast(`已成功彻底删除 ${successCount} 个会话`, sessionDeleteIcon);
-    }
+    if (processedSoFar > 0 || jobReceivedDone) requestSessionListRefresh(false, true);
   }
 
   // 鼠标点击捕获监听：快捷激活批量模式与单选/连选
@@ -9767,15 +10594,183 @@
   addManagedListener(window, "mouseup", () => {
     isBatchDragging = false;
   }, true);
+  // 移动端触摸滑选支持 (Mobile Touch Drag / Swipe Select)
+  let isBatchTouchDragging = false;
+  let batchTouchTargetState = true;
+  let batchTouchAutoScrollRaf = null;
+
+  function stopBatchTouchAutoScroll() {
+    if (batchTouchAutoScrollRaf) {
+      cancelAnimationFrame(batchTouchAutoScrollRaf);
+      batchTouchAutoScrollRaf = null;
+    }
+  }
+
+  function handleBatchTouchAutoScroll(clientY, scrollContainer) {
+    if (!scrollContainer) return;
+    const rect = scrollContainer.getBoundingClientRect();
+    const threshold = 48;
+    const maxSpeed = 12;
+    let delta = 0;
+
+    if (clientY < rect.top + threshold) {
+      const ratio = Math.max(0, (rect.top + threshold - clientY) / threshold);
+      delta = -Math.round(ratio * maxSpeed);
+    } else if (clientY > rect.bottom - threshold) {
+      const ratio = Math.max(0, (clientY - (rect.bottom - threshold)) / threshold);
+      delta = Math.round(ratio * maxSpeed);
+    }
+
+    if (delta !== 0) {
+      scrollContainer.scrollTop += delta;
+      if (!batchTouchAutoScrollRaf) {
+        batchTouchAutoScrollRaf = requestAnimationFrame(() => {
+          batchTouchAutoScrollRaf = null;
+          if (isBatchTouchDragging) {
+            handleBatchTouchAutoScroll(clientY, scrollContainer);
+          }
+        });
+      }
+    } else {
+      stopBatchTouchAutoScroll();
+    }
+  }
+
+  addManagedListener(document, "touchstart", (event) => {
+    if (!isSessionBatchMode || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    const target = event.target;
+    if (!target) return;
+
+    const checkboxWrap = target.closest(".pi-enh-session-batch-checkbox-wrap");
+    const row = target.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    if (!row || target.closest(".pi-enh-session-overflow, .pi-enh-session-menu, [data-session-action]")) return;
+
+    const sessionId = row.getAttribute("data-pi-enh-session-id");
+    if (!sessionId) return;
+
+    if (checkboxWrap) {
+      isBatchTouchDragging = true;
+      const currentlyChecked = selectedSessionBatchIds.has(sessionId);
+      batchTouchTargetState = !currentlyChecked;
+
+      if (batchTouchTargetState) {
+        selectedSessionBatchIds.add(sessionId);
+      } else {
+        selectedSessionBatchIds.delete(sessionId);
+      }
+      lastBatchClickedSessionId = sessionId;
+
+      withMutationGuard(() => {
+        updateSingleBatchRow(sessionId, batchTouchTargetState, row);
+        syncSessionBatchBar();
+      });
+
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        try { navigator.vibrate(10); } catch (_) {}
+      }
+    }
+  }, { passive: true, capture: true });
+
+  addManagedListener(document, "touchmove", (event) => {
+    if (!isSessionBatchMode || !isBatchTouchDragging || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (!el) return;
+
+    const row = el.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    if (row) {
+      const sessionId = row.getAttribute("data-pi-enh-session-id");
+      if (sessionId) {
+        const currentlySelected = selectedSessionBatchIds.has(sessionId);
+        if (currentlySelected !== batchTouchTargetState) {
+          if (batchTouchTargetState) {
+            selectedSessionBatchIds.add(sessionId);
+          } else {
+            selectedSessionBatchIds.delete(sessionId);
+          }
+          lastBatchClickedSessionId = sessionId;
+
+          withMutationGuard(() => {
+            updateSingleBatchRow(sessionId, batchTouchTargetState, row);
+            syncSessionBatchBar();
+          });
+
+          if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+            try { navigator.vibrate(8); } catch (_) {}
+          }
+        }
+      }
+    }
+
+    const scrollContainer = row?.parentElement || document.querySelector(".sidebar-container div.overflow-y-auto") || document.querySelector(".sessions-sidebar div.overflow-y-auto") || document.querySelector(".pi-enh-session-row-host")?.parentElement;
+    handleBatchTouchAutoScroll(touch.clientY, scrollContainer);
+  }, { passive: false, capture: true });
+
+  const endBatchTouch = () => {
+    if (isBatchTouchDragging) {
+      isBatchTouchDragging = false;
+      stopBatchTouchAutoScroll();
+      withMutationGuard(() => {
+        syncSessionBatchBar();
+      });
+    }
+  };
+
+  addManagedListener(window, "touchend", endBatchTouch, true);
+  addManagedListener(window, "touchcancel", endBatchTouch, true);
+
+
+  function restoreBatchDeleteJobPointer() {
+    if (batchDeleteJob || !isPluginEnabled("session-batch-actions")) return;
+    const pointer = readBatchDeleteJobPointer();
+    if (!pointer) return;
+    batchDeleteJob = {
+      ...pointer,
+      status: "running",
+      serverStatus: "running",
+      processed: 0,
+      lastSequence: 0,
+      connectionState: "connecting",
+      attachNeeded: true,
+      appliedDeletedIds: new Set(),
+      failedIds: [],
+      unknownIds: [],
+      notStartedIds: [],
+      done: false,
+    };
+    syncBatchDeleteJobEntry();
+  }
+
+  addManagedListener(window, "online", () => {
+    if (!isPluginEnabled("session-batch-actions") || !batchDeleteJob || batchDeleteJob.done || batchDeleteInFlight || batchDeleteJob.connectionState === "not_found") return;
+    void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
+  });
 
   function syncSessionBatchActions() {
     if (!isPluginEnabled("session-batch-actions")) {
+      stopBatchDeleteObserver();
+      if (batchDeleteModal) {
+        batchDeleteModal.remove();
+        batchDeleteModal = null;
+      }
+      removeBatchDeleteJobEntry();
       if (isSessionBatchMode) setSessionBatchMode(false);
       removeSessionBatchTrigger();
       removeSessionBatchBar();
       return;
     }
     syncSessionBatchTriggerButton();
+    restoreBatchDeleteJobPointer();
+    syncBatchDeleteJobEntry();
+    if (batchDeleteJob && batchDeleteJob.attachNeeded && !batchDeleteInFlight && !batchDeleteJob.done && batchDeleteJob.connectionState !== "not_found") {
+      void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
+    }
     if (isSessionBatchMode) {
       syncSessionBatchBar();
       syncSessionBatchRowStates();
@@ -10219,3 +11214,386 @@
 
   // 聚焦只由明确的输入/新建动作触发；正文拖选造成的失焦应交给浏览器。
   window.__PI_ENH_FOCUS_COMPOSER__ = focusComposerEditable;
+
+
+  // ==========================================
+  // 手机端/输入框排队任务微型数字气泡与状态胶囊 (Mini Queue Badge & Status Capsule)
+  // 彻底满足：即使输入框上方队列面板被用户收起或在手机小屏幕下，打字前后都能直观感知当前队列任务数
+  // ==========================================
+  function syncComposerQueueBadge(count) {
+    const qCount = Math.max(0, Number(count) || 0);
+
+    // 1. 输入框底部工具栏微型排队胶囊（在模型标签或停止按钮旁）
+    const toolbar = document.querySelector(".chat-input-controls, [data-pi-native-composer-host] .flex.items-center.justify-between, .chat-input .flex.items-center");
+    if (toolbar) {
+      let capsule = toolbar.querySelector(".pi-enh-queue-status-capsule");
+      if (qCount > 0) {
+        if (!capsule) {
+          capsule = document.createElement("span");
+          capsule.className = "pi-enh-queue-status-capsule";
+          capsule.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.38);color:#c7d2fe;font-size:11px;font-weight:600;line-height:1;margin-right:6px;cursor:pointer;";
+          capsule.addEventListener("click", () => {
+            const queuePanel = document.querySelector(".pi-enh-queue-panel");
+            if (queuePanel) {
+              queuePanel.hidden = false;
+              queuePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+          });
+          const rightGroup = toolbar.lastElementChild;
+          if (rightGroup) {
+            rightGroup.insertBefore(capsule, rightGroup.firstElementChild);
+          } else {
+            toolbar.appendChild(capsule);
+          }
+        }
+        capsule.innerHTML = `<span style="width:5px;height:5px;border-radius:50%;background:#818cf8;display:inline-block;"></span><span>排队 (${qCount})</span>`;
+        capsule.title = `当前队列中有 ${qCount} 个任务在排队等待执行；点击查看`;
+        capsule.style.display = "inline-flex";
+      } else if (capsule) {
+        capsule.remove();
+      }
+    }
+
+    // 2. 右下角排队/后续消息按钮内的微型数字徽标
+    const followupBtn = document.querySelector(".chat-composer-followup, button.pi-enh-cursor-followup, button[title*='排队'], button[title*='后续消息']");
+    if (followupBtn) {
+      let badge = followupBtn.querySelector(".pi-enh-queue-count-badge");
+      if (qCount > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "pi-enh-queue-count-badge";
+          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
+          followupBtn.appendChild(badge);
+        }
+        badge.textContent = String(qCount);
+        badge.title = `当前队列中有 ${qCount} 个任务在排队等待执行`;
+        badge.style.display = "inline-flex";
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+
+    // 3. 引导按钮（如果存在）
+    const steerBtn = document.querySelector(".chat-composer-steer, button.pi-enh-cursor-steer");
+    if (steerBtn && !followupBtn) {
+      let badge = steerBtn.querySelector(".pi-enh-queue-count-badge");
+      if (qCount > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "pi-enh-queue-count-badge";
+          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
+          steerBtn.appendChild(badge);
+        }
+        badge.textContent = String(qCount);
+        badge.title = `当前队列中有 ${qCount} 个任务在排队`;
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+
+    // 4. 输入框 textarea placeholder 动态提示
+    const textarea = document.querySelector("textarea.chat-input-textarea, .chat-input textarea, textarea");
+    if (textarea && textarea.placeholder && (textarea.placeholder.includes("引导") || textarea.placeholder.includes("排队"))) {
+      const basePlaceholder = textarea.placeholder.replace(/\s*\([^\)]*排队[^\)]*\)/g, "").trim();
+      if (qCount > 0) {
+        textarea.placeholder = `${basePlaceholder} (排队 ${qCount})`;
+      } else {
+        textarea.placeholder = basePlaceholder;
+      }
+    }
+  }
+
+  // ==========================================
+  // 跨设备排队任务实时同步守护器 (Cross-Device Realtime Queue Watchdog)
+  // ==========================================
+  let queueSyncWatchdogTimer = null;
+  let lastKnownQueuedSignature = "";
+
+  async function checkServerQueueStatus(forceTrigger = false) {
+    const sid = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
+    if (!sid || (typeof document !== "undefined" && document.visibilityState !== "visible")) return;
+
+    try {
+      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`, {
+        headers: { "Cache-Control": "no-cache" },
+        cache: "no-store"
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const state = data?.state;
+      const q = state?.queuedMessages;
+
+      const steering = Array.isArray(q?.steering) ? q.steering : [];
+      const followUp = Array.isArray(q?.followUp) ? q.followUp : [];
+      const totalQueueCount = steering.length + followUp.length;
+
+      // 实时更新微型数字气泡与状态胶囊
+      syncComposerQueueBadge(totalQueueCount);
+
+      const sig = JSON.stringify([steering, followUp]);
+      if (sig !== lastKnownQueuedSignature || forceTrigger) {
+        lastKnownQueuedSignature = sig;
+        window.dispatchEvent(new CustomEvent("pi:native-queue-ready"));
+      }
+
+      if (data?.running && !queueSyncWatchdogTimer) {
+        startQueueSyncWatchdog();
+      } else if (!data?.running && !steering.length && !followUp.length && queueSyncWatchdogTimer) {
+        stopQueueSyncWatchdog();
+      }
+    } catch (_) {}
+  }
+
+  function startQueueSyncWatchdog() {
+    stopQueueSyncWatchdog();
+    queueSyncWatchdogTimer = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void checkServerQueueStatus(false);
+      }
+    }, 2000);
+  }
+
+  function stopQueueSyncWatchdog() {
+    if (queueSyncWatchdogTimer) {
+      clearInterval(queueSyncWatchdogTimer);
+      queueSyncWatchdogTimer = null;
+    }
+  }
+
+  addManagedListener(document, "visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void checkServerQueueStatus(true);
+    }
+  });
+  addManagedListener(window, "focus", () => {
+    void checkServerQueueStatus(true);
+  });
+  addManagedListener(window, "pageshow", () => {
+    void checkServerQueueStatus(true);
+  });
+  addManagedListener(window, "online", () => {
+    void checkServerQueueStatus(true);
+  });
+
+  // 页面首屏就绪后，立即主动探活一次排队状态并启动守护
+  if (typeof window !== "undefined") {
+    setTimeout(() => {
+      void checkServerQueueStatus(true);
+    }, 800);
+  }
+
+
+  // ==========================================
+  // 动态对齐“正在同步最新内容”胶囊位置到队列或输入框左上方
+  // 醒目半透明微光呈现，彻底告别顶部暗淡小字
+  // ==========================================
+  function injectSyncCapsuleStyles() {
+    if (typeof document === "undefined" || !document.head || document.getElementById("pi-enh-sync-capsule-style")) return;
+    const style = document.createElement("style");
+    style.id = "pi-enh-sync-capsule-style";
+    style.textContent = `
+      [data-session-sync-status="syncing"] {
+        position: fixed !important;
+        left: max(16px, env(safe-area-inset-left, 16px)) !important;
+        bottom: calc(var(--pi-enh-composer-height, 120px) + 24px) !important;
+        z-index: 55 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        padding: 5px 13px 5px 10px !important;
+        border-radius: 999px !important;
+        background: rgba(17, 24, 39, 0.94) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+        border: 1px solid rgba(129, 140, 248, 0.55) !important;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3) !important;
+        color: #e0e7ff !important;
+        font-size: 11.5px !important;
+        font-weight: 600 !important;
+        line-height: 1 !important;
+        pointer-events: none !important;
+        animation: pi-sync-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
+      }
+      body:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"],
+      html:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"] {
+        bottom: calc(var(--pi-enh-composer-height, 120px) + 68px) !important;
+      }
+      @keyframes pi-sync-pop {
+        from { opacity: 0; transform: translateY(6px) scale(0.96); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function alignSyncingCapsule() {
+    if (typeof document === "undefined") return;
+    const capsule = document.querySelector('[data-session-sync-status="syncing"]');
+    if (!capsule) return;
+
+    injectSyncCapsuleStyles();
+
+    const queuePanel = document.querySelector('.pi-enh-queue-panel:not([hidden])');
+    const composer = document.querySelector('[data-pi-native-composer-host], .chat-input, form.chat-input');
+    const targetAnchor = queuePanel || composer;
+
+    if (targetAnchor) {
+      const rect = targetAnchor.getBoundingClientRect();
+      const bottomOffset = window.innerHeight - rect.top + 8;
+      capsule.style.setProperty("position", "fixed", "important");
+      capsule.style.setProperty("bottom", `${bottomOffset}px`, "important");
+      capsule.style.setProperty("left", `${Math.max(16, rect.left)}px`, "important");
+      capsule.style.setProperty("display", "inline-flex", "important");
+      capsule.style.setProperty("width", "auto", "important");
+      capsule.style.setProperty("border-radius", "999px", "important");
+      capsule.style.setProperty("background", "rgba(17, 24, 39, 0.94)", "important");
+      capsule.style.setProperty("border", "1px solid rgba(129, 140, 248, 0.55)", "important");
+      capsule.style.setProperty("box-shadow", "0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3)", "important");
+      capsule.style.setProperty("color", "#e0e7ff", "important");
+      capsule.style.setProperty("font-size", "11.5px", "important");
+      capsule.style.setProperty("font-weight", "600", "important");
+      capsule.style.setProperty("padding", "5px 13px 5px 10px", "important");
+      capsule.style.setProperty("z-index", "55", "important");
+    }
+  }
+
+  window.__PI_ENH_ALIGN_SYNC_CAPSULE__ = alignSyncingCapsule;
+
+  if (typeof window !== "undefined") {
+    injectSyncCapsuleStyles();
+    setInterval(alignSyncingCapsule, 200);
+    window.addEventListener("resize", alignSyncingCapsule, { passive: true });
+    window.addEventListener("scroll", alignSyncingCapsule, { passive: true, capture: true });
+  }
+
+
+  // ==========================================
+  // 模型错误自动恢复与网络消除看门狗 (Model Error Auto-Recovery Watchdog)
+  // 彻底解决：网络波动导致出现“暂时无法获取模型”红色警告后，网络恢复时必须手动刷新才能消除的缺陷
+  // ==========================================
+  let modelErrorHealingTimer = null;
+  let isHealingModelError = false;
+
+  async function checkAndHealModelError() {
+    if (typeof document === "undefined" || isHealingModelError) return;
+    
+    // 检查页面上是否存在模型错误横幅
+    const errorBanner = Array.from(document.querySelectorAll('.chat-composer-banner-stack > *, [data-pi-native-composer-host] *, .pi-test-model-error-banner')).find(el => {
+      const txt = el.textContent || "";
+      return txt.includes("暂时无法获取模型") || (txt.includes("模型错误") && txt.includes("稍后重试"));
+    });
+
+    if (!errorBanner) {
+      if (modelErrorHealingTimer) {
+        clearInterval(modelErrorHealingTimer);
+        modelErrorHealingTimer = null;
+      }
+      return;
+    }
+
+    // 给红色错误横幅增加轻量关闭按钮（如果尚未添加）
+    if (!errorBanner.querySelector(".pi-enh-model-error-dismiss")) {
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "pi-enh-model-error-dismiss";
+      closeBtn.innerHTML = "×";
+      closeBtn.style.cssText = "float:right;background:none;border:none;color:inherit;font-size:16px;cursor:pointer;opacity:0.7;padding:0 4px;line-height:1;";
+      closeBtn.title = "关闭警告";
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        errorBanner.remove();
+        if (modelErrorHealingTimer) {
+          clearInterval(modelErrorHealingTimer);
+          modelErrorHealingTimer = null;
+        }
+      });
+      errorBanner.insertBefore(closeBtn, errorBanner.firstElementChild);
+    }
+
+    // 发现存在模型错误横幅，发起自愈探活
+    isHealingModelError = true;
+    try {
+      const sessionId = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : "";
+      const engine = typeof getComposerExecutionEngineHint === "function" ? getComposerExecutionEngineHint(sessionId) : "pi";
+      const query = new URLSearchParams({ engine });
+      if (sessionId) query.set("sessionId", sessionId);
+
+      // 关键修复：显式附带有效的工作区 cwd，彻底解决因缺失 cwd 返回 403 无法自愈的问题
+      let cwd = "";
+      if (typeof getEffectiveComposerCwd === "function") {
+        try { cwd = await getEffectiveComposerCwd(); } catch (_) {}
+      }
+      if (!cwd && typeof window !== "undefined") {
+        const domCwd = document.querySelector("[data-current-cwd]")?.getAttribute("data-current-cwd");
+        if (domCwd) cwd = domCwd;
+      }
+      if (!cwd) cwd = "D:/Pi/work";
+      query.set("cwd", cwd);
+
+      const res = await fetch(`/api/models?${query}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && !data.modelError && (data.modelList?.length || Object.keys(data.models || {}).length)) {
+          // 网络已完全恢复且成功获取模型列表：平滑自动消除红色警告横幅！
+          errorBanner.style.transition = "opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease";
+          errorBanner.style.opacity = "0";
+          errorBanner.style.maxHeight = "0px";
+          errorBanner.style.margin = "0px";
+          errorBanner.style.overflow = "hidden";
+          setTimeout(() => {
+            errorBanner.remove();
+          }, 260);
+
+          // 停止探活定时器
+          if (modelErrorHealingTimer) {
+            clearInterval(modelErrorHealingTimer);
+            modelErrorHealingTimer = null;
+          }
+
+          showToast("网络已恢复，模型连接正常", null, 2500);
+        }
+      }
+    } catch (_) {
+      // 依然处于离线或弱网态，保留下次重试
+    } finally {
+      isHealingModelError = false;
+    }
+  }
+
+  function startModelErrorHealWatchdog() {
+    if (!modelErrorHealingTimer) {
+      modelErrorHealingTimer = setInterval(checkAndHealModelError, 3500);
+    }
+  }
+
+  addManagedListener(window, "online", () => {
+    void checkAndHealModelError();
+  });
+  addManagedListener(document, "visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      void checkAndHealModelError();
+    }
+  });
+  addManagedListener(window, "focus", () => {
+    void checkAndHealModelError();
+  });
+
+    if (typeof window !== "undefined") {
+    setInterval(() => {
+      const hasBanner = document.querySelector('.chat-composer-banner-stack, [data-pi-native-composer-host]');
+      if (hasBanner && !modelErrorHealingTimer) {
+        const txt = hasBanner.textContent || "";
+        if (txt.includes("暂时无法获取模型")) {
+          startModelErrorHealWatchdog();
+          void checkAndHealModelError();
+        }
+      }
+    }, 2500);
+  }
+

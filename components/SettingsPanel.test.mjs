@@ -28,7 +28,7 @@ test("opens one settings panel from direct sidebar shortcuts", () => {
 });
 
 test("keeps every requested configuration surface inside the settings panel", () => {
-  for (const section of ["general", "models", "skills", "agents", "plugins", "mcp", "execution-engine"]) {
+  for (const section of ["general", "models", "skills", "agents", "plugins", "mcp", "execution-engine", "collaboration"]) {
     assert.match(panelSource, new RegExp(`id: "${section}"`));
   }
   for (const component of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"]) {
@@ -240,7 +240,7 @@ test("provides React-owned childless isolated hosts for extension sections and m
   assert.match(isolatedHostSource, /className="settings-extension-loading" role=\{mountFailed \? "alert" : "status"\}/);
   assert.match(isolatedHostSource, /ref=\{hostRef\}[\s\S]*?data-host-id=\{id\}[\s\S]*?\/\>/);
   assert.match(isolatedHostSource, /useLayoutEffect\(/);
-  assert.match(isolatedHostSource, /\[id, renderer, sectionId, mountAttempt\]/);
+  assert.match(isolatedHostSource, /\[id, renderer, sectionId, mountAttempt(?:, active)?\]/);
   assert.doesNotMatch(panelSource, /cleanupRef|subscribeRenderer\(/);
 
   assert.match(panelSource, /id="maintenance" sectionId="general"/);
@@ -313,3 +313,14 @@ test("general styles enforce full main width, 276px themes, switch row sizing an
   assert.match(cssSource, /\.settings-general-heading\s*\{/);
   assert.match(cssSource, /\.settings-general-description\s*\{/);
 });
+
+test("collaboration relay settings tab is registered natively with lazy loading and requires no project", () => {
+  assert.match(panelSource, /\{ id: "collaboration", label: "协作接力", requiresProject: false \}/);
+  assert.match(panelSource, /const loadCollaborationSettings = \(\) => import\("\.\/CollaborationSettings"\)\.then\(\(module\) => module\.CollaborationSettings\);/);
+  assert.match(panelSource, /const CollaborationSettings = dynamic\(loadCollaborationSettings, \{ loading: \(props\) => <SettingsSectionLoading section="collaboration"/);
+  assert.match(panelSource, /\{sectionHost\("collaboration", <CollaborationSettings \/>\)\}/);
+  assert.match(panelSource, /if \(section === "collaboration"\) return <svg/);
+  assert.match(cssSource, /\.settings-collaboration-panel/);
+  assert.match(cssSource, /\.settings-collaboration-card/);
+});
+

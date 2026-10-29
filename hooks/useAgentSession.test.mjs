@@ -53,7 +53,13 @@ function hookHarness() {
   const setter = (key) => (value) => { state[key] = typeof value === "function" ? value(state[key]) : value; };
   const scope = {
     ...queueHelpers, ...promptRecovery, sessionIdRef: ref("session"), session: { id: "session" },
-    agentRunningRef: ref(false), bashRunningRef: ref(false), promptRunIdRef: ref(0), agentStateRevisionRef: ref(0), extensionUiRevisionRef: ref(0),
+    dataRef: ref(null), messagesRef: ref([]), activeLeafIdRef: ref(null), assistantRunIdentityRef: ref(null),
+    consumedPromptQueueRequestsRef: ref({ sessionId: "session", ids: new Set() }),
+    assistantRunIdentityFor: evaluate(findNode(hookFile, node => ts.isFunctionDeclaration(node) && node.name?.text === "assistantRunIdentityFor"), hookFile, {}),
+    filterConsumedQueueRequests: evaluate(findNode(hookFile, node => ts.isFunctionDeclaration(node) && node.name?.text === "filterConsumedQueueRequests"), hookFile, {}),
+    extensionUiViewRef: ref({sessionId: "session", generation: 0}),
+    deliverExtensionUiInput: async (...args) => { state.commands.push(args); return {status: "closed"}; },
+    agentRunningRef: ref(false), sdkAgentActiveRef: ref(false), bashRunningRef: ref(false), promptRunIdRef: ref(0), agentStateRevisionRef: ref(0), extensionUiRevisionRef: ref(0),
     rpcPromptPendingRef: ref(false), optimisticUserMessageRef: ref(null), preparationRef: ref(null),
     entryIdsRef: ref([]), pendingScrollToUserRef: ref(false), ensuringNewSessionRef: ref(null),
     isNew: false, newSessionCwd: null, composerDraftKey: "draft", newSessionDraftKey: null,
@@ -74,6 +80,8 @@ function hookHarness() {
     sendAgentCommand: async (...args) => { state.commands.push(args); },
     isBlockingExtensionUiRequest: () => true, onAttentionNeeded: noop,
   };
+  scope.rememberConsumedQueueRequest = callback("rememberConsumedQueueRequest", scope);
+  scope.applyExtensionUiResult = callback("applyExtensionUiResult", scope);
   scope.handleExtensionUiRequest = callback("handleExtensionUiRequest", scope);
   scope.handleAgentEvent = callback("handleAgentEvent", scope);
   return { state, scope };
@@ -296,7 +304,7 @@ test("sessions the user never overrode follow pi's configured defaultTools (#700
   );
 });
 
-test("session mount probes external appends and interrupted hydration retries only once", () => {
+test("session mount probes external appends with one immediate and bounded deferred hydration repairs", () => {
   const loadSessionSource = source.slice(
     source.indexOf("  const loadSession = useCallback"),
     source.indexOf("  const loadContext = useCallback"),
@@ -305,12 +313,12 @@ test("session mount probes external appends and interrupted hydration retries on
     source.indexOf("// Load session on mount"),
     source.indexOf("sessionHookMountedRef.current = false"),
   );
-  assert.match(loadSessionSource, /options\?: \{ force\?: boolean; streamRetry\?: boolean(?:; abortRetry\?: boolean)?(?:; signal\?: AbortSignal)?; resident\?: boolean \}/);
+  assert.match(loadSessionSource, /options\?: \{ force\?: boolean; streamRetry\?: boolean; streamRetryCount\?: number(?:; abortRetry\?: boolean)?(?:; signal\?: AbortSignal)?; resident\?: boolean \}/);
   assert.match(loadSessionSource, /!options\?\.streamRetry/);
   assert.match(loadSessionSource, /if \(ownsCurrentView\(\)\) void loadSession\(sid, true, includeState, \{ force: true, streamRetry: true \}\)/);
   assert.match(loadSessionSource, /options\?\.resident && !options.force/);
   assert.match(loadSessionSource, /force: options\?\.force \|\| Boolean\(options\?\.resident && !reuseResident\)/);
-  // Cold misses still probe disk; certified resident views avoid history re-fetch.
+  // Resident views paint immediately but still negotiate server freshness.
   assert.match(loadSessionSource, /buildSessionSyncUrl\(\{[^}]*force: options\?\.force/);
   assert.match(loadSessionSource, /d\.wrapperRebuilt[\s\S]*?eventConnectionRef\.current\?\.close\(\)[\s\S]*?maintain\(sid\)/);
   assert.match(mountSource, /loadSession\(session\.id, !cached, true, \{ resident: true \}\)/);
@@ -739,7 +747,7 @@ test("queues extension dialogs and custom panels by request id instead of sharin
 
   assert.match(
     source,
-    /import \{\s+enqueueExtensionUiRequest,\s+removeExtensionUiRequest,\s+retainExtensionUiRequests,\s+upsertExtensionUiRequest,\s+\} from "@\/lib\/extension-ui-queue"/,
+    /import \{\s+enqueueExtensionUiRequest,\s+removeExtensionUiRequest,\s+retainExtensionUiRequests,\s+upsertExtensionUiRequest,\s+refreshPendingExtensionUiRequest,\s+isExtensionUiDeliveryCurrent,\s+\} from "@\/lib\/extension-ui-queue"/,
   );
   // A (re)connect drops what the server no longer holds; its replay follows.
   const connectedSource = source.slice(source.indexOf('      case "connected": {'), source.indexOf('      case "agent_start":'));
@@ -758,7 +766,8 @@ test("queues extension dialogs and custom panels by request id instead of sharin
     extensionRequestSource,
     /case "custom":\s+setExtensionCustomUis\(\(queue\) => request\.closed\s+\? removeExtensionUiRequest\(queue, request\.id\)\s+: upsertExtensionUiRequest\(queue, request\)\)/,
   );
-  assert.match(respondSource, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, request\.id\)\)/);
+  assert.match(respondSource, /return applyExtensionUiResult\(sid, generation, request\.id, request\.method, res\)/);
+  assert.match(source, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, requestId\)\)/);
   assert.match(closedSource, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, event\.id as string\)\)/);
   // The hook keeps exposing what is on screen under the old names, plus how many wait behind it.
   assert.match(source, /const extensionDialog = extensionDialogs\[0\] \?\? null;/);
@@ -796,6 +805,26 @@ test("queues extension dialogs and custom panels by request id instead of sharin
   scope.handleExtensionUiRequest(second);
   assert.deepEqual(state.dialogs, [second]);
   assert.deepEqual(state.custom, []);
+});
+
+test("real extension delivery callbacks ignore A-B-A late ACKs and never resurrect SSE-closed questions", async () => {
+  const {scope, state} = hookHarness();
+  const first = {type: "extension_ui_request", id: "custom-first", method: "custom", lines: ["First"]};
+  const second = {...first, id: "custom-second", lines: ["Second"]};
+  state.custom = [first, second];
+  let resolve;
+  scope.deliverExtensionUiInput = () => new Promise(done => {resolve = done;});
+  const delivery = callback("sendExtensionCustomInput", scope)(first, "answer");
+  scope.sessionIdRef.current = "other";
+  scope.extensionUiViewRef.current = {sessionId: "other", generation: 1};
+  scope.sessionIdRef.current = "session";
+  scope.extensionUiViewRef.current = {sessionId: "session", generation: 2};
+  resolve({status: "closed"});
+  assert.equal((await delivery).status, "uncertain");
+  assert.deepEqual(state.custom, [first, second]);
+  scope.handleAgentEvent({type: "extension_ui_closed", id: first.id});
+  scope.applyExtensionUiResult("session", 2, first.id, "custom", {status: "pending", request: first});
+  assert.deepEqual(state.custom, [second]);
 });
 
 test("drops queued extension UI when a tool change rebuilds the wrapper", () => {
@@ -1222,8 +1251,137 @@ test("late queued user delivery updates chat and queue together without resurrec
   assert.equal(state.messages.length,1,'same request identity is idempotent');
 });
 
+test('a committed request cannot return from a stale queue snapshot while identical pending text remains', () => {
+  const { scope, state } = hookHarness();
+  state.queue = {
+    steering: ['same text', 'pending text'], followUp: ['same text'],
+    requestIds: { steering: ['committed-request', null], followUp: ['other-request'] },
+    deliveryStates: [{ status: 'unknown', error: 'stale' }, { status: 'queued' }, { status: 'failed', error: 'live' }],
+  };
+  scope.queuedMessagesRef = ref(state.queue);
+  scope.consumedPromptQueueRequestsRef = ref({ sessionId: 'session', ids: new Set() });
+  scope.filterConsumedQueueRequests = evaluate(
+    findNode(hookFile, node => ts.isFunctionDeclaration(node) && node.name?.text === 'filterConsumedQueueRequests'),
+    hookFile,
+    {},
+  );
+  scope.setQueuedMessagesState = value => { state.queue = value; };
+  scope.setQueueSyncStatus = noop;
+  scope.isSessionMemoryCacheEnabled = () => false;
+  scope.getSessionViewSnapshot = noop;
+  scope.setSessionViewSnapshot = noop;
+  scope.normalizeQueuedMessages = evaluate(
+    findNode(hookFile, node => ts.isFunctionDeclaration(node) && node.name?.text === 'normalizeQueuedMessages'),
+    hookFile,
+    {},
+  );
+  scope.setQueuedMessages = callback('setQueuedMessages', scope);
+  scope.reconcilePromptSubmission = noop;
+  const revision = scope.agentStateRevisionRef.current;
+
+  scope.handleAgentEvent({
+    type: 'prompt_delivery', requestId: 'committed-request',
+    receipt: { status: 'committed', entryId: 'assistant-input:0' },
+  });
+  assert.equal(scope.agentStateRevisionRef.current, revision + 1, 'a receipt invalidates older state reads');
+  assert.deepEqual(state.queue, {
+    steering: ['pending text'], followUp: ['same text'],
+    requestIds: { steering: [null], followUp: ['other-request'] },
+    deliveryStates: [{ status: 'queued' }, { status: 'failed', error: 'live' }],
+  });
+
+  scope.handleAgentEvent({
+    type: 'queue_update', steering: ['same text', 'pending text'], followUp: ['same text'],
+    requestIds: { steering: ['committed-request', null], followUp: ['other-request'] },
+    deliveryStates: [{ status: 'unknown', error: 'stale' }, { status: 'queued' }, { status: 'failed', error: 'live' }],
+  });
+  assert.deepEqual(state.queue, {
+    steering: ['pending text'], followUp: ['same text'],
+    requestIds: { steering: [null], followUp: ['other-request'] },
+    deliveryStates: [{ status: 'queued' }, { status: 'failed', error: 'live' }],
+  }, 'only the exact committed request is consumed');
+});
+
+test('an exact native user entry consumes its queue row before the committed receipt arrives', () => {
+  const { scope, state } = hookHarness();
+  state.queue = {
+    steering: ['same text'], followUp: ['same text'],
+    requestIds: { steering: ['native-request'], followUp: ['other-request'] },
+  };
+  scope.queuedMessagesRef = ref(state.queue);
+  scope.consumedPromptQueueRequestsRef = ref({ sessionId: 'session', ids: new Set() });
+  scope.filterConsumedQueueRequests = evaluate(
+    findNode(hookFile, node => ts.isFunctionDeclaration(node) && node.name?.text === 'filterConsumedQueueRequests'),
+    hookFile,
+    {},
+  );
+  scope.setQueuedMessagesState = value => { state.queue = value; };
+  scope.setQueueSyncStatus = noop;
+  scope.isSessionMemoryCacheEnabled = () => false;
+  scope.getSessionViewSnapshot = noop;
+  scope.setSessionViewSnapshot = noop;
+  scope.normalizeQueuedMessages = evaluate(
+    findNode(hookFile, node => ts.isFunctionDeclaration(node) && node.name?.text === 'normalizeQueuedMessages'),
+    hookFile,
+    {},
+  );
+  scope.setQueuedMessages = callback('setQueuedMessages', scope);
+  scope.reconcilePromptSubmission = noop;
+  const revision = scope.agentStateRevisionRef.current;
+  const oldQueue = {
+    steering: ['same text'], followUp: ['same text'],
+    requestIds: { steering: ['native-request'], followUp: ['other-request'] },
+  };
+
+  scope.handleAgentEvent({
+    type: 'message_end', requestId: 'native-request', entryId: 'native-user-entry:0',
+    message: { role: 'user', content: 'same text', timestamp: 4 },
+  });
+
+  assert.equal(scope.agentStateRevisionRef.current, revision + 1, 'the native delivery invalidates older state reads');
+  scope.handleAgentEvent({ type: 'queue_update', ...oldQueue });
+  assert.deepEqual(state.queue, {
+    steering: [], followUp: ['same text'],
+    requestIds: { steering: [], followUp: ['other-request'] },
+  });
+
+  scope.handleAgentEvent({
+    type: 'message_end', requestId: 'unproven-request',
+    message: { role: 'user', content: 'unproven text', timestamp: 5 },
+    queuedMessages: { steering: ['unproven text'], followUp: [], requestIds: { steering: ['unproven-request'], followUp: [] } },
+  });
+  assert.deepEqual(state.queue, {
+    steering: ['unproven text'], followUp: [],
+    requestIds: { steering: ['unproven-request'], followUp: [] },
+  }, 'request ID without an entry ID is not enough to consume a row');
+});
+
+test('assistant completion is owned by its exact entry in the active session leaf and run', () => {
+  const { scope, state } = hookHarness();
+  const prompt = { role: 'user', content: 'prompt', timestamp: 1 };
+  const answer = { role: 'assistant', content: [{ type: 'text', text: 'seen reply' }], timestamp: 2 };
+  scope.dataRef.current = { sessionId: 'session' };
+  scope.activeLeafIdRef.current = 'leaf-a';
+  scope.handleAgentEvent({ type: 'agent_start' });
+  assert.deepEqual(scope.assistantRunIdentityRef.current, { sessionId: 'session', leafId: 'leaf-a', runId: 1 });
+
+  scope.handleAgentEvent({ type: 'message_end', entryId: 'assistant-entry:0', message: answer });
+
+  assert.equal(state.messages[0], answer);
+  assert.deepEqual(
+    scope.preserveLiveAssistantMessages([prompt], scope.messagesRef.current, ['prompt-entry'], scope.assistantRunIdentityRef.current),
+    [prompt, answer],
+    'history that has not confirmed the assistant entry must retain the just seen run output',
+  );
+  assert.deepEqual(
+    scope.preserveLiveAssistantMessages([prompt], scope.messagesRef.current, ['prompt-entry'], { ...scope.assistantRunIdentityRef.current, leafId: 'leaf-b' }),
+    [prompt],
+    'switching branch ownership does not restore an old reply',
+  );
+});
+
 test('queue snapshots invalidate state reads started before their SSE revision',()=>{
- const {scope}=hookHarness();scope.normalizeQueuedMessages=q=>q;scope.setQueuedMessages=()=>{};
+ const {scope}=hookHarness();scope.normalizeQueuedMessages=q=>q;scope.queuedMessagesRef=ref({steering:[],followUp:[]});scope.setQueuedMessages=()=>{};
  const before=scope.agentStateRevisionRef.current;
  scope.handleAgentEvent({type:'queue_update',steering:['same'],followUp:[]});
  assert.equal(scope.agentStateRevisionRef.current,before+1);
@@ -1239,9 +1397,12 @@ test("Codex ensureNewSession captures displayed default model/thinking while Pi 
     let postedBody = null;
     const scope = {
       sessionIdRef: ref(null),
+      assistantRunIdentityRef: ref(null),
       isNew: true,
       newSessionCwd: "/workspace/codex",
       ensuringNewSessionRef: ref(null),
+      creationRequestIdRef: ref(null),
+      createNoticeId: () => "creation-fixture-20261025",
       executionEngine: "codex",
       newSessionModelOverrideRef: ref(null),
       thinkingLevelOverrideRef: ref(null),
@@ -1287,6 +1448,7 @@ test("Codex ensureNewSession captures displayed default model/thinking while Pi 
     let postedBody = null;
     const scope = {
       sessionIdRef: ref(null),
+      assistantRunIdentityRef: ref(null),
       isNew: true,
       newSessionCwd: "/workspace/pi",
       ensuringNewSessionRef: ref(null),
@@ -1329,3 +1491,29 @@ test("Codex ensureNewSession captures displayed default model/thinking while Pi 
   }
 });
 
+
+test('new-session rejection exposes the server reason and leaves the draft session uncreated',async()=>{
+ for(const response of [
+  {ok:false,status:400,json:async()=>({error:'Windows 桌面基础接入尚不支持此操作，请在 Codex 桌面处理。'})},
+  {ok:false,status:500,json:async()=>{throw new SyntaxError('non-JSON')}},
+ ]) {
+ const scope={sessionIdRef:ref(null),assistantRunIdentityRef:ref(null),isNew:true,newSessionCwd:'D:\\CODEX',ensuringNewSessionRef:ref(null),creationRequestIdRef:ref(null),createNoticeId:()=> 'creation-fixture-20261025',executionEngine:'codex',
+   newSessionModelOverrideRef:ref(null),thinkingLevelOverrideRef:ref(null),displayModelSnapshotRef:ref({model:null,thinkingLevel:null}),
+   toolPreset:'full',sessionToolsPinnedRef:ref(false),getToolNamesForPreset:()=>undefined,fetch:async()=>response};
+  const ensure=callback('ensureNewSession',scope);
+  await assert.rejects(ensure(),response.status===400?/Windows 桌面基础接入尚不支持此操作/:/HTTP 500/);
+  assert.equal(scope.sessionIdRef.current,null);assert.equal(scope.ensuringNewSessionRef.current,null);
+ }
+});
+
+test('manual retry of an unconfirmed new Codex session keeps the same creation identity',async()=>{
+ let attempts=0,generated=0;const bodies=[];
+ const scope={sessionIdRef:ref(null),assistantRunIdentityRef:ref(null),isNew:true,newSessionCwd:'D:\\CODEX',ensuringNewSessionRef:ref(null),creationRequestIdRef:ref(null),executionEngine:'codex',
+  createNoticeId:()=> 'creation-fixture-'+(++generated)+'-20261025',
+  newSessionModelOverrideRef:ref(null),thinkingLevelOverrideRef:ref(null),displayModelSnapshotRef:ref({model:null,thinkingLevel:null}),
+  toolPreset:'full',sessionToolsPinnedRef:ref(false),getToolNamesForPreset:()=>undefined,resolveExecutionEngine:()=> 'codex',
+  fetch:async(_,options)=>{bodies.push(JSON.parse(options.body));attempts++;return attempts===1?{ok:false,status:502,json:async()=>({error:'等待桌面接管'})}:{ok:true,json:async()=>({sessionId:'codex:11111111-2222-4333-8444-555555555555'})};}};
+ const ensure=callback('ensureNewSession',scope);
+ await assert.rejects(ensure(),/等待桌面接管/);
+ await ensure();assert.equal(generated,1);assert.equal(bodies[0].creationRequestId,bodies[1].creationRequestId);
+});

@@ -7,6 +7,7 @@ export const NATIVE_SETTINGS_SECTION_VALUES = [
   "mcp",
   "execution-engine",
   "learning",
+  "collaboration",
 ] as const;
 
 export const EXTENSION_SETTINGS_SECTION_VALUES = [

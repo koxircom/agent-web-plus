@@ -9,6 +9,7 @@ import { readNoticeRecovery, type NoticeRecovery } from "./notice-recovery";
 // hooks/useAgentSession.ts. This helper collapses that down to one line.
 
 import type { PendingPromptSubmission } from "./prompt-submissions";
+import type { ExtensionUiRequest, ExtensionUiDeliveryResult } from "./types";
 import { retainPromptSubmission, markPromptSubmissionUncertain, reconcilePromptSubmission, releasePromptSubmission } from "./prompt-submissions";
 import { markPromptSubmissionsRecalled } from "./prompt-submissions";
 import { persistDraftNow } from "./draft-store";
@@ -68,13 +69,16 @@ export async function sendAgentCommand<T = unknown>(
   // Admission to the local outbox precedes network preparation (including SSE).
   await options?.beforeDispatch?.();
   dispatched = true;
+  const isPrompt = command.type === "prompt";
+  const isExtensionUi = command.type === "extension_ui_input" || command.type === "extension_ui_response";
+  const timeoutSignal = isPrompt ? AbortSignal.timeout(30000) : isExtensionUi ? AbortSignal.timeout(12000) : undefined;
   const res = await fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...command, ...(requestId ? { requestId } : {}) }),
-    ...(requestId ? { signal: AbortSignal.timeout(30000) } : {}),
+    ...(timeoutSignal ? { signal: timeoutSignal } : {}),
   });
-  const body = (await res.json().catch(() => ({}))) as {
+  let body: {
     success?: boolean;
     data?: T;
     error?: string;
@@ -83,6 +87,11 @@ export async function sendAgentCommand<T = unknown>(
     recovery?: unknown;
     receipt?: { status: string; inFlight?: boolean };
   };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    body = {};
+  }
   if (!res.ok || body.error) {
     throw new AgentCommandError(
       body.error ?? `HTTP ${res.status}`,
@@ -92,7 +101,10 @@ export async function sendAgentCommand<T = unknown>(
       readNoticeRecovery(body.recovery),
     );
   }
-  if (requestId && body.success !== true) throw new Error("发送响应未确认");
+  if (isPrompt && body.success !== true) throw new Error("发送响应未确认");
+  if (isExtensionUi && body.success !== true) {
+    throw new AgentCommandError("回答响应未确认", res.status);
+  }
   if (requestId) {
     reconcilePromptSubmission(requestId, body.receipt ?? { status: "accepted" });
   }
@@ -153,6 +165,158 @@ export async function readPromptReceipt(sessionId: string, requestId: string): P
   const receipt = await response.json();
   if (!["committed", "accepted", "unconfirmed", "pending", "unknown", "rejected", "cancelled", "recalled"].includes(receipt.status)) throw new Error("Invalid prompt receipt");
   return receipt;
+}
+
+// Transport admission lock, not another UI queue: an uncertain write survives
+// component/session remounts in this tab and cannot be replayed without proof.
+const extensionUiWrites = new Map<string, {sessionId: string; id: string; state: "inFlight" | "uncertain"}>();
+const extensionUiWriteKey = (sessionId: string, id: string) => JSON.stringify([sessionId, id]);
+
+export function validateExtensionUiSnapshot(data: unknown): ExtensionUiRequest[] {
+  if (!data || typeof data !== "object") {
+    throw new Error("Invalid extension UI state snapshot: body must be an object");
+  }
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.runtimeAlive !== "boolean") {
+    throw new Error("Invalid extension UI state snapshot: missing runtimeAlive declaration");
+  }
+  if (!Array.isArray(obj.pendingExtensionUiRequests)) {
+    throw new Error("Invalid extension UI state snapshot: pendingExtensionUiRequests must be an array");
+  }
+  for (const item of obj.pendingExtensionUiRequests) {
+    if (!item || typeof item !== "object") {
+      throw new Error("Invalid extension UI state snapshot: request item must be an object");
+    }
+    const req = item as Record<string, unknown>;
+    if (typeof req.id !== "string" || !req.id) {
+      throw new Error("Invalid extension UI state snapshot: request missing id");
+    }
+    if (req.type !== "extension_ui_request") {
+      throw new Error("Invalid extension UI state snapshot: request missing type");
+    }
+    if (!["select", "confirm", "input", "editor", "custom"].includes(String(req.method))) {
+      throw new Error("Invalid extension UI state snapshot: request missing method");
+    }
+    if (req.method === "custom") {
+      if (!Array.isArray(req.lines) || req.lines.some(line => typeof line !== "string")) {
+        throw new Error("Invalid extension UI state snapshot: custom request missing lines");
+      }
+      if (req.askUser !== undefined) {
+        const question = req.askUser as Record<string, unknown> | null;
+        if (!question || typeof question !== "object" || typeof question.question !== "string" || typeof question.toolCallId !== "string"
+          || !Array.isArray(question.options) || question.options.some(option => !option || typeof option !== "object" || typeof (option as Record<string, unknown>).title !== "string")) {
+          throw new Error("Invalid extension UI state snapshot: corrupt question");
+        }
+      }
+    }
+  }
+  if (obj.runtimeAlive === false && obj.pendingExtensionUiRequests.length) {
+    throw new Error("Invalid extension UI state snapshot: dead runtime has pending requests");
+  }
+  return obj.pendingExtensionUiRequests as ExtensionUiRequest[];
+}
+
+export function validateExtensionUiAck(
+  ack: unknown,
+  expectedId: string,
+  expectedMethod: string,
+): ExtensionUiDeliveryResult | null {
+  if (!ack || typeof ack !== "object") return null;
+  const obj = ack as Record<string, unknown>;
+  if (obj.id !== expectedId) return null;
+  if (obj.status === "closed") {
+    return { status: "closed" };
+  }
+  if (obj.status === "pending") {
+    const req = obj.request as ExtensionUiRequest | undefined;
+    if (!req || typeof req !== "object") return null;
+    if (req.type !== "extension_ui_request" || req.id !== expectedId || req.method !== expectedMethod) return null;
+    try { validateExtensionUiSnapshot({runtimeAlive: true, pendingExtensionUiRequests: [req]}); }
+    catch { return null; }
+    return { status: "pending", request: req };
+  }
+  return null;
+}
+
+export async function checkExtensionUiState(sessionId: string): Promise<ExtensionUiRequest[]> {
+  const timeoutMs = 5000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/state?extensionUi=1`, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const text = await response.text();
+    const data = JSON.parse(text);
+    const pending = validateExtensionUiSnapshot(data);
+    const ids = new Set(pending.map(request => request.id));
+    for (const [key, write] of extensionUiWrites) {
+      if (write.sessionId === sessionId && write.state === "uncertain" && !ids.has(write.id)) extensionUiWrites.delete(key);
+    }
+    return pending;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export type ExtensionUiCommandPayload =
+  | { type: "extension_ui_response"; id: string; method: string; [key: string]: unknown }
+  | { type: "extension_ui_input"; id: string; method: "custom"; data: string | string[] };
+
+export async function deliverExtensionUiInput(
+  sessionId: string,
+  payload: ExtensionUiCommandPayload,
+): Promise<ExtensionUiDeliveryResult> {
+  const { id, method } = payload;
+  const key = extensionUiWriteKey(sessionId, id);
+  const existing = extensionUiWrites.get(key);
+  if (existing) {
+    if (existing.state === "uncertain") {
+      try {
+        const pending = await checkExtensionUiState(sessionId);
+        if (!pending.some(request => request.id === id)) return { status: "closed" };
+      } catch { /* Ambiguous writes remain locked; never resend. */ }
+    }
+    return { status: "uncertain", message: "结果待确认，未重复发送" };
+  }
+  // Fail closed rather than evicting an unresolved write to make room.
+  if (extensionUiWrites.size >= 1024) return { status: "uncertain", message: "待确认请求过多，请先检查状态" };
+  const admission = {sessionId, id, state: "inFlight" as const};
+  // A terminal can legitimately send distinct keystrokes before the previous
+  // ACK arrives. Only discrete answer batches/dialog responses take admission;
+  // uncertain writes still block every subsequent input until read-only proof.
+  if (payload.type === "extension_ui_response" || Array.isArray(payload.data)) extensionUiWrites.set(key, admission);
+  try {
+    const rawAck = await sendAgentCommand<unknown>(sessionId, payload);
+    const validated = validateExtensionUiAck(rawAck, id, method);
+    if (validated) {
+      if (validated.status === "closed" || extensionUiWrites.get(key) === admission) extensionUiWrites.delete(key);
+      return validated;
+    }
+    extensionUiWrites.set(key, {sessionId, id, state: "uncertain"});
+    // Unacknowledged / corrupt / legacy ACK: read-only check
+    try {
+      const pending = await checkExtensionUiState(sessionId);
+      const stillPending = pending.find((r) => r.id === id);
+      if (!stillPending) return { status: "closed" };
+      return { status: "uncertain", message: "结果待确认，未重复发送" };
+    } catch {
+      return { status: "uncertain", message: "结果待确认，未重复发送" };
+    }
+  } catch {
+    // Network failure / timeout / 5xx on POST: read-only check to see if server actually processed & closed
+    extensionUiWrites.set(key, {sessionId, id, state: "uncertain"});
+    try {
+      const pending = await checkExtensionUiState(sessionId);
+      const stillPending = pending.find((r) => r.id === id);
+      if (!stillPending) return { status: "closed" };
+      return { status: "uncertain", message: "结果待确认，未重复发送" };
+    } catch {
+      return { status: "uncertain", message: "结果待确认，未重复发送" };
+    }
+  }
 }
 
 export async function acknowledgeRecalledPrompts(sessionId: string, requestIds: string[], draftKey = sessionId): Promise<void> {

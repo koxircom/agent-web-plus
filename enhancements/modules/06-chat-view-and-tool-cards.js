@@ -4156,10 +4156,15 @@
   });
   addManagedListener(window, "pageshow", (event) => {
     // 页面从 BFCache 或后台恢复
-    if (event.persisted) {
-      if (document.visibilityState !== "hidden") {
-        setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
+    if (document.visibilityState !== "hidden") {
+      setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
+      if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
+        try {
+          window.__PI_WEB_REFRESH_PROJECT_STATUS__();
+        } catch (e) {}
       }
+    }
+    if (event.persisted) {
       const currentId = getActiveSessionId() || getCurrentSessionId();
       if (currentId) {
         if (typeof scheduleTerminalSyncCheck === "function") {

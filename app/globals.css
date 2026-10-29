@@ -2072,35 +2072,42 @@ span.token.table {
   .pi-history-load-spinner { animation: none; }
 }
 
-/* Keep the engine and icon actions on one row at every sidebar width. */
+/* The header wraps when its contents no longer fit the sidebar. */
 .pi-native-sidebar-header-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  column-gap: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
   margin-bottom: 10px;
 }
 .pi-native-sidebar-header-toolbar > [data-pi-native-engine-switcher] {
-  width: 100%;
+  flex: 1 1 max-content;
+  max-width: 100%;
   min-width: 0;
 }
 /* The shared desktop selector otherwise keeps its intrinsic button width. */
 /* Agent text and status dot share one rail; model pickers retain default padding. */
 .pi-native-sidebar-header-toolbar [data-pi-native-engine-switcher] .model-selector > button {
+  --model-selector-height: auto;
+  --model-selector-padding-block: 4px;
   --model-selector-padding-start: 0px;
   --model-selector-label-flex: 0 1 auto;
   text-align: left;
   width: 100%;
   min-width: 0;
+  min-height: 32px;
 }
 .pi-native-sidebar-header-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
 }
 
 /* Agent names keep their own typography; only menu mechanics are shared. */

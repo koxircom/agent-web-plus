@@ -1,3 +1,4 @@
+import { CodexBridgeError } from "@/lib/execution-engines/codex-bridge-client";
 import { resolveExecutionEngine } from "@/lib/execution-engine-context";
 import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { NextResponse } from "next/server";
@@ -119,6 +120,7 @@ export async function POST(req: Request) {
       thinkingLevel: state.thinkingLevel,
     });
   } catch (error) {
+    if (error instanceof CodexBridgeError) return NextResponse.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status: error.status });
     if (error instanceof RangeError) return NextResponse.json({ error: error.message, code: "engine_invalid" }, { status: 400 });
     const receipt = createdSessionId && promptRequestId ? getPromptReceipt(createdSessionId, promptRequestId) : null;
     const uncertain = receipt && !["unknown", "rejected"].includes(receipt.status);

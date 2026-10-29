@@ -1,6 +1,6 @@
 {
   "name": "@agegr/pi-web",
-  "version": "1.4.17",
+  "version": "1.4.41",
   "capabilities": {
     "nativeSettingsHost": true,
     "nativeSettingsLayout": true,
@@ -10,7 +10,9 @@
     "nativeAskUser": true,
     "nativeSessionTags": true,
     "nativeUserMessageIdentity": true,
-    "codexExecutionEngine": true
+    "codexExecutionEngine": true,
+    "collaborationResourceLock": true,
+    "odooAddonLanLock": true
   },
   "piWebEdition": "koxir-standalone",
   "standalone": true,
@@ -33,6 +35,7 @@
   },
   "files": [
     "bin",
+    "!bin/**/*.test.py",
     ".next",
     "!.next/cache",
     "!.next/dev",
@@ -49,11 +52,14 @@
     "docs/codex-engine.md",
     "!connectors/**/__pycache__",
     "!connectors/**/*.pyc",
-    "docs/agent-web-compatibility.md"
+    "docs/agent-web-compatibility.md",
+    "docs/collaboration.md",
+    "docs/odoo-lan-protocol.md",
+    "skills/collaboration"
   ],
   "scripts": {
-    "prebuild": "node scripts/check-sdk-baseline.cjs && node enhancements/build-pi-web-enhancements.cjs --build --verify && node scripts/build-session-history-worker.cjs",
-    "prepack": "python3 scripts/check-publication.py --root . && node enhancements/build-pi-web-enhancements.cjs --verify && node scripts/check-client-budget.cjs && node scripts/build-session-history-worker.cjs && node scripts/qa/release-gate.cjs",
+    "prebuild": "node scripts/prepare-dom-feedback-assets.cjs && node scripts/prepare-pdf-assets.cjs && node scripts/check-sdk-baseline.cjs && node enhancements/build-pi-web-enhancements.cjs --build --verify && node scripts/build-session-history-worker.cjs",
+    "prepack": "node scripts/prepare-dom-feedback-assets.cjs --verify && node scripts/prepare-pdf-assets.cjs --verify && python3 scripts/check-publication.py --root . && node enhancements/build-pi-web-enhancements.cjs --verify && node scripts/check-client-budget.cjs && node scripts/build-session-history-worker.cjs && node scripts/qa/release-gate.cjs",
     "postinstall": "node bin/prepare-terminal.js",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
@@ -86,7 +92,9 @@
     "react-dom": "19.3.0",
     "semver": "7.8.5",
     "undici": "8.11.0",
-    "web-push": "3.6.7"
+    "web-push": "3.6.7",
+    "html-to-image": "1.11.13",
+    "@jridgewell/trace-mapping": "0.3.31"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.2",
@@ -117,7 +125,8 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "tailwindcss": "^4.2.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "pdfjs-dist": "6.4.299"
   },
   "browserslist": [
     "chrome 111",

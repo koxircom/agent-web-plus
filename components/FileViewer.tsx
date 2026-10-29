@@ -1,6 +1,8 @@
 "use client";
+import { DomFeedbackPreview } from "./DomFeedbackPreview";
 
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
+import dynamic from "next/dynamic";
 import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-async-light";
 import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
 import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
@@ -32,6 +34,8 @@ import {
   type FileViewerDisplayMode as DisplayMode,
   type FileViewerState,
 } from "@/lib/file-viewer-state";
+
+const PdfViewer = dynamic(() => import("./PdfViewer"), { ssr: false, loading: () => <div role="status" style={{ padding: 16 }}>正在加载 PDF 阅读器…</div> });
 
 export type { FileViewerState } from "@/lib/file-viewer-state";
 
@@ -930,9 +934,8 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, executionEngine, initi
 
   const ext = getFileExt(filePath);
   const isPdf = ext === "pdf";
-  const pageFragment = isPdf && initialPage && initialPage > 0 ? `#page=${initialPage}` : "";
   const previewUrl = isPdf
-    ? `${getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined, executionEngine)}${pageFragment}`
+    ? `${getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined, executionEngine)}`
     : getFileApiUrl(filePath, "preview", sourceSessionId, bust ? { v: bust } : undefined, executionEngine);
 
   useEffect(() => {
@@ -1078,13 +1081,15 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, executionEngine, initi
           <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#f87171", fontSize: 13, textAlign: "center" }}>
             {error}
           </div>
+        ) : isPdf ? (
+          <PdfViewer key={`${executionEngine}:${sourceSessionId}:${filePath}`} url={previewUrl} initialPage={initialPage} />
         ) : (
           <iframe
             key={previewUrl}
             src={previewUrl}
-            sandbox={isPdf ? undefined : "allow-same-origin"}
+            sandbox="allow-same-origin"
             title={t("i18n.previewFile", { file: getFileName(filePath) })}
-            style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "#eef1f5" }}
+            style={{ width: "100%", height: "100%", border: "none", background: "#eef1f5" }}
           />
         )}
       </div>
@@ -1880,6 +1885,7 @@ function TextFileViewer({
       <div
         ref={contentRef}
         className="file-viewer-content"
+        data-dom-feedback-file-path={filePath}
         onScroll={(event) => {
           viewerStateRef.current.scrollTop = event.currentTarget.scrollTop;
           viewerStateRef.current.scrollLeft = event.currentTarget.scrollLeft;
@@ -1889,12 +1895,7 @@ function TextFileViewer({
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
           <DiffView patch={gitDiff.patch!} />
         ) : isHtml && effectiveDisplayMode === "preview" ? (
-          <iframe
-            srcDoc={content}
-            sandbox="allow-scripts"
-            style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
-             title={t("i18n.htmlPreview")}
-          />
+          <DomFeedbackPreview content={content} filePath={filePath} title={t("i18n.htmlPreview")} />
         ) : isMarkdown && effectiveDisplayMode === "preview" ? (
           <div
             className="markdown-body markdown-file-preview"

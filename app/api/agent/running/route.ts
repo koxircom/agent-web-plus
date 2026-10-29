@@ -5,6 +5,7 @@ import {
   getCompletionNotificationSuppressedRpcSessionIds,
   getRunningRpcSessionIds,
   getRpcProjectStatusSnapshot,
+  getRpcWaitingSessionsSnapshot,
 } from "@/lib/rpc-manager";
 
 export const dynamic = "force-dynamic";
@@ -22,12 +23,15 @@ export async function GET(request: Request) {
       throw error;
     }
   }
+  const waitingResult = await getRpcWaitingSessionsSnapshot();
   return NextResponse.json(
     {
       ...getRpcProjectStatusSnapshot(),
       sessionListVersion: getSessionListVersion(),
       runningSessionIds: getRunningRpcSessionIds(),
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
+      collaborationWaitingSessions: waitingResult.sessions,
+      collaborationAuthorityAvailable: waitingResult.authorityAvailable,
     },
     { headers: { "Cache-Control": "no-store" } },
   );

@@ -3,7 +3,7 @@ const {spawnSync}=require('node:child_process');const path=require('node:path');
 const root=path.resolve(__dirname,'../..');
 for(const args of [
   ['--test','public/sw.test.mjs','tests/brand-naming.test.mjs','lib/turn-number.test.mjs'],
-  ['--test','hooks/useAgentSession.test.mjs','lib/execution-engines/codex-first-model.test.mjs','lib/execution-engines/codex-model-runtime.test.mjs'],
+  ['--test','lib/new-session-start.test.mjs','lib/codex-api-errors.test.mjs','hooks/useAgentSession.test.mjs','lib/execution-engines/codex-first-model.test.mjs','lib/execution-engines/codex-model-runtime.test.mjs'],
   ['tests/codex-first-model.pw.mjs'],
   ['tests/codex-first-model.pw.mjs','--full-page'],
   ['tests/turn-number.pw.mjs'],

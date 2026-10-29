@@ -47,9 +47,12 @@ export function userMessageKey(message: Partial<AgentMessage>): string {
 }
 
 interface UserMessageIdentity { requestId?: string; entryId?: string; sessionId?: string; awaitingHistory?: boolean; renderKey?: string }
+export interface LiveAssistantRunIdentity { sessionId: string; leafId: string | null; runId: number }
+interface LiveAssistantEntryIdentity extends LiveAssistantRunIdentity { entryId: string }
 // Identity follows the message object through React updates without entering
 // the certified wire payload or retaining a second transcript/cache.
 const identities = new WeakMap<AgentMessage, UserMessageIdentity>();
+const liveAssistantIdentities = new WeakMap<AgentMessage, LiveAssistantEntryIdentity>();
 export function bindUserMessageIdentity(message: AgentMessage, identity: UserMessageIdentity): void {
   if (message.role !== "user") return;
   const current = identities.get(message) ?? {};
@@ -67,6 +70,36 @@ export function bindUserHistoryIdentities(messages: AgentMessage[], entryIds: st
     entryId: entryIds[index], requestId: requests.get(entryIds[index]),
   }));
 }
+export function bindLiveAssistantMessage(message: AgentMessage, identity: LiveAssistantEntryIdentity): void {
+  if (message.role !== "assistant" || !identity.sessionId || !identity.entryId || !Number.isSafeInteger(identity.runId)) return;
+  liveAssistantIdentities.set(message, identity);
+}
+
+/** Keep only exact assistant entries seen in the active session, leaf, and run until history confirms their IDs. */
+export function preserveLiveAssistantMessages(
+  history: AgentMessage[], current: AgentMessage[], entryIds: string[], run: LiveAssistantRunIdentity | null,
+): AgentMessage[] {
+  if (!run) return history;
+  const confirmed = new Map(entryIds.map((entryId, index) => [entryId, index]));
+  const retained: AgentMessage[] = [];
+  const retainedIds = new Set<string>();
+  for (const message of current) {
+    if (message.role !== "assistant") continue;
+    const identity = liveAssistantIdentities.get(message);
+    if (!identity || identity.sessionId !== run.sessionId || identity.leafId !== run.leafId
+      || identity.runId !== run.runId || retainedIds.has(identity.entryId)) continue;
+    const confirmedIndex = confirmed.get(identity.entryId);
+    if (confirmedIndex !== undefined) {
+      const saved = history[confirmedIndex];
+      if (saved?.role === "assistant") bindLiveAssistantMessage(saved, identity);
+      continue;
+    }
+    retained.push(message);
+    retainedIds.add(identity.entryId);
+  }
+  return retained.length ? [...history, ...retained] : history;
+}
+
 function sameIdentity(a: AgentMessage, b: AgentMessage): boolean {
   const x = identities.get(a), y = identities.get(b);
   return Boolean(x && y && ((x.entryId && x.entryId === y.entryId) || (x.requestId && x.requestId === y.requestId)));
@@ -96,7 +129,12 @@ export function reconcileDeliveredUserEntry(messages: AgentMessage[], delivered:
     : !pending.requestId && userMessageKey(delivered) === userMessageKey(pending.message));
   const echo = ownsEcho ? messages.indexOf(pending.message) : -1;
   const existing = messages.findIndex((message, index) => index !== echo && sameIdentity(message, delivered));
-  if (existing !== -1) return echo === -1 ? messages : messages.filter((_, index) => index !== echo);
+  if (existing !== -1) {
+    // A native row can precede its exact request identity. Enrich that same
+    // row while retiring only its own optimistic preview.
+    if (identity) bindUserMessageIdentity(messages[existing], { requestId: identity.requestId, entryId: identity.entryId });
+    return echo === -1 ? messages : messages.filter((_, index) => index !== echo);
+  }
   if (echo !== -1) bindUserMessageIdentity(delivered, { renderKey: userMessageRenderKey(pending!.message) });
   if (echo !== -1) return messages.map((message, index) => index === echo ? delivered : message);
   return [...messages, delivered];

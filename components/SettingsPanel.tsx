@@ -16,6 +16,7 @@ import {
 import dynamic from "next/dynamic";
 import { useI18n } from "@/hooks/useI18n";
 import { useTheme } from "@/hooks/useTheme";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { THEME_OPTIONS } from "@/lib/theme";
 import { ThemeIcon } from "./ThemeIcon";
 import {
@@ -73,7 +74,7 @@ function SettingsSectionLoading({ section, error, retry }: {
   retry?: () => void;
 }) {
   const { t } = useI18n();
-  const labels = { models: t("common.models"), skills: t("common.skills"), agents: t("common.agents"), plugins: t("common.plugins"), mcp: t("settings.mcp"), "execution-engine": "执行引擎", learning: "自动复盘" };
+  const labels = { models: t("common.models"), skills: t("common.skills"), agents: t("common.agents"), plugins: t("common.plugins"), mcp: t("settings.mcp"), "execution-engine": "执行引擎", learning: "自动复盘", collaboration: "协作接力" };
   return (
     <div className="settings-section-loading" role={error ? "alert" : "status"} aria-busy={!error}>
       <h2>{labels[section as keyof typeof labels]}</h2>
@@ -95,14 +96,16 @@ const loadMcpConfig = () => import("./McpConfig").then((module) => module.McpCon
 const loadLearningSettings = () => import("./LearningSettings").then((module) => module.LearningSettings);
 const LearningSettings = dynamic(loadLearningSettings, { loading: (props) => <SettingsSectionLoading section="learning" {...props} /> });
 const loadExecutionEngineSettings = () => import("./ExecutionEngineSettings").then((module) => module.ExecutionEngineSettings);
+const loadCollaborationSettings = () => import("./CollaborationSettings").then((module) => module.CollaborationSettings);
 const ModelsConfig = dynamic(loadModelsConfig, { loading: (props) => <SettingsSectionLoading section="models" {...props} /> });
 const SkillsConfig = dynamic(loadSkillsConfig, { loading: (props) => <SettingsSectionLoading section="skills" {...props} /> });
 const AgentsConfig = dynamic(loadAgentsConfig, { loading: (props) => <SettingsSectionLoading section="agents" {...props} /> });
 const PluginsConfig = dynamic(loadPluginsConfig, { loading: (props) => <SettingsSectionLoading section="plugins" {...props} /> });
 const McpConfig = dynamic(loadMcpConfig, { loading: (props) => <SettingsSectionLoading section="mcp" {...props} /> });
 const ExecutionEngineSettings = dynamic(loadExecutionEngineSettings, { loading: (props) => <SettingsSectionLoading section="execution-engine" {...props} /> });
+const CollaborationSettings = dynamic(loadCollaborationSettings, { loading: (props) => <SettingsSectionLoading section="collaboration" {...props} /> });
 
-const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig, learning: loadLearningSettings, "execution-engine": loadExecutionEngineSettings };
+const sectionLoaders = { models: loadModelsConfig, skills: loadSkillsConfig, agents: loadAgentsConfig, plugins: loadPluginsConfig, mcp: loadMcpConfig, learning: loadLearningSettings, "execution-engine": loadExecutionEngineSettings, collaboration: loadCollaborationSettings };
 export function preloadSettingsSection(section: SettingsSection) {
   const loader = sectionLoaders[section as keyof typeof sectionLoaders];
   // Warm only the hovered/focused code chunk; no component/data request is mounted.
@@ -147,6 +150,7 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   if (section === "plugins") return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
   if (section === "mcp") return <svg {...common}><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" /></svg>;
   if (section === "execution-engine") return <svg {...common}><rect x="3" y="4" width="7" height="6" rx="1.5" /><rect x="14" y="14" width="7" height="6" rx="1.5" /><path d="M10 7h3a2 2 0 0 1 2 2v5M14 17h-3a2 2 0 0 1-2-2v-5" /></svg>;
+  if (section === "collaboration") return <svg {...common}><path d="M17 3v4a2 2 0 0 1-2 2H5M9 5 5 9l4 4M7 21v-4a2 2 0 0 1 2-2h10M15 19l4-4-4-4" /></svg>;
   if (section === "enhancements") return <svg {...common}><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.5-6.5 2.5-2.5m-15 15 2.5-2.5m0-10-2.5-2.5m15 15-2.5-2.5" /><circle cx="12" cy="12" r="4" /></svg>;
   if (section === "notifications") return <svg {...common}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>;
   if (section === "archived") return <svg {...common}><rect width="20" height="5" x="2" y="3" rx="1" /><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" /><path d="M10 12h4" /></svg>;
@@ -170,7 +174,7 @@ const SETTINGS_NAV_GROUPS: readonly NavGroupDef[] = [
   {
     id: "agent",
     titleKey: "settings.groupAgents",
-    sectionIds: ["models", "skills", "agents", "plugins", "mcp", "execution-engine", "learning", "enhancements"],
+    sectionIds: ["models", "skills", "agents", "plugins", "mcp", "execution-engine", "collaboration", "learning", "enhancements"],
   },
   {
     id: "data",
@@ -649,6 +653,10 @@ export function SettingsPanel({
 
   // 1. 同步初始布局状态（0ms 首次 client render 取得，无跳变）
   const [layout, setLayout] = useState<SettingsLayoutState>(() => readInitialSettingsLayout());
+  const isMobileSettings = useIsMobile();
+  const [mobileSidebarExpanded, setMobileSidebarExpanded] = useState(false);
+  // Phone navigation starts compact without overwriting desktop preferences.
+  const sidebarCollapsed = isMobileSettings ? !mobileSidebarExpanded : layout.isCollapsed;
   const [isResizing, setIsResizing] = useState(false);
 
   // 拖动状态 ref：记录开始位置和初始尺寸，供取消时回滚
@@ -684,6 +692,7 @@ export function SettingsPanel({
       { id: "plugins", label: t("common.plugins"), requiresProject: true },
       { id: "mcp", label: t("settings.mcp"), requiresProject: false },
       { id: "execution-engine", label: "执行引擎", requiresProject: false },
+      { id: "collaboration", label: "协作接力", requiresProject: false },
       { id: "learning", label: "自动复盘", requiresProject: false },
     ],
     [t],
@@ -741,6 +750,7 @@ export function SettingsPanel({
 
       setMountedSections((current) => new Set(current).add(nextSection));
       setSection(nextSection);
+      setMobileSidebarExpanded(false);
       setLastSettingsSection(nextSection);
       return true;
     },
@@ -792,16 +802,20 @@ export function SettingsPanel({
 
   // 7. 折叠切换（纯 CSS 过渡，无多余状态）
   const toggleCollapse = useCallback(() => {
+    if (isMobileSettings) {
+      setMobileSidebarExpanded((expanded) => !expanded);
+      return;
+    }
     setLayout((prev) => {
       const nextCollapsed = !prev.isCollapsed;
       saveSidebarCollapsed(nextCollapsed);
       return { ...prev, isCollapsed: nextCollapsed };
     });
-  }, []);
+  }, [isMobileSettings]);
 
   // 8. 拖动 Pointer Capture 处理
   const handleSidebarPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || !e.isPrimary || layout.isCollapsed) return;
+    if (e.button !== 0 || !e.isPrimary || sidebarCollapsed) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {}
@@ -818,13 +832,13 @@ export function SettingsPanel({
   };
 
   const handleSidebarDoubleClick = () => {
-    if (layout.isCollapsed) return;
+    if (sidebarCollapsed) return;
     setLayout((prev) => ({ ...prev, sidebarWidth: SETTINGS_SIDEBAR_WIDTH_DEFAULT }));
     saveSidebarWidth(SETTINGS_SIDEBAR_WIDTH_DEFAULT);
   };
 
   const handleSidebarKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (layout.isCollapsed) return;
+    if (sidebarCollapsed) return;
     if (e.key === "ArrowLeft") {
       e.preventDefault();
       const next = clampSidebarWidth(layout.sidebarWidth - 16);
@@ -1007,14 +1021,14 @@ export function SettingsPanel({
   const availableSectionIds = useMemo(() => sections.map((s) => s.id), [sections]);
 
   const dialogStyle: CSSProperties = {
-    "--settings-sidebar-width": `${layout.isCollapsed ? SETTINGS_SIDEBAR_WIDTH_COLLAPSED : layout.sidebarWidth}px`,
+    "--settings-sidebar-width": `${sidebarCollapsed ? SETTINGS_SIDEBAR_WIDTH_COLLAPSED : layout.sidebarWidth}px`,
     "--settings-dialog-width": `${layout.dialogSize.width}px`,
     "--settings-dialog-height": `${layout.dialogSize.height}px`,
   } as CSSProperties;
 
   const surfaceClassName = [
     "settings-dialog-surface",
-    layout.isCollapsed ? "is-collapsed" : "",
+    sidebarCollapsed ? "is-collapsed" : "",
     isResizing ? "is-resizing" : "",
   ]
     .filter(Boolean)
@@ -1041,9 +1055,9 @@ export function SettingsPanel({
               type="button"
               className="settings-sidebar-collapse-btn"
               onClick={toggleCollapse}
-              title={layout.isCollapsed ? "展开标签栏" : "折叠标签栏 (只显示图标)"}
-              aria-label={layout.isCollapsed ? "展开标签栏" : "折叠标签栏"}
-              aria-expanded={!layout.isCollapsed}
+              title={sidebarCollapsed ? "展开标签栏" : "折叠标签栏 (只显示图标)"}
+              aria-label={sidebarCollapsed ? "展开标签栏" : "折叠标签栏"}
+              aria-expanded={!sidebarCollapsed}
             >
               <svg
                 width="17"
@@ -1082,6 +1096,7 @@ export function SettingsPanel({
                           title={disabled ? t("settings.projectRequired") : isSettingsPluginEnabled("settings-tab-shortcuts") ? `${item.label}（双击添加／取消快捷入口）` : item.label}
                           aria-current={selected ? "page" : undefined}
                           data-section-id={item.id}
+                          aria-label={item.label}
                           data-pi-enh-tab={legacyTabAttr}
                           onClick={() => activateSection(item.id)}
                           onDoubleClick={() => settingsExtensionRegistry.invokeTabAction(item.id)}
@@ -1168,6 +1183,7 @@ export function SettingsPanel({
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
           {sectionHost("learning", <LearningSettings cwd={cwd} />)}
           {sectionHost("execution-engine", <ExecutionEngineSettings />)}
+          {sectionHost("collaboration", <CollaborationSettings />)}
 
           {/* 5 个 legacy extension section host */}
           {enabledExtensions.map((ext) =>

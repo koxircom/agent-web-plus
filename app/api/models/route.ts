@@ -1,3 +1,4 @@
+import { CodexBridgeError } from "@/lib/execution-engines/codex-bridge-client";
 import { resolveExecutionEngine } from "@/lib/execution-engine-context";
 import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
 import { stat } from "fs/promises";
@@ -115,7 +116,12 @@ export async function GET(req: Request) {
   try { engine = resolveExecutionEngine(query.get("engine"), (await readExecutionEngineSettings()).defaultEngine, sessionId); }
   catch (error) { return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 }); }
   if (engine === "codex") {
-    return Response.json(await (await import("@/lib/execution-engines/codex-engine")).codexModels(query.get("cwd") || undefined));
+    try {
+      return Response.json(await (await import("@/lib/execution-engines/codex-engine")).codexModels(query.get("cwd") || undefined));
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : "暂时无法获取 Codex 模型，请稍后重试。" },
+        { status: error instanceof CodexBridgeError ? error.status : 503 });
+    }
   }
   const requestedCwd = new URL(req.url).searchParams.get("cwd") || process.cwd();
   const cwd = resolve(requestedCwd);

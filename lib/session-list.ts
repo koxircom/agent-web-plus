@@ -5,7 +5,7 @@ import { getCompletionNotificationSuppressedRpcSessionIds, getRpcSessionInfos, g
 /** One reader for the initial page and subsequent sidebar refreshes. */
 export async function readSessionList(options: { summary?: boolean; force?: boolean; engine?: "pi" | "codex" } = {}) {
   if ((options.engine ?? (await readExecutionEngineSettings()).defaultEngine) === "codex") {
-    return (await import("./execution-engines/codex-engine")).listCodexSessions();
+    return (await import("./execution-engines/codex-engine")).listCodexSessions({ force: options.force });
   }
   const persisted = options.summary ? listSessionSummaries() : listAllSessions({ force: options.force });
   const sessionListVersion = getSessionListVersion();

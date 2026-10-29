@@ -628,6 +628,7 @@ function chatInputCallback(name, context) {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
   }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
     allowEmptyContinue: false,
+    directSubmissionPendingRef: {current: false},
     attachedImagesRef: {current: context.attachedImages ?? []},
     valueRef: {current: context.value},
     queuedSubmissionPendingRef: {current: false}, queuedPreviewVisible:false,
@@ -1165,6 +1166,9 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
       queuedSubmissionPendingRef: { current: false }, queuedPreviewVisible:false,
       setQueuedSubmissionPending() {},
       value: "preserve this text and 11 images",
+      valueRef: {current: "preserve this text and 11 images"},
+      draftKeyRef: {current: "fixture"},
+      directSubmissionPendingRef: {current: false},
       attachedImages: attachedEleven,
       attachedImagesRef: { current: attachedEleven },
       MAX_ATTACHED_IMAGES,
@@ -1187,6 +1191,9 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
       queuedSubmissionPendingRef: { current: false }, queuedPreviewVisible:false,
       setQueuedSubmissionPending() {},
       value: "preserve this text and 11 images",
+      valueRef: {current: "preserve this text and 11 images"},
+      draftKeyRef: {current: "fixture"},
+      directSubmissionPendingRef: {current: false},
       attachedImages: attachedEleven,
       attachedImagesRef: { current: attachedEleven },
       MAX_ATTACHED_IMAGES,
@@ -1223,6 +1230,9 @@ test("over-limit draft (>10 images) renders all previews and warning banner, blo
       compilerOptions: { target: ts.ScriptTarget.ES2020 },
     }).outputText).runInNewContext({lastSubmissionAtRef:{current:-Infinity},performance,
       value: "preserve this text and 11 images",
+      valueRef: {current: "preserve this text and 11 images"},
+      draftKeyRef: {current: "fixture"},
+      directSubmissionPendingRef: {current: false},
       attachedImages: attachedTen,
       attachedImagesRef: { current: attachedTen },
       MAX_ATTACHED_IMAGES,
@@ -1317,7 +1327,7 @@ test("goal and plan controls share neutral mode icons and expose an accessible e
   const styles = readFileSync(new URL("../app/composer.css", import.meta.url), "utf8");
   assert.match(input, /switchMode\("normal", snapshot\.sessionId \?\? undefined\)/);
   assert.match(input, /aria-label=\{`退出\$\{modeLabel\}模式`\}/);
-  assert.match(input, /title=\{`退出\$\{modeLabel\}模式`\}/);
+  assert.match(input, /title=\{modePending \? "尚未启用：[^"\n]+" : `退出\$\{modeLabel\}模式`\}/);
   assert.match(module, /SVG_GOAL_ICON/);
   assert.match(module, /SVG_PLAN_ICON/);
   assert.doesNotMatch(module, /composer-mode-icons\.svg#(?:goal|plan)/);
@@ -1395,4 +1405,13 @@ test('explicit rejected queue callback does not commit the quote payload',async(
  let commits=0,preview;const window={__PI_ENH_PREPARE_COMPOSER_SUBMISSION__:()=>({text:'引用正文',commit(){commits++;}})};
  const run=chatInputCallback('sendQueued',{window,value:'',attachedImages:[],queuedPreviewVisible:false,onFollowUp:async()=>false,onAudioUnlock(){},onBuiltinCommand:null,onPromptWithStreamingBehavior:undefined,onSteer:undefined,clearInput(){},setQueuedSubmissionPreview:v=>preview=typeof v==='function'?v(preview):v});
  await run('followup');assert.equal(commits,0);assert.equal(preview,null);
+});
+
+
+test('direct submit claims one intent before await and ignores a stale click after clear',async()=>{
+ let release;let held=new Promise(resolve=>release=resolve);const values={current:'建议内容'},images={current:[]},calls=[];
+ const send=chatInputCallback('handleSend',{valueRef:values,attachedImagesRef:images,isStreaming:false,runBuiltinCommand:async()=>{await held;return false},onAudioUnlock(){},clearInput(){values.current=''},onSend:text=>calls.push(text)});
+ const first=send();await send();assert.equal(calls.length,0);release();await first;assert.deepEqual(calls,['建议内容']);
+ await send();assert.deepEqual(calls,['建议内容'],'stale callbacks read the consumed ref, not the old render closure');
+ values.current='建议内容';held=Promise.resolve();await send();assert.deepEqual(calls,['建议内容','建议内容'],'a separately entered same-text message is an independent intent');
 });

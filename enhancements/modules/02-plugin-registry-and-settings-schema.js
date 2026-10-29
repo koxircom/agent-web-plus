@@ -116,6 +116,13 @@
       defaultEnabled: true,
     },
     {
+      id: "dom-feedback",
+      name: "界面与预览标注",
+      desc: "点击元素后添加备注，按需附局部截图；电脑默认启用，手机可手动开启。",
+      category: "交互增强",
+      defaultEnabled: true,
+    },
+    {
       id: "quick-quote",
       name: "划选引用与注释",
       desc: "划选对话文本后可一键引用，或保存多条带可选评论的引用注释；输入框上方实时显示 x 条注释，并在发送时作为结构化上下文附带给 Agent。",
@@ -586,7 +593,7 @@
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
     { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
-    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
+    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote", "dom-feedback"] },
     { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer"] },
     { id: "composer-workflow", name: "输入与附件增强", desc: "管理编辑器快捷操作、草稿、附件和移动端输入保护。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["stop-fast-response", "quick-action-buttons", "empty-send-continue", "composer-draft-cache", "composer-file-paste", "composer-image-zoom", "mobile-enter-newline", "composer-clean-placeholder", "codex-composer-layout", "composer-model-reasoning-pill", "composer-queue-panel", "running-model-switch", "composer-markdown-format", "composer-format-toggle", "composer-compact-button", "composer-tool-preset", "composer-modes", "at-mention-plugins"] },
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
@@ -708,7 +715,7 @@
     }
     for (const plugin of ENHANCEMENT_PLUGINS) {
       const legacyValue = includeLegacyPreferences ? readEnhancementStorage(`pi-enh-plugin-${plugin.id}`) : null;
-      config.features[plugin.id] = { enabled: legacyValue === null ? plugin.defaultEnabled : legacyValue === "true" };
+      config.features[plugin.id] = { enabled: legacyValue === null ? defaultFeatureEnabled(plugin) : legacyValue === "true" };
     }
     for (const [featureId, definitions] of Object.entries(ENHANCEMENT_PLUGIN_SETTINGS)) {
       config.settings[featureId] = {};
@@ -902,7 +909,7 @@
     Object.assign(getEnhancementConfig(), defaults);
     writeEnhancementConfig();
     for (const plugin of ENHANCEMENT_PLUGINS) {
-      try { localStorage.setItem(`pi-enh-plugin-${plugin.id}`, String(plugin.defaultEnabled)); } catch (e) {}
+      try { localStorage.setItem(`pi-enh-plugin-${plugin.id}`, String(defaultFeatureEnabled(plugin))); } catch (e) {}
       const next = isPluginEnabled(plugin.id);
       if (next !== previous.get(plugin.id)) onPluginStateChanged(plugin.id, next);
     }
@@ -913,13 +920,18 @@
     syncEnhancementPanelControls();
   }
 
+  function defaultFeatureEnabled(plugin) {
+    if (plugin.id === "dom-feedback" && window.matchMedia?.("(pointer: coarse), (hover: none)").matches) return false;
+    return plugin.defaultEnabled;
+  }
+
   function isPluginEnabled(id) {
     const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === id);
     if (!plugin) return true;
     const module = getModuleForPlugin(id);
     if (module && !isModuleEnabled(module.id)) return false;
     const enabled = getEnhancementConfig().features[id]?.enabled;
-    return typeof enabled === "boolean" ? enabled : plugin.defaultEnabled;
+    return typeof enabled === "boolean" ? enabled : defaultFeatureEnabled(plugin);
   }
 
   function setPluginEnabled(id, enabled) {
@@ -1058,11 +1070,15 @@
     } else if (id === "turn-usage-total") {
       if (!enabled) hideUsageTooltip();
       syncAllUsageBadges();
+    } else if (id === "dom-feedback") {
+      syncAnnotationComposer();
+      window.dispatchEvent(new Event("pi-dom-feedback-preferences-change"));
     } else if (id === "quick-quote") {
       if (!enabled && typeof hideQuoteBar === "function") {
         if (composerSubmissionInFlight?.snapshot) cancelComposerNativeSubmission();
         hideQuoteBar();
         removeAnnotationUi();
+        if (isPluginEnabled("dom-feedback")) syncAnnotationComposer();
       } else if (enabled && typeof syncAnnotationComposer === "function") {
         syncAnnotationComposer();
       }
@@ -3718,7 +3734,7 @@
     }
   }
 
-  function openSessionTagsPopover(sessionId, triggerItem, event, triggerRect) {
+  function openSessionTagsPopover(sessionId, triggerItem, event, triggerRect, extraSessionIds) {
     if (activeSessionTagsPopover && activeSessionTagsPopover.getAttribute("data-session-id") === sessionId) {
       if (triggerItem) {
         activeSessionTagsTriggerItem = triggerItem;
@@ -3739,6 +3755,10 @@
     if (triggerItem) triggerItem.classList.add("is-submenu-open");
 
     let allTags = readSessionTagsDefinitions();
+    const targetSessionIds = (Array.isArray(extraSessionIds) && extraSessionIds.length > 0)
+      ? extraSessionIds
+      : [sessionId];
+    const isMulti = targetSessionIds.length > 1;
     let currentTagIds = new Set(getSessionTagIds(sessionId));
     let recommendedColorItem = getRecommendedTagColor(allTags);
 
@@ -3896,12 +3916,24 @@
       if (optionItem) {
         const tagId = optionItem.getAttribute("data-tag-id");
         if (tagId) {
-          const wasSelected = currentTagIds.has(tagId);
-          toggleSessionTag(sessionId, tagId);
-          currentTagIds = new Set(getSessionTagIds(sessionId));
           const targetTag = allTags.find((t) => t.id === tagId);
           const tagName = targetTag ? targetTag.name : "标签";
-          showToast(wasSelected ? `已移除会话「${tagName}」标签` : `已为会话打上「${tagName}」标签`);
+          if (isMulti) {
+            const anyHas = targetSessionIds.some((sid) => getSessionTagIds(sid).includes(tagId));
+            const shouldAdd = !anyHas;
+            for (const sid of targetSessionIds) {
+              const has = getSessionTagIds(sid).includes(tagId);
+              if (has !== shouldAdd) {
+                toggleSessionTag(sid, tagId);
+              }
+            }
+            showToast(shouldAdd ? `已为 ${targetSessionIds.length} 个会话打上「${tagName}」标签` : `已为 ${targetSessionIds.length} 个会话移除「${tagName}」标签`);
+          } else {
+            const wasSelected = currentTagIds.has(tagId);
+            toggleSessionTag(sessionId, tagId);
+            currentTagIds = new Set(getSessionTagIds(sessionId));
+            showToast(wasSelected ? `已移除会话「${tagName}」标签` : `已为会话打上「${tagName}」标签`);
+          }
           closeSessionTagsPopover(true);
         }
       }
@@ -3915,9 +3947,17 @@
         closeSessionTagsPopover(true);
         triggerShortcutNavigation("tags");
       } else if (action === "clear-tags") {
-        clearSessionTags(sessionId);
-        currentTagIds.clear();
-        showToast("已清除会话所有标签");
+        if (isMulti) {
+          for (const sid of targetSessionIds) {
+            clearSessionTags(sid);
+          }
+          currentTagIds.clear();
+          showToast(`已清除 ${targetSessionIds.length} 个会话的所有标签`);
+        } else {
+          clearSessionTags(sessionId);
+          currentTagIds.clear();
+          showToast("已清除会话所有标签");
+        }
         closeSessionTagsPopover(true);
       }
     });
@@ -4516,6 +4556,7 @@
 
   function removeSessionOdooAddonsAll() {
     for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-odoo-addons='true']")) {
+      if (row.getAttribute("data-pi-native-session-odoo-addons") === "true") continue;
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
       row.removeAttribute("data-pi-enh-has-odoo-addons");
       syncSessionOdooAddonsHeight(row, row.dataset.piEnhSessionId);
@@ -4523,7 +4564,7 @@
   }
 
   function syncSessionOdooAddonsRow(row, sessionId) {
-    if (!row || !sessionId) return;
+    if (!row || !sessionId || row.getAttribute("data-pi-native-session-odoo-addons") === "true") return;
 
     if (!isPluginEnabled("session-odoo-addons") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
@@ -5750,7 +5791,8 @@
       if (archivedEntries.some((e) => e.id === sessionId)) {
         writeStoredArchivedEntries(archivedEntries.filter((e) => e.id !== sessionId));
       }
-      void restoreArchivedSession(sessionId).catch(() => {});
+      // A confirmed Codex deletion must never issue another native mutation.
+      if (!sessionId.startsWith("codex:")) void restoreArchivedSession(sessionId).catch(() => {});
       try { clearSessionTags(sessionId); } catch (e) {}
       try {
         const uIds = readUnreadSessionIds();
@@ -6446,28 +6488,11 @@
   async function toggleSessionPin(sessionId) {
     if (!sessionId) return false;
     if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
-      const isPinned = isSessionPinned(sessionId);
-      const targetAction = isPinned ? "unpin" : "pin";
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: targetAction }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "置顶操作未确认，会话状态已保留");
+      const nativeFn = (typeof window !== "undefined") ? window.__PI_ENH_TOGGLE_NATIVE_SESSION_PIN__ : null;
+      if (typeof nativeFn === "function") {
+        return await nativeFn(sessionId);
       }
-      const data = await res.json().catch(() => ({}));
-      if (data?.ok !== true || !data.session || data.session.id !== sessionId || data.session.pinned !== (targetAction === "pin")) {
-        throw new Error(data?.error || "置顶操作未获得原生确认，会话状态已保留");
-      }
-      const nextPinned = Boolean(data.session.pinned);
-      const entry = knownSessionsMap.get(sessionId);
-      if (entry) entry.pinned = nextPinned;
-      requestSessionListRefresh(false, true);
-      syncSessionOdooAddonsLayout();
-      syncSessionSectionHeaders();
-      return nextPinned;
+      throw new Error("原生置顶服务不可用");
     }
     const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
     const isPinned = pinnedIds.has(sessionId);

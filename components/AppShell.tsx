@@ -11,6 +11,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { CHAT_SCROLL_STORAGE_KEY, MAX_SAVED_CHAT_POSITIONS, readChatScrollPositions, serializeChatScrollPositions, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
+import { DomFeedbackControl } from "./DomFeedbackControl";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel } from "./SettingsPanel";
@@ -193,8 +194,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     () => initialNavigation.requestedCwd ? "validating" : "idle",
   );
   const [initialCwdError, setInitialCwdError] = useState<string | null>(null);
+  const [initialCwdRetryGeneration, setInitialCwdRetryGeneration] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
+  const [sessionRefreshKey, setSessionRefreshKey] = useState(0);
   const [sessionScrollPositions] = useState(() => {
     try { return readChatScrollPositions(typeof window === "undefined" ? null : sessionStorage.getItem(CHAT_SCROLL_STORAGE_KEY)); }
     catch { return new Map<string, ChatScrollPosition>(); }
@@ -707,9 +710,37 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     if (newSessionCwd && executionEngineReady) setTabOpenNewSession(newSessionCwd, undefined, executionEngine);
   }, [executionEngine, executionEngineReady, newSessionCwd, selectedSession]);
 
+  const handleRetryInitialCwd = useCallback(() => {
+    if (initialCwdStatus !== "error") return;
+    const requestedCwd = initialNavigation.requestedCwd;
+    if (!requestedCwd || !executionEngineReady) return;
+    if (selectedSessionIdRef.current || selectedSession) return;
+    if (newSessionCwdRef.current !== null && newSessionCwdRef.current !== requestedCwd) return;
+    const engine = executionEngineRef.current;
+    if (initialCwdEngineRef.current !== engine) return;
+
+    setInitialCwdRetryGeneration((prev) => prev + 1);
+  }, [executionEngineReady, initialCwdStatus, initialNavigation.requestedCwd, selectedSession]);
+
+  useEffect(() => {
+    if (initialCwdStatus !== "error") return;
+    const retryOnResume = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      handleRetryInitialCwd();
+    };
+    window.addEventListener("online", retryOnResume);
+    document.addEventListener("visibilitychange", retryOnResume);
+    return () => {
+      window.removeEventListener("online", retryOnResume);
+      document.removeEventListener("visibilitychange", retryOnResume);
+    };
+  }, [handleRetryInitialCwd, initialCwdStatus]);
+
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
     if (!requestedCwd || !executionEngineReady) return;
+    if (selectedSessionIdRef.current || selectedSession) return;
+    if (newSessionCwdRef.current !== null && newSessionCwdRef.current !== requestedCwd) return;
     // A late validation must not replace a newer project, Agent or session.
     const intent = navigationIntentRef.current;
     const engine = executionEngineRef.current;
@@ -731,7 +762,16 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
           throw new Error(data.error ?? `HTTP ${response.status}`);
         }
 
-        if (controller.signal.aborted || navigationIntentRef.current !== intent || executionEngineRef.current !== engine) return;
+        if (
+          controller.signal.aborted
+          || navigationIntentRef.current !== intent
+          || executionEngineRef.current !== engine
+          || initialNavigation.requestedCwd !== requestedCwd
+          || selectedSessionIdRef.current !== null
+          || selectedSession !== null
+        ) {
+          return;
+        }
 
         // The sidebar will notify us when it adopts this cwd. Avoid remounting
         // the just-created empty chat during that initial synchronization.
@@ -744,13 +784,22 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         replaceSessionUrl(newSessionUrl(data.cwd, engine));
       })
       .catch((error: unknown) => {
-        if (controller.signal.aborted || navigationIntentRef.current !== intent || executionEngineRef.current !== engine) return;
+        if (
+          controller.signal.aborted
+          || navigationIntentRef.current !== intent
+          || executionEngineRef.current !== engine
+          || initialNavigation.requestedCwd !== requestedCwd
+          || selectedSessionIdRef.current !== null
+          || selectedSession !== null
+        ) {
+          return;
+        }
         setInitialCwdError(error instanceof Error ? error.message : String(error));
         setInitialCwdStatus("error");
       });
 
     return () => controller.abort();
-  }, [initialNavigation, executionEngineReady]);
+  }, [executionEngineReady, initialCwdRetryGeneration, initialNavigation, selectedSession]);
 
   // Restore the workspace's last open session after switching to it. Called
   // from handleCwdChange once the outgoing context has been reset. The session
@@ -905,13 +954,15 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     }
     activeProjectKeyRef.current = projectKey;
     // Re-clicking the already-open session must not remount the chat and
-    // re-run the full load/positioning cycle. Only skip when the effective
+    // re-run the positioning cycle. Revalidate history in its current owner.
+    // Only skip remounting when the effective
     // cwd context already matches — otherwise a pending cwd move still needs
     // the full re-select flow.
     if (!isRestore && selectedSession) {
       const sameProject =
         workspaceKeyOf(selectedSession) === workspaceKeyOf(session);
       if (selectedSession.id === session.id && sameProject) {
+        setSessionRefreshKey((key) => key + 1);
         if (isMobile) setSidebarOpen(false);
         return;
       }
@@ -2255,6 +2306,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               </svg>
             )}
           </button>
+          {!rightPanelOpen && <DomFeedbackControl key={`${activeFileTabId ?? "chat"}:${activeFileTab?.viewerRevision ?? 0}`} sessionId={selectedSession?.id} engine={executionEngine} onImages={files => chatInputRef.current?.addImages(files)} />}
           {isMobile && (
             <div
               ref={mobileToolbarRef}
@@ -2632,6 +2684,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
           {showChat ? (
             <ChatWindow
               key={sessionKey}
+              sessionRefreshKey={sessionRefreshKey}
               session={selectedSession}
               executionEngine={executionEngineReady ? activeExecutionEngine : "codex"}
               mobileNavigationOpen={mobileNavigationOpen}
@@ -2689,6 +2742,24 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
                 {initialNavigation.requestedCwd}
               </div>
               <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
+              <button
+                type="button"
+                onClick={handleRetryInitialCwd}
+                style={{
+                  marginTop: 8,
+                  padding: "6px 16px",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-panel)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  transition: "background 0.15s, border-color 0.15s",
+                }}
+              >
+                {locale === "zh-TW" ? "重試" : locale.startsWith("zh") ? "重试" : "Retry"}
+              </button>
             </div>
           ) : showPlaceholder ? (
             activeCwd ? (
@@ -2760,6 +2831,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               onCloseTab={handleCloseFileTab}
             />
           </div>
+          {rightPanelOpen && <DomFeedbackControl key={`${activeFileTabId ?? "chat"}:${activeFileTab?.viewerRevision ?? 0}`} sessionId={selectedSession?.id} engine={executionEngine} onImages={files => chatInputRef.current?.addImages(files)} />}
           <button
             type="button"
             className="file-panel-expand-button"
@@ -2798,7 +2870,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         </div>
 
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div data-dom-feedback-file-path={activeFileTab?.filePath} style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
           {activeFileTab?.filePath ? (
             <FileViewer
               key={`${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}

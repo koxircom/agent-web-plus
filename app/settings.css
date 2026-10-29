@@ -2931,3 +2931,345 @@
     }
   }
 }
+
+/* 协作接力 (Collaboration Relay) 面板样式 */
+.settings-collaboration-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-sizing: border-box;
+}
+
+.settings-collaboration-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-collaboration-title {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.settings-collaboration-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-actions {
+  flex-shrink: 0;
+}
+
+.settings-collaboration-banner {
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-collaboration-banner-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-collaboration-pill {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(120, 120, 120, 0.12);
+  color: var(--text-dim);
+  font-weight: normal;
+}
+
+.settings-collaboration-banner-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-collaboration-banner-list li {
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-alert {
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(220, 38, 38, 0.08);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  color: var(--text);
+}
+
+.settings-collaboration-alert-title {
+  font-weight: 600;
+  color: #dc2626;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.settings-collaboration-alert-message {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-loading {
+  padding: 16px 0;
+}
+
+.settings-collaboration-loading-text {
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.settings-collaboration-empty {
+  padding: 32px 16px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.settings-collaboration-empty-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.15);
+  color: #16a34a;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.settings-collaboration-empty-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.settings-collaboration-empty-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.settings-collaboration-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-collaboration-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-collaboration-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-collaboration-card-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-collaboration-resource-name {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.settings-collaboration-resource-key {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: rgba(120, 120, 120, 0.12);
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.settings-collaboration-status-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.settings-collaboration-status-badge.is-held {
+  background: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+}
+
+.settings-collaboration-status-badge.is-handoff {
+  background: rgba(234, 179, 8, 0.15);
+  color: #ca8a04;
+}
+
+.settings-collaboration-status-badge.is-unknown {
+  background: rgba(239, 68, 68, 0.15);
+  color: #dc2626;
+}
+
+.settings-collaboration-owner-box {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.settings-collaboration-field-label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.settings-collaboration-field-value {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-field-value.is-owner {
+  font-weight: 600;
+}
+
+.settings-collaboration-queue-section {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.settings-collaboration-queue-head {
+  margin-bottom: 8px;
+}
+
+.settings-collaboration-queue-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.settings-collaboration-queue-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.settings-collaboration-queue-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-collaboration-queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.settings-collaboration-queue-order {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 4px;
+  background: rgba(120, 120, 120, 0.12);
+  border-radius: 3px;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+.settings-collaboration-queue-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-collaboration-queue-session,
+.settings-collaboration-queue-reason,
+.settings-collaboration-queue-task {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-queue-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.settings-collaboration-queue-val {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.settings-collaboration-footer-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 2px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .settings-collaboration-card-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+}
+

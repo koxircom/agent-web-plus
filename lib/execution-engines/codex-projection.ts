@@ -7,6 +7,20 @@ export interface CodexRequest {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: Record<string, any>;
 }
+/** Match native dialog identities without exposing question text in sidebar polling. */
+export function projectCodexPendingRequests(requests: CodexRequest[]) {
+  return requests.flatMap(request => {
+    const id = "codex-request:" + request.id;
+    if (request.supported && ["item/tool/requestUserInput", "tool/requestUserInput", "bridge/requestUserInputAsync"].includes(request.method)) {
+      return (request.params.questions || []).map((question: { id: string }) => ({ id: id + ":" + question.id, method: "input" }));
+    }
+    if (request.supported && ["item/commandExecution/requestApproval", "item/fileChange/requestApproval", "item/permissions/requestApproval"].includes(request.method)) {
+      return [{ id, method: "select" }];
+    }
+    // Unsupported native actions still need attention in their originating client.
+    return [{ id, method: "confirm" }];
+  });
+}
 export interface CodexRow {
   key: string; requestId?: string; deliveryConfirmed?: boolean; turnId: string; order: number; version: string; role: string;
   kind?: string; status?: string; title?: string; text: string; truncated?: boolean; turnStatus?: string;
@@ -23,7 +37,7 @@ export interface CodexComposerState {
 }
 export interface CodexMeta {
   composerState?: CodexComposerState;
-  id: string; title: string; cwd: string; model?: string; provider?: string; effort?: string;
+  id: string; title: string; cwd: string; model?: string | null; provider?: string; effort?: string;
   status: string; connected: boolean; sequence: number;
   submissions?: { id: string; clientRequestId?: string; text: string; status: string; mode?: string; error?: string }[];
   requests?: CodexRequest[]; historyComplete?: boolean; userMessageCount?: number;

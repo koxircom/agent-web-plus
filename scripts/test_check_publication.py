@@ -25,6 +25,13 @@ class PublicationGateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); (root/'safe.js').write_text('const path="/home/demo/.pi/agent"; const url="https://example.invalid"; const key="pi-web:settings-navigation";')
             self.assertEqual(module.inspect(root)['status'], 'passed')
+    def test_emscripten_virtual_home_is_not_a_private_host_path(self):
+        for artifact in (False, True):
+            safe = b'var env={USER:"web_user",HOME:"/home/web_user"};'
+            self.assertEqual(module.inspect_entry('public/engine.js', safe, artifact=artifact), [])
+            unsafe = safe + b'var path="/home/private_operator/contracts";'
+            findings = module.inspect_entry('public/engine.js', unsafe, artifact=artifact)
+            self.assertEqual([r['category'] for r in findings], ['personal-home-path'])
     def test_excludes_untracked_build_and_dependencies_but_blocks_runtime_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); (root/'.next').mkdir(); (root/'.next/ignored.js').write_text('sk-'+'z'*24)

@@ -93,6 +93,11 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
+  "dom-feedback": {
+    "defaultEnabled": true,
+    "moduleId": "selection-context",
+    "moduleDefaultEnabled": true
+  },
   "quick-quote": {
     "defaultEnabled": true,
     "moduleId": "selection-context",
