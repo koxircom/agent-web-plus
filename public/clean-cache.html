@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>正在强力刷新并清除本地缓存 - Pi Web</title>
+  <style>
+    :root {
+      --bg: #09090b;
+      --card-bg: #18181b;
+      --text: #f4f4f5;
+      --text-muted: #a1a1aa;
+      --accent: #3b82f6;
+      --border: #27272a;
+      --success: #22c55e;
+      --warn: #eab308;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 20px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--accent) 15%, transparent);
+      color: var(--accent);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      transition: all 0.2s ease;
+    }
+    .icon.is-success {
+      background: color-mix(in srgb, var(--success) 15%, transparent);
+      color: var(--success);
+    }
+    .icon.is-warn {
+      background: color-mix(in srgb, var(--warn) 15%, transparent);
+      color: var(--warn);
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      font-weight: 650;
+    }
+    p {
+      margin: 0 0 18px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .steps {
+      background: #111113;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      text-align: left;
+      font-size: 12px;
+      font-family: ui-monospace, monospace;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+      line-height: 1.6;
+    }
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .step-ok {
+      color: var(--success);
+    }
+    .step-warn {
+      color: var(--warn);
+    }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: opacity 0.15s ease;
+      box-sizing: border-box;
+      text-decoration: none;
+    }
+    .btn:active {
+      opacity: 0.85;
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .btn.btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+    .spin {
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div id="statusIcon" class="icon">
+      <svg id="loadingSvg" class="spin" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+      <svg id="okSvg" style="display:none;" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+    </div>
+    <h2 id="statusTitle">正在强力清理手机本地缓存...</h2>
+    <p id="statusDesc">正在注销 Service Worker 并清理离线缓存与静态资源...</p>
+
+    <div class="steps" id="stepsLog">
+      <div class="step-item" id="stepSw"><span>⏳ 注销 Service Worker 离线守护...</span></div>
+      <div class="step-item" id="stepCache"><span>⏳ 清理 CacheStorage 强缓存...</span></div>
+      <div class="step-item" id="stepBust"><span>⏳ 重置本地 loader 缓存标识...</span></div>
+      <div class="step-item" id="stepHttp"><span>⏳ 刷新 HTTP 核心资源磁盘缓存...</span></div>
+    </div>
+
+    <button id="retryBtn" class="btn" style="display:none; margin-bottom: 8px;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+      <span>重新清理并刷新</span>
+    </button>
+    <a id="returnBtn" href="/" class="btn">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+      <span id="returnBtnText">立即返回会话</span>
+    </a>
+  </div>
+
+  <script>
+    (async function() {
+      function withTimeout(promise, ms, desc) {
+        return new Promise(function(resolve, reject) {
+          var timer = setTimeout(function() {
+            reject(new Error(desc + "超时 (" + ms + "ms)"));
+          }, ms);
+          Promise.resolve(promise).then(
+            function(val) { clearTimeout(timer); resolve(val); },
+            function(err) { clearTimeout(timer); reject(err); }
+          );
+        });
+      }
+
+      function getRedirectUrl() {
+        try {
+          var params = new URLSearchParams(window.location.search);
+          var session = params.get("session");
+          var ts = Date.now();
+          if (session && session.trim()) {
+            return "/?session=" + encodeURIComponent(session.trim()) + "&t=" + ts;
+          }
+          return "/?t=" + ts;
+        } catch (_) {
+          return "/?t=" + Date.now();
+        }
+      }
+
+      var redirectUrl = getRedirectUrl();
+      var retryBtn = document.getElementById("retryBtn");
+      var returnBtn = document.getElementById("returnBtn");
+      var returnBtnText = document.getElementById("returnBtnText");
+      if (returnBtn) {
+        returnBtn.href = redirectUrl;
+      }
+      if (retryBtn) {
+        retryBtn.onclick = function() {
+          if (isCleaning) return;
+          cleanAll();
+        };
+      }
+
+      var isCleaning = false;
+      var swCleaned = true;
+      var cacheCleaned = true;
+      var storageCleaned = true;
+      var httpCleaned = true;
+
+      async function refreshHttpStaticCache(url) {
+        return await withTimeout(
+          (async function() {
+            var res = await fetch(url, { cache: "reload", credentials: "same-origin" });
+            if (!res.ok) {
+              throw new Error("页面响应异常 HTTP " + res.status);
+            }
+            var htmlText = await res.text();
+            var rawUrls = new Set();
+
+            // 1. DOMParser 解析 script[src] 与 link[rel~=stylesheet][href]
+            try {
+              var doc = new DOMParser().parseFromString(htmlText, "text/html");
+              var scripts = doc.querySelectorAll("script[src]");
+              for (var i = 0; i < scripts.length; i++) {
+                var src = scripts[i].getAttribute("src");
+                if (src) rawUrls.add(src);
+              }
+
+              var links = doc.querySelectorAll('link[rel="stylesheet"][href], link[rel~="stylesheet"][href]');
+              for (var j = 0; j < links.length; j++) {
+                var href = links[j].getAttribute("href");
+                if (href) rawUrls.add(href);
+              }
+            } catch (_) {}
+
+            // 2. 纯文本正则提取 RSC Flight inline 串与静态 chunk 引用（严禁 eval / 执行 inline）
+            // 匹配被引号、转义引号、括号、逗号等边界包裹的安全 js/css 资源路径
+            var staticRegex = /(?:\\*["'\`\(\[\s,=]|^)((?:(?:https?:)?\/\/[^\s"\\><'\`]+|(?:(?:\/_next\/|_next\/)static\/|static\/(?:chunks|css)\/)[a-zA-Z0-9_\-\.\/]+\.(?:js|css)))(?=[\\*["'\`\)\]\s,;>]|$)/g;
+            var m;
+            while ((m = staticRegex.exec(htmlText)) !== null) {
+              if (m[1]) {
+                rawUrls.add(m[1]);
+              }
+            }
+
+            // 3. 根目录增强脚本保底
+            rawUrls.add("/pi-web-enhancements.js");
+            rawUrls.add("/pi-web-enhancement-loader.js");
+
+            // 4. 白名单过滤、路径归一化与去重
+            var staticUrls = [];
+            var seenUrls = new Set();
+            var currentOrigin = window.location.origin;
+
+            rawUrls.forEach(function(raw) {
+              if (!raw || typeof raw !== "string") return;
+
+              // 坚决拒绝相对协议跨源 //
+              if (raw.indexOf("//") === 0) return;
+
+              // 坚决拒绝路径穿越与反斜杠
+              if (raw.indexOf("..") !== -1 || raw.indexOf("\\") !== -1) return;
+
+              // 绝对 URL 检查同源
+              if (raw.indexOf("://") !== -1) {
+                try {
+                  var parsedOrigin = new URL(raw).origin;
+                  if (parsedOrigin !== currentOrigin) return;
+                } catch (_) {
+                  return;
+                }
+              }
+
+              var normalizedPath = raw;
+              if (normalizedPath.indexOf("://") !== -1) {
+                try {
+                  normalizedPath = new URL(normalizedPath).pathname;
+                } catch (_) {
+                  return;
+                }
+              }
+
+              if (normalizedPath.indexOf("_next/static/") === 0) {
+                normalizedPath = "/" + normalizedPath;
+              } else if (normalizedPath.indexOf("static/") === 0) {
+                normalizedPath = "/_next/" + normalizedPath;
+              }
+
+              // 严格字符与后缀白名单
+              if (
+                normalizedPath !== "/pi-web-enhancements.js" &&
+                normalizedPath !== "/pi-web-enhancement-loader.js"
+              ) {
+                if (normalizedPath.indexOf("/_next/static/") !== 0) return;
+                if (!/\.(?:js|css)$/.test(normalizedPath)) return;
+                if (!/^\/_next\/static\/[a-zA-Z0-9_\-\.\/]+$/.test(normalizedPath)) return;
+
+                var segments = normalizedPath.split("/").filter(Boolean);
+                for (var s = 0; s < segments.length; s++) {
+                  var seg = segments[s];
+                  if (seg === "." || seg === ".." || !/^[a-zA-Z0-9_\-\.]+$/.test(seg)) {
+                    return;
+                  }
+                }
+              }
+
+              try {
+                var parsed = new URL(normalizedPath, window.location.href);
+                if (parsed.origin === currentOrigin) {
+                  if (!seenUrls.has(parsed.href)) {
+                    seenUrls.add(parsed.href);
+                    staticUrls.push(parsed.href);
+                  }
+                }
+              } catch (_) {}
+            });
+
+            if (staticUrls.length === 0) {
+              return { total: 0, failed: 0 };
+            }
+
+            var failed = 0;
+            await Promise.all(
+              staticUrls.map(async function(staticUrl) {
+                try {
+                  var itemRes = await fetch(staticUrl, { cache: "reload", credentials: "same-origin" });
+                  if (!itemRes.ok) {
+                    failed++;
+                    return;
+                  }
+                  await itemRes.arrayBuffer();
+                } catch (_) {
+                  failed++;
+                }
+              })
+            );
+
+            return { total: staticUrls.length, failed: failed };
+          })(),
+          5000,
+          "HTTP 静态资源重载"
+        );
+      }
+
+      async function cleanAll() {
+        if (isCleaning) return;
+        isCleaning = true;
+
+        swCleaned = true;
+        cacheCleaned = true;
+        storageCleaned = true;
+        httpCleaned = true;
+
+        if (retryBtn) {
+          retryBtn.disabled = true;
+          retryBtn.style.display = "none";
+        }
+        if (returnBtn) {
+          returnBtn.classList.remove("btn-secondary");
+          returnBtn.removeAttribute("disabled");
+          returnBtn.style.pointerEvents = "auto";
+        }
+        if (returnBtnText) returnBtnText.textContent = "立即返回会话";
+
+        document.getElementById("loadingSvg").style.display = "block";
+        document.getElementById("okSvg").style.display = "none";
+        document.getElementById("statusIcon").className = "icon";
+        document.getElementById("statusTitle").textContent = "正在强力清理手机本地缓存...";
+        document.getElementById("statusDesc").textContent = "正在注销 Service Worker 并清理离线缓存与静态资源...";
+        document.getElementById("stepSw").innerHTML = '<span>⏳ 注销 Service Worker 离线守护...</span>';
+        document.getElementById("stepCache").innerHTML = '<span>⏳ 清理 CacheStorage 强缓存...</span>';
+        document.getElementById("stepBust").innerHTML = '<span>⏳ 重置本地 loader 缓存标识...</span>';
+        document.getElementById("stepHttp").innerHTML = '<span>⏳ 刷新 HTTP 核心资源磁盘缓存...</span>';
+
+        try {
+          // 1. 注销所有 Service Worker（带短有界超时）
+          try {
+            if ('serviceWorker' in navigator) {
+              var registrations = await withTimeout(
+                navigator.serviceWorker.getRegistrations(),
+                1500,
+                "获取 SW 列表"
+              );
+              if (registrations && registrations.length > 0) {
+                for (var i = 0; i < registrations.length; i++) {
+                  try {
+                    await withTimeout(registrations[i].unregister(), 1200, "注销单个 SW");
+                  } catch (subErr) {
+                    swCleaned = false;
+                  }
+                }
+              }
+              if (swCleaned) {
+                document.getElementById("stepSw").innerHTML = '<span class="step-ok">✓ 已注销 Service Worker</span>';
+              } else {
+                document.getElementById("stepSw").innerHTML = '<span class="step-warn">! 部分 SW 注销超时或跳过</span>';
+              }
+            } else {
+              document.getElementById("stepSw").innerHTML = '<span class="step-ok">✓ 此环境不支持，无需清理</span>';
+            }
+          } catch (e) {
+            swCleaned = false;
+            var msg = (e && e.message) ? e.message : '未知异常';
+            document.getElementById("stepSw").innerHTML = '<span class="step-warn">! 跳过 SW 注销: ' + msg + '</span>';
+          }
+
+          // 2. 清空所有 CacheStorage（带短有界超时）
+          try {
+            if ('caches' in window) {
+              var keys = await withTimeout(
+                caches.keys(),
+                1500,
+                "获取 CacheStorage 列表"
+              );
+              if (keys && keys.length > 0) {
+                for (var j = 0; j < keys.length; j++) {
+                  try {
+                    await withTimeout(caches.delete(keys[j]), 1200, "删除单个缓存池");
+                  } catch (cErr) {
+                    cacheCleaned = false;
+                  }
+                }
+              }
+              if (cacheCleaned) {
+                document.getElementById("stepCache").innerHTML = '<span class="step-ok">✓ 离线资源缓存池已清理</span>';
+              } else {
+                document.getElementById("stepCache").innerHTML = '<span class="step-warn">! 部分离线缓存清理超时</span>';
+              }
+            } else {
+              document.getElementById("stepCache").innerHTML = '<span class="step-ok">✓ 此环境不支持，无需清理</span>';
+            }
+          } catch (e) {
+            cacheCleaned = false;
+            var cMsg = (e && e.message) ? e.message : '未知异常';
+            document.getElementById("stepCache").innerHTML = '<span class="step-warn">! 跳过 CacheStorage: ' + cMsg + '</span>';
+          }
+
+          // 3. 清理已过期的本地 loader 标识（严禁全局清空 sessionStorage，保留草稿/设置/登录；保留 durable-state-rev 安全状态）
+          try {
+            var LOADER_KEYS = [
+              "pi-enh-cached-asset-build",
+              "pi-enh-loader-cache",
+              "pi-enh-asset-build"
+            ];
+            for (var k = 0; k < LOADER_KEYS.length; k++) {
+              var keyName = LOADER_KEYS[k];
+              try { localStorage.removeItem(keyName); } catch (_) {}
+              try { sessionStorage.removeItem(keyName); } catch (_) {}
+            }
+            document.getElementById("stepBust").innerHTML = '<span class="step-ok">✓ loader 缓存已重置，保留用户数据</span>';
+          } catch (e) {
+            storageCleaned = false;
+            document.getElementById("stepBust").innerHTML = '<span class="step-warn">! 本地 loader 键重置跳过</span>';
+          }
+
+          // 4. 强制重载 HTTP 磁盘中的 Next.js immutable CSS/JS 缓存
+          try {
+            var stepHttpEl = document.getElementById("stepHttp");
+            var httpResult = await refreshHttpStaticCache(redirectUrl);
+            if (httpResult.failed > 0) {
+              httpCleaned = false;
+              if (stepHttpEl) {
+                stepHttpEl.innerHTML = '<span class="step-warn">! 静态资源部分未刷新 (' + (httpResult.total - httpResult.failed) + '/' + httpResult.total + ')</span>';
+              }
+            } else {
+              if (stepHttpEl) {
+                stepHttpEl.innerHTML = '<span class="step-ok">✓ 已强制刷新 HTTP 静态脚本与样式 (' + httpResult.total + ')</span>';
+              }
+            }
+          } catch (hErr) {
+            httpCleaned = false;
+            var hMsg = (hErr && hErr.message) ? hErr.message : "重载异常";
+            var stepHttpEl2 = document.getElementById("stepHttp");
+            if (stepHttpEl2) {
+              stepHttpEl2.innerHTML = '<span class="step-warn">! HTTP 静态资源未刷新: ' + hMsg + '</span>';
+            }
+          }
+
+          // 评估清理成果：失败或部分超时/未刷新不能宣称彻底成功
+          var allOk = swCleaned && cacheCleaned && storageCleaned && httpCleaned;
+          document.getElementById("loadingSvg").style.display = "none";
+          document.getElementById("okSvg").style.display = "block";
+
+          if (allOk) {
+            document.getElementById("statusIcon").className = "icon is-success";
+            document.getElementById("statusTitle").textContent = "清理完成，即将返回界面";
+            document.getElementById("statusDesc").textContent = "离线缓存已清理并已重新请求静态资源，2 秒后自动重新载入...";
+            if (retryBtn) {
+              retryBtn.style.display = "none";
+              retryBtn.disabled = false;
+            }
+            if (returnBtn) returnBtn.classList.remove("btn-secondary");
+            if (returnBtnText) returnBtnText.textContent = "立即返回会话";
+            setTimeout(function() {
+              window.location.replace(redirectUrl);
+            }, 1800);
+          } else {
+            // 部分失败或超时坚决不自动跳转，留出重试与手动选择
+            document.getElementById("statusIcon").className = "icon is-warn";
+            document.getElementById("statusTitle").textContent = "清理已完成（部分步骤未刷新）";
+            document.getElementById("statusDesc").textContent = "部分静态资源或离线缓存未完全刷新，未宣称彻底成功。请点击上方按钮重试或直接返回。";
+            if (retryBtn) {
+              retryBtn.style.display = "inline-flex";
+              retryBtn.disabled = false;
+            }
+            if (returnBtn) returnBtn.classList.add("btn-secondary");
+            if (returnBtnText) returnBtnText.textContent = "忽略并返回会话";
+          }
+        } catch (fatalErr) {
+          document.getElementById("loadingSvg").style.display = "none";
+          document.getElementById("okSvg").style.display = "block";
+          document.getElementById("statusIcon").className = "icon is-warn";
+          document.getElementById("statusTitle").textContent = "清理遇到异常";
+          document.getElementById("statusDesc").textContent = "清理过程中发生异常，请重试或直接返回。";
+          if (retryBtn) {
+            retryBtn.style.display = "inline-flex";
+            retryBtn.disabled = false;
+          }
+          if (returnBtn) returnBtn.classList.add("btn-secondary");
+          if (returnBtnText) returnBtnText.textContent = "忽略并返回会话";
+        } finally {
+          isCleaning = false;
+          if (retryBtn && retryBtn.style.display !== "none") {
+            retryBtn.disabled = false;
+          }
+        }
+      }
+
+      setTimeout(cleanAll, 100);
+    })();
+  </script>
+</body>
+</html>

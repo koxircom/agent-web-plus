@@ -3,14 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#1a1a1a" />
-    <title>Agent Web Plus 离线</title>
+    <meta name="theme-color" content="#18181b" />
+    <title>一键强力清理手机缓存并重新载入 - Agent Web Plus</title>
     <style>
       :root {
         color-scheme: dark;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #1a1a1a;
-        color: #e8e8e8;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #09090b;
+        color: #f4f4f5;
+        --border: #27272a;
+        --accent: #3b82f6;
+        --success: #22c55e;
+        --warn: #eab308;
       }
 
       * {
@@ -20,112 +24,562 @@
       body {
         min-height: 100dvh;
         margin: 0;
-        display: grid;
-        place-items: center;
-        padding: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #09090b;
       }
 
       main {
-        width: min(100%, 420px);
-        display: grid;
-        justify-items: center;
+        width: min(100%, 400px);
+        background: #18181b;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 28px 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         text-align: center;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
       }
 
-      .brand {
-        display: block;
-        width: min(100%, 215px);
-        height: auto;
-        margin-bottom: 24px;
+      .status-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: rgba(59, 130, 246, 0.15);
+        color: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 18px;
+        transition: all 0.25s ease;
+      }
+
+      .status-icon.is-success {
+        background: rgba(34, 197, 94, 0.18);
+        color: var(--success);
+      }
+
+      .status-icon.is-warn {
+        background: rgba(234, 179, 8, 0.18);
+        color: var(--warn);
       }
 
       h1 {
-        margin: 0 0 10px;
-        font-size: 22px;
+        margin: 0 0 8px;
+        font-size: 19px;
         font-weight: 650;
-        letter-spacing: 0;
       }
 
       p {
-        margin: 0;
-        color: #9ca3af;
-        font-size: 14px;
+        margin: 0 0 18px;
+        color: #a1a1aa;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .step-box {
+        width: 100%;
+        background: #111113;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 20px;
+        text-align: left;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
         line-height: 1.6;
+        color: #a1a1aa;
       }
 
-      button {
-        margin-top: 24px;
-        min-height: 40px;
+      .step-line {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .step-ok {
+        color: var(--success);
+      }
+
+      .step-warn {
+        color: var(--warn);
+      }
+
+      .btn {
+        width: 100%;
+        min-height: 44px;
         padding: 0 18px;
-        border: 1px solid #514a70;
-        border-radius: 6px;
-        background: #292633;
-        color: #e8e8e8;
-        font: inherit;
+        border: none;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #ffffff;
+        font-size: 14px;
+        font-weight: 600;
         cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        text-decoration: none;
+        transition: opacity 0.15s ease;
       }
 
-      button:hover {
-        background: #363246;
+      .btn:active {
+        opacity: 0.85;
       }
 
-      button:focus-visible {
-        outline: 2px solid #8b7bf6;
-        outline-offset: 3px;
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        pointer-events: none;
+      }
+
+      .btn.btn-secondary {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: #a1a1aa;
+      }
+
+      .spin {
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
       }
     </style>
   </head>
   <body>
     <main>
-      <svg
-        class="brand"
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 816 186"
-        width="215"
-        height="49"
-        fill="none"
-        role="img"
-        aria-label="π+ Agent Web Plus"
-      >
-        <title>π+ Agent Web Plus</title>
-        <defs>
-          <style>
-            .brand-wordmark-text {
-              fill: #ffffff;
-              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-              font-size: 64px;
-              font-weight: 700;
-              letter-spacing: normal;
-            }
-          </style>
-          <linearGradient id="flatBlueViolet" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="#4f5ae8" />
-            <stop offset="100%" stop-color="#7850e8" />
-          </linearGradient>
-          <linearGradient id="plusGradient" gradientUnits="userSpaceOnUse" x1="620" y1="56" x2="770" y2="140">
-            <stop offset="0%" stop-color="#6e67f8" />
-            <stop offset="25%" stop-color="#585bf9" />
-            <stop offset="52%" stop-color="#3b4ffb" />
-            <stop offset="78%" stop-color="#2563eb" />
-            <stop offset="100%" stop-color="#1d4ed8" />
-          </linearGradient>
-        </defs>
-        <g id="brand-graphic">
-          <circle id="flat-main-disc" cx="91.2" cy="96" r="87.5" fill="url(#flatBlueViolet)" />
-          <path id="symbol-pi" fill="#ffffff" d="M67.7,59.5H132.7C135.9,59.5 136.1,62.9 135.4,67.2C134.8,71.3 133.9,73.5 130.4,73.5H114.1L107.7,107.5C106.3,114.4 106.7,118.8 110.8,121.2C114.6,123.3 121.1,123.8 124.9,119.8C126.7,117.9 128.6,120 129.5,123C131.7,130.9 122.2,137.5 113.8,137.5C101.1,137.5 92.2,131.4 93.7,114.9C94.1,105.5 97.7,86.3 100.5,73.5H82.1L75.5,108.4C72.9,122.1 66.6,137.5 55.6,137.5C49.5,137.5 45.8,132.7 48,127.2C49.6,123.8 54.5,122 57.5,116C62.4,106.5 65.3,89.4 68.7,73.7H60.2C56.7,73.7 55.3,75.4 53.1,78.4C50.5,82.3 43.5,82.9 44.9,77.2C47.2,67.1 56.2,59.5 67.7,59.5Z" />
-          <circle id="flat-plus-disc" cx="167" cy="38" r="34" fill="#6250e9" stroke="#ffffff" stroke-width="1.6" />
-          <path id="symbol-plus" fill="#ffffff" d="M162.7,19.5L169.7,19.5L169.7,20.5L170.7,20.5L170.7,33.5L182.7,33.5L182.7,40.5L171.7,40.5L171.7,41.5L170.7,41.5L170.7,54.5L162.7,54.5L162.7,41.5L150.7,41.5L150.7,40.5L149.7,40.5L149.7,33.5L162.7,33.5Z" />
-        </g>
-        <g id="brand-typography">
-          <text data-pi-brand-part="wordmark" class="brand-wordmark-text" x="230" y="138">
-            <tspan fill="#ffffff">Agent Web </tspan>
-            <tspan fill="url(#plusGradient)">Plus</tspan>
-          </text>
-        </g>
-      </svg>
-      <h1>Agent Web Plus 暂时离线</h1>
-      <p>无法连接到本地 Agent Web Plus 服务。请恢复连接后重试。</p>
-      <button type="button" onclick="window.location.reload()">重试连接</button>
+      <div id="statusIcon" class="status-icon">
+        <svg id="loadingSvg" class="spin" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>
+        <svg id="okSvg" style="display:none;" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+      </div>
+      <h1 id="statusTitle">正在强力清理手机本地缓存...</h1>
+      <p id="statusDesc">正在注销 Service Worker 并清理离线缓存与静态资源...</p>
+
+      <div class="step-box">
+        <div class="step-line" id="stepSw"><span>⏳ 注销 Service Worker 离线拦截...</span></div>
+        <div class="step-line" id="stepCache"><span>⏳ 清除 CacheStorage 磁盘静态缓存...</span></div>
+        <div class="step-line" id="stepToken"><span>⏳ 重置本地 loader 缓存标识...</span></div>
+        <div class="step-line" id="stepHttp"><span>⏳ 刷新 HTTP 核心资源磁盘缓存...</span></div>
+      </div>
+
+      <button id="retryBtn" class="btn" style="display:none; margin-bottom: 8px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        <span>重新清理并刷新</span>
+      </button>
+      <a id="actionBtn" href="/" class="btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        <span id="actionBtnText">立即进入会话</span>
+      </a>
     </main>
+
+    <script>
+      (async function() {
+        function withTimeout(promise, ms, desc) {
+          return new Promise(function(resolve, reject) {
+            var timer = setTimeout(function() {
+              reject(new Error(desc + "超时 (" + ms + "ms)"));
+            }, ms);
+            Promise.resolve(promise).then(
+              function(val) { clearTimeout(timer); resolve(val); },
+              function(err) { clearTimeout(timer); reject(err); }
+            );
+          });
+        }
+
+        function getRedirectUrl() {
+          try {
+            var params = new URLSearchParams(window.location.search);
+            var session = params.get("session");
+            var ts = Date.now();
+            if (session && session.trim()) {
+              return "/?session=" + encodeURIComponent(session.trim()) + "&t=" + ts;
+            }
+            return "/?t=" + ts;
+          } catch (_) {
+            return "/?t=" + Date.now();
+          }
+        }
+
+        var redirectUrl = getRedirectUrl();
+        var retryBtn = document.getElementById("retryBtn");
+        var actionBtn = document.getElementById("actionBtn");
+        var actionBtnText = document.getElementById("actionBtnText");
+        if (actionBtn) {
+          actionBtn.href = redirectUrl;
+        }
+        if (retryBtn) {
+          retryBtn.onclick = function() {
+            if (isCleaning) return;
+            clean();
+          };
+        }
+
+        var isCleaning = false;
+        var swCleaned = true;
+        var cacheCleaned = true;
+        var storageCleaned = true;
+        var httpCleaned = true;
+
+        async function refreshHttpStaticCache(url) {
+          return await withTimeout(
+            (async function() {
+              var res = await fetch(url, { cache: "reload", credentials: "same-origin" });
+              if (!res.ok) {
+                throw new Error("页面响应异常 HTTP " + res.status);
+              }
+              var htmlText = await res.text();
+              var rawUrls = new Set();
+
+              // 1. DOMParser 解析 script[src] 与 link[rel~=stylesheet][href]
+              try {
+                var doc = new DOMParser().parseFromString(htmlText, "text/html");
+                var scripts = doc.querySelectorAll("script[src]");
+                for (var i = 0; i < scripts.length; i++) {
+                  var src = scripts[i].getAttribute("src");
+                  if (src) rawUrls.add(src);
+                }
+
+                var links = doc.querySelectorAll('link[rel="stylesheet"][href], link[rel~="stylesheet"][href]');
+                for (var j = 0; j < links.length; j++) {
+                  var href = links[j].getAttribute("href");
+                  if (href) rawUrls.add(href);
+                }
+              } catch (_) {}
+
+              // 2. 纯文本正则提取 RSC Flight inline 串与静态 chunk 引用（严禁 eval / 执行 inline）
+              // 匹配被引号、转义引号、括号、逗号等边界包裹的安全 js/css 资源路径
+              var staticRegex = /(?:\\*["'\`\(\[\s,=]|^)((?:(?:https?:)?\/\/[^\s"\\><'\`]+|(?:(?:\/_next\/|_next\/)static\/|static\/(?:chunks|css)\/)[a-zA-Z0-9_\-\.\/]+\.(?:js|css)))(?=[\\*["'\`\)\]\s,;>]|$)/g;
+              var m;
+              while ((m = staticRegex.exec(htmlText)) !== null) {
+                if (m[1]) {
+                  rawUrls.add(m[1]);
+                }
+              }
+
+              // 3. 根目录增强脚本保底
+              rawUrls.add("/pi-web-enhancements.js");
+              rawUrls.add("/pi-web-enhancement-loader.js");
+
+              // 4. 白名单过滤、路径归一化与去重
+              var staticUrls = [];
+              var seenUrls = new Set();
+              var currentOrigin = window.location.origin;
+
+              rawUrls.forEach(function(raw) {
+                if (!raw || typeof raw !== "string") return;
+
+                // 坚决拒绝相对协议跨源 //
+                if (raw.indexOf("//") === 0) return;
+
+                // 坚决拒绝路径穿越与反斜杠
+                if (raw.indexOf("..") !== -1 || raw.indexOf("\\") !== -1) return;
+
+                // 绝对 URL 检查同源
+                if (raw.indexOf("://") !== -1) {
+                  try {
+                    var parsedOrigin = new URL(raw).origin;
+                    if (parsedOrigin !== currentOrigin) return;
+                  } catch (_) {
+                    return;
+                  }
+                }
+
+                var normalizedPath = raw;
+                if (normalizedPath.indexOf("://") !== -1) {
+                  try {
+                    normalizedPath = new URL(normalizedPath).pathname;
+                  } catch (_) {
+                    return;
+                  }
+                }
+
+                if (normalizedPath.indexOf("_next/static/") === 0) {
+                  normalizedPath = "/" + normalizedPath;
+                } else if (normalizedPath.indexOf("static/") === 0) {
+                  normalizedPath = "/_next/" + normalizedPath;
+                }
+
+                // 严格字符与后缀白名单
+                if (
+                  normalizedPath !== "/pi-web-enhancements.js" &&
+                  normalizedPath !== "/pi-web-enhancement-loader.js"
+                ) {
+                  if (normalizedPath.indexOf("/_next/static/") !== 0) return;
+                  if (!/\.(?:js|css)$/.test(normalizedPath)) return;
+                  if (!/^\/_next\/static\/[a-zA-Z0-9_\-\.\/]+$/.test(normalizedPath)) return;
+
+                  var segments = normalizedPath.split("/").filter(Boolean);
+                  for (var s = 0; s < segments.length; s++) {
+                    var seg = segments[s];
+                    if (seg === "." || seg === ".." || !/^[a-zA-Z0-9_\-\.]+$/.test(seg)) {
+                      return;
+                    }
+                  }
+                }
+
+                try {
+                  var parsed = new URL(normalizedPath, window.location.href);
+                  if (parsed.origin === currentOrigin) {
+                    if (!seenUrls.has(parsed.href)) {
+                      seenUrls.add(parsed.href);
+                      staticUrls.push(parsed.href);
+                    }
+                  }
+                } catch (_) {}
+              });
+
+              if (staticUrls.length === 0) {
+                return { total: 0, failed: 0 };
+              }
+
+              var failed = 0;
+              await Promise.all(
+                staticUrls.map(async function(staticUrl) {
+                  try {
+                    var itemRes = await fetch(staticUrl, { cache: "reload", credentials: "same-origin" });
+                    if (!itemRes.ok) {
+                      failed++;
+                      return;
+                    }
+                    await itemRes.arrayBuffer();
+                  } catch (_) {
+                    failed++;
+                  }
+                })
+              );
+
+              return { total: staticUrls.length, failed: failed };
+            })(),
+            5000,
+            "HTTP 静态资源重载"
+          );
+        }
+
+        async function clean() {
+          if (isCleaning) return;
+          isCleaning = true;
+
+          swCleaned = true;
+          cacheCleaned = true;
+          storageCleaned = true;
+          httpCleaned = true;
+
+          if (retryBtn) {
+            retryBtn.disabled = true;
+            retryBtn.style.display = "none";
+          }
+          if (actionBtn) {
+            actionBtn.classList.remove("btn-secondary");
+            actionBtn.removeAttribute("disabled");
+            actionBtn.style.pointerEvents = "auto";
+          }
+          if (actionBtnText) actionBtnText.textContent = "立即进入会话";
+
+          document.getElementById("loadingSvg").style.display = "block";
+          document.getElementById("okSvg").style.display = "none";
+          document.getElementById("statusIcon").className = "status-icon";
+          document.getElementById("statusTitle").textContent = "正在强力清理手机本地缓存...";
+          document.getElementById("statusDesc").textContent = "正在注销 Service Worker 并清理离线缓存与静态资源...";
+          document.getElementById("stepSw").innerHTML = '<span>⏳ 注销 Service Worker 离线拦截...</span>';
+          document.getElementById("stepCache").innerHTML = '<span>⏳ 清除 CacheStorage 磁盘静态缓存...</span>';
+          document.getElementById("stepToken").innerHTML = '<span>⏳ 重置本地 loader 缓存标识...</span>';
+          document.getElementById("stepHttp").innerHTML = '<span>⏳ 刷新 HTTP 核心资源磁盘缓存...</span>';
+
+          try {
+            // 1. 注销全部 Service Worker（带短有界超时）
+            try {
+              if ('serviceWorker' in navigator) {
+                var registrations = await withTimeout(
+                  navigator.serviceWorker.getRegistrations(),
+                  1500,
+                  "获取 SW 列表"
+                );
+                if (registrations && registrations.length > 0) {
+                  for (var i = 0; i < registrations.length; i++) {
+                    try {
+                      await withTimeout(registrations[i].unregister(), 1200, "注销单个 SW");
+                    } catch (subErr) {
+                      swCleaned = false;
+                    }
+                  }
+                }
+                if (swCleaned) {
+                  document.getElementById("stepSw").innerHTML = '<span class="step-ok">✓ 已注销 Service Worker</span>';
+                } else {
+                  document.getElementById("stepSw").innerHTML = '<span class="step-warn">! 部分 SW 注销超时或跳过</span>';
+                }
+              } else {
+                document.getElementById("stepSw").innerHTML = '<span class="step-ok">✓ 此环境不支持，无需清理</span>';
+              }
+            } catch (e) {
+              swCleaned = false;
+              var msg = (e && e.message) ? e.message : '未知异常';
+              document.getElementById("stepSw").innerHTML = '<span class="step-warn">! 跳过 SW: ' + msg + '</span>';
+            }
+
+            // 2. 清除全部 CacheStorage 缓存桶（带短有界超时）
+            try {
+              if ('caches' in window) {
+                var keys = await withTimeout(
+                  caches.keys(),
+                  1500,
+                  "获取 CacheStorage 列表"
+                );
+                if (keys && keys.length > 0) {
+                  for (var j = 0; j < keys.length; j++) {
+                    try {
+                      await withTimeout(caches.delete(keys[j]), 1200, "删除单个缓存池");
+                    } catch (cErr) {
+                      cacheCleaned = false;
+                    }
+                  }
+                }
+                if (cacheCleaned) {
+                  document.getElementById("stepCache").innerHTML = '<span class="step-ok">✓ 离线缓存池已清理</span>';
+                } else {
+                  document.getElementById("stepCache").innerHTML = '<span class="step-warn">! 部分离线缓存清理超时</span>';
+                }
+              } else {
+                document.getElementById("stepCache").innerHTML = '<span class="step-ok">✓ 此环境不支持，无需清理</span>';
+              }
+            } catch (e) {
+              cacheCleaned = false;
+              var cMsg = (e && e.message) ? e.message : '未知异常';
+              document.getElementById("stepCache").innerHTML = '<span class="step-warn">! 跳过 Cache: ' + cMsg + '</span>';
+            }
+
+            // 3. 清理已过期的本地 loader 标识（严禁全局清空 sessionStorage，保留草稿/设置/登录；保留 durable-state-rev 安全状态）
+            try {
+              var LOADER_KEYS = [
+                "pi-enh-cached-asset-build",
+                "pi-enh-loader-cache",
+                "pi-enh-asset-build"
+              ];
+              for (var k = 0; k < LOADER_KEYS.length; k++) {
+                var keyName = LOADER_KEYS[k];
+                try { localStorage.removeItem(keyName); } catch (_) {}
+                try { sessionStorage.removeItem(keyName); } catch (_) {}
+              }
+              document.getElementById("stepToken").innerHTML = '<span class="step-ok">✓ loader 缓存已重置，保留用户数据</span>';
+            } catch (e) {
+              storageCleaned = false;
+              document.getElementById("stepToken").innerHTML = '<span class="step-warn">! 本地 loader 键重置跳过</span>';
+            }
+
+            // 评估网络与清理状态
+            var isOffline = typeof navigator.onLine === "boolean" && !navigator.onLine;
+
+            if (isOffline) {
+              // 契约铁律：offline 必须保留真正离线时留在页面重试能力，禁止离线自动跳转循环与无网请求
+              var stepHttpEl = document.getElementById("stepHttp");
+              if (stepHttpEl) {
+                stepHttpEl.innerHTML = '<span class="step-warn">! 设备离线，跳过 HTTP 静态资源刷新</span>';
+              }
+              var offlineAllOk = swCleaned && cacheCleaned && storageCleaned;
+              document.getElementById("loadingSvg").style.display = "none";
+              document.getElementById("okSvg").style.display = "block";
+
+              document.getElementById("statusIcon").className = "status-icon " + (offlineAllOk ? "is-success" : "is-warn");
+              document.getElementById("statusTitle").textContent = "离线缓存已重置（离线状态）";
+              document.getElementById("statusDesc").textContent = "本地离线强缓存已清除。当前设备网络离线，请连接网络后点击下方按钮重试。";
+              if (retryBtn) {
+                retryBtn.style.display = "inline-flex";
+                retryBtn.disabled = false;
+              }
+              if (actionBtnText) actionBtnText.textContent = "重试重新连接";
+
+              // 监听网络恢复，恢复时才允许自动跳转
+              window.addEventListener("online", function() {
+                document.getElementById("statusDesc").textContent = "网络已恢复，正在重新连接...";
+                setTimeout(function() {
+                  window.location.replace(getRedirectUrl());
+                }, 1000);
+              }, { once: true });
+
+              return; // 离线状态坚决不自动跳转！
+            }
+
+            // 在线跳转之前强制刷新 HTTP 磁盘静态资源缓存
+            try {
+              var stepHttpOnlineEl = document.getElementById("stepHttp");
+              var httpResult = await refreshHttpStaticCache(redirectUrl);
+              if (httpResult.failed > 0) {
+                httpCleaned = false;
+                if (stepHttpOnlineEl) {
+                  stepHttpOnlineEl.innerHTML = '<span class="step-warn">! 静态资源部分未刷新 (' + (httpResult.total - httpResult.failed) + '/' + httpResult.total + ')</span>';
+                }
+              } else {
+                if (stepHttpOnlineEl) {
+                  stepHttpOnlineEl.innerHTML = '<span class="step-ok">✓ 已强制刷新 HTTP 静态脚本与样式 (' + httpResult.total + ')</span>';
+                }
+              }
+            } catch (hErr) {
+              httpCleaned = false;
+              var hMsg = (hErr && hErr.message) ? hErr.message : "重载异常";
+              var stepHttpOnlineEl2 = document.getElementById("stepHttp");
+              if (stepHttpOnlineEl2) {
+                stepHttpOnlineEl2.innerHTML = '<span class="step-warn">! HTTP 静态资源未刷新: ' + hMsg + '</span>';
+              }
+            }
+
+            var allOk = swCleaned && cacheCleaned && storageCleaned && httpCleaned;
+
+            document.getElementById("loadingSvg").style.display = "none";
+            document.getElementById("okSvg").style.display = "block";
+
+            // 在线状态下的跳转逻辑
+            if (allOk) {
+              document.getElementById("statusIcon").className = "status-icon is-success";
+              document.getElementById("statusTitle").textContent = "清理完成，即将载入界面";
+              document.getElementById("statusDesc").textContent = "离线缓存已清理并已重新请求静态资源，1 秒后自动重新载入...";
+              if (retryBtn) {
+                retryBtn.style.display = "none";
+                retryBtn.disabled = false;
+              }
+              if (actionBtn) actionBtn.classList.remove("btn-secondary");
+              if (actionBtnText) actionBtnText.textContent = "立即进入会话";
+              setTimeout(function() {
+                window.location.replace(redirectUrl);
+              }, 1200);
+            } else {
+              // 部分失败或超时坚决不自动跳转，留出重试与手动选择
+              document.getElementById("statusIcon").className = "status-icon is-warn";
+              document.getElementById("statusTitle").textContent = "清理已完成（部分步骤未刷新）";
+              document.getElementById("statusDesc").textContent = "部分静态资源或离线缓存未完全刷新，未宣称彻底成功。请点击上方按钮重试或直接进入。";
+              if (retryBtn) {
+                retryBtn.style.display = "inline-flex";
+                retryBtn.disabled = false;
+              }
+              if (actionBtn) actionBtn.classList.add("btn-secondary");
+              if (actionBtnText) actionBtnText.textContent = "忽略并进入会话";
+            }
+          } catch (fatalErr) {
+            document.getElementById("loadingSvg").style.display = "none";
+            document.getElementById("okSvg").style.display = "block";
+            document.getElementById("statusIcon").className = "status-icon is-warn";
+            document.getElementById("statusTitle").textContent = "清理遇到异常";
+            document.getElementById("statusDesc").textContent = "清理过程中发生异常，请重试或直接进入。";
+            if (retryBtn) {
+              retryBtn.style.display = "inline-flex";
+              retryBtn.disabled = false;
+            }
+            if (actionBtn) actionBtn.classList.add("btn-secondary");
+            if (actionBtnText) actionBtnText.textContent = "忽略并进入会话";
+          } finally {
+            isCleaning = false;
+            if (retryBtn && retryBtn.style.display !== "none") {
+              retryBtn.disabled = false;
+            }
+          }
+        }
+
+        setTimeout(clean, 100);
+      })();
+    </script>
   </body>
 </html>

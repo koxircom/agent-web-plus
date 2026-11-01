@@ -1,812 +1,5 @@
-var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M11 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0\" /><path d=\"M12 7a5 5 0 1 0 5 5\" /><path d=\"M13 3.055a9 9 0 1 0 7.941 7.945\" /><path d=\"M15 6v3h3l3 -3h-3v-3l-3 3\" /><path d=\"M15 9l-3 3\" /></g>","plan":"<g fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7\" /><path d=\"M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3\" /><path d=\"M9.7 17l4.6 0\" /></g>"};
-;
-/* Shared, side-effect-free accounting used by the generator and Usage plugin. */
-(function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.PiUsageLedger = factory();
-})(typeof globalThis !== "undefined" ? globalThis : this, function () {
-  "use strict";
-  const fields = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "totalTokens", "messageCount", "calls", "records", "costNano", "unpricedTokens", "missingUsage"];
-  const empty = () => Object.fromEntries(fields.map(k => [k, 0]));
-  function add(to, from) { for (const k of fields) to[k] += from[k] || 0; return to; }
-  function day(timestamp) {
-    const ms = typeof timestamp === "number" ? timestamp : Date.parse(timestamp);
-    return Number.isFinite(ms) ? new Date(ms + 8 * 3600000).toISOString().slice(0, 10) : "unknown";
-  }
-
-  const MODEL_CANONICAL_MAP = {
-    "gemini-3.8-flash-high": { key: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash High" },
-    "gemini-3.8-flash": { key: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash High" },
-    "gemini-3.8-flash-exp-a": { key: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash High" },
-    "gemini-3.8-flash-exp": { key: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash High" },
-    "gemini-2.0-flash": { key: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-    "gemini-1.5-pro": { key: "gemini-1.5-pro", name: "Gemini 1.5 Pro" },
-    "gpt-6-astra": { key: "gpt-6-astra", name: "GPT-6 Astra" },
-    "gpt-6.1-sol": { key: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-    "gpt-6-sol": { key: "gpt-6-sol", name: "GPT-6 Sol" },
-    "gpt-6-luna": { key: "gpt-6-luna", name: "GPT-6 Luna" },
-    "gpt-5.6-sol": { key: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
-    "gpt-5.6-terra": { key: "gpt-5.6-terra", name: "GPT-5.6 Terra" },
-    "gpt-5.6-luna": { key: "gpt-5.6-luna", name: "GPT-5.6 Luna" },
-    "gpt-5.5": { key: "gpt-5.5", name: "GPT-5.5" },
-    "gpt-5.4": { key: "gpt-5.4", name: "GPT-5.4" },
-    "gpt-5.4-mini": { key: "gpt-5.4-mini", name: "GPT-5.4 mini" },
-    "gpt-5.4-nano": { key: "gpt-5.4-nano", name: "GPT-5.4 nano" },
-    "gpt-5.4-pro": { key: "gpt-5.4-pro", name: "GPT-5.4 Pro" },
-    "gpt-5": { key: "gpt-5", name: "GPT-5" },
-    "gpt-5-mini": { key: "gpt-5-mini", name: "GPT-5 mini" },
-    "gpt-4o-mini": { key: "gpt-4o-mini", name: "GPT-4o mini" },
-    "gpt-4o": { key: "gpt-4o", name: "GPT-4o" },
-    "o3": { key: "o3", name: "o3" },
-    "o3-mini": { key: "o3-mini", name: "o3-mini" },
-    "o3-pro": { key: "o3-pro", name: "o3-pro" },
-    "o4-mini": { key: "o4-mini", name: "o4-mini" },
-    "o1": { key: "o1", name: "o1" },
-    "claude-3.7-sonnet": { key: "claude-3.7-sonnet", name: "Claude 3.7 Sonnet" },
-    "claude-3.5-sonnet": { key: "claude-3.5-sonnet", name: "Claude 3.5 Sonnet" },
-    "deepseek-flash": { key: "deepseek-flash", name: "DeepSeek V4.1 Flash" },
-    "deepseek-v4-pro": { key: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
-    "system-summaries": { key: "system-summaries", name: "工具 / 压缩摘要" },
-  };
-
-  // Pi SDK 模型目录参考价/基准价，非账单 (USD / 1M Tokens: [input, output, cacheRead, cacheWrite])
-  const STANDARD_RATES = {
-    "gemini-3.8-flash-high": [0.10, 0.40, 0.025, 0.025], // Google 官方 Gemini 3.8 Flash High 定价
-    "gemini-3.8-flash": [0.10, 0.40, 0.025, 0.025],
-    "gemini-3.8-flash-exp-a": [0.10, 0.40, 0.025, 0.025],
-    "gemini-3.8-flash-exp": [0.10, 0.40, 0.025, 0.025],
-    "gemini-2.0-flash": [0.10, 0.40, 0.025, 0.025],
-    "gemini-1.5-pro": [1.25, 5.00, 0.3125, 0.3125],
-    "gpt-6-astra": [10.00, 50.00, 1.00, 12.50],
-    "gpt-6.1-sol": [2.00, 10.00, 0.10, 2.50], // OpenAI 官方 Standard 定价 (https://developers.openai.com/api/docs/pricing)
-    "gpt-6-sol": [2.00, 10.00, 0.20, 2.50],
-    "gpt-6-luna": [0.10, 0.50, 0.01, 0.125],
-    "gpt-5.6-sol": [4.00, 20.00, 0.40, 5.00], // 最新官方调整下调 20%
-    "gpt-5.6-terra": [2.00, 12.00, 0.20, 2.50],
-    "gpt-5.6-luna": [0.20, 1.20, 0.02, 0.25],
-    "gpt-5.5": [5.00, 30.00, 0.50, 0.00],
-    "gpt-5.4": [2.50, 15.00, 0.25, 0.00],
-    "gpt-5.4-mini": [0.75, 4.50, 0.075, 0.00],
-    "gpt-5.4-nano": [0.20, 1.25, 0.02, 0.00],
-    "gpt-5.4-pro": [30.00, 180.00, 0.00, 0.00],
-    "gpt-5": [1.25, 10.00, 0.125, 0.00],
-    "gpt-5-mini": [0.25, 2.00, 0.025, 0.00],
-    "gpt-4o-mini": [0.15, 0.60, 0.075, 0.075],
-    "gpt-4o": [2.50, 10.00, 1.25, 1.25],
-    "o3": [2.00, 8.00, 0.50, 0.00],
-    "o3-mini": [1.10, 4.40, 0.55, 0.00],
-    "o3-pro": [20.00, 80.00, 0.00, 0.00],
-    "o4-mini": [1.10, 4.40, 0.275, 0.00],
-    "o1": [15.00, 60.00, 7.50, 0.00],
-    "claude-3.7-sonnet": [3.00, 15.00, 0.30, 0.30],
-    "claude-3.5-sonnet": [3.00, 15.00, 0.30, 0.30],
-    "deepseek-flash": [0.30, 1.20, 0.006, 0.006], // DeepSeek 官网最新标准高峰价 (空闲5折为 [0.15, 0.60, 0.003, 0.003])
-    "deepseek-v4-pro": [1.32, 3.96, 0.044, 0.044], // DeepSeek 官网最新 Pro 高峰价 (空闲5折为 [0.66, 1.98, 0.022, 0.022])
-    "system-summaries": [2.50, 10.00, 1.25, 1.25],
-  };
-
-  // 规范模型归一化映射：仅显式完整别名白名单，未知保持原样，system仅无模型时归为system-summaries
-  function canonicalModel(model, provider, role) {
-    const raw = String(model || "").trim();
-    const m = raw.toLowerCase();
-    if (!m || m === "unknown") {
-      if (role === "system") return { key: "system-summaries", name: "工具 / 压缩摘要" };
-      return { key: "unknown", name: "未记录模型" };
-    }
-    if (MODEL_CANONICAL_MAP[m]) return MODEL_CANONICAL_MAP[m];
-    const base = m.includes("/") ? m.split("/").pop() : m;
-    if (MODEL_CANONICAL_MAP[base]) return MODEL_CANONICAL_MAP[base];
-    return { key: raw, name: raw };
-  }
-
-  function isValidDay(d) {
-    if (typeof d !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-    const [y, m, dayNum] = d.split("-").map(Number);
-    const dt = new Date(Date.UTC(y, m - 1, dayNum));
-    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === dayNum;
-  }
-
-  function name(id) {
-    return canonicalModel(id, null, null).name;
-  }
-
-  function resolveRate(pricing, rawModel, provider, canonicalKey, bucketEngine) {
-    if (!pricing || typeof pricing !== "object" || !pricing.models || typeof pricing.models !== "object") {
-      return null;
-    }
-    if (pricing.version !== 1 || pricing.currency !== "USD" || pricing.unit !== "per_1m_tokens") {
-      return null;
-    }
-    const models = pricing.models;
-    const raw = typeof rawModel === "string" ? rawModel.trim() : "";
-    const clean = raw.includes("/") ? raw.split("/").pop().trim() : raw;
-    const full = (provider && provider !== "unknown") ? `${provider}/${clean}` : raw;
-
-    const candidateKeys = [raw, clean, full, canonicalKey].filter(Boolean);
-    let matched = null;
-    let foundKey = false;
-    for (const key of candidateKeys) {
-      if (Object.prototype.hasOwnProperty.call(models, key)) {
-        matched = models[key];
-        foundKey = true;
-        break;
-      }
-    }
-
-    if (foundKey) {
-      if (matched && typeof matched === "object") {
-        const input = matched.input;
-        const output = matched.output;
-        const cacheRead = matched.cacheRead;
-        const cacheWrite = matched.cacheWrite;
-        const isValid = v => typeof v === "number" && Number.isFinite(v) && v >= 0;
-        if (isValid(input) && isValid(output) && isValid(cacheRead) && isValid(cacheWrite)) {
-          return {
-            rates: [input, output, cacheRead, cacheWrite],
-            source: matched.source || "pricing",
-            tiered: Boolean(matched.tiered),
-            modelId: matched.modelId || raw,
-          };
-        }
-      }
-      // 命中显式条目但非法（缺失/非数字/负数/非法属性等），禁止静默回退 STANDARD 费率
-      return null;
-    }
-
-    const isCodex = bucketEngine === "codex" || (provider && String(provider).toLowerCase() === "openai-codex");
-    if (!isCodex) {
-      const stdRate = STANDARD_RATES[canonicalKey] || STANDARD_RATES[clean] || STANDARD_RATES[raw];
-      if (Array.isArray(stdRate) && stdRate.length >= 3) {
-        return {
-          rates: stdRate,
-          source: "fallback",
-          tiered: false,
-          modelId: canonicalKey || clean || raw,
-        };
-      }
-    }
-
-    return null;
-  }
-
-  // Only validated Codex lineage changes the conversation dimension. Physical
-  // execution buckets, dates, roles and Pi's existing ownership stay intact.
-  function conversationId(ledger, id) {
-    const seen = new Set([id]);
-    let current = id;
-    while (true) {
-      const parent = ledger.sessions?.[current]?.parentSessionId;
-      if (typeof parent !== "string" || !parent.startsWith("codex:") || !ledger.sessions?.[parent]) return current;
-      if (seen.has(parent)) return id;
-      seen.add(parent);
-      current = parent;
-    }
-  }
-
-  function aggregate(ledger, options = {}) {
-    const total = empty(), roles = { main: empty(), subagent: empty(), system: empty() };
-    const models = new Map(), sessions = new Map(), allModels = new Map(), physicalSessions = new Set();
-    const now = options.now ?? Date.now(), range = options.timeRange || "all";
-
-    const validRanges = ["all", "today", "yesterday", "24h", "7d", "30d", "custom"];
-    if (options.timeRange && !validRanges.includes(options.timeRange)) {
-      throw new Error(`Invalid timeRange: ${options.timeRange}`);
-    }
-    const validRoles = ["all", "main", "subagent", "system"];
-    if (options.role && !validRoles.includes(options.role)) {
-      throw new Error(`Invalid role: ${options.role}`);
-    }
-    const validEngines = ["all", "pi", "codex"];
-    if (options.engine !== undefined && !validEngines.includes(options.engine)) {
-      throw new Error(`Invalid engine: ${options.engine}`);
-    }
-    const selectedEngine = options.engine === undefined ? "all" : options.engine;
-    if (options.now !== undefined && (typeof options.now !== "number" || !Number.isFinite(options.now))) {
-      throw new Error("Invalid now timestamp");
-    }
-
-    const hasModelFilter = Boolean(options.model && options.model !== "all");
-    let optCanonicalKey = null;
-    let optRaw = null;
-    if (hasModelFilter) {
-      optRaw = String(options.model).trim();
-      const optCanonical = canonicalModel(optRaw);
-      if (MODEL_CANONICAL_MAP[optCanonical.key]) {
-        optCanonicalKey = optCanonical.key;
-      }
-    }
-
-    let windowStart = -Infinity, windowEnd = Infinity;
-    let startCutoff = "", endCutoff = "";
-
-    if (range === "today") {
-      startCutoff = day(now);
-      endCutoff = day(now);
-    } else if (range === "yesterday") {
-      startCutoff = day(now - 86400000);
-      endCutoff = day(now - 86400000);
-    } else if (range === "24h") {
-      windowStart = now - 86400000;
-      windowEnd = now;
-    } else if (range === "7d") {
-      startCutoff = day(now - 6 * 86400000);
-      endCutoff = day(now);
-    } else if (range === "30d") {
-      startCutoff = day(now - 29 * 86400000);
-      endCutoff = day(now);
-    } else if (range === "custom") {
-      if (options.startDate != null && options.startDate !== "") {
-        if (!isValidDay(options.startDate)) throw new Error(`Invalid custom startDate: ${options.startDate}`);
-        startCutoff = options.startDate;
-      }
-      if (options.endDate != null && options.endDate !== "") {
-        if (!isValidDay(options.endDate)) throw new Error(`Invalid custom endDate: ${options.endDate}`);
-        endCutoff = options.endDate;
-      }
-      if (startCutoff && endCutoff && startCutoff > endCutoff) {
-        throw new Error(`Invalid custom date range: startDate ${startCutoff} > endDate ${endCutoff}`);
-      }
-    }
-
-    let excludedTokens = 0, excludedRecords = 0;
-
-    for (const b of ledger.buckets || []) {
-      const bucketEngine = b.engine === undefined ? "pi" : b.engine;
-      if (bucketEngine !== "pi" && bucketEngine !== "codex") {
-        throw new Error(`Invalid bucket engine: ${bucketEngine}`);
-      }
-      if (selectedEngine !== "all" && bucketEngine !== selectedEngine) continue;
-
-      const c = canonicalModel(b.model, b.provider, b.role);
-      const cKey = c.key;
-      allModels.set(cKey, c.name);
-
-      let matchExecutionCandidate = true;
-      if (hasModelFilter) {
-        if (optCanonicalKey) {
-          matchExecutionCandidate = (cKey === optCanonicalKey);
-        } else {
-          const fullBucketModel = (b.provider && b.provider !== "unknown") ? `${b.provider}/${b.model}` : b.model;
-          matchExecutionCandidate = (cKey === optRaw || b.model === optRaw || fullBucketModel === optRaw);
-        }
-      }
-
-      let matchControllerCandidate = false;
-      let ctrlCanonical = null;
-      if (b.role === "subagent" && b.controllerModel && b.controllerModel !== "unknown") {
-        ctrlCanonical = canonicalModel(b.controllerModel, null, "main");
-        if (!hasModelFilter) {
-          matchControllerCandidate = true;
-        } else {
-          if (optCanonicalKey) {
-            matchControllerCandidate = (ctrlCanonical.key === optCanonicalKey);
-          } else {
-            const fullCtrlModel = (b.controllerProvider && b.controllerProvider !== "unknown") ? `${b.controllerProvider}/${b.controllerModel}` : b.controllerModel;
-            matchControllerCandidate = (ctrlCanonical.key === optRaw || b.controllerModel === optRaw || fullCtrlModel === optRaw);
-          }
-        }
-      }
-
-      // 如果既非目标执行模型，也非目标 controller 的调度子任务，则跳过
-      if (!matchExecutionCandidate && !matchControllerCandidate) continue;
-
-      let item;
-      if (range === "24h") {
-        let dayStart = -Infinity, dayEnd = Infinity;
-        let dayKnown = false;
-        if (b.day !== "unknown") {
-          dayStart = Date.parse(`${b.day}T00:00:00+08:00`);
-          dayEnd = dayStart + 86400000;
-          dayKnown = Number.isFinite(dayStart);
-        }
-        const overlaps24h = !dayKnown || (dayEnd > windowStart && dayStart <= windowEnd);
-
-        if (Array.isArray(b.timeline)) {
-          const filtered = { ...b, ...empty() };
-          let matched = 0;
-          for (const entry of b.timeline) {
-            const ts = entry[0];
-            if (typeof ts === "number" && Number.isFinite(ts)) {
-              if (ts > windowStart && ts <= windowEnd) {
-                matched++;
-                for (let i = 0; i < fields.length; i++) {
-                  filtered[fields[i]] += entry[1 + i] || 0;
-                }
-              }
-            } else {
-              if (overlaps24h) {
-                excludedTokens += entry[1 + 4] || 0;
-                excludedRecords += entry[1 + 7] || 0;
-              }
-            }
-          }
-          if (matched === 0) continue;
-          item = filtered;
-        } else {
-          if (!overlaps24h) {
-            continue;
-          }
-          if (dayKnown && dayStart > windowStart && dayEnd - 1 <= windowEnd) {
-            item = { ...b };
-          } else {
-            excludedTokens += b.totalTokens;
-            excludedRecords += b.records;
-            continue;
-          }
-        }
-      } else {
-        if (startCutoff && (b.day === "unknown" || b.day < startCutoff)) continue;
-        if (endCutoff && (b.day === "unknown" || b.day > endCutoff)) continue;
-        item = { ...b };
-      }
-
-      // 智能价格核算：有原生上报优先原值；旧桶整个桶 cost=0 时全桶补价；不得对 cost>0 且部分 unpriced 用比例近似冒充精确
-      let effectiveCostNano = 0;
-      let effectiveEstimatedCostNano = 0;
-      let effectiveUnpriced = item.unpricedTokens || 0;
-      let isExplicitEstimated = false;
-
-      if (!options.pricing) {
-        effectiveCostNano = bucketEngine === "codex" ? 0 : (item.costNano || 0);
-        if (bucketEngine !== "codex" && item.totalTokens > 0) {
-          const rate = STANDARD_RATES[cKey];
-          if (rate) {
-            if (effectiveCostNano <= 0) {
-              const estUsd = ((item.inputTokens || 0) * rate[0] + (item.outputTokens || 0) * rate[1] + (item.cacheReadTokens || 0) * rate[2] + (item.cacheWriteTokens || 0) * (rate[3] || 0)) / 1e6;
-              effectiveCostNano = Math.round(estUsd * 1e9);
-              effectiveEstimatedCostNano = effectiveCostNano;
-              effectiveUnpriced = 0;
-              isExplicitEstimated = true;
-            }
-          }
-        }
-      } else {
-        if ((item.costNano || 0) > 0) {
-          effectiveCostNano = item.costNano;
-          effectiveEstimatedCostNano = 0;
-          effectiveUnpriced = item.unpricedTokens || 0;
-        } else if (item.totalTokens > 0) {
-          const resolved = resolveRate(options.pricing, b.model, b.provider, cKey, bucketEngine);
-          if (resolved && resolved.rates) {
-            const rate = resolved.rates;
-            // 阶梯费率按独立 Bucket 估算，不按历史跨调用累计触发 >272k 档位
-            const estUsd = ((item.inputTokens || 0) * rate[0] + (item.outputTokens || 0) * rate[1] + (item.cacheReadTokens || 0) * rate[2] + (item.cacheWriteTokens || 0) * (rate[3] || 0)) / 1e6;
-            effectiveCostNano = Math.round(estUsd * 1e9);
-            effectiveEstimatedCostNano = effectiveCostNano;
-            effectiveUnpriced = 0;
-            isExplicitEstimated = true;
-          } else {
-            effectiveCostNano = 0;
-            effectiveEstimatedCostNano = 0;
-            effectiveUnpriced = item.totalTokens;
-          }
-        }
-      }
-
-      const isPricedFree = Boolean(isExplicitEstimated && effectiveCostNano === 0 && effectiveUnpriced === 0 && item.totalTokens > 0);
-
-      item = {
-        ...item,
-        costNano: effectiveCostNano,
-        estimatedCostNano: effectiveEstimatedCostNano,
-        unpricedTokens: effectiveUnpriced,
-        isEstimated: isExplicitEstimated,
-        isExplicitFree: isPricedFree,
-      };
-
-      const matchRole = !options.role || options.role === "all" || b.role === options.role;
-
-      // 1. 物理执行维度：必须匹配执行模型筛选与角色筛选
-      if (matchExecutionCandidate && matchRole) {
-        add(total, item);
-        add(roles[item.role], item);
-        total.estimatedCostNano = (total.estimatedCostNano || 0) + effectiveEstimatedCostNano;
-        roles[item.role].estimatedCostNano = (roles[item.role].estimatedCostNano || 0) + effectiveEstimatedCostNano;
-        if (isExplicitEstimated) {
-          total.hasEstimated = true;
-          roles[item.role].hasEstimated = true;
-        }
-        if (isPricedFree) {
-          total.hasExplicitFree = true;
-          roles[item.role].hasExplicitFree = true;
-        }
-        if (bucketEngine === "codex") {
-          total.codexTokens = (total.codexTokens || 0) + item.totalTokens;
-          roles[item.role].codexTokens = (roles[item.role].codexTokens || 0) + item.totalTokens;
-        }
-
-        if (!models.has(cKey)) {
-          models.set(cKey, {
-            ...empty(),
-            key: cKey,
-            name: c.name,
-            providerList: new Set(),
-            sessionIds: new Set(),
-            roles: { main: empty(), subagent: empty(), system: empty() },
-            dispatchedSubagents: { tokens: 0, calls: 0, messages: 0, pricingComplete: true },
-            workerSubagents: { tokens: 0, calls: 0, messages: 0 },
-            estimatedCostNano: 0,
-          });
-        }
-        const m = models.get(cKey);
-        add(m, item);
-        add(m.roles[item.role], item);
-        m.estimatedCostNano = (m.estimatedCostNano || 0) + effectiveEstimatedCostNano;
-        m.roles[item.role].estimatedCostNano = (m.roles[item.role].estimatedCostNano || 0) + effectiveEstimatedCostNano;
-        if (isExplicitEstimated) {
-          m.hasEstimated = true;
-          m.roles[item.role].hasEstimated = true;
-        }
-        if (isPricedFree) {
-          m.hasExplicitFree = true;
-          m.roles[item.role].hasExplicitFree = true;
-        }
-        if (bucketEngine === "codex") {
-          m.codexTokens = (m.codexTokens || 0) + item.totalTokens;
-          m.roles[item.role].codexTokens = (m.roles[item.role].codexTokens || 0) + item.totalTokens;
-        }
-        const groupId = bucketEngine === "codex" ? conversationId(ledger, item.sessionId) : item.sessionId;
-        physicalSessions.add(item.sessionId);
-        m.sessionIds.add(groupId);
-        if (b.provider && b.provider !== "unknown") m.providerList.add(b.provider);
-
-        if (b.role === "subagent") {
-          m.workerSubagents.tokens += item.totalTokens;
-          m.workerSubagents.calls += item.calls;
-          m.workerSubagents.messages += item.messageCount;
-          if (effectiveEstimatedCostNano > 0) {
-            m.workerSubagents.estimatedCostNano = (m.workerSubagents.estimatedCostNano || 0) + effectiveEstimatedCostNano;
-          }
-        }
-
-        if (!sessions.has(groupId)) {
-          sessions.set(groupId, { ...(ledger.sessions?.[groupId] || {}), ...empty(), id: groupId,
-            mainTokens: 0, subagentTokens: 0, subagentIds: new Set(), subtaskDetails: new Map(), estimatedCostNano: 0 });
-        }
-        const group = sessions.get(groupId);
-        add(group, item);
-        group.estimatedCostNano = (group.estimatedCostNano || 0) + effectiveEstimatedCostNano;
-        if (isExplicitEstimated) group.hasEstimated = true;
-        if (isPricedFree) group.hasExplicitFree = true;
-        if (bucketEngine === "codex") {
-          group.codexTokens = (group.codexTokens || 0) + item.totalTokens;
-          if (item.role === "subagent") {
-            group.subagentTokens += item.totalTokens;
-            group.subagentIds.add(item.sessionId);
-          } else group.mainTokens += item.totalTokens;
-        }
-        // These rows explain already-counted Codex physical usage. They never
-        // flow back into aggregate totals, and require a validated parent link.
-        if (bucketEngine === "codex" && item.role === "subagent" && groupId !== item.sessionId) {
-          const detailDay = typeof b.day === "string" ? b.day : "unknown";
-          const detailKey = JSON.stringify([item.sessionId, detailDay]);
-          let detail = group.subtaskDetails.get(detailKey);
-          if (!detail) {
-            const childSession = ledger.sessions?.[item.sessionId] || {};
-            detail = {
-              ...empty(), sessionId: item.sessionId,
-              name: childSession.name || childSession.title || item.sessionId,
-              day: detailDay, codexTokens: 0, estimatedCostNano: 0,
-            };
-            group.subtaskDetails.set(detailKey, detail);
-          }
-          add(detail, item);
-          detail.codexTokens += item.totalTokens;
-          detail.estimatedCostNano = (detail.estimatedCostNano || 0) + effectiveEstimatedCostNano;
-          if (isExplicitEstimated) detail.hasEstimated = true;
-          if (isPricedFree) detail.hasExplicitFree = true;
-        }
-      }
-
-      // 2. 调度归属维度：双向子代理归属，仅记录发起调用的主控模型（非加和信息，不计入物理总量）
-      // controller dispatch 必须遵守执行角色筛选：role=main 时不展示来自 role=subagent 的 dispatch/savings；role=all 或 role=subagent 时可展示
-      if (matchControllerCandidate && ctrlCanonical && matchRole) {
-        const ctrl = ctrlCanonical;
-        if (!models.has(ctrl.key)) {
-          models.set(ctrl.key, {
-            ...empty(),
-            key: ctrl.key,
-            name: ctrl.name,
-            providerList: new Set(),
-            sessionIds: new Set(),
-            roles: { main: empty(), subagent: empty(), system: empty() },
-            dispatchedSubagents: { tokens: 0, calls: 0, messages: 0, pricingComplete: true },
-            workerSubagents: { tokens: 0, calls: 0, messages: 0 },
-          });
-        }
-        const cm = models.get(ctrl.key);
-        if (cm.dispatchedSubagents.pricingComplete === undefined) {
-          cm.dispatchedSubagents.pricingComplete = true;
-        }
-        cm.dispatchedSubagents.tokens += item.totalTokens;
-        cm.dispatchedSubagents.calls += item.calls;
-        cm.dispatchedSubagents.messages += item.messageCount;
-        if (bucketEngine === "codex") cm.dispatchedSubagents.codexTokens = (cm.dispatchedSubagents.codexTokens || 0) + item.totalTokens;
-
-        // 子 Agent 实际费用：优先使用已按事件精确聚合的 item.costNano（item.costNano 是唯一实际费用入口）
-        // 只有 unpricedTokens === 0 才算该子桶完整定价。
-        // 若任何选中调度子桶未完整定价，整个 controller 的 savings 标记为 pricingComplete=false
-        if (!options.pricing) {
-          const mainRate = STANDARD_RATES[ctrl.key];
-          const isSubPriced = bucketEngine !== "codex" && (item.unpricedTokens || 0) === 0;
-          const hasHypMainCost = bucketEngine !== "codex" && Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
-
-          if (isSubPriced && hasHypMainCost) {
-            const actualSubCost = (item.costNano || 0) / 1e9;
-            const mrCw = mainRate[3] || 0;
-            const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
-            cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
-            cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
-          } else {
-            cm.dispatchedSubagents.pricingComplete = false;
-          }
-        } else {
-          const resolvedCtrl = resolveRate(options.pricing, b.controllerModel, b.controllerProvider, ctrl.key, bucketEngine);
-          const mainRate = resolvedCtrl ? resolvedCtrl.rates : null;
-          const isSubPriced = (item.unpricedTokens || 0) === 0 && (item.costNano > 0 || item.isExplicitFree);
-          const hasHypMainCost = Boolean(mainRate && (item.cacheWriteTokens === 0 || mainRate.length >= 4));
-
-          if (isSubPriced && hasHypMainCost) {
-            const actualSubCost = (item.costNano || 0) / 1e9;
-            const mrCw = mainRate[3] || 0;
-            const hypMainCost = ((item.inputTokens || 0) * mainRate[0] + (item.outputTokens || 0) * mainRate[1] + (item.cacheReadTokens || 0) * mainRate[2] + (item.cacheWriteTokens || 0) * mrCw) / 1e6;
-            cm.dispatchedSubagents.actualCost = (cm.dispatchedSubagents.actualCost || 0) + actualSubCost;
-            cm.dispatchedSubagents.hypotheticalCost = (cm.dispatchedSubagents.hypotheticalCost || 0) + hypMainCost;
-            if (bucketEngine === "codex" || item.estimatedCostNano > 0 || (resolvedCtrl && resolvedCtrl.source !== "pi-sdk") || item.isExplicitFree) {
-              cm.dispatchedSubagents.isEstimated = true;
-            }
-          } else {
-            cm.dispatchedSubagents.pricingComplete = false;
-          }
-        }
-      }
-    }
-
-    function attachDisplayFlags(target) {
-      if (!target) return;
-      if (target.totalTokens > 0 && target.unpricedTokens === 0 && target.costNano === 0 && (target.hasEstimated || target.hasExplicitFree)) {
-        target.isExplicitFree = true;
-      }
-    }
-
-    attachDisplayFlags(total);
-    for (const r of Object.values(roles)) attachDisplayFlags(r);
-
-    const modelBreakdowns = [...models.values()].map(m => {
-      attachDisplayFlags(m);
-      for (const r of Object.values(m.roles)) attachDisplayFlags(r);
-      const d = m.dispatchedSubagents;
-      if (d) {
-        if (d.calls > 0 && d.pricingComplete && d.hypotheticalCost > 0) {
-          d.savedCost = Math.max(0, d.hypotheticalCost - d.actualCost);
-          d.subSavedRatio = ((d.savedCost / d.hypotheticalCost) * 100).toFixed(1);
-          const mainCost = (m.roles.main.costNano || 0) / 1e9;
-          d.allMainTotalCost = mainCost + d.hypotheticalCost;
-          d.actualTotalCost = mainCost + d.actualCost;
-          d.overallSavedRatio = d.allMainTotalCost > 0 ? ((d.savedCost / d.allMainTotalCost) * 100).toFixed(1) : d.subSavedRatio;
-          d.isEstimated = Boolean(d.isEstimated || m.estimatedCostNano > 0 || m.isExplicitFree);
-        } else {
-          d.pricingComplete = false;
-          d.savedCost = 0;
-          d.actualCost = 0;
-          d.hypotheticalCost = 0;
-          delete d.subSavedRatio;
-          delete d.overallSavedRatio;
-          delete d.allMainTotalCost;
-          delete d.actualTotalCost;
-        }
-      }
-      return {
-        ...m,
-        provider: m.providerList.size > 0 ? [...m.providerList].join(" · ") : "未记录渠道", 
-        providerList: undefined,
-        sessionCount: m.sessionIds.size,
-        sessionIds: undefined,
-        percentage: total.totalTokens ? Number(((m.totalTokens / total.totalTokens) * 100).toFixed(1)) : 0,
-      };
-    }).sort((a, b) => b.totalTokens - a.totalTokens);
-
-    return {
-      ...total,
-      roles,
-      modelBreakdowns,
-      allModels: [...allModels],
-      sessionCount: sessions.size,
-      physicalSessionCount: physicalSessions.size,
-      topSessions: [...sessions.values()].map(({ subagentIds, subtaskDetails, ...session }) => {
-        attachDisplayFlags(session);
-        return {
-          ...session,
-          subagentCount: subagentIds.size,
-          subtasks: [...subtaskDetails.values()].map(st => {
-            attachDisplayFlags(st);
-            return st;
-          }).sort((a, b) =>
-            b.day.localeCompare(a.day) || b.totalTokens - a.totalTokens || a.name.localeCompare(b.name)),
-        };
-      }).sort((a, b) => b.totalTokens - a.totalTokens).slice(0, 10),
-      timeCoverage: { excludedTokens, excludedRecords },
-    };
-  }
-
-  function validate(ledger) {
-    if (ledger.version !== 2 || !Array.isArray(ledger.buckets)) throw new Error("Unsupported Usage ledger schema");
-    for (const b of ledger.buckets) {
-      if (b.engine !== undefined && b.engine !== "pi" && b.engine !== "codex") throw new Error(`Invalid bucket engine: ${b.engine}`);
-      if (!["main", "subagent", "system"].includes(b.role)) throw new Error("Invalid execution role");
-      if (b.day !== "unknown") {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(b.day)) throw new Error(`Invalid day format: ${b.day}`);
-        const [y, m, d] = b.day.split("-").map(Number);
-        const dt = new Date(Date.UTC(y, m - 1, d));
-        if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
-          throw new Error(`Invalid calendar date: ${b.day}`);
-        }
-      }
-      for (const k of fields) {
-        if (!Number.isSafeInteger(b[k]) || b[k] < 0) throw new Error(`Invalid ${k}`);
-      }
-      if (b.totalTokens !== b.inputTokens + b.outputTokens + b.cacheReadTokens + b.cacheWriteTokens) {
-        throw new Error("Token components do not reconcile");
-      }
-
-      if (b.timeline !== null && b.timeline !== undefined) {
-        if (!Array.isArray(b.timeline)) throw new Error("Timeline must be an array or null");
-        const tlSum = empty();
-        for (const entry of b.timeline) {
-          if (!Array.isArray(entry) || entry.length < 1 + fields.length) throw new Error("Invalid timeline entry structure");
-          const ts = entry[0];
-          if (ts !== null) {
-            if (typeof ts !== "number" || !Number.isSafeInteger(ts)) throw new Error("Invalid timeline timestamp");
-            if (b.day !== "unknown" && day(ts) !== b.day) {
-              throw new Error(`Timeline timestamp day mismatch: ${day(ts)} vs bucket ${b.day}`);
-            }
-          }
-          for (let i = 0; i < fields.length; i++) {
-            const v = entry[1 + i];
-            const k = fields[i];
-            if (!Number.isSafeInteger(v) || v < 0) throw new Error(`Invalid timeline field ${k}`);
-            tlSum[k] += v;
-            if (!Number.isSafeInteger(tlSum[k])) throw new Error(`Timeline integer overflow for ${k}`);
-          }
-          const entryTotal = entry[1 + 4]; // totalTokens
-          const entryComp = entry[1 + 0] + entry[1 + 1] + entry[1 + 2] + entry[1 + 3];
-          if (entryTotal !== entryComp) throw new Error("Timeline entry token components do not reconcile");
-        }
-        for (const k of fields) {
-          if (tlSum[k] !== b[k]) {
-            throw new Error(`Timeline sum mismatch for ${k}: ${tlSum[k]} vs ${b[k]}`);
-          }
-        }
-      }
-    }
-    const a = aggregate(ledger);
-    for (const k of fields) {
-      if (!Number.isSafeInteger(a[k]) || a[k] < 0) throw new Error(`Invalid aggregated total ${k}`);
-      if (a[k] !== a.modelBreakdowns.reduce((s, m) => s + m[k], 0)) throw new Error(`Model mismatch: ${k}`);
-      if (a[k] !== Object.values(a.roles).reduce((s, r) => s + r[k], 0)) throw new Error(`Role mismatch: ${k}`);
-      if (ledger.totals && a[k] !== ledger.totals[k]) {
-        // 成本与未定价属于派生核算字段（受 STANDARD_RATES 费率基准表与智能补价规则控制）
-        // 只要底层物理 token 与记录计数量完全一致，允许平滑自愈对齐快照 totals，杜绝费率基准演进导致面板报错
-        if (k === "costNano" || k === "unpricedTokens") {
-          const tokensMatch = ledger.totals.totalTokens === a.totalTokens &&
-                              ledger.totals.inputTokens === a.inputTokens &&
-                              ledger.totals.outputTokens === a.outputTokens &&
-                              ledger.totals.cacheReadTokens === a.cacheReadTokens;
-          if (tokensMatch) {
-            ledger.totals[k] = a[k];
-            continue;
-          }
-        }
-        throw new Error(`Snapshot mismatch: ${k}`);
-      }
-    }
-    return a;
-  }
-
-  return { fields, empty, add, day, name, canonicalModel, STANDARD_RATES, aggregate, validate, resolveRate };
-});
-
-;
-/* Optional resources share one request and publish no UI ownership. */
-(function (root) {
-  "use strict";
-  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-151436c8dff200f2.js","integrity":"sha256-FRQ2yN/yAPLOPBWnCZxg1XB4TQKDjgbhtw/9PZ8VKOk=","bytes":80990},"image-editor":{"path":"/pi-web-assets/image-editor-d639e1103e1c3401.js","integrity":"sha256-1jnhED4cNAE9/iHWC+lG0Ye0Fjtb5jHV3w5TJbkiFOE=","bytes":54470}};
-  const pending = new Map();
-  // Hot reloads may change an optional asset while keeping the same window.
-  // Reuse only an export stamped with this exact content-addressed path.
-  const versions = root.__PI_OPTIONAL_LOADED_ASSETS__ instanceof Map
-    ? root.__PI_OPTIONAL_LOADED_ASSETS__ : (root.__PI_OPTIONAL_LOADED_ASSETS__ = new Map());
-  function read(name, fromLoad = false) {
-    let value = null;
-    if (name === "xlsx-engine" && typeof root.XLSX?.read === "function") value = root.XLSX;
-    if (name === "usage-panel" && typeof root.PiUsagePanel?.render === "function") value = root.PiUsagePanel;
-    if (name === "image-editor" && typeof root.PiImageEditor?.create === "function") value = root.PiImageEditor;
-    if (!value) return null;
-    const path = assets[name]?.path;
-    if (fromLoad) versions.set(name, { path, value });
-    const loaded = versions.get(name);
-    return loaded?.path === path && loaded.value === value ? value : null;
-  }
-
-  root.__PI_ENH_LOAD_OPTIONAL__ = function (name) {
-    const asset = assets[name];
-    if (!asset) return Promise.reject(new Error("未知的可选组件"));
-    const loaded = read(name);
-    if (loaded) return Promise.resolve(loaded);
-    if (pending.has(name)) return pending.get(name);
-    const promise = new Promise((resolve, reject) => {
-      const script = root.document.createElement("script");
-      script.src = asset.path;
-      script.integrity = asset.integrity;
-      script.async = true;
-      script.dataset.piOptionalAsset = name;
-      let timer;
-      const finish = error => {
-        clearTimeout(timer);
-        script.onload = script.onerror = null;
-        const value = error ? null : read(name, true);
-        if (error || !value) {
-          script.remove();
-          reject(error || new Error("可选组件初始化失败"));
-        } else {
-          resolve(value);
-        }
-      };
-      script.onload = () => finish();
-      script.onerror = () => finish(new Error("可选组件加载失败，请重试"));
-      timer = setTimeout(() => finish(new Error("可选组件加载超时，请重试")), 15000);
-      root.document.head.appendChild(script);
-    }).finally(() => pending.delete(name));
-    pending.set(name, promise);
-    return promise;
-  };
-  // A paste may arrive before this loader is ready. Honor that demand once,
-  // using the same in-flight request as explicit preview/editor opens.
-  if (root.__PI_IMAGE_PRELOAD_REQUESTED__) {
-    root.__PI_ENH_LOAD_OPTIONAL__("image-editor").catch(() => {});
-  }
-})(window);
-
-;
-  // Canonical fast reader: compiled from the same tested factory, no duplicate algorithm.
-  var isPluginFastActive = (function createFastPluginReader(storageGetter, metadata) {
-  let lastRaw;
-  let parsedModern = null;
-  const read = (key) => {
-    try {
-      const value = storageGetter(key);
-      return value === undefined ? null : value;
-    } catch (_) { return null; }
-  };
-  return function isPluginFastActive(pluginId) {
-    if (!Object.prototype.hasOwnProperty.call(metadata, pluginId)) return true;
-    const info = metadata[pluginId];
-    const raw = read("pi-enh-settings-v1");
-    if (raw !== lastRaw) {
-      lastRaw = raw;
-      parsedModern = null;
-      if (raw) {
-        try { parsedModern = JSON.parse(raw); } catch (_) {}
-      }
-    }
-    // 与 getEnhancementConfig() 一致：任何 truthy 解析值均 normalize(defaults)。
-    const moduleConfig = parsedModern && parsedModern.modules && parsedModern.modules[info.moduleId];
-    const moduleEnabled = moduleConfig && typeof moduleConfig.enabled === "boolean"
-      ? moduleConfig.enabled : info.moduleDefaultEnabled;
-    if (info.moduleId && !moduleEnabled) return false;
-    if (parsedModern) {
-      const feature = parsedModern.features && parsedModern.features[pluginId];
-      return feature && typeof feature.enabled === "boolean" ? feature.enabled : info.defaultEnabled;
-    }
-    const legacy = read("pi-enh-plugin-" + pluginId);
-    return legacy === null ? info.defaultEnabled : legacy === "true";
-  };
-})(function(key) {
-    return typeof localStorage !== "undefined" && localStorage ? localStorage.getItem(key) : null;
-  }, {"stop-fast-response":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"model-scope-warning":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"dom-feedback":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
-;
 /**
- * Agent Web Plus Enhancements v4.3.4:
+ * Pi Web Enhancements v4.3.4:
  * 1. Session Row Context Menu (Right-click in sidebar)
  *    - Copy Session ID / Path / Prompt / CWD
  * 2. Quick Action Quote Toolbar (Select text in chat output)
@@ -844,12 +37,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   } catch (e) {}
 
+  // 0.5 物理级去除标签页中的 Pi Web 标识与防止标题抖动（保留状态文字 🔵/🟠/🔴/🟢 等）
+  function sanitizePageTitle(rawTitle) {
+    if (!rawTitle) return "";
+    let clean = String(rawTitle)
+      .replace(/\s*[-·|_]\s*(?:π\+\s*)?\bPi\s*Web\b(?:\s+Plus\b|\s*\+)?/gi, "")
+      .replace(/(?:π\+\s*)?\bPi\s*Web\b(?:\s+Plus\b|\s*\+)?\s*[-·|_]\s*/gi, "")
+      .replace(/(?:π\+\s*)?\bPi\s*Web\b(?:\s+Plus\b|\s*\+)?/gi, "")
+      .replace(/\s*[-·|_]\s*$/, "")
+      .trim();
+    return clean;
+  }
+
   // Safe Hot-Reloading: Clean up any previous instance before re-initializing
   if (typeof window.__PI_WEB_ENHANCEMENTS_CLEANUP__ === "function") {
     try {
       window.__PI_WEB_ENHANCEMENTS_CLEANUP__();
     } catch (err) {
-      console.warn("[Agent Web Plus Enhancements] error cleaning up previous instance:", err);
+      console.warn("[Pi Web Enhancements] error cleaning up previous instance:", err);
     }
   }
   // 立即清除任何可能残留的孤儿 Toast 节点
@@ -863,6 +68,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   let isDisposed = false;
   let hasDeferredSync = false;
 
+  let titleObserver = null;
+  let headObserver = null;
+  let installedTitleGetter = null;
+  let installedTitleSetter = null;
+  let hadOwnTitleDesc = false;
+  let prevOwnTitleDesc = null;
   // Top-level TDZ hoisted forward declarations (< line 200)
   let pendingDecorationOperations,
     latestKnownSessionGroups,
@@ -900,8 +111,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     isComposingInput,
     composerModesStateMap,
     pendingNewComposerMode,
+    pendingComposerNavOverride,
+    lastTrackedModeUrlSessionId,
+    lastTrackedModeNativeDraftKey,
+    syntheticUrlSessionForNewDraft,
     isSessionBatchMode,
-    selectedSessionBatchIds = null,
+    selectedSessionBatchIds,
     batchDeleteModal,
     durationTooltip,
     usageTooltip,
@@ -909,6 +124,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     minimapHistoryDisplayState,
     autoLoadEarlierTriggered,
     viewerFileContentCache,
+    baseTitle,
     wasRunning,
     restoredThinkingSessionScopes,
     SHORTCUT_TIP_STORAGE_KEY,
@@ -919,6 +135,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     sidebarObserver = null,
     activeTurnStartTime = null,
     activeTurnEntryId = null,
+    restoreTitleTimer = null,
     notRunningConsecutiveTicks = 0,
     isRestoringThinking = false,
     settingsDialogObserver = null,
@@ -934,6 +151,208 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     bridgeBaseSyncUrl = null,
     currentScriptTag = null,
     pollerIntervalId = null;
+
+  function isProjectStatusIndicatorActive() {
+    if (isDisposed) return false;
+    if (typeof isPluginEnabled === "function") {
+      try {
+        return Boolean(isPluginEnabled("project-status-indicator"));
+      } catch (e) {}
+    }
+    try {
+      if (typeof localStorage !== "undefined") {
+        const direct = localStorage.getItem("pi-enh-plugin-project-status-indicator");
+        if (direct === "false") return false;
+        if (direct === "true") return true;
+        const raw = localStorage.getItem("pi-enh-settings-v1") || localStorage.getItem("pi-enh-features");
+        if (raw) {
+          const cfg = JSON.parse(raw);
+          if (cfg && cfg.features && cfg.features["project-status-indicator"] && cfg.features["project-status-indicator"].enabled === false) {
+            return false;
+          }
+          if (cfg && cfg["project-status-indicator"] && cfg["project-status-indicator"].enabled === false) {
+            return false;
+          }
+        }
+      }
+    } catch (e) {}
+    return true;
+  }
+
+  // 0.6 document.title setter 拦截与 DOM 更新防护（去除 Pi Web 尾缀并防止与原生 MutationObserver 死循环）
+  try {
+    if (typeof document !== "undefined") {
+      hadOwnTitleDesc = Object.prototype.hasOwnProperty.call(document, "title");
+      let desc = hadOwnTitleDesc
+        ? Object.getOwnPropertyDescriptor(document, "title")
+        : (Object.getOwnPropertyDescriptor(Document.prototype, "title") ||
+           (typeof HTMLDocument !== "undefined" && Object.getOwnPropertyDescriptor(HTMLDocument.prototype, "title")) ||
+           Object.getOwnPropertyDescriptor(Object.getPrototypeOf(document) || Document.prototype, "title"));
+
+      let origGet = null;
+      let origSet = null;
+
+      if (desc && (desc.get || desc.set)) {
+        origGet = desc.get;
+        origSet = desc.set;
+      } else if (desc && "value" in desc) {
+        let storedVal = desc.value;
+        origGet = function () { return storedVal; };
+        origSet = function (val) { storedVal = val; };
+      }
+
+      if (origSet) {
+        // 防止热重载重复 defineProperty 套娃，解包最底层原始方法
+        if (origGet && origGet.__pi_enh_orig_get) {
+          origGet = origGet.__pi_enh_orig_get;
+        }
+        if (origSet && origSet.__pi_enh_orig_set) {
+          origSet = origSet.__pi_enh_orig_set;
+        }
+
+        prevOwnTitleDesc = hadOwnTitleDesc ? Object.getOwnPropertyDescriptor(document, "title") : null;
+
+        let isSettingTitleInternally = false;
+
+        installedTitleGetter = function () {
+          const raw = origGet ? origGet.call(this) : "";
+          if (!isProjectStatusIndicatorActive()) {
+            return raw;
+          }
+          const sanitized = sanitizePageTitle(raw);
+          return sanitized || raw;
+        };
+        installedTitleGetter.__pi_enh_title__ = true;
+        installedTitleGetter.__pi_enh_orig_get = origGet;
+
+        installedTitleSetter = function (val) {
+          window.__PI_WEB_NATIVE_TITLE_RAW__ = val;
+          // Preserve the native title before sanitizing the enhanced display.
+          // Legacy cores publish it through document.title, newer cores also
+          // provide __PI_WEB_NATIVE_TITLE_BASE__ directly.
+          if (
+            typeof val === "string" &&
+            (/^(?:π\+\s*)?Pi\s*Web(?:\s+Plus|\+)?$/i.test(val.trim()) ||
+             /\s-\s(?:π\+\s*)?Pi\s*Web(?:\s+Plus|\+)?$/i.test(val.trim()))
+          ) {
+            window.__PI_WEB_NATIVE_TITLE_BASE__ = val;
+          }
+
+          if (!isProjectStatusIndicatorActive()) {
+            origSet.call(this, val);
+            return;
+          }
+
+          const cleanBase = sanitizePageTitle(val);
+          // A sanitized enhancer write must not replace an authoritative native base.
+          if (!window.__PI_WEB_NATIVE_TITLE_BASE__ && cleanBase && !/^(?:🔵|🟠|🔴|🟢|⚠️)/.test(cleanBase)) {
+            window.__PI_WEB_NATIVE_TITLE_BASE__ = cleanBase;
+          }
+
+          // 状态前缀保护：若当前 val 本身已带有状态前缀（如 🔵、🟠 需要确认、🟢 已完成等），直接使用 cleanBase
+          let targetTitle = cleanBase;
+          const hasStatusPrefix = /^(?:🔵|🟠|🔴|🟢|⚠️)/.test(cleanBase);
+
+          if (!hasStatusPrefix && typeof window.__PI_ENH_COMPOSE_WINDOW_TITLE__ === "function") {
+            try {
+              const composed = window.__PI_ENH_COMPOSE_WINDOW_TITLE__(cleanBase);
+              if (composed) targetTitle = composed;
+            } catch (e) {}
+          }
+
+          if (!targetTitle) {
+            targetTitle = cleanBase || (val ? sanitizePageTitle(val) : "") || "work";
+          }
+
+          // 获取当前底层真实的 title，若已等于目标值则禁止重复写入（防止与原生 MutationObserver 死循环）
+          const currentTitle = origGet ? origGet.call(this) : (document.querySelector("title")?.textContent || "");
+          if (currentTitle === targetTitle) {
+            return;
+          }
+
+          if (isSettingTitleInternally) {
+            origSet.call(this, targetTitle);
+            return;
+          }
+
+          isSettingTitleInternally = true;
+          try {
+            origSet.call(this, targetTitle);
+          } finally {
+            isSettingTitleInternally = false;
+          }
+        };
+        installedTitleSetter.__pi_enh_title__ = true;
+        installedTitleSetter.__pi_enh_orig_set = origSet;
+
+        Object.defineProperty(document, "title", {
+          configurable: true,
+          enumerable: true,
+          get: installedTitleGetter,
+          set: installedTitleSetter,
+        });
+
+        // 初始若已有标题且开启增强，同步一次净化
+        if (isProjectStatusIndicatorActive() && document.title) {
+          const initClean = sanitizePageTitle(document.title);
+          if (initClean && initClean !== document.title) {
+            installedTitleSetter.call(document, document.title);
+          }
+        }
+      }
+
+      let isSanitizingDomTitle = false;
+      const cleanDomTitle = () => {
+        if (isDisposed || isSanitizingDomTitle) return;
+        if (!isProjectStatusIndicatorActive()) return;
+        const titleEl = document.querySelector("title");
+        if (!titleEl) return;
+        const currentText = titleEl.textContent || "";
+        if (!/Pi\s*Web/i.test(currentText)) return;
+        let cleaned = sanitizePageTitle(currentText);
+        if (!cleaned) return;
+        const hasStatus = /^(?:🔵|🟠|🔴|🟢|⚠️)/.test(cleaned);
+        if (!hasStatus && typeof window.__PI_ENH_COMPOSE_WINDOW_TITLE__ === "function") {
+          try {
+            const composed = window.__PI_ENH_COMPOSE_WINDOW_TITLE__(cleaned);
+            if (composed) cleaned = composed;
+          } catch (e) {}
+        }
+        if (titleEl.textContent !== cleaned) {
+          isSanitizingDomTitle = true;
+          try {
+            titleEl.textContent = cleaned;
+          } finally {
+            isSanitizingDomTitle = false;
+          }
+        }
+      };
+
+      if (typeof MutationObserver !== "undefined") {
+        titleObserver = new MutationObserver(cleanDomTitle);
+        const attachTitleObserver = () => {
+          if (isDisposed) return;
+          const t = document.querySelector("title");
+          if (t) {
+            titleObserver.observe(t, { childList: true, characterData: true, subtree: true });
+            cleanDomTitle();
+          }
+        };
+
+        if (document.head) {
+          headObserver = new MutationObserver(() => {
+            if (isDisposed) return;
+            const t = document.querySelector("title");
+            if (t) {
+              attachTitleObserver();
+            }
+          });
+          headObserver.observe(document.head, { childList: true });
+        }
+        attachTitleObserver();
+      }
+    }
+  } catch (e) {}
 
   // --- Managed Lifecycle & Zero-Leak Teardown Registry ---
   const activeCleanups = [];
@@ -986,7 +405,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       try {
         fn();
       } catch (err) {
-        console.error("[Agent Web Plus Enhancements] Error in managed timeout:", err);
+        console.error("[Pi Web Enhancements] Error in managed timeout:", err);
       }
     }, ms);
     managedTimeoutCleanups.set(id, cleanup);
@@ -1037,15 +456,50 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
 
   // --- Notification Preferences & History (通知偏好与历史) ---
-  const getNativeNotificationPolicy = () => {
-    try { return window.__PI_NATIVE_NOTIFICATION_POLICY__ || null; } catch (e) { return null; }
-  };
-  const nativeNotificationPolicy = getNativeNotificationPolicy();
-  const NOTIFICATION_CHANNELS = nativeNotificationPolicy?.channels || [];
-  const NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT = nativeNotificationPolicy?.changeEvent || "pi-native-notification-policy-change";
+  const NOTIFICATION_SETTINGS_STORAGE_KEY = "pi-enh-notification-settings-v1";
+  const NOTIFICATION_HISTORY_STORAGE_KEY = "pi-enh-notification-history-v1";
+  const NOTIFICATION_HISTORY_LIMIT = 100;
+  const NOTIFICATION_CHANNELS = [
+    { id: "session-title", name: "会话标题自动提炼", desc: "会话标题被 AI 自动提炼并修改时提示。", group: "日常提示", defaultEnabled: false },
+    { id: "mcp", name: "MCP 工具与连接提示", desc: "MCP 工具注册、重新加载、连接失败或配置错误提示。", group: "日常提示", defaultEnabled: false },
+    { id: "native-info", name: "普通信息提示", desc: "其他 info 级别的 Agent 扩展通知。", group: "日常提示", defaultEnabled: false },
+    { id: "native-success", name: "成功提示", desc: "操作成功或服务完成时的 success 通知。", group: "日常提示", defaultEnabled: true },
+    { id: "native-warning", name: "警告提示", desc: "warning 级别的服务或配置告警。", group: "异常与安全", defaultEnabled: true },
+    { id: "native-error", name: "错误提示", desc: "error 级别的故障提示，建议保持开启。", group: "异常与安全", defaultEnabled: true },
+    { id: "security-guard", name: "安全拦截与防护", desc: "WSL、NAS、Pi Web 重启及超时看门狗等高危操作拦截提示。", group: "异常与安全", defaultEnabled: true },
+    { id: "enhancement-toast", name: "网页增强操作提示", desc: "复制、归档、缓存、插件切换等网页操作的轻量提示。", group: "网页提醒", defaultEnabled: true },
+    { id: "attention-sound", name: "审批提示音", desc: "后台任务等待人工处理时播放提示音。", group: "后台任务", defaultEnabled: true },
+    { id: "attention-desktop", name: "桌面待处理通知", desc: "后台任务需要处理时发送浏览器/系统桌面通知。", group: "后台任务", defaultEnabled: false },
+  ];
+  let notificationSettings = null;
+
+  function getNotificationDefaults() {
+    return Object.fromEntries(NOTIFICATION_CHANNELS.map((item) => [item.id, item.defaultEnabled]));
+  }
 
   function readNotificationSettings() {
-    return getNativeNotificationPolicy()?.getSettings?.() || Object.fromEntries(NOTIFICATION_CHANNELS.map((item) => [item.id, item.defaultEnabled]));
+    if (notificationSettings) return notificationSettings;
+    const defaults = getNotificationDefaults();
+    try {
+      const raw = localStorage.getItem(NOTIFICATION_SETTINGS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      if (parsed && typeof parsed === "object" && parsed.schemaVersion === 1 && parsed.channels) {
+        for (const item of NOTIFICATION_CHANNELS) {
+          if (typeof parsed.channels[item.id] === "boolean") defaults[item.id] = parsed.channels[item.id];
+        }
+      }
+    } catch (e) {}
+    notificationSettings = defaults;
+    try {
+      localStorage.setItem(NOTIFICATION_SETTINGS_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, channels: notificationSettings }));
+    } catch (e) {}
+    return notificationSettings;
+  }
+
+  function writeNotificationSettings() {
+    try {
+      localStorage.setItem(NOTIFICATION_SETTINGS_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, channels: readNotificationSettings() }));
+    } catch (e) {}
   }
 
   function getNotificationChannel(id) {
@@ -1053,7 +507,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function isNotificationEnabled(id) {
-    return getNativeNotificationPolicy()?.isEnabled?.(id) ?? true;
+    const channel = getNotificationChannel(id);
+    if (!channel) return true;
+    return readNotificationSettings()[id] !== false;
   }
 
   function getNotificationTypeLabel(type) {
@@ -1061,20 +517,150 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function classifyNotification(message, type = "info", channel = "native") {
-    return getNativeNotificationPolicy()?.classify?.(message, type, channel) || "native-info";
+    const text = String(message || "");
+    if (channel === "toast") return "enhancement-toast";
+    if (channel === "attention-sound") return "attention-sound";
+    if (channel === "attention-desktop") return "attention-desktop";
+    if (/会话标题(?:已自动提炼|自动提炼)/i.test(text)) return "session-title";
+    if (/\bMCP\b|Registered\s+\d+\s+tool|MCP tools|工具.*(?:注册|重新加载)|(?:注册|重新加载).*工具/i.test(text)) return "mcp";
+    if (/已(?:物理)?拦截|WSL|NAS|Pi Web.*(?:杀死|重启|高危)|看门狗|超时兜底/i.test(text)) return "security-guard";
+    if (type === "error") return "native-error";
+    if (type === "warning") return "native-warning";
+    if (type === "success") return "native-success";
+    return "native-info";
   }
 
   function readNotificationHistory() {
-    return getNativeNotificationPolicy()?.history?.() || [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem(NOTIFICATION_HISTORY_STORAGE_KEY) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) { return []; }
+  }
+
+  function writeNotificationHistory(history) {
+    try { localStorage.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, JSON.stringify(history.slice(0, NOTIFICATION_HISTORY_LIMIT))); } catch (e) {}
   }
 
   function recordNotificationEvent(message, type = "info", channel = "native", settingId = null) {
-    return getNativeNotificationPolicy()?.record?.(message, type, channel, settingId) ?? true;
+    const resolvedId = settingId || classifyNotification(message, type, channel);
+    const enabled = isNotificationEnabled(resolvedId);
+    const history = readNotificationHistory();
+    history.unshift({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      timestamp: Date.now(),
+      message: String(message || "").slice(0, 2000),
+      type: String(type || "info"),
+      channel: String(channel || "native"),
+      settingId: resolvedId,
+      suppressed: !enabled,
+    });
+    writeNotificationHistory(history);
+    return enabled;
   }
 
-  function applyNotificationVisibility(dispatchPolicyChange = true) {
-    if (dispatchPolicyChange) {
-      try { window.dispatchEvent(new CustomEvent(NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT)); } catch (e) {}
+  function isNotificationCenterEnabled() {
+    try { return typeof isPluginEnabled !== "function" || isPluginEnabled("notification-center"); } catch (e) { return true; }
+  }
+
+  function getNativeNoticeType(node) {
+    const bullet = node?.querySelector?.(":scope > span");
+    const background = `${bullet?.style?.background || ""} ${bullet?.style?.backgroundColor || ""}`.toLowerCase();
+    if (background.includes("#ef4444") || background.includes("239, 68, 68")) return "error";
+    if (background.includes("#d97706") || background.includes("217, 119, 6")) return "warning";
+    if (background.includes("#10b981") || background.includes("16, 185, 129")) return "success";
+    return "info";
+  }
+
+  function ensureNoticeCopyButton(node) {
+    if (!node || node.querySelector?.("[data-pi-notice-copy]")) return;
+    const textSpan = node.querySelector?.("span[tabindex]") || node.querySelector?.(":scope > span:nth-of-type(2)");
+    const rawText = (textSpan ? textSpan.textContent : node.textContent || "").trim();
+    if (!rawText) return;
+
+    if (textSpan) {
+      textSpan.style.flex = "1 1 auto";
+    }
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "notice-copy-btn";
+    copyBtn.setAttribute("data-pi-notice-copy", "true");
+    copyBtn.setAttribute("title", "复制内容");
+    copyBtn.setAttribute("aria-label", "复制内容");
+    copyBtn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;align-self:flex-start;margin-top:14px;margin-left:4px;padding:4px 8px;gap:4px;border-radius:6px;border:1px solid color-mix(in srgb, var(--border, #3f3f46) 65%, transparent);background:rgba(255,255,255,0.06);color:var(--text-muted, #a1a1aa);font-size:12px;line-height:1;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;transition:all 0.15s ease;";
+    copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span style="font-size:11px;">复制</span>';
+
+    node.addEventListener("touchstart", () => {
+      node.dataset.piTouchActive = "true";
+    }, { passive: true });
+
+    copyBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const textToCopy = (textSpan ? textSpan.textContent : rawText).trim();
+      copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg><span style="font-size:11px;color:#22c55e;">已复制</span>';
+      copyBtn.style.background = "rgba(34, 197, 94, 0.15)";
+      copyBtn.style.borderColor = "rgba(34, 197, 94, 0.4)";
+      copyBtn.style.color = "#22c55e";
+      await copyText(textToCopy, "已复制报错信息至剪贴板");
+      setTimeout(() => {
+        if (copyBtn.isConnected) {
+          copyBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span style="font-size:11px;">复制</span>';
+          copyBtn.style.background = "rgba(255,255,255,0.06)";
+          copyBtn.style.borderColor = "color-mix(in srgb, var(--border, #3f3f46) 65%, transparent)";
+          copyBtn.style.color = "var(--text-muted, #a1a1aa)";
+        }
+      }, 1800);
+    });
+
+    node.appendChild(copyBtn);
+  }
+
+  function processNativeNotice(node) {
+    if (!node?.matches?.(".notice-shelf-item")) return;
+    ensureNoticeCopyButton(node);
+    if (node.dataset.piEnhNotificationProcessed === "true") return;
+    if (!isNotificationCenterEnabled()) {
+      if (node.hasAttribute("data-pi-enh-notification-suppressed")) {
+        node.removeAttribute("data-pi-enh-notification-suppressed");
+      }
+      return;
+    }
+    const textSpan = node.querySelector?.("span[tabindex]") || node.querySelector?.(":scope > span:nth-of-type(2)");
+    const message = (textSpan ? textSpan.textContent : node.textContent || "").trim();
+    if (!message) return;
+    const type = getNativeNoticeType(node);
+    const settingId = classifyNotification(message, type, "native");
+    node.dataset.piEnhNotificationProcessed = "true";
+    node.dataset.piEnhNotificationSetting = settingId;
+    recordNotificationEvent(message, type, "native", settingId);
+    const shouldSuppress = !isNotificationEnabled(settingId);
+    if (shouldSuppress) {
+      if (node.getAttribute("data-pi-enh-notification-suppressed") !== "true") {
+        node.setAttribute("data-pi-enh-notification-suppressed", "true");
+      }
+    } else {
+      if (node.hasAttribute("data-pi-enh-notification-suppressed")) {
+        node.removeAttribute("data-pi-enh-notification-suppressed");
+      }
+    }
+  }
+
+  function applyNotificationVisibility() {
+    const centerEnabled = isNotificationCenterEnabled();
+    for (const node of document.querySelectorAll(".notice-shelf-item")) {
+      const settingId = node.dataset.piEnhNotificationSetting || classifyNotification(node.textContent || "", getNativeNoticeType(node), "native");
+      node.dataset.piEnhNotificationSetting = settingId;
+      const shouldSuppress = centerEnabled && !isNotificationEnabled(settingId);
+      if (shouldSuppress) {
+        if (node.getAttribute("data-pi-enh-notification-suppressed") !== "true") {
+          node.setAttribute("data-pi-enh-notification-suppressed", "true");
+        }
+      } else {
+        if (node.hasAttribute("data-pi-enh-notification-suppressed")) {
+          node.removeAttribute("data-pi-enh-notification-suppressed");
+        }
+      }
     }
     if (!isNotificationEnabled("enhancement-toast")) dismissToast?.(true);
     if (typeof renderAttentionNotices === "function") renderAttentionNotices();
@@ -1083,18 +669,33 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function setNotificationEnabled(id, enabled) {
-    if (!getNotificationChannel(id) || !getNativeNotificationPolicy()?.setEnabled?.(id, enabled)) return;
-    applyNotificationVisibility(false);
+    if (!getNotificationChannel(id)) return;
+    readNotificationSettings()[id] = Boolean(enabled);
+    writeNotificationSettings();
+    applyNotificationVisibility();
   }
 
   function clearNotificationHistory() {
-    getNativeNotificationPolicy()?.clearHistory?.();
+    writeNotificationHistory([]);
   }
 
-  function resetNotificationSettings() {
-    getNativeNotificationPolicy()?.reset?.();
-    applyNotificationVisibility(false);
+  function scanNativeNotices(root) {
+    if (root?.matches?.(".notice-shelf-item")) processNativeNotice(root);
+    root?.querySelectorAll?.(".notice-shelf-item").forEach(processNativeNotice);
   }
+
+  function initNotificationCapture() {
+    scanNativeNotices(document);
+    if (typeof addManagedListener === "function") {
+      addManagedListener(document, "animationstart", (e) => {
+        if (e.animationName === "notice-shelf-in" && e.target && e.target.classList && e.target.classList.contains("notice-shelf-item")) {
+          processNativeNotice(e.target);
+        }
+      });
+    }
+  }
+
+  window.__PI_ENH_SCAN_NATIVE_NOTICES__ = scanNativeNotices;
 
   window.__PI_ENH_NOTIFICATION_SETTINGS__ = {
     channels: NOTIFICATION_CHANNELS,
@@ -1103,8 +704,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     history: () => readNotificationHistory(),
     clearHistory: clearNotificationHistory,
     classify: classifyNotification,
-    reset: resetNotificationSettings,
-    admit: (notice) => getNativeNotificationPolicy()?.admitNativeNotification?.(notice) ?? true,
   };
 
   // --- Toast Helper ---
@@ -1207,6 +806,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     showToast(pendingToast.message, pendingToast.iconSvg, pendingToast.durationMs, pendingToast.settingId);
   }
 
+  initNotificationCapture();
+
   // --- Clipboard Helper ---
   async function copyText(text, successMsg) {
     try {
@@ -1227,6 +828,693 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       showToast("复制失败: " + e.message);
     }
   }
+
+
+  // --- Settings Sidebar Layout CSS (统一设置CSS事实源，供预热loader与主引擎稳定态共用) ---
+  const SETTINGS_SIDEBAR_LAYOUT_CSS = `
+    /* ==========================================================================
+       设置对话框左侧侧边栏导航与加宽布局 (Settings Dialog Sidebar Layout)
+       ========================================================================== */
+    @media (min-width: 641px) {
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface {
+        display: flex !important;
+        flex-direction: row !important;
+        position: relative !important;
+        width: var(--settings-dialog-width, 1220px) !important;
+        max-width: calc(100vw - 32px) !important;
+        height: var(--settings-dialog-height, 86vh) !important;
+        max-height: calc(100dvh - 32px) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35) !important;
+        box-sizing: border-box !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface.is-resizing,
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface.is-resizing *,
+      html.pi-enh-settings-resizing,
+      html.pi-enh-settings-resizing * {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        transition: none !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface.is-resizing > .settings-dialog-header,
+      html.pi-enh-settings-resizing .settings-dialog-surface > .settings-dialog-header {
+        transition: none !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface > .settings-dialog-header {
+        position: static !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        justify-content: flex-start !important;
+        flex-shrink: 0 !important;
+        width: var(--settings-sidebar-width, 200px) !important;
+        min-width: var(--settings-sidebar-width, 200px) !important;
+        max-width: var(--settings-sidebar-width, 200px) !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        padding: 16px 8px 16px 10px !important;
+        margin: 0 !important;
+        border-bottom: none !important;
+        border-right: 1px solid var(--border) !important;
+        background: var(--bg-panel, rgba(255, 255, 255, 0.02)) !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+        transition: none !important;
+      }
+
+      /* 显式折叠/展开动画 (首次挂载不触发，仅在折叠交互时生效) */
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface.pi-enh-sidebar-animating > .settings-dialog-header,
+      html.pi-enh-settings-sidebar-animating .settings-dialog-surface > .settings-dialog-header {
+        transition: width 0.22s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.22s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.22s cubic-bezier(0.4, 0, 0.2, 1), padding 0.22s ease !important;
+      }
+
+      /* 侧边栏折叠状态 (Collapsed Mini Sidebar) */
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-dialog-surface > .settings-dialog-header {
+        width: 58px !important;
+        min-width: 58px !important;
+        max-width: 58px !important;
+        padding: 16px 6px 16px 6px !important;
+      }
+
+      /* 侧边栏与内容区分割手柄 (Splitter) */
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-resizer {
+        position: absolute !important;
+        top: 0 !important;
+        left: calc(var(--settings-sidebar-width, 200px) - 7px) !important;
+        width: 14px !important;
+        height: 100% !important;
+        cursor: col-resize !important;
+        z-index: 35 !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        touch-action: none !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-resizer-line {
+        width: 2px !important;
+        height: 100% !important;
+        background: transparent !important;
+        border-radius: 1px !important;
+        pointer-events: none !important;
+        transition: background-color 0.15s ease, box-shadow 0.15s ease !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-resizer:hover .pi-enh-sidebar-resizer-line,
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-resizer.is-dragging .pi-enh-sidebar-resizer-line {
+        background: var(--accent, #6366f1) !important;
+        box-shadow: 0 0 8px rgba(99, 102, 241, 0.6) !important;
+      }
+
+      /* 弹窗四周拖拽调整手柄 (Dialog Resizers) */
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer {
+        position: absolute !important;
+        z-index: 40 !important;
+        user-select: none !important;
+        touch-action: none !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-east {
+        top: 0 !important;
+        right: -4px !important;
+        width: 8px !important;
+        height: 100% !important;
+        cursor: ew-resize !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-south {
+        bottom: -4px !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 8px !important;
+        cursor: ns-resize !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-se {
+        bottom: 0 !important;
+        right: 0 !important;
+        width: 18px !important;
+        height: 18px !important;
+        cursor: nwse-resize !important;
+        z-index: 45 !important;
+        display: flex !important;
+        align-items: flex-end !important;
+        justify-content: flex-end !important;
+        padding: 3px 4px !important;
+        box-sizing: border-box !important;
+        opacity: 0.35 !important;
+        transition: opacity 0.15s ease !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-se:hover,
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-se.is-dragging {
+        opacity: 0.9 !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-grip {
+        color: var(--text-muted, #a1a1aa) !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-dialog-resizer-se:hover .pi-enh-dialog-resizer-grip {
+        color: var(--accent, #6366f1) !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-title {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 4px 10px 8px !important;
+        margin-bottom: 6px !important;
+        font-size: 16px !important;
+        font-weight: 700 !important;
+        color: var(--text) !important;
+        letter-spacing: -0.01em !important;
+        border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06)) !important;
+        box-sizing: border-box !important;
+        position: relative !important;
+      }
+
+      /* 侧边栏折叠按钮 (Gemini / 主流侧边栏切换按钮风格) */
+      .pi-enh-sidebar-collapse-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 28px !important;
+        height: 28px !important;
+        min-width: 28px !important;
+        min-height: 28px !important;
+        padding: 0 !important;
+        border: none !important;
+        border-radius: 6px !important;
+        background: transparent !important;
+        color: var(--text-muted, #94a3b8) !important;
+        cursor: pointer !important;
+        transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease !important;
+        user-select: none !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
+      }
+      .pi-enh-sidebar-collapse-btn:hover {
+        background: var(--bg-hover, rgba(255, 255, 255, 0.08)) !important;
+        color: var(--text, #f8fafc) !important;
+      }
+      .pi-enh-sidebar-collapse-btn:active {
+        transform: scale(0.92) !important;
+      }
+
+      /* 折叠态标题行与折叠按钮居中 */
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-dialog-title {
+        justify-content: center !important;
+        padding: 0 0 10px 0 !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-dialog-title .pi-enh-sidebar-title-text {
+        display: none !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .pi-enh-sidebar-collapse-btn {
+        margin: 0 auto !important;
+      }
+
+      /* 折叠态选项卡容器 */
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tabs {
+        align-items: center !important;
+        padding: 2px 0 8px 0 !important;
+      }
+
+      /* 折叠态单个选项卡 - 仅显示居中图标 */
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab {
+        width: 44px !important;
+        min-width: 44px !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 !important;
+        justify-content: center !important;
+        border-radius: 8px !important;
+        gap: 0 !important;
+        margin: 0 auto 3px auto !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab > span:not(.pi-enh-tab-pin-indicator) {
+        display: none !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab .settings-section-icon,
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab svg:not(.pi-enh-tab-pin-indicator) {
+        margin: 0 auto !important;
+        width: 18px !important;
+        height: 18px !important;
+        display: block !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab[aria-current=page] {
+        background: var(--bg-selected, rgba(255, 255, 255, 0.08)) !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab:after {
+        left: 2px !important;
+        top: 8px !important;
+        bottom: 8px !important;
+        width: 3px !important;
+        border-radius: 2px !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .settings-section-tab .pi-enh-tab-pin-indicator {
+        position: absolute !important;
+        top: 6px !important;
+        right: 6px !important;
+        margin: 0 !important;
+        width: 5px !important;
+        height: 5px !important;
+        box-shadow: 0 0 4px var(--accent, #38bdf8) !important;
+      }
+
+      /* 折叠态隐藏底部快捷入口提示与拖拽手柄 */
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .pi-enh-sidebar-shortcut-tip {
+        display: none !important;
+      }
+      html.pi-enh-settings-sidebar-active.pi-enh-settings-sidebar-collapsed .pi-enh-sidebar-resizer {
+        display: none !important;
+        pointer-events: none !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tabs {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 3px !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 2px 0 8px 0 !important;
+        overflow-x: hidden !important;
+        overflow-y: auto !important;
+        scrollbar-width: thin !important;
+      }
+
+      /* 大屏/折叠屏展开 (>= 641px) 下严禁显示移动端下拉选择器 */
+      .settings-mobile-section-picker,
+      html.pi-enh-settings-sidebar-active .settings-mobile-section-picker {
+        display: none !important;
+      }
+
+      /* 折叠屏展开态 (641px ~ 900px) 左侧竖向标签栏比例与提示框无孤字优化 */
+      @media (max-width: 900px) {
+        html.pi-enh-settings-sidebar-active:not(.pi-enh-settings-sidebar-collapsed) .settings-dialog-surface > .settings-dialog-header {
+          width: var(--settings-sidebar-width, 190px) !important;
+          min-width: var(--settings-sidebar-width, 190px) !important;
+          max-width: var(--settings-sidebar-width, 190px) !important;
+        }
+        html.pi-enh-settings-sidebar-active:not(.pi-enh-settings-sidebar-collapsed) .pi-enh-sidebar-resizer {
+          left: calc(var(--settings-sidebar-width, 190px) - 7px) !important;
+        }
+        html.pi-enh-settings-sidebar-active .pi-enh-sidebar-shortcut-tip {
+          padding: 7px 7px !important;
+          gap: 4px !important;
+        }
+        html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-main {
+          gap: 5px !important;
+        }
+        html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-title {
+          font-size: 11px !important;
+          white-space: nowrap !important;
+        }
+        html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-sub {
+          font-size: 10px !important;
+          white-space: nowrap !important;
+        }
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tabs::-webkit-scrollbar {
+        width: 4px !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tabs::-webkit-scrollbar-thumb {
+        background: var(--border) !important;
+        border-radius: 4px !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab {
+        position: relative !important;
+        display: flex !important;
+        flex: 0 0 auto !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        gap: 9px !important;
+        width: 100% !important;
+        height: 36px !important;
+        min-height: 36px !important;
+        padding: 0 10px !important;
+        border: none !important;
+        border-radius: 6px !important;
+        background: transparent !important;
+        color: var(--text-muted) !important;
+        cursor: pointer !important;
+        font-size: 13px !important;
+        font-weight: 400 !important;
+        text-align: left !important;
+        white-space: nowrap !important;
+        transition: all 0.15s ease !important;
+        user-select: none !important;
+        box-sizing: border-box !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab:not(:disabled):hover {
+        background: var(--bg-hover) !important;
+        color: var(--text) !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab[aria-current=page] {
+        background: var(--bg-selected, rgba(255, 255, 255, 0.08)) !important;
+        color: var(--accent, #6366f1) !important;
+        font-weight: 600 !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab:after {
+        position: absolute !important;
+        bottom: 7px !important;
+        top: 7px !important;
+        left: 0 !important;
+        width: 3px !important;
+        height: auto !important;
+        border-radius: 0 2px 2px 0 !important;
+        background: var(--accent, #6366f1) !important;
+        content: "" !important;
+        opacity: 0 !important;
+        transform: scaleY(0.4) !important;
+        transition: opacity 0.15s ease, transform 0.15s ease !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab[aria-current=page]:after {
+        opacity: 1 !important;
+        transform: scaleY(1) !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab .settings-section-icon {
+        flex-shrink: 0 !important;
+        width: 16px !important;
+        height: 16px !important;
+        opacity: 0.85 !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab[aria-current=page] .settings-section-icon {
+        opacity: 1 !important;
+        color: var(--accent, #6366f1) !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab > span:not(.pi-enh-tab-pin-indicator) {
+        flex: 1 !important;
+        line-height: 1.4 !important;
+        padding-bottom: 2px !important;
+        margin-bottom: -2px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-section-tab .pi-enh-tab-pin-indicator {
+        flex: 0 0 auto !important;
+        width: 6px !important;
+        height: 6px !important;
+        margin-left: auto !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-close {
+        position: absolute !important;
+        top: 10px !important;
+        right: 14px !important;
+        z-index: 50 !important;
+        width: 32px !important;
+        height: 32px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        border-radius: 6px !important;
+        background: transparent !important;
+        color: var(--text-muted) !important;
+        border: none !important;
+        cursor: pointer !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-close:hover {
+        background: var(--bg-hover) !important;
+        color: var(--text) !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface > main.settings-dialog-main {
+        flex: 1 1 auto !important;
+        width: auto !important;
+        min-width: 0 !important;
+        min-height: 0 !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        overflow-y: auto !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .agents-feature-actions,
+      html.pi-enh-settings-sidebar-active .config-detail-actions,
+      html.pi-enh-settings-sidebar-active .enabled-models-banner,
+      html.pi-enh-settings-sidebar-active .config-panel-header,
+      html.pi-enh-settings-sidebar-active .pi-enh-plugins-toolbar,
+      html.pi-enh-settings-sidebar-active .pi-enh-archived-header-actions,
+      html.pi-enh-settings-sidebar-active .pi-enh-tags-header-actions,
+      html.pi-enh-settings-sidebar-active .pi-enh-notifications-header-actions,
+      html.pi-enh-settings-sidebar-active .pi-enh-usage-title-row {
+        padding-right: 52px !important;
+        box-sizing: border-box !important;
+      }
+
+      html.pi-enh-settings-sidebar-active .enabled-models-banner-text {
+        min-width: 0 !important;
+        flex: 1 1 auto !important;
+        overflow: hidden !important;
+      }
+
+      /* 侧边栏底部快捷入口双击提示 */
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-shortcut-tip {
+        margin-top: auto !important;
+        margin-bottom: 2px !important;
+        padding: 8px 9px !important;
+        border-radius: 8px !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08)) !important;
+        display: flex !important;
+        align-items: flex-start !important;
+        justify-content: space-between !important;
+        gap: 6px !important;
+        flex-shrink: 0 !important;
+        box-sizing: border-box !important;
+        transition: opacity 0.2s ease, transform 0.2s ease !important;
+        animation: pi-enh-tip-fadein 0.25s ease !important;
+      }
+      @keyframes pi-enh-tip-fadein {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-main {
+        display: flex !important;
+        align-items: flex-start !important;
+        gap: 7px !important;
+        min-width: 0 !important;
+        flex: 1 !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-icon {
+        flex-shrink: 0 !important;
+        margin-top: 1.5px !important;
+        color: #f59e0b !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-text {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        min-width: 0 !important;
+        flex: 1 !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-title {
+        font-size: 11.5px !important;
+        font-weight: 600 !important;
+        color: var(--text, #f4f4f5) !important;
+        line-height: 1.35 !important;
+        letter-spacing: -0.01em !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-sub {
+        font-size: 10.5px !important;
+        color: var(--text-dim, #71717a) !important;
+        line-height: 1.35 !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-close {
+        border: none !important;
+        background: transparent !important;
+        color: var(--text-dim, #71717a) !important;
+        cursor: pointer !important;
+        font-size: 14px !important;
+        line-height: 1 !important;
+        padding: 0 2px !important;
+        border-radius: 4px !important;
+        transition: all 0.12s ease !important;
+        flex-shrink: 0 !important;
+      }
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-tip-close:hover {
+        color: var(--text, #f4f4f5) !important;
+        background: var(--bg-hover, rgba(255, 255, 255, 0.08)) !important;
+      }
+    }
+
+    /* 非侧边栏模式或直屏手机下彻底隐藏侧边栏专属辅助节点 (防跨形态切换残留) */
+    html:not(.pi-enh-settings-sidebar-active) .pi-enh-sidebar-shortcut-tip,
+    html:not(.pi-enh-settings-sidebar-active) .pi-enh-sidebar-resizer,
+    html:not(.pi-enh-settings-sidebar-active) .pi-enh-dialog-resizer {
+      display: none !important;
+      pointer-events: none !important;
+    }
+
+    /* ==========================================================================
+       直屏手机 (<= 640px) 设置弹窗精致现代 UI 优化 (Mobile Portrait Settings Header Polish)
+       严格限定 max-width: 640px，绝不侵入折叠屏展开态 (>= 641px) 的左侧竖向标签栏
+       ========================================================================== */
+    @media (max-width: 640px) {
+      /* 0. 直屏手机弹窗容器保持上下布局，隐藏竖向标签页列表与侧边栏专属控件 */
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface,
+      .settings-dialog-surface {
+        display: flex !important;
+        flex-direction: column !important;
+      }
+      .settings-section-tabs,
+      html.pi-enh-settings-sidebar-active .settings-section-tabs,
+      .pi-enh-sidebar-shortcut-tip,
+      .pi-enh-sidebar-resizer,
+      .pi-enh-dialog-resizer {
+        display: none !important;
+        pointer-events: none !important;
+      }
+
+      /* 1. 物理级严厉隐藏折叠按钮 (直屏手机无需且严禁展示侧边栏折叠按钮) */
+      .pi-enh-sidebar-collapse-btn,
+      .settings-dialog-header .pi-enh-sidebar-collapse-btn,
+      html.pi-enh-settings-sidebar-active .pi-enh-sidebar-collapse-btn,
+      html.pi-enh-settings-sidebar-collapsed .pi-enh-sidebar-collapse-btn {
+        display: none !important;
+        pointer-events: none !important;
+      }
+
+      /* 2. 移动端设置弹窗头部栏整体美化与对齐 */
+      .settings-dialog-header,
+      html.pi-enh-settings-sidebar-active .settings-dialog-surface > .settings-dialog-header {
+        position: relative !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        height: 52px !important;
+        min-height: 52px !important;
+        max-height: 52px !important;
+        padding: 0 14px 0 16px !important;
+        margin: 0 !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08)) !important;
+        background: var(--bg-panel, rgba(24, 24, 27, 0.94)) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        box-sizing: border-box !important;
+        gap: 10px !important;
+        overflow: visible !important;
+      }
+
+      /* 3. 移动端“设置”主标题 */
+      .settings-dialog-title,
+      html.pi-enh-settings-sidebar-active .settings-dialog-title {
+        display: inline-flex !important;
+        align-items: center !important;
+        font-size: 15px !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.01em !important;
+        color: var(--text, #f8fafc) !important;
+        height: auto !important;
+        min-height: auto !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: none !important;
+        flex-shrink: 0 !important;
+      }
+
+      /* 4. 分类选择下拉胶囊 Modern Capsule Picker 美化 (告别原生生硬灰框) */
+      .settings-mobile-section-picker {
+        display: block !important;
+        flex: 1 1 auto !important;
+        max-width: 220px !important;
+        min-width: 0 !important;
+        height: 32px !important;
+        line-height: 30px !important;
+        margin: 0 4px 0 0 !important;
+        padding: 0 28px 0 12px !important;
+        border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.14)) !important;
+        border-radius: 999px !important;
+        background-color: var(--bg-selected, rgba(255, 255, 255, 0.06)) !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: right 10px center !important;
+        background-size: 12px 12px !important;
+        color: var(--text, #f8fafc) !important;
+        font-family: inherit !important;
+        font-size: 13.5px !important;
+        font-weight: 550 !important;
+        outline: none !important;
+        cursor: pointer !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+        transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease !important;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+      .settings-mobile-section-picker:hover {
+        background-color: var(--bg-hover, rgba(255, 255, 255, 0.10)) !important;
+        border-color: rgba(255, 255, 255, 0.22) !important;
+      }
+      .settings-mobile-section-picker:focus-visible {
+        border-color: var(--accent, #6366f1) !important;
+        box-shadow: 0 0 0 2px var(--accent-subtle, rgba(99, 102, 241, 0.28)) !important;
+      }
+
+      /* 5. 关闭按钮精致对齐 */
+      .settings-dialog-close,
+      html.pi-enh-settings-sidebar-active .settings-dialog-close {
+        position: relative !important;
+        top: auto !important;
+        right: auto !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        min-height: 30px !important;
+        border-radius: 8px !important;
+        border: none !important;
+        background: transparent !important;
+        color: var(--text-muted, #94a3b8) !important;
+        margin: 0 0 0 auto !important;
+        padding: 0 !important;
+        cursor: pointer !important;
+        flex-shrink: 0 !important;
+        transition: background-color 0.15s ease, color 0.15s ease !important;
+      }
+      .settings-dialog-close:hover {
+        background: var(--bg-hover, rgba(255, 255, 255, 0.10)) !important;
+        color: var(--text, #f8fafc) !important;
+      }
+
+      /* 6. 直屏手机下隐藏与顶部选择器重复的内容区一级面板大标题 (如“常规”)，消除拥挤与重复感 */
+      .settings-general-title {
+        display: none !important;
+      }
+      .settings-general {
+        padding: 12px 14px 28px !important;
+      }
+      .settings-general-section:first-of-type {
+        margin-top: 4px !important;
+      }
+    }
+  `;
   // ==========================================
   // 0. Enhancement Plugins Registry (网页插件注册与管理)
   // ==========================================
@@ -1239,9 +1527,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       defaultEnabled: true,
     },
     {
+      id: "user-message-reconcile",
+      name: "用户消息状态对齐与大图去重",
+      desc: "智能对齐发送含大图消息时的乐观状态与服务端 SSE 消息，消除重复追加气泡，修复 React 状态并杜绝旧轮误匹配。",
+      category: "交互增强",
+      defaultEnabled: true,
+    },
+    {
       id: "general-settings-dashboard",
       name: "常规设置双列布局与服务重启",
-      desc: "将设置弹窗“常规”面板优化为现代双列卡片仪表盘布局，消除右侧大片空白，并在页面维护模块增加一键重启 Agent Web Plus 服务功能。",
+      desc: "将设置弹窗“常规”面板优化为现代双列卡片仪表盘布局，消除右侧大片空白，并在页面维护模块增加一键重启 Pi Web 服务功能。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1283,7 +1578,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     {
       id: "subagent-dispatch-cards",
       name: "子代理调度原生折叠卡片",
-      desc: "隐藏旧式“调度子代理”正文播报，并在 Agent Web Plus 原生 subagent 折叠卡片中补充无图标模型名；保留原生耗时、展开箭头和交互。",
+      desc: "隐藏旧式“调度子代理”正文播报，并在 Pi Web 原生 subagent 折叠卡片中补充无图标模型名；保留原生耗时、展开箭头和交互。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1345,13 +1640,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       defaultEnabled: true,
     },
     {
-      id: "dom-feedback",
-      name: "界面与预览标注",
-      desc: "点击元素后添加备注，按需附局部截图；电脑默认启用，手机可手动开启。",
-      category: "交互增强",
-      defaultEnabled: true,
-    },
-    {
       id: "quick-quote",
       name: "划选引用与注释",
       desc: "划选对话文本后可一键引用，或保存多条带可选评论的引用注释；输入框上方实时显示 x 条注释，并在发送时作为结构化上下文附带给 Agent。",
@@ -1396,7 +1684,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     {
       id: "native-message-font",
       name: "助手正文原生字号",
-      desc: "将助手 Markdown 正文恢复为 Agent Web Plus 原生 14px 排版；不改变消息底部的时间、Token 消耗和费用显示。",
+      desc: "将助手 Markdown 正文恢复为 Pi Web 原生 14px 排版；不改变消息底部的时间、Token 消耗和费用显示。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1445,7 +1733,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     {
       id: "project-status-indicator",
       name: "跨项目会话状态提示",
-      desc: "精简标签页标题，移除冗余 Agent Web Plus 标识与跳动的计时秒数。运行中以蓝色小球 🔵 纯净指示，需要确认 🟠、错误 🔴、已完成 🟢 显示状态文字与对应颜色小球；多标签页一目了然。", 
+      desc: "精简标签页标题，移除冗余 Pi Web 标识与跳动的计时秒数。运行中以蓝色小球 🔵 纯净指示，需要确认 🟠、错误 🔴、已完成 🟢 显示状态文字与对应颜色小球；多标签页一目了然。", 
       category: "运行监控",
       defaultEnabled: true,
     },
@@ -1787,9 +2075,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     },
     {
       id: "pi-web-plus-branding",
-      name: "Agent Web Plus 品牌装饰",
-      desc: "控制侧边栏与界面的附加紧凑头距、字体和间距等品牌装饰样式；原生「π+ Agent Web Plus」自有基础品牌标识始终保持生效。",
+      name: "Pi Web Plus 品牌装饰",
+      desc: "控制侧边栏与界面的附加紧凑头距、字体和间距等品牌装饰样式；原生「π+ Pi Web Plus」自有基础品牌标识始终保持生效。",
       version: "1.0.0",
+      category: "显示增强",
+      defaultEnabled: true,
+    },
+    {
+      id: "collapsed-sidebar-session-title",
+      name: "收起列表底栏会话标题",
+      desc: "当会话列表侧边栏收起时，在输入框左下方状态条显示当前会话标题矩形胶囊背景，点击可快速唤出侧边栏。",
       category: "显示增强",
       defaultEnabled: true,
     },
@@ -1820,10 +2115,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   };
   const ENHANCEMENT_MODULES = [
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
-    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
+    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["user-message-reconcile", "task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
-    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote", "dom-feedback"] },
-    { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer"] },
+    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
+    { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer", "collapsed-sidebar-session-title"] },
     { id: "composer-workflow", name: "输入与附件增强", desc: "管理编辑器快捷操作、草稿、附件和移动端输入保护。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["stop-fast-response", "quick-action-buttons", "empty-send-continue", "composer-draft-cache", "composer-file-paste", "composer-image-zoom", "mobile-enter-newline", "composer-clean-placeholder", "codex-composer-layout", "composer-model-reasoning-pill", "composer-queue-panel", "running-model-switch", "composer-markdown-format", "composer-format-toggle", "composer-compact-button", "composer-tool-preset", "composer-modes", "at-mention-plugins"] },
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
     { id: "background-attention", name: "后台会话提醒", desc: "管理跨项目状态、提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
@@ -1944,7 +2239,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     for (const plugin of ENHANCEMENT_PLUGINS) {
       const legacyValue = includeLegacyPreferences ? readEnhancementStorage(`pi-enh-plugin-${plugin.id}`) : null;
-      config.features[plugin.id] = { enabled: legacyValue === null ? defaultFeatureEnabled(plugin) : legacyValue === "true" };
+      config.features[plugin.id] = { enabled: legacyValue === null ? plugin.defaultEnabled : legacyValue === "true" };
     }
     for (const [featureId, definitions] of Object.entries(ENHANCEMENT_PLUGIN_SETTINGS)) {
       config.settings[featureId] = {};
@@ -2138,7 +2433,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     Object.assign(getEnhancementConfig(), defaults);
     writeEnhancementConfig();
     for (const plugin of ENHANCEMENT_PLUGINS) {
-      try { localStorage.setItem(`pi-enh-plugin-${plugin.id}`, String(defaultFeatureEnabled(plugin))); } catch (e) {}
+      try { localStorage.setItem(`pi-enh-plugin-${plugin.id}`, String(plugin.defaultEnabled)); } catch (e) {}
       const next = isPluginEnabled(plugin.id);
       if (next !== previous.get(plugin.id)) onPluginStateChanged(plugin.id, next);
     }
@@ -2149,18 +2444,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     syncEnhancementPanelControls();
   }
 
-  function defaultFeatureEnabled(plugin) {
-    if (plugin.id === "dom-feedback" && window.matchMedia?.("(pointer: coarse), (hover: none)").matches) return false;
-    return plugin.defaultEnabled;
-  }
-
   function isPluginEnabled(id) {
     const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === id);
     if (!plugin) return true;
     const module = getModuleForPlugin(id);
     if (module && !isModuleEnabled(module.id)) return false;
     const enabled = getEnhancementConfig().features[id]?.enabled;
-    return typeof enabled === "boolean" ? enabled : defaultFeatureEnabled(plugin);
+    return typeof enabled === "boolean" ? enabled : plugin.defaultEnabled;
   }
 
   function setPluginEnabled(id, enabled) {
@@ -2185,6 +2475,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function onPluginStateChanged(id, enabled) {
+    if (id === "collapsed-sidebar-session-title") {
+      if (!enabled) {
+        if (typeof window !== "undefined" && typeof window.__PI_ENH_REMOVE_COLLAPSED_SESSION_TITLE__ === "function") {
+          try { window.__PI_ENH_REMOVE_COLLAPSED_SESSION_TITLE__(); } catch (_) {}
+        }
+      } else {
+        if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_COLLAPSED_SESSION_TITLE__ === "function") {
+          try { window.__PI_ENH_SYNC_COLLAPSED_SESSION_TITLE__(); } catch (_) {}
+        }
+      }
+    }
     if (id === "settings-tab-shortcuts") syncBottomShortcutsBar(true);
     if (id === "stop-fast-response") {
       if (!enabled) {
@@ -2224,8 +2525,18 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         syncAllDurationBadges();
       }
     } else if (id === "turn-number-indicator") {
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new Event("pi-native-composer-preferences-change"));
+      if (!enabled) {
+        if (typeof clearAllTurnNumberBadges === "function") {
+          clearAllTurnNumberBadges();
+        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_CLEAR_TURN_NUMBERS__ === "function") {
+          window.__PI_ENH_CLEAR_TURN_NUMBERS__();
+        }
+      } else {
+        if (typeof syncAllTurnNumberBadges === "function") {
+          syncAllTurnNumberBadges();
+        } else if (typeof window !== "undefined" && typeof window.__PI_ENH_SYNC_TURN_NUMBERS__ === "function") {
+          window.__PI_ENH_SYNC_TURN_NUMBERS__();
+        }
       }
     } else if (id === "model-generation-speed") {
       if (!enabled) {
@@ -2299,15 +2610,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     } else if (id === "turn-usage-total") {
       if (!enabled) hideUsageTooltip();
       syncAllUsageBadges();
-    } else if (id === "dom-feedback") {
-      syncAnnotationComposer();
-      window.dispatchEvent(new Event("pi-dom-feedback-preferences-change"));
     } else if (id === "quick-quote") {
       if (!enabled && typeof hideQuoteBar === "function") {
         if (composerSubmissionInFlight?.snapshot) cancelComposerNativeSubmission();
         hideQuoteBar();
         removeAnnotationUi();
-        if (isPluginEnabled("dom-feedback")) syncAnnotationComposer();
       } else if (enabled && typeof syncAnnotationComposer === "function") {
         syncAnnotationComposer();
       }
@@ -2396,12 +2703,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
       syncSessionOdooAddonsLayout();
       syncSessionSectionHeaders();
-      window.__PI_ENH_RERENDER_SESSIONS__?.();
+      requestSessionListRefresh();
     } else if (id === "session-section-headers") {
       if (!enabled) removeSessionSectionHeaders();
       syncSessionOdooAddonsLayout();
       syncSessionSectionHeaders();
-      window.__PI_ENH_RERENDER_SESSIONS__?.();
+      requestSessionListRefresh();
     } else if (id === "session-model-label") {
       if (!enabled) removeSessionModelLabels();
       else syncSessionModelLabels();
@@ -2747,7 +3054,160 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_SET_PLUGIN_SETTING__ = setPluginSetting;
   window.__PI_ENH_CONFIG__ = getEnhancementConfig();
 
-  // User-message identity and reconciliation belong to the native session hook.
+  // ==========================================
+  // 用户消息状态对齐与大图去重 (User Message Reconcile)
+  // ==========================================
+
+  function extractContentText(content) {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => (part && typeof part === "object" && part.type === "text" && typeof part.text === "string" ? part.text : ""))
+        .filter(Boolean)
+        .join("\n");
+    }
+    return "";
+  }
+
+  function extractContentImages(content) {
+    if (!Array.isArray(content)) return [];
+    return content.filter((part) => part && typeof part === "object" && part.type === "image");
+  }
+
+  function stripDimensionNotes(text) {
+    if (typeof text !== "string") return "";
+    return text.replace(/\n*\s*\[Image:\s*original\s+[\s\S]*?\]\s*/gi, "").trim();
+  }
+
+  function reconcileUserMessage(prevMessages, serverMsg, options = {}) {
+    const fallback = typeof options.fallback === "function"
+      ? options.fallback
+      : () => [...(Array.isArray(prevMessages) ? prevMessages : []), serverMsg];
+
+    if (!isPluginEnabled("user-message-reconcile")) {
+      return fallback();
+    }
+
+    if (!Array.isArray(prevMessages) || prevMessages.length === 0) {
+      return [serverMsg];
+    }
+
+    if (!serverMsg || serverMsg.role !== "user") {
+      return fallback();
+    }
+
+    const lastFingerprint = options.lastFingerprint;
+    const serverFingerprint = options.serverFingerprint;
+    const fingerprintFn = typeof options.fingerprintFn === "function" ? options.fingerprintFn : null;
+
+    // 严格倒序扫描：向后仅跳过 role 为 system 或 custom 的元数据消息
+    // assistant / toolResult / 其他任何角色均视为边界，绝不跨越
+    let targetIdx = -1;
+    for (let i = prevMessages.length - 1; i >= 0; i--) {
+      const msg = prevMessages[i];
+      if (!msg) break;
+      if (msg.role === "system" || msg.role === "custom") {
+        continue;
+      }
+      if (msg.role === "user") {
+        targetIdx = i;
+        break;
+      }
+      break;
+    }
+
+    if (targetIdx === -1) {
+      return fallback();
+    }
+
+    const targetMsg = prevMessages[targetIdx];
+    if (!targetMsg) {
+      return fallback();
+    }
+
+    // 替换候选必须保留后缀元数据，不能 slice(0, -1) 误删 system/custom
+    const replaceTarget = () => [
+      ...prevMessages.slice(0, targetIdx),
+      serverMsg,
+      ...prevMessages.slice(targetIdx + 1)
+    ];
+
+    // 1. 防重复 SSE：
+    // 1a. 若目标消息已是本次服务端消息（相同对象引用）
+    if (targetMsg === serverMsg) {
+      return prevMessages;
+    }
+    // 1b. 权威 ID 判定：
+    if (serverMsg.id && targetMsg.id) {
+      if (serverMsg.id === targetMsg.id) {
+        return prevMessages;
+      }
+      // 权威 id 冲突：两者都有不同权威 ID 时，不去重且不替换，直接 fallback 追加
+      return fallback();
+    }
+
+    const isOptimistic = Boolean(targetMsg && targetMsg.__piEnhOptimistic);
+
+    // 1c. 服务端消息无 id（或服务端 ID 不可靠），但属于不同引用的重复 SSE 事件：
+    // 必须仅对非乐观消息、相同 timestamp 且精确相同 fingerprint 才去重；禁止纯文本/时间窗吞同文历史
+    const hasValidTimestamp = typeof serverMsg.timestamp === "number" &&
+      typeof targetMsg.timestamp === "number" &&
+      serverMsg.timestamp === targetMsg.timestamp;
+
+    if (!isOptimistic && hasValidTimestamp) {
+      let isExactFingerprint = false;
+      if (fingerprintFn) {
+        const fpTarget = fingerprintFn(targetMsg);
+        const fpServer = typeof serverFingerprint === "string" ? serverFingerprint : fingerprintFn(serverMsg);
+        isExactFingerprint = Boolean(fpTarget && fpServer && fpTarget === fpServer);
+      } else if (serverFingerprint && typeof lastFingerprint === "string") {
+        isExactFingerprint = lastFingerprint === serverFingerprint;
+      } else {
+        isExactFingerprint = JSON.stringify(targetMsg.content) === JSON.stringify(serverMsg.content);
+      }
+
+      if (isExactFingerprint) {
+        return prevMessages;
+      }
+    }
+
+    // 2. 深度比对当前回合乐观消息与服务端消息：
+    // 铁律：仅在明确具有 __piEnhOptimistic 标记时才做文本/图片归一化替换！
+    // 绝不能对无标记的已持久化历史消息凭同文误吞
+    if (isOptimistic) {
+      const textA = extractContentText(targetMsg.content).trim();
+      const textB = extractContentText(serverMsg.content).trim();
+      const imgsA = extractContentImages(targetMsg.content);
+      const imgsB = extractContentImages(serverMsg.content);
+
+      // 2a. 高分辨率图片消息对齐：两端包含相同数量的图片，
+      // 且服务端文本在剥离 [Image: original ...] 尺寸标注后与乐观消息文本一致
+      if (imgsA.length > 0 && imgsA.length === imgsB.length) {
+        const cleanTextB = stripDimensionNotes(textB);
+        const cleanTextA = stripDimensionNotes(textA);
+        if (textA === textB || textA === cleanTextB || cleanTextA === cleanTextB) {
+          return replaceTarget();
+        }
+      }
+
+      // 2b. 纯文本消息对齐：文本完全一致时将客户端乐观项替换为权威服务端消息
+      if (imgsA.length === 0 && imgsB.length === 0 && textA.length > 0 && textA === textB) {
+        return replaceTarget();
+      }
+    }
+
+    // 2c. 原生指纹完全匹配（在标记缺失时仍保留原有兜底）：
+    // 若发送时记录的 lastFingerprint 还在且与目标消息匹配，
+    // 原生指纹匹配也应替换为权威对象避免后续重放
+    if (lastFingerprint && fingerprintFn && fingerprintFn(targetMsg) === lastFingerprint) {
+      return replaceTarget();
+    }
+
+    // 3. 其他情况（不同文本、不同内容、历史未标记消息）：绝不乱去重，走 fallback 追加
+    return fallback();
+  }
+
+  window.__PI_ENH_RECONCILE_USER_MESSAGE__ = reconcileUserMessage;
 
   // ==========================================
   // 0.1 Codex-style Session Pin & Archive (会话置顶与归档状态)
@@ -3265,13 +3725,33 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function isDurableStateEnabled() {
-    return typeof window !== "undefined" && !!window &&
-      window.__PI_ENH_DURABLE_STATE_ENABLED__ === true &&
-      window.__PI_ENH_NATIVE_STATE_API__ === true;
+    if (typeof window === "undefined" || !window) return false;
+    if (window.__PI_ENH_DURABLE_STATE_ENABLED__ !== true) return false;
+    if (window.__PI_ENH_NATIVE_STATE_API__ === true) return true;
+    try {
+      const loc = window.location;
+      if (!loc) return false;
+      const hostname = loc.hostname;
+      const port = String(loc.port || "");
+      const allowedHosts = ["127.0.0.1", "127.0.0.1", "localhost"];
+      if (!allowedHosts.includes(hostname)) return false;
+      if (port !== "30141" && port !== "30142") return false;
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   function getDurableStateBaseUrl() {
-    return "/api";
+    if (window.__PI_ENH_NATIVE_STATE_API__ === true) return "/api";
+    try {
+      const loc = window.location;
+      const protocol = loc.protocol || "http:";
+      const hostname = loc.hostname || "127.0.0.1";
+      return `${protocol}//${hostname}:30149`;
+    } catch (e) {
+      return "http://127.0.0.1:30149";
+    }
   }
 
   function getDurableStateInstanceParam() {
@@ -3510,7 +3990,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       writeSessionTagsDefinitions(replayedDefs);
       writeSessionTagMappings(replayedMappings);
       syncSessionTags();
-      window.__PI_ENH_RERENDER_SESSIONS__?.();
+      if (typeof requestSessionListRefresh === "function") {
+        requestSessionListRefresh(false, true);
+      }
     }
 
     if (state.sessionColors && typeof state.sessionColors === "object" && !Array.isArray(state.sessionColors)) {
@@ -4222,8 +4704,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     `).join("");
     return `
       <div class="pi-enh-menu-sep"></div>
-      <div class="pi-enh-session-color-label">会话背景颜色 (Web 偏好)</div>
-      <div class="pi-enh-session-color-grid" role="group" aria-label="会话背景颜色 (Web 偏好)">${choices}</div>
+      <div class="pi-enh-session-color-label">会话背景颜色</div>
+      <div class="pi-enh-session-color-grid" role="group" aria-label="会话背景颜色">${choices}</div>
       <div class="pi-enh-menu-item" data-action="clear-session-color"><span>清除背景颜色</span></div>
     `;
   }
@@ -4477,7 +4959,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         }
 
         syncSessionTags();
-        window.__PI_ENH_RERENDER_SESSIONS__?.();
+        if (typeof requestSessionListRefresh === "function") {
+          requestSessionListRefresh(false, true);
+        }
 
         const tagsPanel = typeof document !== "undefined" ? document.querySelector(".pi-enh-tags-panel") : null;
         const nav = typeof document !== "undefined" ? document.querySelector(".settings-section-tabs") : null;
@@ -4963,7 +5447,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   }
 
-  function openSessionTagsPopover(sessionId, triggerItem, event, triggerRect, extraSessionIds) {
+  function openSessionTagsPopover(sessionId, triggerItem, event, triggerRect) {
     if (activeSessionTagsPopover && activeSessionTagsPopover.getAttribute("data-session-id") === sessionId) {
       if (triggerItem) {
         activeSessionTagsTriggerItem = triggerItem;
@@ -4984,10 +5468,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (triggerItem) triggerItem.classList.add("is-submenu-open");
 
     let allTags = readSessionTagsDefinitions();
-    const targetSessionIds = (Array.isArray(extraSessionIds) && extraSessionIds.length > 0)
-      ? extraSessionIds
-      : [sessionId];
-    const isMulti = targetSessionIds.length > 1;
     let currentTagIds = new Set(getSessionTagIds(sessionId));
     let recommendedColorItem = getRecommendedTagColor(allTags);
 
@@ -5145,24 +5625,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (optionItem) {
         const tagId = optionItem.getAttribute("data-tag-id");
         if (tagId) {
+          const wasSelected = currentTagIds.has(tagId);
+          toggleSessionTag(sessionId, tagId);
+          currentTagIds = new Set(getSessionTagIds(sessionId));
           const targetTag = allTags.find((t) => t.id === tagId);
           const tagName = targetTag ? targetTag.name : "标签";
-          if (isMulti) {
-            const anyHas = targetSessionIds.some((sid) => getSessionTagIds(sid).includes(tagId));
-            const shouldAdd = !anyHas;
-            for (const sid of targetSessionIds) {
-              const has = getSessionTagIds(sid).includes(tagId);
-              if (has !== shouldAdd) {
-                toggleSessionTag(sid, tagId);
-              }
-            }
-            showToast(shouldAdd ? `已为 ${targetSessionIds.length} 个会话打上「${tagName}」标签` : `已为 ${targetSessionIds.length} 个会话移除「${tagName}」标签`);
-          } else {
-            const wasSelected = currentTagIds.has(tagId);
-            toggleSessionTag(sessionId, tagId);
-            currentTagIds = new Set(getSessionTagIds(sessionId));
-            showToast(wasSelected ? `已移除会话「${tagName}」标签` : `已为会话打上「${tagName}」标签`);
-          }
+          showToast(wasSelected ? `已移除会话「${tagName}」标签` : `已为会话打上「${tagName}」标签`);
           closeSessionTagsPopover(true);
         }
       }
@@ -5176,17 +5644,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         closeSessionTagsPopover(true);
         triggerShortcutNavigation("tags");
       } else if (action === "clear-tags") {
-        if (isMulti) {
-          for (const sid of targetSessionIds) {
-            clearSessionTags(sid);
-          }
-          currentTagIds.clear();
-          showToast(`已清除 ${targetSessionIds.length} 个会话的所有标签`);
-        } else {
-          clearSessionTags(sessionId);
-          currentTagIds.clear();
-          showToast("已清除会话所有标签");
-        }
+        clearSessionTags(sessionId);
+        currentTagIds.clear();
+        showToast("已清除会话所有标签");
         closeSessionTagsPopover(true);
       }
     });
@@ -5785,7 +6245,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function removeSessionOdooAddonsAll() {
     for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-has-odoo-addons='true']")) {
-      if (row.getAttribute("data-pi-native-session-odoo-addons") === "true") continue;
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
       row.removeAttribute("data-pi-enh-has-odoo-addons");
       syncSessionOdooAddonsHeight(row, row.dataset.piEnhSessionId);
@@ -5793,7 +6252,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function syncSessionOdooAddonsRow(row, sessionId) {
-    if (!row || !sessionId || row.getAttribute("data-pi-native-session-odoo-addons") === "true") return;
+    if (!row || !sessionId) return;
 
     if (!isPluginEnabled("session-odoo-addons") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
@@ -5851,9 +6310,21 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function syncSessionOdooAddonsLayout() {
-    // React owns the filtered list, including an empty result. Never restore
-    // bootstrap groups or request another render from a layout observation:
-    // an engine/project switch can legitimately hide every catalogue row.
+    // React 的刷新是异步的；切换开关/热加载时，同步用同一高度函数重排整组，
+    // 不能只改变某一行高度而暂时保留下方旧坐标。
+    if (!Array.isArray(latestKnownSessionGroups) || !latestKnownSessionGroups.length) {
+      if (Array.isArray(window.__PI_ENH_EARLY_SESSION_GROUPS__) && window.__PI_ENH_EARLY_SESSION_GROUPS__.length > 0) {
+        processSessionGroups(window.__PI_ENH_EARLY_SESSION_GROUPS__);
+      }
+      if ((!Array.isArray(latestKnownSessionGroups) || !latestKnownSessionGroups.length) && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
+        try {
+          const raw = window.__PI_ENH_GET_RAW_SESSIONS__();
+          if (Array.isArray(raw) && raw.length > 0) {
+            window.__PI_ENH_RERENDER_SESSIONS__?.();
+          }
+        } catch (e) {}
+      }
+    }
 
     const rows = document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]");
     if (!rows || rows.length === 0) {
@@ -6593,7 +7064,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             void persistArchivedSessionsToServer(mergedEntries, newRev);
           }
 
-          window.__PI_ENH_RERENDER_SESSIONS__?.();
+          requestSessionListRefresh();
           const panel = document.querySelector(".pi-enh-archived-panel");
           const nav = document.querySelector(".settings-section-tabs");
           if (panel && panel.style.display !== "none") {
@@ -6650,7 +7121,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           if (remoteRevision > 0) setLocalArchivedRevision(remoteRevision);
           window.__PI_ENH_ARCHIVED_MANIFEST__ = remoteEntries;
           if (changed || force) {
-            window.__PI_ENH_RERENDER_SESSIONS__?.();
+            requestSessionListRefresh();
             const panel = document.querySelector(".pi-enh-archived-panel");
             const nav = document.querySelector(".settings-section-tabs");
             if (panel && panel.style.display !== "none") {
@@ -6900,7 +7371,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           }
 
           if (collectionChanged || force || isFirstVisit) {
-            window.__PI_ENH_RERENDER_SESSIONS__?.();
+            requestSessionListRefresh();
             syncSessionPinArchiveControls();
           }
         }
@@ -7016,12 +7487,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         }
         void persistPinnedSessionsToServer(pinnedIds);
       }
-      const archivedEntries = readStoredArchivedEntries();
-      if (archivedEntries.some((e) => e.id === sessionId)) {
-        writeStoredArchivedEntries(archivedEntries.filter((e) => e.id !== sessionId));
-      }
-      // A confirmed Codex deletion must never issue another native mutation.
-      if (!sessionId.startsWith("codex:")) void restoreArchivedSession(sessionId).catch(() => {});
+      restoreArchivedSession(sessionId);
       try { clearSessionTags(sessionId); } catch (e) {}
       try {
         const uIds = readUnreadSessionIds();
@@ -7054,36 +7520,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     });
   }
 
-  function isSessionPinnedItem(group, pinnedIds) {
-    const rootId = group?.root?.id;
-    if (!rootId) return false;
-    if (typeof rootId === "string" && rootId.startsWith("codex:")) {
-      return Boolean(group?.root?.pinned);
-    }
-    return Boolean(pinnedIds && pinnedIds.has(rootId));
-  }
-
-  function isSessionPinned(sessionId) {
-    if (!sessionId) return false;
-    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
-      if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
-        try {
-          const rawList = window.__PI_ENH_GET_RAW_SESSIONS__();
-          if (Array.isArray(rawList)) {
-            const found = rawList.find((s) => s?.id === sessionId);
-            if (found && typeof found.pinned === "boolean") return found.pinned;
-          }
-        } catch (_) {}
-      }
-      const group = latestKnownSessionGroups.find((g) => g?.root?.id === sessionId);
-      if (group?.root && typeof group.root.pinned === "boolean") return group.root.pinned;
-      const entry = knownSessionsMap.get(sessionId);
-      if (entry && typeof entry.pinned === "boolean") return entry.pinned;
-      return false;
-    }
-    return readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
-  }
-
   function processSessionGroups(groups) {
     if (!Array.isArray(groups)) return groups;
     const isPinArchiveEnabled = isPluginEnabled("session-pin-archive");
@@ -7098,12 +7534,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const rootId = group?.root?.id;
       if (!rootId) continue;
       if (group.root) {
-        knownSessionsMap.set(rootId, group.root);
-        knownSessionTitles.set(rootId, computeSessionTitle(group.root));
+        const prev = knownSessionsMap.get(rootId);
+        if (!prev || !prev.modified || (group.root.modified && group.root.modified > prev.modified)) {
+          knownSessionsMap.set(rootId, group.root);
+          knownSessionTitles.set(rootId, computeSessionTitle(group.root));
+        } else if (!knownSessionTitles.has(rootId)) {
+          knownSessionTitles.set(rootId, computeSessionTitle(group.root));
+        }
       }
-      const isCodex = typeof rootId === "string" && rootId.startsWith("codex:");
-      const isArchived = isCodex ? Boolean(group?.root?.archived) : archivedIds.has(rootId);
-      if (isArchived || isSessionDeleted(rootId)) {
+      if (archivedIds.has(rootId) || isSessionDeleted(rootId)) {
         continue;
       }
       // 标签快速过滤：若选中了某个特定标签，仅保留拥有该标签的会话
@@ -7124,7 +7563,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     // 严格按所属项目隔离，严禁将其他项目的置顶会话跨工作区注入当前列表
     const result = !isPinArchiveEnabled
       ? filtered
-      : filtered.sort((left, right) => Number(isSessionPinnedItem(right, pinnedIds)) - Number(isSessionPinnedItem(left, pinnedIds)));
+      : filtered.sort((left, right) => Number(pinnedIds.has(right?.root?.id)) - Number(pinnedIds.has(left?.root?.id)));
 
     latestKnownSessionGroups = result;
     scheduleImmediateSidebarRowsSync();
@@ -7223,11 +7662,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     let pinnedCount = 0;
     if (pinArchiveEnabled && sectionHeadersEnabled) {
       const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
-      for (const group of groups) {
-        if (isSessionPinnedItem(group, pinnedIds)) {
-          pinnedCount += 1;
-        } else {
-          break;
+      if (pinnedIds && pinnedIds.size > 0) {
+        for (const group of groups) {
+          const rootId = group?.root?.id;
+          if (rootId && pinnedIds.has(rootId)) {
+            pinnedCount += 1;
+          } else {
+            break;
+          }
         }
       }
     }
@@ -7370,9 +7812,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
 
     const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
+    if (!pinnedIds || pinnedIds.size === 0) return 0;
     let count = 0;
     for (const group of groups) {
-      if (isSessionPinnedItem(group, pinnedIds)) {
+      const rootId = group?.root?.id;
+      if (rootId && pinnedIds.has(rootId)) {
         count += 1;
       } else {
         break;
@@ -7714,15 +8158,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_SYNC_SESSION_SECTION_HEADERS__ = syncSessionSectionHeaders;
   window.__PI_ENH_REMOVE_SESSION_SECTION_HEADERS__ = removeSessionSectionHeaders;
 
-  async function toggleSessionPin(sessionId) {
+  function toggleSessionPin(sessionId) {
     if (!sessionId) return false;
-    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
-      const nativeFn = (typeof window !== "undefined") ? window.__PI_ENH_TOGGLE_NATIVE_SESSION_PIN__ : null;
-      if (typeof nativeFn === "function") {
-        return await nativeFn(sessionId);
-      }
-      throw new Error("原生置顶服务不可用");
-    }
     const pinnedIds = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY);
     const isPinned = pinnedIds.has(sessionId);
     if (isPinned) pinnedIds.delete(sessionId);
@@ -7741,29 +8178,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return !isPinned;
   }
 
-  async function archiveSession(sessionId, meta = {}) {
+  function archiveSession(sessionId, meta = {}) {
     if (!sessionId) return false;
-    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "archive" }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "归档操作未确认，会话状态已保留");
-      }
-      const data = await res.json().catch(() => ({}));
-      if (data?.ok !== true || !data.session || data.session.id !== sessionId || data.session.archived !== true) {
-        throw new Error(data?.error || "归档操作未获得原生确认，会话状态已保留");
-      }
-      const entry = knownSessionsMap.get(sessionId);
-      if (entry) entry.archived = true;
-      requestSessionListRefresh(false, true);
-      syncSessionOdooAddonsLayout();
-      syncSessionSectionHeaders();
-      return true;
-    }
     unmarkSessionAsRecentlyRestored(sessionId);
     const entries = readStoredArchivedEntries();
     if (entries.some((e) => e.id === sessionId)) {
@@ -7798,83 +8214,34 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return true;
   }
 
-  async function restoreArchivedSessions(sessionIds) {
+  function restoreArchivedSessions(sessionIds) {
     if (!Array.isArray(sessionIds) || sessionIds.length === 0) return 0;
-    const codexIds = sessionIds.map(id => typeof id === "string" ? id.trim() : id?.id).filter(id => typeof id === "string" && id.startsWith("codex:"));
-    const piIds = sessionIds.map(id => typeof id === "string" ? id.trim() : id?.id).filter(id => typeof id === "string" && Boolean(id) && !id.startsWith("codex:"));
-    let restoredCount = 0;
-    const succeededIds = [];
-    const failedIds = [];
+    const targetSet = new Set(sessionIds.map((id) => (typeof id === "string" ? id.trim() : id?.id)).filter(Boolean));
+    if (targetSet.size === 0) return 0;
 
-    if (codexIds.length > 0) {
-      let firstError = null;
-      for (const cid of codexIds) {
-        try {
-          const res = await fetch(`/api/sessions/${encodeURIComponent(cid)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "unarchive" }),
-          });
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            throw new Error(data.error || `还原会话 ${cid} 未确认，操作已中止`);
-          }
-          const data = await res.json().catch(() => ({}));
-          if (data?.ok !== true || !data.session || data.session.id !== cid || data.session.archived !== false) {
-            throw new Error(data?.error || `还原会话 ${cid} 未获得原生确认，操作已中止`);
-          }
-          const entry = knownSessionsMap.get(cid);
-          if (entry) entry.archived = false;
-          restoredCount++;
-          succeededIds.push(cid);
-        } catch (err) {
-          failedIds.push(cid);
-          if (!firstError) firstError = err;
-        }
-      }
-      if (succeededIds.length > 0) {
-        requestSessionListRefresh(false, true);
-      }
-      if (firstError) {
-        const error = new Error(firstError.message || "部分会话还原未确认，已保留归档状态");
-        error.succeededIds = succeededIds;
-        error.failedIds = failedIds;
-        error.restoredCount = restoredCount;
-        throw error;
-      }
+    const entries = readStoredArchivedEntries();
+    const next = entries.filter((e) => !targetSet.has(e.id));
+    const restoredCount = entries.length - next.length;
+    if (restoredCount === 0) return 0;
+
+    for (const sid of targetSet) {
+      markSessionAsRecentlyRestored(sid);
     }
 
-    if (piIds.length > 0) {
-      const targetSet = new Set(piIds);
-      const entries = readStoredArchivedEntries();
-      const next = entries.filter((e) => !targetSet.has(e.id));
-      const piRestored = entries.length - next.length;
-      if (piRestored > 0) {
-        for (const sid of targetSet) {
-          markSessionAsRecentlyRestored(sid);
-          succeededIds.push(sid);
-        }
-        writeStoredArchivedEntries(next);
-        if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
-          window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => {
-            const id = typeof e === "string" ? e : e?.id;
-            return id && !targetSet.has(id);
-          });
-        }
-        void persistArchivedSessionsToServer(next, undefined, true);
-        restoredCount += piRestored;
-      }
+    writeStoredArchivedEntries(next);
+    if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
+      window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => {
+        const id = typeof e === "string" ? e : e?.id;
+        return id && !targetSet.has(id);
+      });
     }
-    const resultObj = new Number(restoredCount);
-    resultObj.succeededIds = succeededIds;
-    resultObj.failedIds = failedIds;
-    resultObj.restoredCount = restoredCount;
-    return resultObj;
+    void persistArchivedSessionsToServer(next, undefined, true);
+    return restoredCount;
   }
 
-  async function restoreArchivedSession(sessionId) {
+  function restoreArchivedSession(sessionId) {
     if (!sessionId) return false;
-    return (await restoreArchivedSessions([sessionId])) > 0;
+    return restoreArchivedSessions([sessionId]) > 0;
   }
 
   function isArchiveAutoRestoreOnPromptEnabled() {
@@ -7889,15 +8256,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const archivedIds = readStoredSessionIds(ARCHIVED_SESSION_STORAGE_KEY);
     if (!archivedIds.has(sessionId)) return false;
 
-    // Pi 本地存储同步先移出，保证 Pi 自动恢复行为实时生效
-    archivedIds.delete(sessionId);
-    writeStoredSessionIds(ARCHIVED_SESSION_STORAGE_KEY, archivedIds);
-    const entries = readStoredArchivedEntries();
-    const next = entries.filter((e) => e.id !== sessionId);
-    writeStoredArchivedEntries(next);
-    void persistArchivedSessionsToServer(next, undefined, true);
-
-    restoreArchivedSession(sessionId).then((restored) => {
+    if (restoreArchivedSession(sessionId)) {
       requestSessionListRefresh();
       showToast("已自动唤醒会话并恢复至列表", sessionArchiveIcon);
       const panel = document.querySelector(".pi-enh-archived-panel");
@@ -7905,10 +8264,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (panel && panel.style.display !== "none") {
         renderArchivedPanel(panel, nav);
       }
-    }).catch((err) => {
-      console.warn("[pi-enh] 自动唤醒会话恢复确认异常:", err);
-    });
-    return true;
+      return true;
+    }
+    return false;
   }
 
   // ==========================================
@@ -8061,30 +8419,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function deleteArchivedSession(sessionId) {
     if (!sessionId) return false;
-    const isCodex = String(sessionId).startsWith("codex:");
     markSessionAsDeleted(sessionId);
 
     try {
       const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
       });
-      if (isCodex) {
-        if (!resp || !resp.ok) {
-          restoreSessionDeleteState(sessionId);
-          const detail = resp ? await resp.json().catch(() => ({})) : {};
-          throw new Error(typeof detail?.error === "string" ? detail.error : (resp ? `删除失败 (HTTP ${resp.status})` : "无法连接执行端，请稍后重试"));
-        }
-        const data = await resp.json().catch(() => ({}));
-        if (!data || data.ok !== true) {
-          restoreSessionDeleteState(sessionId);
-          throw new Error(typeof data?.error === "string" ? data.error : "删除未确认，执行端未返回确认标记");
-        }
-      } else {
-        if (!resp || (!resp.ok && resp.status !== 404)) {
-          restoreSessionDeleteState(sessionId);
-          const detail = resp ? await resp.json().catch(() => ({})) : {};
-          throw new Error(typeof detail?.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
-        }
+      if (!resp || (!resp.ok && resp.status !== 404)) {
+        restoreSessionDeleteState(sessionId);
+        throw new Error(`HTTP ${resp ? resp.status : "Failed"}`);
       }
 
       markSessionDeleteConfirmed(sessionId);
@@ -8115,7 +8458,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   window.__PI_ENH_PROCESS_SESSION_GROUPS__ = processSessionGroups;
-  window.__PI_ENH_IS_SESSION_PINNED__ = isSessionPinned;
   window.__PI_ENH_TOGGLE_SESSION_PIN__ = toggleSessionPin;
   window.__PI_ENH_ARCHIVE_SESSION__ = archiveSession;
   window.__PI_ENH_RESTORE_ARCHIVED_SESSION__ = restoreArchivedSession;
@@ -9425,41 +9767,76 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       seal.size >= 0 && !seal.pendingToolCalls && !seal.pendingSubagentCalls;
   }
 
-  // ==========================================
-  // 后台自动统计与自动删除 (Background Auto-Accounting & Seamless Deletion)
-  // 用户要求：删除逻辑优化，后台自动统计，自动删除，绝不因用量核验失败阻断前台删除
-  // ==========================================
-  function backgroundSealSessionUsage(sessionId) {
-    if (!sessionId) return;
-    void (async () => {
-      try {
-        const activeFetch = baseFetch || originalWindowFetch || (typeof fetch === "function" ? fetch : null);
-        if (!activeFetch) return;
-
-        // 1. 静默触发服务端用量入账与账本更新
-        await activeFetch("/api/usage/ledger", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" }
-        }).catch(() => null);
-
-        // 2. 如果用量面板组件已加载，异步静默刷新快照
-        if (typeof window !== "undefined" && window.PiUsagePanel?.fetchSnapshotOnce) {
-          try {
-            await window.PiUsagePanel.fetchSnapshotOnce();
-          } catch (_) {}
-        }
-      } catch (err) {
-        console.warn("[Usage Accounting Background] 后台自动统计用量提示:", err?.message || err);
-      }
-    })();
-  }
-
-  // 前台删除会话放行函数：直接放行真实删除，后台异步自动统计
+  // 客户端失败关闭保护，不是服务端删除事务：绕过浏览器或检查后并发写入仍需后端原子协议。
   async function ensureSessionIngestedBeforeDelete(sessionId) {
-    if (!sessionId) return true;
-    // 异步派发后台自动用量封存与账本统计，绝不阻塞前台删除
-    backgroundSealSessionUsage(sessionId);
-    return true;
+    if (!sessionId) throw new Error("缺少会话 ID，已阻止删除");
+    // 关键环境隔离：30142 同事端容器不属于 30141 全局用量账本扫描域，跳过封存门禁直接放行真实删除
+    if (typeof window !== "undefined" && window.location && window.location.port === "30142") {
+      return true;
+    }
+    const activeFetch = baseFetch || originalWindowFetch;
+    if (!activeFetch) throw new Error("无法核验用量入账，已阻止删除");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 40000);
+    const request = async (url, init = {}) => {
+      const response = await activeFetch(url, { ...init, cache: "no-store", signal: controller.signal });
+      if (!response?.ok) throw new Error(`入账核验 HTTP ${response?.status || "失败"}`);
+      return response.json();
+    };
+    const freshMeta = async () => {
+      const listing = await request(`/api/sessions?usageGuard=${Date.now()}`);
+      if (!Array.isArray(listing.sessions) || !Array.isArray(listing.runningSessionIds)) {
+        throw new Error("无法确认会话或运行状态，已阻止删除");
+      }
+      if (listing.runningSessionIds.includes(sessionId)) {
+        throw new Error("会话仍在运行，待用量回传后再删除");
+      }
+      const meta = listing.sessions.find(s => s.id === sessionId);
+      if (!meta) throw new Error("无法取得最新会话版本，已阻止删除");
+      const detail = await request(`/api/sessions/${encodeURIComponent(sessionId)}?tail=1&usageGuard=${Date.now()}`);
+      if (detail.sessionId !== sessionId || !(typeof detail.leafId === "string" || detail.leafId === null)) {
+        throw new Error("无法取得原生会话末条记录，已阻止删除");
+      }
+      return {
+        ...meta,
+        leafId: detail.leafId,
+        usageDeleteGuard: typeof detail.usageDeleteGuard === "number" ? detail.usageDeleteGuard : 0,
+      };
+    };
+    try {
+      let meta = await freshMeta();
+      if (meta.usageDeleteGuard >= 1) {
+        knownSessionsMap.set(sessionId, meta);
+        return true;
+      }
+      if (!isSessionIngested(sessionId, meta)) {
+        const refreshHost = (typeof window !== "undefined" && window.location?.hostname) ? window.location.hostname : "127.0.0.1";
+        let result;
+        try {
+          result = await request(`http://${refreshHost}:30149/usage/refresh`, { method: "POST" });
+        } catch (fetchErr) {
+          if (refreshHost !== "127.0.0.1") {
+            result = await request("http://127.0.0.1:30149/usage/refresh", { method: "POST" });
+          } else {
+            throw fetchErr;
+          }
+        }
+        if (result.ok !== true) throw new Error("服务端入账失败，已阻止删除");
+        await window.__PI_ENH_LOAD_OPTIONAL__("usage-panel");
+        if (!window.PiUsagePanel?.fetchSnapshotOnce) throw new Error("用量模块不可用，已阻止删除");
+        await window.PiUsagePanel.fetchSnapshotOnce(controller.signal);
+        meta = await freshMeta();
+        if (!isSessionIngested(sessionId, meta)) {
+          throw new Error("会话仍有未入账用量、未结束工具或版本变化，已阻止删除");
+        }
+      }
+      knownSessionsMap.set(sessionId, meta);
+      return true;
+    } catch (error) {
+      throw new Error(`未完成用量封存，删除已取消：${error.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ==========================================
@@ -10244,24 +10621,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return `${(query || "").trim().toLowerCase()}::${tagId || "all"}`;
   }
 
-  function getNativeSearchCatalog() {
-    try {
-      const snapshot = window.__PI_ENH_GET_SEARCH_CATALOG__?.();
-      return snapshot && Array.isArray(snapshot.sessions) && typeof snapshot.scope === "string" ? snapshot : null;
-    } catch (_) { return null; }
-  }
-
-  function getFromSearchCache(key, catalogScope) {
+  function getFromSearchCache(key) {
     const entry = SESSION_SEARCH_CACHE.get(key);
     if (!entry) return null;
-    if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
+    if (Date.now() - entry.timestamp > SEARCH_CACHE_TTL) {
       SESSION_SEARCH_CACHE.delete(key);
       return null;
     }
     return entry.data;
   }
 
-  function setToSearchCache(key, data, catalogScope) {
+  function setToSearchCache(key, data) {
     if (!key || !data) return;
     if (SESSION_SEARCH_CACHE.size >= SEARCH_CACHE_MAX_SIZE) {
       const oldestKey = SESSION_SEARCH_CACHE.keys().next().value;
@@ -10270,7 +10640,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     SESSION_SEARCH_CACHE.set(key, {
       timestamp: Date.now(),
       data,
-      catalogScope,
     });
   }
 
@@ -10278,13 +10647,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     SESSION_SEARCH_CACHE.clear();
   }
 
-  function findNarrowableParentCache(query, catalogScope) {
+  function findNarrowableParentCache(query) {
     const qClean = (query || "").trim().toLowerCase();
     if (!qClean) return null;
 
     // 1. 尝试找前缀词缓存：例如当前是 "解耦"，检查是否已有 "解" 的完整缓存
     for (const [cacheKey, entry] of SESSION_SEARCH_CACHE.entries()) {
-      if (entry.catalogScope !== catalogScope || Date.now() - entry.timestamp > SEARCH_CACHE_TTL) continue;
       const [cachedQ, cachedTag] = cacheKey.split("::");
       if (cachedTag !== (activeSessionFilterTagId || "all")) continue;
       if (cachedQ && cachedQ.length < qClean.length && qClean.startsWith(cachedQ)) {
@@ -10570,15 +10938,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       return realFetch(input, init);
     }
 
-    // Native catalogue ownership is required before local metadata can add hits.
-    // Older tabs without this bridge use the authoritative server search.
-    const catalog = getNativeSearchCatalog();
-    if (!catalog) return realFetch(input, init);
-    const catalogById = new Map(catalog.sessions.filter((s) => s?.id && !s.transient && !s.submissionPending).map((s) => [s.id, s]));
-
     // 1. 优先命中 0ms 闪电 LRU 缓存
     const cacheKey = getSearchCacheKey(query, activeSessionFilterTagId);
-    const cachedData = getFromSearchCache(cacheKey, catalog.scope);
+    const cachedData = getFromSearchCache(cacheKey);
     if (cachedData) {
       scheduleSearchResultsHighlight();
       return createCachedResponse(cachedData, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_CACHE");
@@ -10587,7 +10949,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const keywords = query.split(/\s+/).map((k) => k.trim()).filter(Boolean);
 
     // 1.1 前缀或多词子集内存收窄匹配 (0ms 瞬发响应)
-    const narrowableParent = findNarrowableParentCache(query, catalog.scope);
+    const narrowableParent = findNarrowableParentCache(query);
     if (narrowableParent) {
       const parentResults = narrowableParent.data.results || [];
       const filtered = [];
@@ -10595,7 +10957,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       for (const item of parentResults) {
         const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
         const sid = item.session?.id;
-        const sess = sid ? catalogById.get(sid) : null;
+        const sess = sid ? knownSessionsMap.get(sid) : null;
         const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
         const combined = fullSnippet + " " + sessMeta;
 
@@ -10610,7 +10972,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           results: filtered,
           truncated: narrowableParent.data.truncated || false,
         };
-        setToSearchCache(cacheKey, narrowedJson, catalog.scope);
+        setToSearchCache(cacheKey, narrowedJson);
         scheduleSearchResultsHighlight();
         return createCachedResponse(narrowedJson, new Headers({ "Content-Type": "application/json" }), "ENHANCED_SEARCH_NARROWED");
       }
@@ -10622,6 +10984,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     activeSearchAbortController = new AbortController();
     const currentAbortSignal = activeSearchAbortController.signal;
+
+    // 3. 内存索引预热保证
+    if (knownSessionsMap.size === 0) {
+      await prewarmSessionSearchIndex();
+    }
 
     let nativeResults = [];
     let isTruncated = false;
@@ -10659,7 +11026,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           for (const item of primaryList) {
             const fullSnippet = ((item.before || "") + " " + (item.match || "") + " " + (item.after || "")).toLowerCase();
             const sid = item.session?.id;
-            const sess = sid ? catalogById.get(sid) : null;
+            const sess = sid ? knownSessionsMap.get(sid) : null;
             const sessMeta = ((sess?.name || "") + " " + (sess?.firstMessage || "") + " " + (sess?.id || "")).toLowerCase();
             const combined = fullSnippet + " " + sessMeta;
 
@@ -10679,7 +11046,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const titleMatches = [];
 
     // 本地标题/首条消息多关键词 AND 匹配
-    for (const [id, s] of catalogById.entries()) {
+    for (const [id, s] of knownSessionsMap.entries()) {
       if (seenSessionIds.has(id)) continue;
       const name = (s.name || "").trim();
       const firstMsg = (s.firstMessage || "").trim();
@@ -10717,7 +11084,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       seenSessionIds.add(id);
     }
 
-    let mergedResults = [...titleMatches, ...nativeResults].filter((r) => catalogById.has(r.session?.id));
+    let mergedResults = [...titleMatches, ...nativeResults];
 
     // 结合标签过滤：若选中了具体标签，严格过滤出满足该标签的会话
     if (isPluginEnabled("session-tags") && activeSessionFilterTagId && activeSessionFilterTagId !== "all") {
@@ -10734,7 +11101,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     };
 
     // 保存至 LRU 高性能缓存
-    if (getNativeSearchCatalog()?.scope === catalog.scope) setToSearchCache(cacheKey, mergedJson, catalog.scope);
+    setToSearchCache(cacheKey, mergedJson);
 
     // 触发搜索关键词全量高亮与导航
     scheduleSearchResultsHighlight();
@@ -11316,6 +11683,45 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   ]);
 
   const pendingStopRequests = new Map();
+  const pendingStopRuntimePreparations = new Map();
+
+  async function prepareStopRuntimeForPrompt(target, input, init) {
+    const entry = { cancelled: false };
+    let entries = pendingStopRuntimePreparations.get(target.sessionId);
+    if (!entries) pendingStopRuntimePreparations.set(target.sessionId, entries = new Set());
+    entries.add(entry);
+    const signal = init?.signal || input?.signal;
+    const checkCancelled = () => {
+      if (entry.cancelled || signal?.aborted) throw new DOMException("消息已在启动前停止", "AbortError");
+    };
+    try {
+      checkCancelled();
+      const activeFetch = baseFetch || originalWindowFetch;
+      if (!activeFetch) return;
+      const headers = new Headers(init?.headers || input?.headers);
+      headers.set("Content-Type", "application/json");
+      const call = (type) => activeFetch.call(window, target.urlStr, {
+        method: "POST", headers, credentials: init?.credentials || input?.credentials || "same-origin",
+        signal, body: JSON.stringify({ type })
+      });
+      const response = await call("get_state");
+      checkCancelled();
+      if (!response.ok) return;
+      const result = await response.json();
+      const state = result?.data || result;
+      checkCancelled();
+      // Never reload a running session or consume its user queue. Fresh SDK
+      // resources are loaded only at the existing idle command boundary.
+      if (state?.isStreaming || state?.isPromptRunning || state?.isBashRunning || state?.isCompacting) return;
+      if (state?.stopRuntimeVersion === "1.0.0" && ["1.0.0", "not-applicable"].includes(state?.subagentCancellationVersion)) return;
+      const reload = await call("reload");
+      checkCancelled();
+      if (!reload.ok) throw new Error("停止保护更新失败，消息未启动");
+    } finally {
+      entries.delete(entry);
+      if (!entries.size) pendingStopRuntimePreparations.delete(target.sessionId);
+    }
+  }
 
   // 记录每个 DOM 按钮最初的属性以及当前持有反馈的 token 集合
   // 使用 WeakMap 避免持有已销毁 DOM 的引用引起内存泄漏
@@ -11393,7 +11799,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     // 真实 composer 边界限制：仅在 fieldset、form、.pi-enh-cursor-composer 或包含 textarea.chat-input-textarea 的容器内查找
     const composerRoots = [];
     const knownRoots = document.querySelectorAll(
-      '[data-pi-native-composer-host], form, .pi-enh-cursor-composer, .chat-input-container, [data-chat-input-wrap]'
+      'fieldset, form, .pi-enh-cursor-composer, .chat-input-container, [data-chat-input-wrap]'
     );
     for (const r of knownRoots) {
       if (r && r.nodeType === 1 && !composerRoots.includes(r)) {
@@ -11402,7 +11808,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     const textareas = document.querySelectorAll('textarea.chat-input-textarea');
     for (const ta of textareas) {
-      const root = ta.closest('[data-pi-native-composer-host], form, [data-composer], div') || ta.parentElement;
+      const root = ta.closest('fieldset, form, [data-composer], div') || ta.parentElement;
       if (root && !composerRoots.includes(root)) {
         composerRoots.push(root);
       }
@@ -11691,6 +12097,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       throw callerSignal.reason || new DOMException("The user aborted a request.", "AbortError");
     }
 
+    if (abortType === "abort") {
+      for (const entry of pendingStopRuntimePreparations.get(sessionId) || []) entry.cancelled = true;
+    }
     const myEntry = { promise: null, sessionId, abortType };
     applyStopFeedback(sessionId, myEntry);
 
@@ -11772,6 +12181,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         if (syncAbortType) {
           return dispatchDirectStopFetch.call(this, agentTarget, syncAbortType, input, init);
         }
+        let commandType = null;
+        if (typeof init?.body === "string") {
+          try { commandType = JSON.parse(init.body)?.type; } catch (_) {}
+        }
+        if (commandType === "prompt") await prepareStopRuntimeForPrompt(agentTarget, input, init);
         const asyncAbortType = await resolveAgentAbortType(input, init);
         if (asyncAbortType) {
           return dispatchDirectStopFetch.call(this, agentTarget, asyncAbortType, input, init);
@@ -11806,27 +12220,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
 
     // A new-chat mode is staged locally; establish and verify it BEFORE the first prompt.
-    if (queueRequestBody && isPluginEnabled("composer-modes")) {
+    if (queueRequestBody && pendingNewComposerMode?.sessionId && isPluginEnabled("composer-modes")) {
       const owner = extractSessionIdFromUrl(requestUrl);
-      const stagedPending = pendingNewComposerMode;
-      const staged = pendingNewComposerMode?.sessionId ? pendingNewComposerMode : null;
-      // Creation is not a Pi session id; it has no owner until the response.
-      const ownerEngine = owner === "new" ? null : owner?.startsWith("codex:") ? "codex" : owner ? "pi" : null;
-      const stagedEngine = stagedPending?.engine || "pi";
-      if (stagedPending && (
-        (ownerEngine && ownerEngine !== stagedEngine) ||
-        stagedPending.project !== getCurrentProjectStatusKey()
-      )) {
-        pendingNewComposerMode = null;
-      } else if (staged && owner === staged.sessionId && ownerEngine === stagedEngine) {
-        const payload = await queueRequestBody.then(text => { try { return JSON.parse(text); } catch { return null; } });
-        const internalPiModePrompt = stagedEngine === "pi" && String(payload?.message || "").startsWith("/composer-mode");
-        if (payload?.type === "prompt" && !internalPiModePrompt) {
-          if (!await requestSwitchComposerMode(staged.mode, owner)) {
-            return new Response(JSON.stringify({success:false,accepted:false,code:"prompt_rejected",error:"计划/目标模式尚未确认生效，消息未发送，请重试。"}), {status:409,headers:{"Content-Type":"application/json"}});
-          }
-          if (pendingNewComposerMode === staged) pendingNewComposerMode = null;
+      const payload = await queueRequestBody.then(text => { try { return JSON.parse(text); } catch { return null; } });
+      if (owner === pendingNewComposerMode.sessionId && payload?.type === "prompt" &&
+          !String(payload.message || "").startsWith("/composer-mode")) {
+        const staged = pendingNewComposerMode;
+        if (!await requestSwitchComposerMode(staged.mode, owner)) {
+          return new Response(JSON.stringify({success:false,accepted:false,code:"prompt_rejected",error:"计划/目标模式尚未确认生效，消息未发送，请重试。"}), {status:409,headers:{"Content-Type":"application/json"}});
         }
+        if (pendingNewComposerMode === staged) pendingNewComposerMode = null;
       }
     }
 
@@ -12202,20 +12605,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (response?.ok && requestMethod === "POST" && /\/api\/agent\/new(?:[?#]|$)/.test(requestUrl) && pendingNewComposerMode) {
       const created = await response.clone().json().catch(() => null);
       if (created?.sessionId && pendingNewComposerMode.project === getCurrentProjectStatusKey()) {
-        const createdEngine = created.sessionId.startsWith("codex:") ? "codex" : "pi";
-        const stagedEngine = pendingNewComposerMode.engine || "pi";
-        if (createdEngine === stagedEngine) pendingNewComposerMode.sessionId = created.sessionId;
-        else pendingNewComposerMode = null;
+        pendingNewComposerMode.sessionId = created.sessionId;
       }
     }
     // Keep native GET/poll state authoritative, including changes from another browser.
     if (response?.ok && requestMethod === "GET" && /\/api\/agent\/[^/?#]+(?:[?#]|$)/.test(requestUrl)) {
       const state = await response.clone().json().catch(() => null);
-      const parsedMode = parseExtensionStatus(state?.state || state, "composer-modes");
+      const parsedMode = parseExtensionStatus(state?.state, "composer-modes");
       if (parsedMode?.version === 1 && ["normal", "plan", "goal"].includes(parsedMode.mode)) {
-        const sessionId = extractSessionIdFromUrl(requestUrl);
-        const commitModeState = window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__;
-        if (sessionId && typeof commitModeState === "function") commitModeState(sessionId, parsedMode);
+        composerModesStateMap.set(extractSessionIdFromUrl(requestUrl), parsedMode);
       }
     }
 
@@ -12445,6 +12843,30 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return null;
   }
 
+
+  // ==========================================
+  // 未送达消息草稿自动保全 (借鉴官方 v0.13.0 fix #1457)
+  // ==========================================
+  function restoreUndeliveredPromptToComposer(text) {
+    if (!text || typeof document === "undefined") return;
+    try {
+      const textarea = typeof findComposerTextarea === "function"
+        ? findComposerTextarea()
+        : document.querySelector("textarea");
+      if (textarea && (!textarea.value || !textarea.value.trim())) {
+        if (typeof setComposerTextareaValue === "function") {
+          setComposerTextareaValue(textarea, text);
+        } else {
+          textarea.value = text;
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        if (typeof showToast === "function") {
+          showToast("⚠️ 网络发送异常，已自动为您恢复未送达的消息内容", null, 4000);
+        }
+      }
+    } catch (_) {}
+  }
+
   async function cachedSessionFetch(input, init) {
     const activeFetch = baseFetch || originalWindowFetch || (typeof fetch === "function" ? fetch : null);
     if (!activeFetch) return Promise.reject(new Error("fetch unavailable"));
@@ -12457,13 +12879,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const urlStr = typeof input === "string" ? input : input?.url ? input.url : String(input);
     // HEAD is a read-only validator, never an Agent command or cache mutation.
     if (method === "HEAD") return activeFetch(input, init);
-    // Native sync envelopes and current-identity lookups must bypass all history caches.
-    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?(?:sync|lookup)=1(?=[&#]|$)/.test(urlStr)) {
-      return activeFetch(input, init);
-    }
-    // Interaction queues and prompt receipts belong to the live server.
-    // A receipt must never be replaced by an idle Agent state envelope.
-    if (method === "GET" && /\/api\/agent\/[^/?#]+\?(?:[^#]*&)?(?:interactions=1|requestId=[^&#]+)(?=[&#]|$)/.test(urlStr)) {
+    // Native versioned envelopes own their exact baseline; directly return activeFetch without caching or rewriting.
+    if (method === "GET" && /\/api\/sessions\/[^/?#]+\?(?:[^#]*&)?sync=1(?=[&#]|$)/.test(urlStr)) {
       return activeFetch(input, init);
     }
 
@@ -12544,6 +12961,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           }
         }
       }
+      let promptTextSnapshot = null;
+      if (method === "POST" && /\/api\/agent\/[^/?#]+(?:[?#]|$)/.test(urlStr)) {
+        try {
+          const bodyStr = typeof init?.body === "string" ? init.body : null;
+          const bodyJson = bodyStr ? JSON.parse(bodyStr) : null;
+          if (bodyJson && typeof bodyJson.message === "string" && bodyJson.message.trim()) {
+            promptTextSnapshot = bodyJson.message;
+          }
+        } catch (_) {}
+      }
+
       let response = null;
       try {
         response = await activeFetch.apply(this, arguments);
@@ -12551,7 +12979,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         if (method === "DELETE" && targetSessionId) {
           restoreSessionDeleteState(targetSessionId);
         }
+        if (promptTextSnapshot) {
+          restoreUndeliveredPromptToComposer(promptTextSnapshot);
+        }
         throw fetchErr;
+      }
+      if (response && !response.ok && response.status >= 500 && promptTextSnapshot) {
+        restoreUndeliveredPromptToComposer(promptTextSnapshot);
       }
       if (method === "DELETE") {
         if (response && (response.ok || response.status === 200 || response.status === 204 || response.status === 404)) {
@@ -12577,8 +13011,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     // 场景 0: /api/agent/:id 状态请求（绝不能当作会话详情缓存！）
     if (urlStr.includes("/api/agent/")) {
-      // Runtime state is ephemeral: idle sessions can still own paused queues
-      // and pending questions. Only the native service may report it empty.
+      if (
+        isPluginEnabled("session-memory-cache") &&
+        knownSessionsMap.has(sessionId) &&
+        !entry.isRunning &&
+        !entry.hasPendingAgentEnd &&
+        !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sessionId))
+      ) {
+        return createCachedResponse(entry.state?.data || { running: false }, {}, "IDLE_STATE");
+      }
       const reqGeneration = entry.runGeneration;
       const realResp = await activeFetch(input, { ...init, cache: "no-store" });
       if (realResp && (realResp.ok || realResp.status === 200)) {
@@ -12619,8 +13060,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     // 场景 2: 会话状态请求 (/api/sessions/:id/state)
     const isStateRequest = urlStr.endsWith("/state") || urlStr.includes("/state?");
     if (isStateRequest) {
-      // Runtime state is ephemeral: idle sessions can still own paused queues
-      // and pending questions. Only the native service may report it empty.
+      if (
+        isPluginEnabled("session-memory-cache") &&
+        knownSessionsMap.has(sessionId) &&
+        !entry.isRunning &&
+        !entry.hasPendingAgentEnd &&
+        !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sessionId))
+      ) {
+        return createCachedResponse(entry.state?.data || { running: false }, {}, "IDLE_STATE");
+      }
       const reqGeneration = entry.runGeneration;
       const realResp = await activeFetch(input, { ...init, cache: "no-store" });
       if (realResp && (realResp.ok || realResp.status === 200)) {
@@ -12858,28 +13306,30 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       realResp = await activeFetch(fetchInput, liveInit);
       if (realResp && (realResp.ok || realResp.status === 200)) {
         try {
-          const clone = typeof realResp.clone === "function" ? realResp.clone() : realResp;
-          const rawJson = await clone.json();
-          const json = rawJson;
-          const oldData = entry.detailRequests.get(urlStr)?.data;
-          const oldMsgs = oldData?.context?.messages;
-          const newMsgs = json?.context?.messages;
-          const isFreshEmpty = Array.isArray(oldMsgs) && oldMsgs.length > 0 && Array.isArray(newMsgs) && newMsgs.length === 0;
-          if (!isFreshEmpty && isSnapshotComplete(json)) {
-            const now = Date.now();
-            const stampedJson = withSessionCacheTimestamp(json, now);
-            entry.forceBypassCache = false;
-            if (!entry.hasPendingAgentEnd) {
-              entry.needsFreshSync = false;
+          const clone = typeof realResp.clone === "function" ? realResp.clone() : null;
+          if (clone) {
+            const rawJson = await clone.json();
+            const json = rawJson;
+            const oldData = entry.detailRequests.get(urlStr)?.data;
+            const oldMsgs = oldData?.context?.messages;
+            const newMsgs = json?.context?.messages;
+            const isFreshEmpty = Array.isArray(oldMsgs) && oldMsgs.length > 0 && Array.isArray(newMsgs) && newMsgs.length === 0;
+            if (!isFreshEmpty && isSnapshotComplete(json)) {
+              const now = Date.now();
+              const stampedJson = withSessionCacheTimestamp(json, now);
+              entry.forceBypassCache = false;
+              if (!entry.hasPendingAgentEnd) {
+                entry.needsFreshSync = false;
+              }
+              commitSessionDetailSnapshot(sessionId, entry, urlStr, stampedJson, now);
+              entry._lastRevalidatedAt = now;
+              recordSessionModelMetadataFromPayload(sessionId, stampedJson);
+              entry.lastAccessed = now;
+              enforceSessionCacheLRU();
+              void persistSessionDetail(sessionId, urlStr, stampedJson);
+              if (resolveColdFlight) { resolveColdFlight(stampedJson); resolveColdFlight = null; }
+              return createCachedResponse(stampedJson, realResp.headers, "LIVE_WINDOW");
             }
-            commitSessionDetailSnapshot(sessionId, entry, urlStr, stampedJson, now);
-            entry._lastRevalidatedAt = now;
-            recordSessionModelMetadataFromPayload(sessionId, stampedJson);
-            entry.lastAccessed = now;
-            enforceSessionCacheLRU();
-            void persistSessionDetail(sessionId, urlStr, stampedJson);
-            if (resolveColdFlight) { resolveColdFlight(stampedJson); resolveColdFlight = null; }
-            return createCachedResponse(stampedJson, realResp.headers, "LIVE_WINDOW");
           }
         } catch (e) {}
       }
@@ -13670,7 +14120,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         const entry = getOrCreateSessionEntry(sId);
         entry.hasPendingAttention = false;
       }
-      if (["agent_start", "agent_end", "agent_settled", "prompt_done", "extension_ui_request", "extension_ui_response", "extension_ui_closed"].includes(data?.type)
+      if (["agent_start", "agent_settled", "prompt_done", "extension_ui_request", "extension_ui_response", "extension_ui_closed"].includes(data?.type)
         || (data?.type === "tool_execution_end" && data.toolName === "ask_user")) {
         requestProjectStatusRefresh(data?.type === "extension_ui_request" && data.closed === true);
         if (typeof schedulePrioritySessionPreloads === "function") {
@@ -13690,7 +14140,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         const sId = extractSessionIdFromUrl(urlStr);
         if (
           sId &&
-          !sId.startsWith("codex:") &&
           urlStr.includes("/events") &&
           urlStr.includes("/api/agent/") &&
           isPluginEnabled("session-memory-cache") &&
@@ -13698,8 +14147,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           !sessionMemoryCache.get(sId)?.isRunning &&
           !(typeof isChatSessionRunning === "function" && isChatSessionRunning(sId))
         ) {
-          // Codex 的共享执行端可由电脑启动任务，其只读 SSE 必须真实订阅。
-          // 休眠 Pi 历史会话惰性 SSE 代理：浏览历史会话时不向服务端发起 /events 触发 startRpcSession 冷启动阻塞；
+          // 休眠历史会话惰性 SSE 代理：浏览历史会话时不向服务端发起 /events 触发 startRpcSession 冷启动阻塞；
           // 当用户在该会话发送消息（POST /api/agent/:id）时自动升级连接真实 OriginalEventSource。
           const listeners = new Map();
           let realEs = null;
@@ -14191,6 +14639,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     clearSessionMemoryCache();
     syncCrossDeviceSessionSync(false);
   });
+
   // ==========================================
   // 1. Session Row Context Menu (右键会话菜单)
   // ==========================================
@@ -14947,11 +15396,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function removeSessionPinArchiveControls() {
     document.documentElement.classList.remove("pi-enh-session-pin-archive-active");
     for (const selector of [".pi-enh-session-overflow", ".pi-enh-session-pinned-indicator", ".pi-enh-session-menu"]) {
-      for (const element of document.querySelectorAll(selector)) {
-        if (!element.hasAttribute("data-pi-native-session-pin")) {
-          element.remove();
-        }
-      }
+      for (const element of document.querySelectorAll(selector)) element.remove();
     }
   }
 
@@ -14988,7 +15433,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     // 所有删除入口只可标 pending，网络前严禁提前清理或清除 metadata。
     // markSessionAsDeleted 通过 React sidebar bridge 复制本地数组，首帧即可重算过滤与虚拟坐标。
     markSessionAsDeleted(sessionId);
-    showToast("正在删除会话…", sessionDeleteIcon);
+    showToast("已移除会话，正在后台删除…", sessionDeleteIcon);
 
     (async () => {
       try {
@@ -15014,147 +15459,117 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const row = getSessionRowById(sessionId);
     if (!row) return false;
 
-    return !row.dispatchEvent(new CustomEvent("pi-web:session-row-rename", { cancelable: true }));
+    // 若当前已处于行内编辑状态，直接对焦全选
+    const existingInput = row.querySelector("input");
+    if (existingInput) {
+      existingInput.focus();
+      existingInput.select();
+      return true;
+    }
+
+    // 1. 优先调用原生重命名按钮，完全复用原生状态机与快捷键
+    const renameBtn = row.querySelector('.pi-enh-native-session-actions button[title*="重命名"], .pi-enh-native-session-actions button[title*="Rename"]') ||
+      row.querySelector('button[title*="重命名"], button[title*="Rename"]');
+
+    if (renameBtn && typeof renameBtn.click === "function") {
+      renameBtn.click();
+      return true;
+    }
+
+    // 2. 稳健自愈回退：若原生按钮因特殊状态缺失，就地插入与原生完全同款的行内输入框，绝不弹出 window.prompt
+    const currentTitle = extractSessionTitleFromRow(row, sessionId) || "";
+    const contentHost = row.querySelector("div:not(.pi-enh-native-session-actions):not(.pi-enh-session-overflow):not(.pi-enh-session-pinned-indicator)") || row.firstElementChild;
+    if (!contentHost) return false;
+
+    const originalDisplay = contentHost.style.display;
+    contentHost.style.display = "none";
+    row.setAttribute("data-pi-enh-editing", "true");
+    row.querySelector(".pi-enh-session-model-badge")?.remove();
+
+    const inlineInput = document.createElement("input");
+    inlineInput.type = "text";
+    inlineInput.value = currentTitle;
+    inlineInput.setAttribute("data-pi-enh-orig-title", currentTitle);
+    inlineInput.style.cssText = "order: 1 !important; flex: 1 1 0 !important; min-width: 0 !important; width: 100% !important; box-sizing: border-box !important; font-size: 12px; padding: 5px 8px; border: 1px solid var(--accent); border-radius: 5px; outline: none; background: var(--bg); color: var(--text); height: 30px;";
+
+    let committed = false;
+    const cleanup = () => {
+      inlineInput.remove();
+      contentHost.style.display = originalDisplay;
+      row.removeAttribute("data-pi-enh-editing");
+      setTimeout(() => {
+        if (typeof syncSessionModelLabels === "function") syncSessionModelLabels();
+        if (typeof syncSessionPinArchiveControls === "function") syncSessionPinArchiveControls();
+      }, 50);
+    };
+
+    const commitChange = async () => {
+      if (committed) return;
+      committed = true;
+      const newName = inlineInput.value.trim();
+      cleanup();
+      // 空文本保护：自动恢复原标题并显示温和气泡
+      if (!newName) {
+        showToast("会话名称不能为空", sessionWarnIcon, 2500);
+        return;
+      }
+      if (newName !== currentTitle) {
+        try {
+          const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const cachedSession = knownSessionsMap.get(sessionId);
+          if (cachedSession) cachedSession.name = newName;
+          knownSessionTitles.set(sessionId, newName);
+          requestSessionListRefresh();
+          showToast("已重命名会话");
+        } catch (e) {
+          showToast("重命名失败: " + (e?.message || String(e)));
+        }
+      }
+    };
+
+    inlineInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        void commitChange();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        committed = true;
+        cleanup();
+      }
+    });
+    inlineInput.addEventListener("blur", () => {
+      void commitChange();
+    });
+
+    const trigger = row.querySelector(".pi-enh-session-overflow");
+    if (trigger) {
+      row.insertBefore(inlineInput, trigger);
+    } else {
+      row.appendChild(inlineInput);
+    }
+
+    requestAnimationFrame(() => {
+      inlineInput.focus();
+      inlineInput.select();
+    });
+
+    return true;
   }
   window.__PI_ENH_TRIGGER_SESSION_INLINE_RENAME__ = triggerSessionInlineRename;
 
-  // ==========================================
-  // 会话引擎与合法 Native 路径识别核心逻辑
-  // ==========================================
-  function isLegalAbsolutePath(p) {
-    if (typeof p !== "string") return false;
-    const trimmed = p.trim();
-    if (!trimmed) return false;
-    if (trimmed.startsWith("codex:")) return false;
-    if (trimmed.startsWith("/")) return true;
-    if (/^[a-zA-Z]:[/\\]/.test(trimmed)) return true;
-    if (/^([/\\]{2})[^/\\]+/.test(trimmed)) return true;
-    return false;
-  }
-
-  function resolveSessionRolloutPath(sessionId, explicitPath) {
-    if (isLegalAbsolutePath(explicitPath)) {
-      return explicitPath.trim();
-    }
-    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
-      try {
-        const rawSessions = window.__PI_ENH_GET_RAW_SESSIONS__();
-        if (Array.isArray(rawSessions)) {
-          const found = rawSessions.find((s) => s && s.id === sessionId);
-          if (found && isLegalAbsolutePath(found.path)) {
-            return found.path.trim();
-          }
-        }
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  function isCodexSession(sessionId, explicitEngine) {
-    if (explicitEngine === "codex") return true;
-    if (explicitEngine === "pi") return false;
-    if (typeof sessionId === "string" && sessionId.startsWith("codex:")) return true;
-
-    // 检查 rawSessions
-    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function") {
-      try {
-        const raw = window.__PI_ENH_GET_RAW_SESSIONS__();
-        if (Array.isArray(raw)) {
-          const s = raw.find((item) => item && item.id === sessionId);
-          if (s) {
-            if (s.executionEngine === "codex" || (typeof s.path === "string" && s.path.startsWith("codex:"))) {
-              return true;
-            }
-            if (s.executionEngine === "pi") {
-              return false;
-            }
-          }
-        }
-      } catch (_) {}
-    }
-
-    // 检查 DOM row 属性
-    const row = typeof getSessionRowById === "function" ? getSessionRowById(sessionId) : null;
-    const rowEngine = row?.getAttribute?.("data-execution-engine");
-    if (rowEngine === "codex") return true;
-    if (rowEngine === "pi") return false;
-
-    // 若 sessionId 存在且未指明 codex，明确 Pi id 不能被当前页面引擎覆盖，直接视为非 Codex 会话
-    if (sessionId) return false;
-
-    // 仅在无具体 sessionId 时的兜底参考全局当前页面引擎
-    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_EXECUTION_ENGINE__ === "function") {
-      try {
-        if (window.__PI_ENH_GET_EXECUTION_ENGINE__() === "codex") return true;
-      } catch (_) {}
-    }
-    return false;
-  }
-
-  async function handleSessionReload(sessionId, options = {}) {
-    if (!sessionId) return false;
-    const isCodex = isCodexSession(sessionId, options.executionEngine);
-    if (!isCodex) {
-      if (typeof window.__PI_ENH_RELOAD_SPECIFIC_SESSION__ === "function") {
-        window.__PI_ENH_RELOAD_SPECIFIC_SESSION__(sessionId, true);
-        return true;
-      }
-      return false;
-    }
-
-    const isCurrentResident = Boolean(
-      typeof window.__PI_WEB_GET_RESIDENT_SESSION_DATA__ === "function" &&
-      window.__PI_WEB_GET_RESIDENT_SESSION_DATA__(sessionId)
-    );
-
-    if (isCurrentResident) {
-      if (typeof window.__PI_WEB_RELOAD_SESSION__ !== "function") {
-        showToast("当前环境未提供原生会话重读接口", "error");
-        return false;
-      }
-      try {
-        showToast("正在重新读取原生会话...");
-        const reloadResult = await window.__PI_WEB_RELOAD_SESSION__(sessionId, true, true, { force: true });
-        if (reloadResult === false) {
-          showToast("重新读取原生会话失败", "error");
-          return false;
-        }
-        return true;
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : (err?.message || "重新读取原生会话失败"), "error");
-        return false;
-      }
-    } else {
-      try {
-        const targetUrl = `/?session=${encodeURIComponent(sessionId)}`;
-        if (typeof window !== "undefined" && window.location) {
-          if (typeof window.location.assign === "function") {
-            window.location.assign(targetUrl);
-          } else {
-            window.location.href = targetUrl;
-          }
-        }
-        return true;
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : "导航到目标会话失败", "error");
-        return false;
-      }
-    }
-  }
-
-  async function handleSessionPinArchiveAction(sessionId, action) {
+  function handleSessionPinArchiveAction(sessionId, action) {
     if (action === "pin") {
-      try {
-        const pinFn = (typeof toggleSessionPin === "function")
-          ? toggleSessionPin
-          : (typeof window !== "undefined" ? window.__PI_ENH_TOGGLE_SESSION_PIN__ : null);
-        const pinned = pinFn ? await pinFn(sessionId) : false;
-        syncSessionPinArchiveControls();
-        requestSessionListRefresh();
-        showToast(pinned ? "已置顶会话" : "已取消置顶会话", sessionPinIcon);
-      } catch (err) {
-        showToast(err?.message || "置顶状态切换未确认，已保留原状态", undefined, 3500);
-      }
+      const pinned = toggleSessionPin(sessionId);
+      syncSessionPinArchiveControls();
+      requestSessionListRefresh();
+      showToast(pinned ? "已置顶会话" : "已取消置顶会话", sessionPinIcon);
       return;
     }
     if (action === "toggle-unread" || action === "unread") {
@@ -15163,27 +15578,22 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       return;
     }
     if (action === "archive") {
-      try {
-        const row = getSessionRowById(sessionId);
-        const sessionName = extractSessionTitleFromRow(row, sessionId);
-        const archiveFn = (typeof archiveSession === "function")
-          ? archiveSession
-          : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
-        const archived = archiveFn ? await archiveFn(sessionId, { name: sessionName }) : false;
+      const row = getSessionRowById(sessionId);
+      const sessionName = extractSessionTitleFromRow(row, sessionId);
+      const archiveFn = (typeof archiveSession === "function")
+        ? archiveSession
+        : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
+      const archived = archiveFn ? archiveFn(sessionId, { name: sessionName }) : false;
 
-        if (archived) {
-          syncSessionPinArchiveControls();
-          requestSessionListRefresh(false, true);
-          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-          }
-          showToast("已归档会话，可在“设置 → 已归档”中还原", sessionArchiveIcon, 4200);
-          return;
+      if (archived) {
+        syncSessionPinArchiveControls();
+        requestSessionListRefresh(false, true);
+        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
         }
-      } catch (err) {
-        showToast(err?.message || "归档未确认，会话已保留在列表中", undefined, 3500);
+        showToast("已归档会话，可在“设置 → 已归档”中还原", sessionArchiveIcon, 4200);
+        return;
       }
-      return;
     }
     if (action === "rename") {
       closeMenu();
@@ -15192,7 +15602,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     if (action === "reload") {
       closeMenu();
-      void handleSessionReload(sessionId);
+      if (typeof window.__PI_ENH_RELOAD_SPECIFIC_SESSION__ === "function") {
+        window.__PI_ENH_RELOAD_SPECIFIC_SESSION__(sessionId, true);
+      }
       return;
     }
     if (action === "delete") {
@@ -15212,22 +15624,18 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (typeof document !== "undefined" && document.documentElement) {
       document.documentElement.classList.remove("pi-enh-scroll-restoring");
     }
-    const isPinnedFn = typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function"
-      ? window.__PI_ENH_IS_SESSION_PINNED__
-      : (id) => readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(id);
-    const pinned = isPinnedFn(sessionId);
+    const pinned = readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sessionId);
     const unread = isSessionUnread(sessionId);
-    const isCodex = isCodexSession(sessionId);
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu pi-enh-session-menu";
     menu.innerHTML = `
       <div class="pi-enh-menu-item" data-session-action="pin">${sessionPinIcon}<span>${pinned ? "取消置顶" : "置顶会话"}</span></div>
       <div class="pi-enh-menu-item" data-session-action="toggle-unread">${unread ? sessionReadIcon : sessionUnreadIcon}<span>${unread ? "标为已读" : "标为未读"}</span></div>
       <div class="pi-enh-menu-item" data-session-action="rename"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg><span>重命名</span></div>
-      <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>${isCodex ? "重新读取原生会话" : "从磁盘重载 (Alt+R)"}</span></div>
+      <div class="pi-enh-menu-item" data-session-action="reload"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg><span>从磁盘重载 (Alt+R)</span></div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-session-action="archive">${sessionArchiveIcon}<span>归档会话</span></div>
-      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" data-stage="init" title="点击一次进入确认，再次点击彻底删除，无法撤销"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
+      <div class="pi-enh-menu-item pi-enh-menu-item-danger" data-session-action="delete" data-stage="init" title="点击一次进入确认，再次点击彻底删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6M14 11v6"></path></svg><span>删除会话</span></div>
     `;
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -15266,14 +15674,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
       deleteMenuItem.setAttribute("data-stage", "init");
       deleteMenuItem.classList.remove("pi-enh-menu-item-confirming");
-      deleteMenuItem.title = "点击一次进入确认，再次点击彻底删除，无法撤销";
+      deleteMenuItem.title = "点击一次进入确认，再次点击彻底删除";
       deleteMenuItem.innerHTML = `${sessionDeleteIcon}<span>删除会话</span>`;
     };
     const armDeleteMenuItem = () => {
       if (!deleteMenuItem) return;
       deleteMenuItem.setAttribute("data-stage", "confirm");
       deleteMenuItem.classList.add("pi-enh-menu-item-confirming");
-      deleteMenuItem.title = "再次点击彻底删除此会话，无法撤销";
+      deleteMenuItem.title = "再次点击彻底删除此会话";
       deleteMenuItem.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg><span>确认删除</span>`;
       if (deleteMenuItem._confirmTimer) clearManagedTimeout(deleteMenuItem._confirmTimer);
       deleteMenuItem._confirmTimer = addManagedTimeout(resetDeleteMenuItem, 4000);
@@ -15307,39 +15715,29 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     for (const row of sessionRows) {
       const sessionId = row.getAttribute("data-pi-enh-session-id");
       if (!sessionId) continue;
-      const isCodex = sessionId.startsWith("codex:");
+      const isPinned = pinnedIds.has(sessionId);
       let indicator = row.querySelector(".pi-enh-session-pinned-indicator");
-
-      if (isCodex) {
-        // Codex 会话置顶标记完全由原生 React 受管，04 绝不为 Codex 会话追加、移除或重新插入原生 marker
-        if (indicator && !indicator.hasAttribute("data-pi-native-session-pin")) {
-          indicator.remove();
-          indicator = null;
+      if (isPinned) {
+        // The pin marker is an action, not a passive decoration: clicking it
+        // immediately toggles the current row back to unpinned.
+        if (!indicator || indicator.tagName?.toLowerCase() !== "button") {
+          indicator?.remove();
+          indicator = document.createElement("button");
+          indicator.type = "button";
+          indicator.className = "pi-enh-session-pinned-indicator";
+          indicator.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleSessionPinArchiveAction(sessionId, "pin");
+          });
         }
-      } else {
-        const isPinned = pinnedIds.has(sessionId);
-        if (isPinned) {
-          // The pin marker is an action, not a passive decoration: clicking it
-          // immediately toggles the current row back to unpinned.
-          if (!indicator || indicator.tagName?.toLowerCase() !== "button") {
-            indicator?.remove();
-            indicator = document.createElement("button");
-            indicator.type = "button";
-            indicator.className = "pi-enh-session-pinned-indicator";
-            indicator.addEventListener("click", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              handleSessionPinArchiveAction(sessionId, "pin");
-            });
-          }
-          indicator.setAttribute("title", "取消置顶");
-          indicator.setAttribute("aria-label", "取消置顶");
-          indicator.setAttribute("aria-pressed", "true");
-          indicator.innerHTML = sessionPinIcon;
-        } else if (indicator && !indicator.hasAttribute("data-pi-native-session-pin")) {
-          indicator.remove();
-          indicator = null;
-        }
+        indicator.setAttribute("title", "取消置顶");
+        indicator.setAttribute("aria-label", "取消置顶");
+        indicator.setAttribute("aria-pressed", "true");
+        indicator.innerHTML = sessionPinIcon;
+      } else if (indicator) {
+        indicator.remove();
+        indicator = null;
       }
 
       let trigger = row.querySelector(".pi-enh-session-overflow");
@@ -15370,8 +15768,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (row.children[row.children.length - 1] !== trigger) row.appendChild(trigger);
 
       // 关键修复：确保置顶图钉 indicator 紧随内容之后、排在 trigger (overflow) 之前，绝不落在第一位
-      // 该段只限 Pi / 非 native 遗留 marker，原生 Codex 完全退出，绝不移动 React 节点
-      if (indicator && !indicator.hasAttribute("data-pi-native-session-pin") && !isCodex && trigger) {
+      if (isPinned && indicator) {
         if (indicator.nextSibling !== trigger) {
           row.insertBefore(indicator, trigger);
         }
@@ -15421,18 +15818,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>
           <span>还原</span>
         `;
-        restoreBtn.addEventListener("click", async (e) => {
+        restoreBtn.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          try {
-            const ok = await restoreArchivedSession(sessionId);
-            if (!ok) return;
-            requestSessionListRefresh();
-            showToast("已还原会话", sessionArchiveIcon);
-            addManagedTimeout(syncSearchResultsArchivedDecoration, 50);
-          } catch (err) {
-            showToast(err instanceof Error ? err.message : "还原会话失败", "error");
-          }
+          restoreArchivedSession(sessionId);
+          requestSessionListRefresh();
+          showToast("已还原会话", sessionArchiveIcon);
+          addManagedTimeout(syncSearchResultsArchivedDecoration, 50);
         });
         metaRow.appendChild(restoreBtn);
       }
@@ -15453,73 +15845,28 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     } catch (_) {}
 
-    const { id, path, cwd, name, clientX, clientY, executionEngine } = event.detail || {};
+    const { id, path, cwd, name, clientX, clientY } = event.detail || {};
     if (!id) return;
-
-    // 检查是否处于多选批量模式
-    const isBatchActive = Boolean(isSessionBatchMode && selectedSessionBatchIds && selectedSessionBatchIds.size > 0);
-    let targetSessionIds = [id];
-    if (isBatchActive) {
-      if (!selectedSessionBatchIds.has(id)) {
-        selectedSessionBatchIds.add(id);
-        if (typeof updateSingleBatchRow === "function") {
-          updateSingleBatchRow(id, true);
-        }
-        if (typeof syncSessionBatchBar === "function") {
-          syncSessionBatchBar();
-        }
-      }
-      targetSessionIds = Array.from(selectedSessionBatchIds);
-    }
-    const isMultiSelect = targetSessionIds.length > 1;
-    const multiCount = targetSessionIds.length;
-
-    const isCodex = isCodexSession(id, executionEngine);
-    const validRolloutPath = resolveSessionRolloutPath(id, path);
-
-    const isPinnedFn = typeof window.__PI_ENH_IS_SESSION_PINNED__ === "function"
-      ? window.__PI_ENH_IS_SESSION_PINNED__
-      : (sid) => (typeof PINNED_SESSION_STORAGE_KEY !== "undefined" && typeof readStoredSessionIds === "function" ? readStoredSessionIds(PINNED_SESSION_STORAGE_KEY).has(sid) : false);
-
-    const allTargetUnread = targetSessionIds.every((sid) => isSessionUnread(sid));
-    const allTargetPinned = targetSessionIds.every((sid) => isPinnedFn(sid));
-
-    const unreadActionTitle = allTargetUnread
-      ? (isMultiSelect ? `批量标为已读 (${multiCount})` : "标为已读")
-      : (isMultiSelect ? `批量标为未读 (${multiCount})` : "标为未读");
-    const unreadIcon = allTargetUnread ? sessionReadIcon : sessionUnreadIcon;
-
-    const pinActionTitle = allTargetPinned
-      ? (isMultiSelect ? `批量取消置顶 (${multiCount})` : "取消置顶")
-      : (isMultiSelect ? `批量置顶会话 (${multiCount})` : "置顶会话");
-
-    const disabledAttr = isMultiSelect ? 'class="pi-enh-menu-item pi-enh-menu-item-disabled" style="opacity:0.42;cursor:not-allowed;pointer-events:none;"' : 'class="pi-enh-menu-item"';
 
     const menu = document.createElement("div");
     menu.className = "pi-enh-menu";
-    const displayName = isMultiSelect
-      ? `已选 ${multiCount} 项 (批量操作)`
-      : (name || id.slice(0, 18) + "...");
+    const displayName = name || id.slice(0, 18) + "...";
 
     menu.innerHTML = `
-      <div class="pi-enh-menu-header"></div>
+      <div class="pi-enh-menu-header" title="${id}">会话: ${displayName}</div>
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="toggle-unread">
-        ${unreadIcon}
-        <span>${unreadActionTitle}</span>
+        ${isSessionUnread(id) ? sessionReadIcon : sessionUnreadIcon}
+        <span>${isSessionUnread(id) ? "标为已读" : "标为未读"}</span>
       </div>
-      <div ${disabledAttr} data-action="rename-session" ${isMultiSelect ? 'title="多选状态下不支持重命名"' : ""}>
+      <div class="pi-enh-menu-item" data-action="rename-session">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
         <span>重命名会话</span>
       </div>
       ${isPluginEnabled("session-pin-archive") ? `
-      <div class="pi-enh-menu-item" data-action="pin-session">
-        ${sessionPinIcon}
-        <span>${pinActionTitle}</span>
-      </div>
       <div class="pi-enh-menu-item" data-action="archive-session">
         ${sessionArchiveIcon}
-        <span>${isMultiSelect ? `批量归档会话 (${multiCount})` : "归档会话"}</span>
+        <span>归档会话</span>
       </div>
       ` : ""}
       ${isPluginEnabled("session-tags") ? `
@@ -15528,24 +15875,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
           <line x1="7" y1="7" x2="7.01" y2="7"></line>
         </svg>
-        <span>${isMultiSelect ? `批量会话标签 (${multiCount})` : "会话标签 (Web 偏好)"}</span>
+        <span>会话标签</span>
         <span class="pi-enh-menu-arrow" style="margin-left:auto;opacity:0.6;font-size:11px;">▶</span>
       </div>
       ` : ""}
       <div class="pi-enh-menu-sep"></div>
       <div class="pi-enh-menu-item" data-action="copy-id">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-        <span>${isMultiSelect ? `复制已选 ${multiCount} 个会话 ID` : "复制会话 ID (Session ID)"}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        <span>复制会话 ID (Session ID)</span>
       </div>
       <div class="pi-enh-menu-item" data-action="copy-url">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-        <span>${isMultiSelect ? `复制已选 ${multiCount} 个会话链接` : "复制会话链接 (Session URL)"}</span>
+        <span>复制会话链接 (Session URL)</span>
       </div>
       <div class="pi-enh-menu-item" data-action="copy-path">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-        <span>${isMultiSelect ? `复制已选 ${multiCount} 个文件路径` : "复制会话文件完整路径"}</span>
+        <span>复制会话文件完整路径</span>
       </div>
-      <div ${disabledAttr} data-action="copy-prompt" ${isMultiSelect ? 'title="接力提示词仅支持单个会话"' : ""}>
+      <div class="pi-enh-menu-item" data-action="copy-prompt">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path><path d="M10 8h4"></path><path d="M10 12h4"></path></svg>
         <span>复制 Agent 接力提示词 (Codex/其他)</span>
       </div>
@@ -15554,15 +15901,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
         <span>复制项目工作目录</span>
       </div>
-      <div ${disabledAttr} data-action="reload-session" ${isMultiSelect ? 'title="从磁盘重载仅支持单个会话"' : ""}>
+      <div class="pi-enh-menu-item" data-action="reload-session">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-        <span>${isCodex ? "重新读取原生会话" : "从磁盘重载 (Alt+R)"}</span>
+        <span>从磁盘重载 (Alt+R)</span>
       </div>
       ${renderSessionColorMenuItems(id)}
     `;
-    const header = menu.querySelector(".pi-enh-menu-header");
-    header.textContent = isMultiSelect ? `已选 ${multiCount} 项 (批量操作)` : `会话: ${displayName}`;
-    header.title = id;
 
     document.body.appendChild(menu);
     activeMenu = menu;
@@ -15575,7 +15919,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     let posX = Number(clientX) || 0;
     let posY = Number(clientY) || 0;
 
-    // 水平定位
+    // 水平定位：默认在鼠标右侧，若超出右边界则向左翻转或贴右边缘展示
     if (posX + menuWidth > window.innerWidth - PADDING) {
       if (posX - menuWidth >= PADDING) {
         posX = posX - menuWidth;
@@ -15585,7 +15929,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     posX = Math.max(PADDING, posX);
 
-    // 垂直定位
+    // 垂直定位：默认在鼠标下方，若超出下边界则优先向上翻转，若上下均不足则贴底/视口安全约束
     if (posY + menuHeight > window.innerHeight - PADDING) {
       if (posY - menuHeight >= PADDING) {
         posY = posY - menuHeight;
@@ -15598,7 +15942,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     menu.style.left = `${Math.round(posX)}px`;
     menu.style.top = `${Math.round(posY)}px`;
 
-    // 鼠标悬停自动展开会话标签二级菜单
+    // 鼠标悬停自动展开会话标签二级菜单 (Hover Cascading Submenu)
     const tagsMenuItem = menu.querySelector('.pi-enh-menu-item[data-action="open-session-tags"]');
     if (tagsMenuItem) {
       tagsMenuItem.addEventListener("mouseenter", () => {
@@ -15609,7 +15953,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         if (!activeSessionTagsPopover) {
           tagsMenuItem._openSubmenuTimer = setTimeout(() => {
             const triggerRect = tagsMenuItem.getBoundingClientRect();
-            openSessionTagsPopover(id, tagsMenuItem, null, triggerRect, isMultiSelect ? targetSessionIds : null);
+            openSessionTagsPopover(id, tagsMenuItem, null, triggerRect);
           }, 120);
         } else {
           tagsMenuItem.classList.add("is-submenu-open");
@@ -15622,6 +15966,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           tagsMenuItem._openSubmenuTimer = null;
         }
         if (activeSessionTagsPopover) {
+          // 若子菜单内输入框聚焦中，绝不启动关闭定时器
           if (document.activeElement && activeSessionTagsPopover.contains(document.activeElement)) {
             return;
           }
@@ -15634,6 +15979,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         }
       });
 
+      // 鼠标移动到主菜单其他项时，迅速收起二级菜单
       const siblingItems = menu.querySelectorAll('.pi-enh-menu-item:not([data-action="open-session-tags"])');
       for (const sib of siblingItems) {
         sib.addEventListener("mouseenter", () => {
@@ -15641,6 +15987,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             clearTimeout(tagsMenuItem._openSubmenuTimer);
             tagsMenuItem._openSubmenuTimer = null;
           }
+          // 关键防护：如果子菜单内的输入框已经获得焦点（用户输入文字中），哪怕鼠标不小心滑过兄弟项，也绝不能杀死子菜单！
           if (activeSessionTagsPopover && document.activeElement && activeSessionTagsPopover.contains(document.activeElement)) {
             return;
           }
@@ -15651,156 +15998,57 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     }
 
-    menu.addEventListener("click", async (e) => {
+    menu.addEventListener("click", (e) => {
       const item = e.target.closest("[data-action]");
       if (!item) return;
       const action = item.dataset.action;
 
       if (action === "toggle-unread") {
         closeMenu();
-        if (isMultiSelect) {
-          const targetUnread = !allTargetUnread;
-          for (const sid of targetSessionIds) {
-            toggleSessionUnread(sid, targetUnread);
-          }
-          reconcileUnreadSessions();
-          showToast(targetUnread ? `已将 ${multiCount} 个会话标为未读` : `已将 ${multiCount} 个会话标为已读`, targetUnread ? sessionUnreadIcon : sessionReadIcon);
-        } else {
-          const unread = toggleSessionUnread(id);
-          showToast(unread ? "已标为未读" : "已标为已读", unread ? sessionUnreadIcon : sessionReadIcon);
-        }
+        const unread = toggleSessionUnread(id);
+        showToast(unread ? "已标为未读" : "已标为已读", unread ? sessionUnreadIcon : sessionReadIcon);
         return;
       } else if (action === "rename-session") {
-        if (isMultiSelect) return;
         closeMenu();
         triggerSessionInlineRename(id);
         return;
-      } else if (action === "pin-session") {
-        closeMenu();
-        if (isMultiSelect) {
-          const targetPinned = !allTargetPinned;
-          const pinFn = (typeof toggleSessionPin === "function") ? toggleSessionPin : (typeof window !== "undefined" ? window.__PI_ENH_TOGGLE_SESSION_PIN__ : null);
-          if (pinFn) {
-            for (const sid of targetSessionIds) {
-              if (isPinnedFn(sid) !== targetPinned) {
-                await pinFn(sid);
-              }
-            }
-            syncSessionPinArchiveControls();
-            requestSessionListRefresh();
-            showToast(targetPinned ? `已置顶 ${multiCount} 个会话` : `已取消置顶 ${multiCount} 个会话`, sessionPinIcon);
-          }
-        } else {
-          void handleSessionPinArchiveAction(id, "pin");
-        }
-        return;
       } else if (action === "archive-session") {
         closeMenu();
-        if (isMultiSelect) {
-          const archiveFn = (typeof archiveSession === "function") ? archiveSession : (typeof window !== "undefined" ? window.__PI_ENH_ARCHIVE_SESSION__ : null);
-          if (archiveFn) {
-            let archivedCount = 0;
-            for (const sid of targetSessionIds) {
-              const row = getSessionRowById(sid);
-              const sessionName = extractSessionTitleFromRow(row, sid);
-              const ok = await archiveFn(sid, { name: sessionName });
-              if (ok) {
-                archivedCount++;
-                selectedSessionBatchIds.delete(sid);
-              }
-            }
-            syncSessionPinArchiveControls();
-            if (typeof syncSessionBatchBar === "function") syncSessionBatchBar();
-            if (typeof syncSessionBatchRowStates === "function") syncSessionBatchRowStates();
-            requestSessionListRefresh(false, true);
-            if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-              try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (_) {}
-            }
-            showToast(`已批量归档 ${archivedCount} 个会话，可在“设置 → 已归档”中还原`, sessionArchiveIcon, 4200);
-          }
-        } else {
-          void handleSessionPinArchiveAction(id, "archive");
-        }
+        handleSessionPinArchiveAction(id, "archive");
         return;
       } else if (action === "open-session-tags") {
         e.stopPropagation();
         const triggerRect = item.getBoundingClientRect();
         if (!activeSessionTagsPopover) {
-          openSessionTagsPopover(id, item, e, triggerRect, isMultiSelect ? targetSessionIds : null);
+          openSessionTagsPopover(id, item, e, triggerRect);
         } else {
           const searchInput = activeSessionTagsPopover.querySelector(".pi-enh-tags-search-input");
           if (searchInput) searchInput.focus();
         }
         return;
       } else if (action === "copy-id") {
-        if (isMultiSelect) {
-          copyText(targetSessionIds.join("\n"), `已复制已选 ${multiCount} 个会话 ID`);
-        } else {
-          copyText(id, `已复制会话 ID: ${id.slice(0, 12)}...`);
-        }
+        copyText(id, `已复制会话 ID: ${id.slice(0, 12)}...`);
       } else if (action === "copy-url") {
         const origin = window.location ? window.location.origin : "";
-        if (isMultiSelect) {
-          const urls = targetSessionIds.map(sid => `${origin}/?session=${encodeURIComponent(sid)}`).join("\n");
-          copyText(urls, `已复制已选 ${multiCount} 个会话链接`);
-        } else {
-          const url = `${origin}/?session=${encodeURIComponent(id)}`;
-          copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
-        }
+        const url = `${origin}/?session=${encodeURIComponent(id)}`;
+        copyText(url, `已复制会话链接: ${id.slice(0, 12)}...`);
       } else if (action === "copy-path") {
-        if (isMultiSelect) {
-          const paths = targetSessionIds.map(sid => resolveSessionRolloutPath(sid)).filter(Boolean);
-          if (paths.length > 0) {
-            copyText(paths.join("\n"), `已复制已选 ${paths.length} 个文件路径`);
-          } else {
-            showToast("所选会话均无独立文件路径");
-          }
-        } else {
-          const targetPath = resolveSessionRolloutPath(id, path);
-          if (targetPath) {
-            copyText(targetPath, `已复制会话文件完整路径`);
-          } else {
-            showToast(isCodex ? "该 Codex 会话暂无本地文件路径" : "会话无独立文件路径");
-          }
-        }
+        copyText(path || "", `已复制会话文件路径`);
       } else if (action === "copy-prompt") {
-        if (isMultiSelect) return;
-        const targetPath = resolveSessionRolloutPath(id, path);
-        const prompt = `这是我之前的 ${isCodex ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${targetPath || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
+        const prompt = `这是我之前的 Pi 会话（ID: ${id}，文件路径: ${path || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
-        if (isMultiSelect) {
-          const cwds = Array.from(new Set(targetSessionIds.map(sid => {
-            const r = getSessionRowById(sid);
-            return r?.getAttribute("data-pi-enh-cwd") || cwd || "";
-          }).filter(Boolean)));
-          copyText(cwds.join("\n") || cwd || "", `已复制工作目录`);
-        } else {
-          copyText(cwd || "", `已复制工作目录`);
-        }
+        copyText(cwd || "", `已复制工作目录`);
       } else if (action === "reload-session") {
-        if (isMultiSelect) return;
-        void handleSessionReload(id, { executionEngine });
+        if (typeof window.__PI_ENH_RELOAD_SPECIFIC_SESSION__ === "function") {
+          window.__PI_ENH_RELOAD_SPECIFIC_SESSION__(id, true);
+        }
       } else if (action === "set-session-color") {
         const color = item.getAttribute("data-session-color") || "";
         const preset = SESSION_COLOR_PRESETS.find((candidate) => candidate.id === color);
-        if (isMultiSelect) {
-          for (const sid of targetSessionIds) {
-            setSessionColor(sid, color);
-          }
-          showToast(`已为已选 ${multiCount} 个会话设为${preset?.name || "所选"}背景`);
-        } else {
-          if (setSessionColor(id, color)) showToast(`已设为${preset?.name || "所选"}背景`);
-        }
+        if (setSessionColor(id, color)) showToast(`已设为${preset?.name || "所选"}背景`);
       } else if (action === "clear-session-color") {
-        if (isMultiSelect) {
-          for (const sid of targetSessionIds) {
-            clearSessionColor(sid);
-          }
-          showToast(`已为已选 ${multiCount} 个会话清除背景颜色`);
-        } else {
-          if (clearSessionColor(id)) showToast("已清除会话背景颜色");
-        }
+        if (clearSessionColor(id)) showToast("已清除会话背景颜色");
       }
       closeMenu();
     });
@@ -15870,7 +16118,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // 会话行内重命名焦点与失焦自愈联动：聚焦即刻隐藏模型徽标，失焦即刻精准恢复
   addManagedListener(document, "focusin", (event) => {
     const input = event.target;
-    if (input?.tagName === "INPUT" && input.type === "text" && input.closest?.(".pi-enh-session-row-host")) {
+    if (input?.tagName === "INPUT" && input.closest?.(".pi-enh-session-row-host")) {
       const row = input.closest(".pi-enh-session-row-host");
       row?.setAttribute("data-pi-enh-editing", "true");
       row?.querySelector(".pi-enh-session-model-badge")?.remove();
@@ -15888,7 +16136,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // 2. 当用户在会话名称输入框按下回车提交空文本时，阻止清空、弹出温和提示并自动恢复原标题
   addManagedListener(document, "keydown", (event) => {
     const input = event.target;
-    if (input?.tagName !== "INPUT" || input.type !== "text" || !input.closest?.(".pi-enh-session-row-host")) return;
+    if (input?.tagName !== "INPUT" || !input.closest?.(".pi-enh-session-row-host")) return;
 
     // 1. Ctrl+Z / Cmd+Z 一键还原初始标题文本
     if ((event.ctrlKey || event.metaKey) && (event.key === "z" || event.key === "Z") && !event.shiftKey) {
@@ -15946,7 +16194,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   addManagedListener(document, "focusout", (event) => {
     const input = event.target;
-    if (input?.tagName === "INPUT" && input.type === "text" && input.closest?.(".pi-enh-session-row-host")) {
+    if (input?.tagName === "INPUT" && input.closest?.(".pi-enh-session-row-host")) {
       const row = input.closest(".pi-enh-session-row-host");
       const rawVal = input.value || "";
       if (!rawVal.trim()) {
@@ -15971,7 +16219,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
 
       setTimeout(() => {
-        if (row && !row.querySelector('input:not([type="checkbox"])')) {
+        if (row && !row.querySelector("input")) {
           row.removeAttribute("data-pi-enh-editing");
         }
         if (typeof syncSessionModelLabels === "function") syncSessionModelLabels();
@@ -15992,11 +16240,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   addManagedListener(window, "blur", closeMenu);
   function handleGlobalEscapeKey(e) {
     if (e.key !== "Escape" && e.keyCode !== 27) return;
-    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
-
-    // Native Settings owns focus, nested dialogs and Escape. Do not bypass
-    // that owner by clicking its close button from a global capture listener.
-    if (document.querySelector(".settings-dialog-backdrop")) return;
 
     // 0. 最高优先级：关闭全屏大图预览 / 退出标注编辑 (全屏最高 z-index 模态层最优先响应，保障 MacBook 等环境)
     const zoomDialog = (typeof activeZoomDialog !== "undefined" && activeZoomDialog && activeZoomDialog.open)
@@ -16089,6 +16332,26 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       return;
     }
 
+    // 1. 最高优先级：退出设置弹窗等模态对话框 (LIFO 顶层优先)
+    const settingsBackdrop = document.querySelector(".settings-dialog-backdrop, [role='dialog'].settings-dialog-backdrop");
+    if (settingsBackdrop) {
+      const closeBtn = settingsBackdrop.querySelector(".settings-dialog-close, button.config-close-button");
+      if (closeBtn) {
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+        closeBtn.click();
+        return;
+      }
+      if (typeof settingsBackdrop.click === "function") {
+        if (typeof e.preventDefault === "function") e.preventDefault();
+        if (typeof e.stopPropagation === "function") e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+        settingsBackdrop.click();
+        return;
+      }
+    }
+
     // 2. 次高优先级：关闭自定义右键菜单、引用工具条与耗时/消耗浮层
     let overlayClosed = false;
     if (activeSessionTagsPopover) {
@@ -16153,8 +16416,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const isInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
       const nativeTextarea = document.querySelector?.("textarea.chat-input-textarea");
       const formattedComposer = target?.closest?.(".pi-enh-formatted-composer");
-      const nativeFieldset = nativeTextarea?.closest?.("[data-pi-native-composer-host]");
-      const formattedFieldset = formattedComposer?.closest?.("[data-pi-native-composer-host]");
+      const nativeFieldset = nativeTextarea?.closest?.("fieldset");
+      const formattedFieldset = formattedComposer?.closest?.("fieldset");
       const isMainComposer = target === nativeTextarea || Boolean(
         formattedComposer && nativeFieldset && formattedFieldset === nativeFieldset
       );
@@ -16243,7 +16506,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             quote: normalizeAnnotationText(item.quote),
             comment: normalizeAnnotationText(item.comment),
             createdAt: Number(item.createdAt) || Date.now(),
-            kind: item.kind === "dom" ? "dom" : "quote",
           }))
           .filter((item) => item.quote);
       }
@@ -16261,25 +16523,20 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return annotationItems.map((item) => ({ ...item }));
   }
 
-  function enabledAnnotations() {
-    return listAnnotations().filter(item => isPluginEnabled(item.kind === "dom" ? "dom-feedback" : "quick-quote"));
-  }
-
   function notifyAnnotationSubmissionState() {
-    const hasAnnotations = enabledAnnotations().length > 0;
+    const hasAnnotations = isPluginEnabled("quick-quote") && annotationItems.length > 0;
     if (lastAnnotationSubmissionState === hasAnnotations) return;
     lastAnnotationSubmissionState = hasAnnotations;
     window.dispatchEvent(new Event("pi-enh-composer-submission-state-change"));
   }
 
-  function addAnnotation(quote, comment, options) {
+  function addAnnotation(quote, comment) {
     ensureAnnotationSession();
     const normalizedQuote = normalizeAnnotationText(quote);
     if (!normalizedQuote) return listAnnotations();
     annotationItems.push({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       quote: normalizedQuote,
-      kind: options?.kind === "dom" ? "dom" : "quote",
       comment: normalizeAnnotationText(comment),
       createdAt: Date.now(),
     });
@@ -16324,12 +16581,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function annotationLabel() {
-    return `${enabledAnnotations().length} 条注释`;
+    return `${listAnnotations().length} 条注释`;
   }
 
   function serializeAnnotations(body) {
     const normalizedBody = String(body || "").trim();
-    const items = enabledAnnotations();
+    const items = listAnnotations();
     if (!items.length) return normalizedBody;
     const blocks = items.map((item, index) => {
       const quoteLines = item.quote
@@ -16430,12 +16687,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function syncAnnotationComposer() {
     notifyAnnotationSubmissionState();
-    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) {
+    if (!isPluginEnabled("quick-quote")) {
       removeAnnotationUi();
       return;
     }
     const textarea = getComposerTextarea();
-    const items = enabledAnnotations();
+    const items = listAnnotations();
     if (!textarea || !items.length) {
       closeAnnotationList();
       if (annotationBadge) {
@@ -16455,9 +16712,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       annotationBatchSelectChecked = false;
       return;
     }
-    const composerCard = textarea.closest?.('[data-pi-native-composer-host] > div[style*="max-width"]') ||
+    const composerCard = textarea.closest?.('fieldset > div[style*="max-width"]') ||
                          textarea.closest?.('.pi-enh-cursor-composer') ||
-                         textarea.closest?.('[data-pi-native-composer-host]') ||
+                         textarea.closest?.('fieldset') ||
                          textarea.closest?.('form');
     const composerHost = composerCard?.parentElement || textarea.parentElement?.parentElement || textarea.parentElement;
 
@@ -17039,13 +17296,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function resizeAnnotationComment(textarea) {
     if (!textarea) return;
     textarea.style.height = "auto";
-    const height = Math.max(30, Math.min(220, textarea.scrollHeight || 30));
+    const height = Math.max(38, Math.min(220, textarea.scrollHeight || 38));
     textarea.style.height = `${height}px`;
     textarea.style.overflowY = (textarea.scrollHeight || 0) > 220 ? "auto" : "hidden";
   }
 
   function openAnnotationEditor(quote, itemId, rect, sourceRange) {
-    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) return;
+    if (!isPluginEnabled("quick-quote")) return;
     const existing = itemId ? listAnnotations().find((item) => item.id === itemId) : null;
     const selectedQuote = normalizeAnnotationText(existing?.quote || quote);
     if (!selectedQuote) return;
@@ -17176,7 +17433,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function openAnnotationList() {
     if (annotationList) return;
-    const items = enabledAnnotations();
+    const items = listAnnotations();
     if (!items.length) return;
     const panel = document.createElement("section");
     panel.className = "pi-enh-annotation-list";
@@ -17218,7 +17475,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         cancelAnnotationListClose();
         removeAnnotation(item.id);
         syncAnnotationComposer();
-        const remaining = enabledAnnotations();
+        const remaining = listAnnotations();
         if (!remaining.length) {
           closeAnnotationList();
           return;
@@ -17276,7 +17533,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function prepareNativeComposerSubmission(kind, body) {
-    const snapshot = enabledAnnotations();
+    if (!isPluginEnabled("quick-quote")) return null;
+    const snapshot = listAnnotations();
     if (!snapshot.length) return null;
     const sessionId = getAnnotationSessionId();
     return {
@@ -17378,9 +17636,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // ==========================================
   // Pure state model: transport, DOM and storage never decide whether a request closed.
   function createProjectStatusModel() {
-    let catalog = new Map(), entries = new Map(), epoch = null, activeSource = null, catalogReady = false;
+    let catalog = new Map(), entries = new Map(), epoch = null, revision = -1;
     let sync = { state: "connecting", at: 0 }, unread = new Set();
-    const acknowledged = new Map(), streams = new Map();
+    const acknowledged = new Map(), retiredEpochs = new Set();
     let completedRead = new Set();
     const completionKey = (id, item) => JSON.stringify([id, item.runId]);
     const isCompletedRead = (id, item) => {
@@ -17405,15 +17663,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const key = value => String(value || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
     const empty = id => ({ id, status: "idle", execution: "idle", pendingRequests: [], runId: "", toolNames: [], observedAt: 0 });
     const buildEntry = id => {
-      // Browser storage is metadata/read history, never a runtime receipt.
-      const item = entries.get(id) || empty(id);
+      const stored = projectStatusState?.sessions?.[id];
+      const item = entries.get(id) || (stored && sync.state !== "live" ? { ...empty(id), ...stored } : empty(id));
       const session = catalog.get(id) || {};
       return { ...item, projectKey: key(session.projectKey || session.projectRoot || session.cwd || item.projectKey),
         title: titleOf({ ...session, id, title: item.title }), cwd: session.cwd || item.cwd || "",
         unread: item.status === "completed" && !!item.runId && !isCompletedRead(id, item) };
     };
-    const list = () => [...(catalogReady ? catalog.keys() : entries.keys())].map(buildEntry);
-    const entry = id => (catalogReady ? catalog.has(id) : entries.has(id))
+    const list = () => [...new Set([...catalog.keys(), ...entries.keys(), ...Object.keys(projectStatusState?.sessions || {})])].map(buildEntry);
+    const entry = id => (entries.has(id) || catalog.has(id) || Boolean(projectStatusState?.sessions && Object.hasOwn(projectStatusState.sessions, id)))
       ? buildEntry(id)
       : empty(id);
     // Native unread flags are session-level activity hints, not evidence of a
@@ -17422,17 +17680,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       (projectKey === null || (others ? entry.projectKey !== key(projectKey) : entry.projectKey === key(projectKey)))
       && (!status || entry.status === status) && entry.status !== "completed"
       && !(entry.status === "interrupted" && acknowledged.get(entry.id) === entry.runId));
-    const apply = (payload, now, source = "default") => {
+    const apply = (payload, now) => {
       const interactions = payload?.interactionState, stamp = payload?.statusSnapshot;
       const reject = state => { sync = { ...sync, state }; return { accepted: false, newRequests: [] }; };
       if (interactions?.version !== 1 || stamp?.version !== 1) return reject("unsupported");
       if (!Array.isArray(interactions.sessions) || !Array.isArray(stamp.executions) || !Array.isArray(payload.runningSessionIds)
         || payload.runningSessionIds.some(id => typeof id !== "string") || !stamp.epoch || typeof stamp.epoch !== "string"
         || !Number.isSafeInteger(stamp.revision) || stamp.revision < 0) return reject("unavailable");
-      // Pi and Codex have independent server epochs. Visiting another engine
-      // must not retire this engine's live epoch or erase its stale-read guard.
-      const stream = streams.get(source);
-      if (stream?.retiredEpochs.has(stamp.epoch) || stream?.epoch === stamp.epoch && stamp.revision < stream.revision) return { accepted: false, newRequests: [] };
+      if (retiredEpochs.has(stamp.epoch) || epoch === stamp.epoch && stamp.revision < revision) return { accepted: false, newRequests: [] };
       const next = new Map(), seen = new Set(), newRequests = [];
       for (const item of stamp.executions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || next.has(item.sessionId)
@@ -17441,17 +17696,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         const status = { ended: "completed", failed: "interrupted" }[item.state] || item.state;
         next.set(item.sessionId, { ...empty(item.sessionId), status, execution: item.state, runId: String(item.runId || ""), toolNames: item.toolNames || [] });
       }
-      // The runtime set is authoritative even if an old server ledger misses an end event.
-      const running = new Set(payload.runningSessionIds);
-      for (const item of next.values()) {
-        if (running.has(item.id)) { item.status = item.execution = "running"; }
-        else if (item.execution === "running") { item.status = item.execution = "idle"; }
-      }
-      for (const id of running) if (!next.has(id)) next.set(id, { ...empty(id), status: "running", execution: "running" });
       for (const item of interactions.sessions) {
         if (!item || typeof item.sessionId !== "string" || !item.sessionId || seen.has(item.sessionId) || !Array.isArray(item.pendingRequests)) return reject("unavailable");
         seen.add(item.sessionId);
-        const ids = new Set(), previous = activeSource === source && epoch === stamp.epoch ? entries.get(item.sessionId) : null;
+        const ids = new Set(), previous = epoch === stamp.epoch ? entries.get(item.sessionId) : null;
         for (const request of item.pendingRequests) {
           if (!request || typeof request.id !== "string" || !request.id || ids.has(request.id)
             || !["select", "confirm", "input", "editor", "custom"].includes(request.method)) return reject("unavailable");
@@ -17464,10 +17712,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         next.set(item.sessionId, entry);
       }
       // Commit only after the entire snapshot validates; no partial DOM transitions.
-      const retiredEpochs = stream?.retiredEpochs || new Set();
-      if (stream && stream.epoch !== stamp.epoch) retiredEpochs.add(stream.epoch);
-      streams.set(source, { epoch: stamp.epoch, revision: stamp.revision, retiredEpochs });
-      entries = next; epoch = stamp.epoch; activeSource = source;
+      if (epoch && epoch !== stamp.epoch) retiredEpochs.add(epoch);
+      entries = next; epoch = stamp.epoch; revision = stamp.revision;
       sync = { state: "live", at: now };
       return { accepted: true, newRequests };
     };
@@ -17493,7 +17739,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     };
     return {
-      apply, list, items, titleOf, markAttention, clearAttention, setCatalog: sessions => { catalogReady = true; catalog = new Map(sessions.filter(s => s?.id).map(s => [s.id, s])); },
+      apply, list, items, titleOf, markAttention, clearAttention, setCatalog: sessions => { catalog = new Map(sessions.filter(s => s?.id).map(s => [s.id, s])); },
       entry,
       setUnread: ids => { unread = new Set(ids); }, // Native activity is not completion-read evidence.
       setCompletedRead: keys => {
@@ -17655,7 +17901,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (projectStatusDisposed) return false;
     const health = projectStatusModel?.health?.();
     if (!health) return false;
-    return health.state === "live" && Date.now() - health.at < 12000;
+    if (health.state === "live") return true;
+    if (health.state === "unsupported" && Date.now() - projectStatusLastLegacyResponseAt < 12000) {
+      return true;
+    }
+    return false;
   }
   function readNoticeSeen(key) { try { const value = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } }
   function writeNoticeSeen(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} }
@@ -17691,7 +17941,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   let isApprovalSoundUnlocked = false;
   async function unlockApprovalSound(preview = false) {
     if (isApprovalSoundUnlocked && !preview) return;
-    if (!approvalSoundEnabled()) { if (preview) showToast("请开启审批提示音，并检查 Agent Web Plus 声音总开关"); return; }
+    if (!approvalSoundEnabled()) { if (preview) showToast("请开启审批提示音，并检查 Pi Web 声音总开关"); return; }
     const sound = getApprovalSound();
     if (sound.ready() && !preview) {
       isApprovalSoundUnlocked = true;
@@ -17783,12 +18033,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           try {
             const registration = await navigator.serviceWorker.getRegistration();
             if (registration) {
-              await registration.showNotification("Agent Web Plus · 待你处理", options);
+              await registration.showNotification("Pi Web · 待你处理", options);
               return () => { void registration.getNotifications({tag:payload.tag}).then(items => items.forEach(item => item.close())).catch(() => {}); };
             }
           } catch { /* Same fallback as native browser-notifications.ts. */ }
         }
-        const notification = new Notification("Agent Web Plus · 待你处理", options);
+        const notification = new Notification("Pi Web · 待你处理", options);
         notification.onclick = () => { notification.close(); window.focus(); openProjectStatusSession(payload.sessionId); };
         return () => { notification.onclick = null; notification.close(); };
       },
@@ -17820,7 +18070,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   projectStatusState = readProjectStatusState();
   projectStatusCatalog = new Map();
   let projectStatusIntervalId = null;
-  let projectTabStatusSnapshot = null;
+  let projectStatusAttentionFaviconTimer = null;
+  const projectStatusOriginalIcons = new Map();
   let projectInteractionInterval = null;
   let projectInteractionController = null;
   let projectInteractionGeneration = 0;
@@ -17832,9 +18083,21 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object" && parsed.sessions) {
-          // Preserve metadata only. Pending/running/error facts must be read live.
-          parsed.sessions = Object.fromEntries(Object.entries(parsed.sessions).map(([id, entry]) =>
-            [id, { id, title: entry?.title || "", cwd: entry?.cwd || "", projectKey: entry?.projectKey || "", status: "idle", pendingRequests: [] }]));
+          let migrated = false;
+          const sessions = Object.fromEntries(Object.entries(parsed.sessions).map(([id, entry]) => {
+            if (entry?.status === "interrupted") {
+              migrated = true;
+              return [id, { ...entry, status: "idle", execution: "idle", needsInterruptionRecheck: true }];
+            }
+            if (entry?.status === "attention" && (!entry?.pendingRequests || entry.pendingRequests.length === 0)) {
+              return [id, { ...entry, status: "attention", pendingRequests: [{ id: "pending-ask", method: "select" }] }];
+            }
+            return [id, entry];
+          }));
+          if (migrated) {
+            parsed.sessions = sessions;
+            try { localStorage.setItem(PROJECT_STATUS_STORAGE_KEY_V1, JSON.stringify(parsed)); } catch (e) {}
+          }
           return parsed;
         }
       }
@@ -17850,7 +18113,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const previous = projectStatusState.sessions || {};
     const nextSessions = Object.fromEntries(listEntries);
     for (const [id, prev] of Object.entries(previous)) {
-      if (nextSessions[id]) {
+      if (!nextSessions[id]) {
+        nextSessions[id] = prev;
+      } else {
         nextSessions[id].title = nextSessions[id].title || prev.title;
         nextSessions[id].cwd = nextSessions[id].cwd || prev.cwd;
         nextSessions[id].projectKey = nextSessions[id].projectKey || prev.projectKey;
@@ -18002,9 +18267,18 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function getEffectiveProjectStatusEntry(id) {
     const entry = projectStatusModel.entry(id);
-    if (!isProjectStatusHealthy()) return { ...entry, status: "unknown", pendingRequests: [], unread: false };
     if (localSessionLoadErrors.has(id) && entry.status === "idle") {
       return { ...entry, status: "load-error", loadError: localSessionLoadErrors.get(id) };
+    }
+    const stored = projectStatusState.sessions[id];
+    if (stored?.status === "attention" && stored.pendingRequests && stored.pendingRequests.length > 0) {
+      return { ...entry, status: "attention", pendingRequests: stored.pendingRequests };
+    }
+    if (entry.status === "idle" && stored?.status && stored.status !== "idle") {
+      const isLive = projectStatusModel.health().state === "live";
+      if (!isLive) {
+        return { ...entry, status: stored.status, pendingRequests: stored.pendingRequests || entry.pendingRequests };
+      }
     }
     return entry;
   }
@@ -18087,6 +18361,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function restoreStatusRow(row) {
+    row.querySelector(".pi-enh-session-status-label")?.remove();
     row.removeAttribute("data-pi-enh-completed-unread");
     row.classList.remove("pi-enh-session-needs-attention");
     row.removeAttribute("data-pi-enh-project-status");
@@ -18098,25 +18373,40 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     row.removeAttribute("data-pi-enh-original-border-left");
   }
 
+  function getPendingInteractionLabel(entry) {
+    const method = entry.pendingRequests[0]?.method;
+    return ["select", "confirm"].includes(method) ? "待决策" : ["input", "editor"].includes(method) ? "待输入" : "待交互";
+  }
+
   function decorateProjectStatusRows() {
     const rows = getSessionStatusRows();
     for (const row of rows) {
-      if (row.hasAttribute("data-pi-native-project-status")) continue;
       const session = findSessionForStatusRow(row);
       const entry = session ? getEffectiveProjectStatusEntry(session.id) : null;
       const status = entry?.status || null;
-      if (!status || status === "idle") { restoreStatusRow(row); continue; }
-      // 已读的“本轮结束”立刻从侧边栏清除消失，不在侧边栏残留灰色徽标
-      if (status === "completed" && !entry.unread) { restoreStatusRow(row); continue; }
+      // 运行中状态与已读的“本轮结束”不展示大块文字标签，避免挤压会话标题横向空间
+      if (!status || status === "idle" || status === "running" || status === "completed") { restoreStatusRow(row); continue; }
+      // 完成态保留内部未读/业务状态，不再插入挤占标题的文字标签。
       if (row.getAttribute("data-pi-enh-project-status") !== status) {
         restoreStatusRow(row);
         row.setAttribute("data-pi-enh-project-status", status);
         if (status === "attention") row.classList.add("pi-enh-session-needs-attention");
       }
+      let label = row.querySelector(".pi-enh-session-status-label");
+      if (!label) { label = document.createElement("span"); label.className = "pi-enh-session-status-label"; row.insertBefore(label, row.querySelector(".pi-enh-session-overflow")); }
+      const text = status === "attention" ? getPendingInteractionLabel(entry) : PROJECT_STATUS_META[status].label;
+      if (label.textContent !== text) label.textContent = text;
+      const hint = status === "attention" ? `${entry.pendingRequests.length} 项待处理；切换或收起不会解除` : status === "load-error" ? `${entry.loadError?.message || "会话加载失败"}；重新进入并成功加载后自动清除` : status === "completed" ? "未读，点击打开后清除；本轮运行已结束" : entry.toolNames.length ? `正在使用 ${entry.toolNames.join("、")}` : text;
+      if (label.title !== hint) label.title = hint;
       const unreadValue = status === "completed" ? String(entry.unread) : null;
       if (unreadValue !== null && row.getAttribute("data-pi-enh-completed-unread") !== unreadValue) row.setAttribute("data-pi-enh-completed-unread", unreadValue);
       else if (unreadValue === null && row.hasAttribute("data-pi-enh-completed-unread")) row.removeAttribute("data-pi-enh-completed-unread");
-
+      const color = status === "completed" ? "#4ade80" : PROJECT_STATUS_META[status].color;
+      const currentColor = typeof label.style.getPropertyValue === "function" ? label.style.getPropertyValue("--status-color") : label.style["--status-color"];
+      if (currentColor !== color) {
+        if (typeof label.style.setProperty === "function") label.style.setProperty("--status-color", color);
+        else label.style["--status-color"] = color;
+      }
     }
   }
 
@@ -18142,7 +18432,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function syncProjectStatusDot(projectButton, status) {
-    if (!projectButton || projectButton.hasAttribute("data-pi-native-project-status")) return;
+    if (!projectButton) return;
     let dot = projectButton.querySelector("[data-pi-enh-project-status-dot]");
     if (!dot) {
       dot = projectButton.querySelector("[title]");
@@ -18178,9 +18468,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       .replace(/^✅\s*\(.*?\)\s*/, "")
       .replace(/^(?:🔵|🟠【等待答复】|⚠️\s*需要确认|🟠\s*需要确认|🔴\s*任务中断|🟢\s*已完成待验收|🟢\s*已完成)\s*(?:·\s*)?/, "")
       .replace(/\s+·\s+(?:🟠【等待答复】|⚠️\s*需要确认|🟠\s*需要确认|🔴\s*任务中断|🟢\s*已完成待验收|🟢\s*已完成|🔵\s*运行中|🔵)\s*$/, "")
-      .replace(/\s*[-·|_]\s*(?:π\+\s*)?\bPi\s*Web\b(?:\s+Plus\b|\s*\+)?/gi, "")
-      .replace(/(?:π\+\s*)?\bPi\s*Web\b(?:\s+Plus\b|\s*\+)?\s*[-·|_]\s*/gi, "")
-      .replace(/(?:π\+\s*)?\bPi\s*Web\b(?:\s+Plus\b|\s*\+)?/gi, "")
+      .replace(/\s*[-·|_]\s*(?:π\+\s*)?(?:Agent\s*Web|Pi\s*Web)(?:\s+Plus\b|\s*\+)?/gi, "")
+      .replace(/(?:π\+\s*)?(?:Agent\s*Web|Pi\s*Web)(?:\s+Plus\b|\s*\+)?\s*[-·|_]\s*/gi, "")
+      .replace(/(?:π\+\s*)?(?:Agent\s*Web|Pi\s*Web)(?:\s+Plus\b|\s*\+)?/gi, "")
       .replace(/\s*[-·|_]\s*$/, "")
       .trim();
     return clean || "work";
@@ -18190,31 +18480,39 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return cleanSessionTitleBase(title);
   }
 
-  function getCurrentProjectTabStatusSnapshot() {
-    const projectKey = getCurrentProjectStatusKey();
-    const counts = { running: 0, attention: 0 };
-    const healthy = isProjectStatusHealthy();
-    if (healthy && projectKey) {
-      const target = normalizeProjectStatusKey(projectKey);
-      for (const entry of projectStatusModel.list()) {
-        if (entry.projectKey !== target) continue;
-        if (entry.status === "attention" && entry.pendingRequests.length) counts.attention++;
-        else if (entry.status === "running") counts.running++;
-      }
-    }
-    return { projectKey: normalizeProjectStatusKey(projectKey), ...counts,
-      count: counts.running + counts.attention, hasAttention: counts.attention > 0, healthy };
+  function renderProjectStatusAttentionFavicon(status) {
+    const favicon = document.head?.querySelector("link[data-pi-enh-attention-favicon]");
+    if (!favicon) return;
+    const color = PROJECT_STATUS_META[status]?.color || "#a1a1aa";
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#16434b"/><path d="M6 10h17v3h-3v11h-3V13h-5v11H9V13H6z" fill="white"/><circle cx="25" cy="7" r="6" fill="${color}" stroke="#18181b" stroke-width="2"/></svg>`;
+    const href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    if (favicon.getAttribute("href") !== href) favicon.setAttribute("href", href);
   }
 
-  function syncProjectTabStatusSnapshot(force = false) {
-    const currentProjectKey = normalizeProjectStatusKey(getCurrentProjectStatusKey());
-    if (!force && projectTabStatusSnapshot?.projectKey === currentProjectKey) return projectTabStatusSnapshot;
-    projectTabStatusSnapshot = projectStatusDisposed || !isPluginEnabled("project-status-indicator")
-      ? { projectKey: currentProjectKey, count: 0, hasAttention: false }
-      : getCurrentProjectTabStatusSnapshot();
-    window.__PI_WEB_PROJECT_TAB_STATUS__ = projectTabStatusSnapshot;
-    window.dispatchEvent(new Event("pi-web-project-tab-status-change"));
-    return projectTabStatusSnapshot;
+  function syncProjectStatusAttentionFavicon(status) {
+    // 图标不再依赖打开当前弹窗；只要处于 attention 状态即展示待处理图标
+    if (!status || status !== "attention" || projectStatusDisposed) {
+      if (projectStatusAttentionFaviconTimer !== null) clearInterval(projectStatusAttentionFaviconTimer);
+      projectStatusAttentionFaviconTimer = null;
+      document.head?.querySelector("link[data-pi-enh-attention-favicon]")?.remove();
+      for (const [icon, rel] of projectStatusOriginalIcons) icon.setAttribute("rel", rel);
+      projectStatusOriginalIcons.clear();
+      return;
+    }
+    for (const icon of document.head.querySelectorAll('link[rel~="icon"]')) {
+      if (icon.hasAttribute("data-pi-enh-attention-favicon")) continue;
+      projectStatusOriginalIcons.set(icon, icon.getAttribute("rel"));
+      icon.removeAttribute("rel");
+    }
+    let favicon = document.head.querySelector("link[data-pi-enh-attention-favicon]");
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.setAttribute("rel", "icon");
+      favicon.setAttribute("type", "image/svg+xml");
+      favicon.setAttribute("data-pi-enh-attention-favicon", "true");
+      document.head.appendChild(favicon);
+    }
+    renderProjectStatusAttentionFavicon(status);
   }
 
   function hasActiveAskUserOnScreen() {
@@ -18242,27 +18540,47 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function getCurrentEffectiveStatus(key = null) {
-    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator") || !isProjectStatusHealthy()) return null;
-    return getProjectStatusForSummary(key || getCurrentProjectStatusKey());
-  }
-
-  function formatProjectTabTitle(base, snapshot) {
-    const cleanBase = cleanSessionTitleBase(base);
-    // Unknown transport health has no task count. Keep diagnostics in the workspace
-    // indicator instead of an unexplained question mark in the browser tab.
-    if (!snapshot.healthy) return cleanBase;
-    const parts = [];
-    if (snapshot.running) parts.push(`🔵${snapshot.running}`);
-    if (snapshot.attention) parts.push(`🟡${snapshot.attention}`);
-    return parts.length ? `${cleanBase} ${parts.join(" ")}` : cleanBase;
-  }
-
-  function composeProjectWindowTitle(base) {
-    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
-      return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Agent Web Plus";
+    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) return null;
+    if (hasActiveAskUserOnScreen() || isCurrentSessionInAttention()) {
+      return "attention";
     }
-    const snapshot = syncProjectTabStatusSnapshot(false);
-    return formatProjectTabTitle(base, snapshot);
+    const projectKey = key || getCurrentProjectStatusKey();
+    let status = projectKey ? getProjectStatusForSummary(projectKey) : null;
+    if (!status && typeof isLiveRunning === "function" && isLiveRunning()) {
+      status = "running";
+    }
+    return status;
+  }
+
+  function composeProjectWindowTitle(base, statusOverride = null) {
+    const status = statusOverride !== null ? statusOverride : getCurrentEffectiveStatus();
+    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
+      return window.__PI_WEB_NATIVE_TITLE_BASE__ || base || "Pi Web";
+    }
+    const cleanBase = cleanSessionTitleBase(base);
+    if (!status || status === "idle") {
+      return cleanBase || "work";
+    }
+
+    const statusMeta = {
+      running: { ball: "🔵", text: "" },
+      attention: { ball: "🟠", text: "需要确认" },
+      interrupted: { ball: "🔴", text: "任务中断" },
+      completed: { ball: "🟢", text: "已完成" },
+    }[status];
+
+    if (!statusMeta) {
+      return cleanBase || "work";
+    }
+
+    const { ball, text } = statusMeta;
+    const statusLabel = text ? `${ball} ${text}` : ball;
+
+    if (!cleanBase) {
+      return statusLabel;
+    }
+
+    return text ? `${statusLabel} · ${cleanBase}` : `${ball} ${cleanBase}`;
   }
   window.__PI_ENH_COMPOSE_WINDOW_TITLE__ = composeProjectWindowTitle;
   window.__PI_ENH_CLEAR_SESSION_ATTENTION__ = clearSessionAttention;
@@ -18271,24 +18589,52 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_GET_CURRENT_PROJECT_STATUS_KEY__ = getCurrentProjectStatusKey;
   window.__PI_ENH_GET_CURRENT_EFFECTIVE_STATUS__ = getCurrentEffectiveStatus;
   window.__PI_ENH_GET_PROJECT_STATUS_FOR_SUMMARY__ = getProjectStatusForSummary;
-  window.__PI_ENH_GET_PROJECT_ACTIVITY__ = (projectKey, others = false) => {
-    if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) return null;
-    const healthy = isProjectStatusHealthy();
-    const counts = { running: 0, attention: 0, interrupted: 0 };
-    if (healthy) for (const entry of projectStatusModel.items(projectKey, null, others)) {
-      if (Object.hasOwn(counts, entry.status)) counts[entry.status]++;
-    }
-    const status = healthy ? ["attention", "interrupted", "running"].find(s => counts[s]) || null : "unknown";
-    const parts = [];
-    if (counts.running) parts.push(`运行 ${counts.running}`);
-    if (counts.attention) parts.push(`待回复 ${counts.attention}`);
-    if (counts.interrupted) parts.push(`异常停止 ${counts.interrupted}`);
-    return { ...counts, status, label: healthy ? parts.join("，") || "无运行或待回复任务" : "状态待确认" };
-  };
 
-  function updateProjectStatusTitle() {
-    syncProjectTabStatusSnapshot(true);
-    window.dispatchEvent(new Event("pi-enh-title-change"));
+  let attentionTitleAlertTick = 0;
+  let attentionTitleAlertTimer = null;
+
+  function stopAttentionTitleAlert() {
+    if (attentionTitleAlertTimer !== null) {
+      clearInterval(attentionTitleAlertTimer);
+      attentionTitleAlertTimer = null;
+    }
+    attentionTitleAlertTick = 0;
+  }
+
+  function startAttentionTitleAlert(cleanBase) {
+    // 彻底废除定时器交替跳动机制，杜绝浏览器标签页标题反复跳动与抖动！
+    stopAttentionTitleAlert();
+    const target = cleanBase ? `🟠 需要确认 · ${cleanBase}` : "🟠 需要确认";
+    if (document.title !== target) document.title = target;
+  }
+
+  function applyProjectStatusTitle(status = null, baseOverride = null) {
+    const base = baseOverride || window.__PI_WEB_NATIVE_TITLE_BASE__ || document.title;
+    if (!base && !status) return;
+    let effectiveStatus = status !== null ? status : getCurrentEffectiveStatus();
+    if ((hasActiveAskUserOnScreen() || isCurrentSessionInAttention()) && effectiveStatus !== "attention") {
+      effectiveStatus = "attention";
+    }
+    const cleanBase = cleanSessionTitleBase(base);
+
+    if (effectiveStatus === "attention" && typeof document !== "undefined" && document.hidden) {
+      startAttentionTitleAlert(cleanBase);
+    } else {
+      stopAttentionTitleAlert();
+    }
+
+    const target = composeProjectWindowTitle(base, effectiveStatus);
+    if (document.title !== target) document.title = target;
+  }
+
+  function updateProjectStatusTitle(status) {
+    syncProjectStatusAttentionFavicon(status);
+    applyProjectStatusTitle(status);
+  }
+
+  function updateLiveStopwatchTitle(baseTitle) {
+    const status = getCurrentEffectiveStatus();
+    applyProjectStatusTitle(status, baseTitle);
   }
 
   function getCurrentProjectButton() {
@@ -18337,10 +18683,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   }
 
-  /*
-   * Keep project status rows and browser chrome sourced from one snapshot so
-   * read completion and resolved Ask User state update together.
-   */
   function syncProjectStatusIndicators() {
     if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) {
       removeProjectStatusIndicators();
@@ -18361,8 +18703,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     renderAttentionNotices();
     syncProjectStatusDots();
     renderProjectStatusSummary();
-    updateProjectStatusTitle();
-    window.__PI_ENH_RERENDER_SESSIONS__?.();
+    const currentKey = getCurrentProjectStatusKey();
+    const currentStatus = getCurrentEffectiveStatus(currentKey);
+    updateProjectStatusTitle(currentStatus);
   }
 
   function removeProjectStatusIndicators() {
@@ -18370,10 +18713,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     disposeApprovalSound();
     document.documentElement.removeAttribute("data-pi-enh-interaction-sync");
     for (const node of document.querySelectorAll(".pi-enh-project-status-summary, .pi-enh-status-popover, .pi-enh-attention-notice")) node.remove();
-    for (const row of getSessionStatusRows()) if (!row.hasAttribute("data-pi-native-project-status")) restoreStatusRow(row);
+    for (const row of getSessionStatusRows()) restoreStatusRow(row);
     for (const dot of document.querySelectorAll("[data-pi-enh-project-status-dot]")) restoreProjectStatusDot(dot);
-    updateProjectStatusTitle();
-    window.__PI_ENH_RERENDER_SESSIONS__?.();
+    updateProjectStatusTitle(null);
   }
 
   function clearSessionAttention(sessionId, nextStatus = null, resolvedRequestIds = []) {
@@ -18488,7 +18830,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const tokens = [...new Set([...readCompletedTokens(), token])].slice(-500);
     try { localStorage.setItem(COMPLETED_READ_KEY, JSON.stringify(tokens)); } catch {}
     persistProjectStatusState();
-    updateProjectStatusTitle();
   }
 
   function markProjectCompletionUnread(id) {
@@ -18511,13 +18852,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       try { localStorage.setItem(COMPLETED_READ_KEY, JSON.stringify(filtered)); } catch {}
       persistProjectStatusState();
     }
-    updateProjectStatusTitle();
   }
 
   function receiveProjectStatus(payload, catalog = null) {
     const reconciledPayload = filterResolvedAskUserRequests(payload);
-    const source = window.__PI_ENH_GET_EXECUTION_ENGINE__?.() || "pi";
-    const result = projectStatusModel.apply(reconciledPayload, Date.now(), source);
+    const result = projectStatusModel.apply(reconciledPayload, Date.now());
     if (result.accepted) {
       projectStatusLastPayload = reconciledPayload;
       if (catalog) refreshProjectStatusCatalog(catalog);
@@ -18530,8 +18869,19 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
 
     // 无论是否带 interactionState，只要能正常拿到 runningSessionIds，就是健康状态
-    if (result.accepted) {
+    if (payload && Array.isArray(payload.runningSessionIds)) {
       projectStatusFailures = 0;
+      if (!result.accepted && !payload.interactionState && !payload.statusSnapshot) {
+        projectStatusLastLegacyResponseAt = Date.now();
+        projectStatusLastPayload = payload;
+        if (catalog) refreshProjectStatusCatalog(catalog);
+        projectStatusModel.setUnread([...readUnreadSessionIds()]);
+        projectStatusModel.setCompletedRead(readCompletedTokens());
+        if (typeof reconcileUnreadSessions === "function") reconcileUnreadSessions();
+        persistProjectStatusState();
+        syncApprovalSound();
+        syncDesktopAttention();
+      }
       const runningSet = new Set(payload.runningSessionIds || []);
       try {
         for (const [sId, entry] of sessionMemoryCache.entries()) {
@@ -18544,7 +18894,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (typeof schedulePrioritySessionPreloads === "function") {
       schedulePrioritySessionPreloads();
     }
-    return result.accepted;
+    return result.accepted || (payload && Array.isArray(payload.runningSessionIds));
   }
 
   let isProjectStatusMonitoringActive = false;
@@ -18566,10 +18916,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     isProjectStatusMonitoringActive = true;
     const generation = projectInteractionGeneration;
-    if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
-      if (window.__PI_WEB_PROJECT_STATUS_SNAPSHOT__) receiveProjectStatus(window.__PI_WEB_PROJECT_STATUS_SNAPSHOT__, window.__PI_ENH_GET_RAW_SESSIONS__?.());
-      return;
-    }
     if (typeof BroadcastChannel === "function") {
       projectStatusChannel = new BroadcastChannel("pi-web-status-v2");
       projectStatusChannel.onmessage = event => {
@@ -18611,10 +18957,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function requestProjectStatusRefresh(urgent = false) {
     if (projectStatusDisposed || !isPluginEnabled("project-status-indicator")) return;
     projectStatusNextPoll = 0;
-    if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
-      void window.__PI_WEB_REFRESH_PROJECT_STATUS__();
-      return;
-    }
     if (!projectStatusLeader && !urgent) { projectStatusChannel?.postMessage({ type: "refresh" }); return; }
     if (projectInteractionController) {
       if (!urgent) { projectStatusRefreshQueued = true; return; }
@@ -18641,7 +18983,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   async function refreshProjectInteractions(force = false) {
-    if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") return window.__PI_WEB_REFRESH_PROJECT_STATUS__();
     if ((!projectStatusLeader && !force) || projectStatusDisposed || isLoginPage() || !isPluginEnabled("project-status-indicator") || projectInteractionController || Date.now() < projectStatusNextPoll) return;
     const generation = projectInteractionGeneration, controller = new AbortController();
     projectInteractionController = controller;
@@ -18662,7 +19003,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         projectStatusChannel?.postMessage({ type: "snapshot", payload, catalog: [...projectStatusCatalog.values()] });
       } else projectStatusFailures++;
     } catch (error) {
-      if (generation === projectInteractionGeneration && !projectStatusDisposed) {
+      if (generation === projectInteractionGeneration && !projectStatusDisposed && !controller.signal.aborted) {
         projectStatusFailures++;
         projectStatusModel.unavailable("unavailable");
         projectStatusChannel?.postMessage({ type: "unavailable" });
@@ -18969,20 +19310,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_PROJECT_STATUS_MODEL__ = projectStatusModel;
   window.__PI_ENH_IS_PROJECT_STATUS_HEALTHY__ = isProjectStatusHealthy;
   window.__PI_ENH_RECEIVE_PROJECT_STATUS__ = receiveProjectStatus;
-  addManagedListener(window, "pi-web-project-status", event => {
-    if (!isProjectStatusMonitoringActive || projectStatusDisposed) return;
-    const detail = event.detail;
-    if (detail?.payload) receiveProjectStatus(detail.payload, detail.catalog || window.__PI_ENH_GET_RAW_SESSIONS__?.());
-    else { projectStatusModel.unavailable("unavailable"); syncProjectStatusIndicators(); }
-  });
-  addManagedListener(window, "pi-web-session-catalog", event => {
-    if (!isProjectStatusMonitoringActive || !Array.isArray(event.detail?.sessions)) return;
-    refreshProjectStatusCatalog(event.detail.sessions);
-    syncProjectStatusIndicators();
-  });
-  addManagedListener(window, "pi-web-project-status-owner", () => {
-    if (isProjectStatusMonitoringActive) setProjectStatusMonitoring(true);
-  });
   window.__PI_ENH_RENDER_NOTIFICATION_PANEL__ = renderNotificationPanel;
   window.__PI_ENH_DEBUG_NOTIF_CONDITIONS__ = () => ({
     disposed: projectStatusDisposed,
@@ -19108,7 +19435,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       question: "优先查看哪类验收证据？",
       context: "单选后自动进入下一题；可使用“上一题”回来修改。",
       options: [
-        { title: "真实浏览器操作", description: "直接在 Agent Web Plus 中点击、填写与提交，最接近实际体验；适合确认布局、动画、焦点和交互路径。" },
+        { title: "真实浏览器操作", description: "直接在 Pi Web 中点击、填写与提交，最接近实际体验；适合确认布局、动画、焦点和交互路径。" },
         { title: "自动化回归结果", description: "可重复执行，适合覆盖状态切换、边界条件和未来改动后的回归保护。" },
         { title: "两者都看", description: "先跑自动测试确认基础行为，再用真实页面验证视觉和最终交互。适合重要的用户可见功能。" },
       ],
@@ -19345,63 +19672,285 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
 
   // ==========================================
-  // 常驻版本号标识 (Persistent Version Badge)
-  // 解决升级后界面无常驻版本号、无法直观确认当前版本的问题
+  // 侧边栏双位置常驻最新版本号徽标 (Persistent Version Badges: v1.4.45)
+  // 彻底解决：界面上缺少版本号标识、用户无法直观确认当前是否已是最新版的痛点
   // ==========================================
-  const CURRENT_APP_VERSION = "1.4.41";
+  const APP_LATEST_VERSION = "v1.4.46";
 
-  function syncPersistentVersionBadges() {
-    if (typeof document === "undefined") return;
-
-    // 1. 侧边栏顶部：在“已连接”状态旁边常驻显示版本号
-    const connEl = Array.from(document.querySelectorAll('div[role="status"] span')).find(el => el.textContent?.trim() === "已连接");
-    if (connEl && connEl.parentElement) {
-      const parent = connEl.parentElement;
-      let verSpan = parent.querySelector(".pi-enh-header-version");
-      if (!verSpan) {
-        verSpan = document.createElement("span");
-        verSpan.className = "pi-enh-header-version";
-        verSpan.style.cssText = "opacity:0.75;margin-left:3px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;";
-        verSpan.title = `Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
-        verSpan.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
-        });
-        parent.appendChild(verSpan);
+  function injectVersionBadgeStyles() {
+    if (typeof document === "undefined" || !document.head) return;
+    let style = document.getElementById("pi-enh-version-badge-style");
+    const cssText = `
+      .pi-enh-version-pill {
+        display: none !important;
       }
-      verSpan.textContent = `· v${CURRENT_APP_VERSION}`;
-    }
-
-    // 2. 侧边栏底部：在快捷按钮栏右侧增加微型胶囊徽章
-    const bottomBtn = document.querySelector(".pi-enh-shortcut-btn, button[data-shortcut-id]");
-    if (bottomBtn && bottomBtn.parentElement) {
-      const bottomBar = bottomBtn.parentElement;
-      let badge = bottomBar.querySelector(".pi-enh-sidebar-bottom-version");
-      if (!badge) {
-        badge = document.createElement("span");
-        badge.className = "pi-enh-sidebar-bottom-version";
-        badge.style.cssText = "display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;background:var(--bg-hover,rgba(255,255,255,0.06));border:1px solid var(--border,rgba(255,255,255,0.12));color:var(--text-dim,#71717a);font-size:10px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.4;margin-left:auto;cursor:pointer;user-select:none;";
-        badge.title = `当前版本：Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
-        badge.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
-        });
-        bottomBar.appendChild(badge);
+      .pi-enh-top-version-label {
+        font-size: 10px !important;
+        font-family: var(--font-mono, ui-monospace, monospace) !important;
+        color: var(--text-muted, var(--text-dim, #71717a)) !important;
+        margin-left: 2px !important;
+        font-weight: 500 !important;
+        user-select: none !important;
+        white-space: nowrap !important;
+        display: inline-block !important;
+        vertical-align: baseline !important;
+        flex-shrink: 0 !important;
       }
-      badge.textContent = `v${CURRENT_APP_VERSION}`;
+      @media (prefers-color-scheme: light) {
+        .pi-enh-top-version-label {
+          color: var(--text-muted, var(--text-dim, #52525b)) !important;
+        }
+      }
+      [data-theme="light"] .pi-enh-top-version-label,
+      html[data-theme="light"] .pi-enh-top-version-label {
+        color: var(--text-muted, var(--text-dim, #52525b)) !important;
+      }
+      [data-theme="dark"] .pi-enh-top-version-label,
+      html[data-theme="dark"] .pi-enh-top-version-label {
+        color: var(--text-muted, var(--text-dim, #a1a1aa)) !important;
+      }
+
+      /* 侧边栏顶栏绝对单行布局与自适应防折行规则 (Strict Single-Row Header Invariant) */
+      .pi-native-sidebar-header-toolbar {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: flex-start !important;
+        justify-content: space-between !important;
+        gap: 4px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+      }
+      .pi-native-sidebar-header-toolbar > [data-pi-native-engine-switcher] {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+        max-width: calc(100% - 94px) !important;
+        overflow: hidden !important;
+      }
+      .pi-native-sidebar-header-toolbar [data-pi-native-engine-switcher] .model-selector {
+        width: 100% !important;
+        min-width: 0 !important;
+      }
+      .pi-native-sidebar-header-toolbar [data-pi-native-engine-switcher] .model-selector > button {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        padding: 2px 4px 2px 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        overflow: hidden !important;
+      }
+      .agent-engine-label {
+        font-size: clamp(13px, 3.8vw, 17px) !important;
+        line-height: 1.2 !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+      }
+      .pi-native-sidebar-header-toolbar [data-pi-native-engine-switcher] [role="status"] {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        font-size: 10px !important;
+        line-height: 1.1 !important;
+        margin-top: 1px !important;
+      }
+      .pi-native-sidebar-header-actions {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        flex: 0 0 auto !important;
+        flex-shrink: 0 !important;
+        gap: 4px !important;
+        margin-inline-start: auto !important;
+      }
+      .pi-native-sidebar-header-actions > button,
+      .pi-native-sidebar-header-actions > .pi-enh-session-batch-trigger {
+        width: 28px !important;
+        height: 28px !important;
+        min-width: 28px !important;
+        max-width: 28px !important;
+        padding: 0 !important;
+        border-radius: 6px !important;
+        flex-shrink: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+      }
+    `;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "pi-enh-version-badge-style";
+      style.textContent = cssText;
+      document.head.appendChild(style);
+    } else if (style.textContent !== cssText) {
+      style.textContent = cssText;
     }
   }
+
+  function syncVersionBadges() {
+    if (typeof document === "undefined") return;
+    injectVersionBadgeStyles();
+
+    // 1. 顶部连接标识旁常驻版本号: "● 已连接 · v1.4.45" (scoped 至侧边栏引擎状态行)
+    const targetText = "· " + APP_LATEST_VERSION;
+    const targetTitle = "Agent Web Plus 最新版本: " + APP_LATEST_VERSION;
+    const statusRows = document.querySelectorAll(
+      "[data-pi-native-engine-switcher] [role='status'], .pi-native-engine-switcher [role='status'], .pi-native-sidebar-header-toolbar [role='status']"
+    );
+    for (const row of statusRows) {
+      let span = row.querySelector(".pi-enh-top-version-label");
+      if (!span) {
+        span = document.createElement("span");
+        span.className = "pi-enh-top-version-label";
+        span.textContent = targetText;
+        span.title = targetTitle;
+        row.appendChild(span);
+      } else {
+        if (span.textContent !== targetText) {
+          span.textContent = targetText;
+        }
+        if (span.title !== targetTitle) {
+          span.title = targetTitle;
+        }
+      }
+    }
+
+    // 2. 清理侧边栏底部多余的版本号徽标，彻底释放底部快捷栏横向空间
+    for (const pill of document.querySelectorAll(".pi-enh-version-pill")) {
+      pill.remove();
+    }
+  }
+
+  
+  // 顶栏绝对单行自适应排版强制引擎 (Inline Style Hard Enforcer)
+  function enforceSingleRowHeader() {
+    if (typeof document === "undefined") return;
+    const toolbar = document.querySelector(".pi-native-sidebar-header-toolbar");
+    if (!toolbar) return;
+
+    toolbar.style.setProperty("display", "flex", "important");
+    toolbar.style.setProperty("flex-wrap", "nowrap", "important");
+    toolbar.style.setProperty("flex-direction", "row", "important");
+    toolbar.style.setProperty("align-items", "flex-start", "important");
+    toolbar.style.setProperty("justify-content", "space-between", "important");
+    toolbar.style.setProperty("gap", "4px", "important");
+    toolbar.style.setProperty("width", "100%", "important");
+    toolbar.style.setProperty("min-width", "0", "important");
+    toolbar.style.setProperty("box-sizing", "border-box", "important");
+
+    const switcher = toolbar.querySelector("[data-pi-native-engine-switcher]");
+    if (switcher) {
+      switcher.style.setProperty("flex", "1 1 auto", "important");
+      switcher.style.setProperty("min-width", "0", "important");
+      switcher.style.setProperty("max-width", "calc(100% - 94px)", "important");
+      switcher.style.setProperty("overflow", "hidden", "important");
+
+      const modelSelectorBtn = switcher.querySelector(".model-selector > button");
+      if (modelSelectorBtn) {
+        modelSelectorBtn.style.setProperty("width", "100%", "important");
+        modelSelectorBtn.style.setProperty("min-width", "0", "important");
+        modelSelectorBtn.style.setProperty("max-width", "100%", "important");
+        modelSelectorBtn.style.setProperty("padding", "2px 4px 2px 0", "important");
+        modelSelectorBtn.style.setProperty("display", "flex", "important");
+        modelSelectorBtn.style.setProperty("align-items", "center", "important");
+        modelSelectorBtn.style.setProperty("gap", "4px", "important");
+        modelSelectorBtn.style.setProperty("overflow", "hidden", "important");
+      }
+
+      const label = switcher.querySelector(".agent-engine-label");
+      if (label) {
+        label.style.setProperty("font-size", "clamp(13px, 3.8vw, 16px)", "important");
+        label.style.setProperty("line-height", "1.2", "important");
+        label.style.setProperty("font-weight", "600", "important");
+        label.style.setProperty("white-space", "nowrap", "important");
+        label.style.setProperty("overflow", "hidden", "important");
+        label.style.setProperty("text-overflow", "ellipsis", "important");
+        label.style.setProperty("flex", "1 1 auto", "important");
+        label.style.setProperty("min-width", "0", "important");
+        label.style.setProperty("display", "inline-block", "important");
+      }
+
+      const statusRow = switcher.querySelector("[role=\"status\"]");
+      if (statusRow) {
+        statusRow.style.setProperty("white-space", "nowrap", "important");
+        statusRow.style.setProperty("overflow", "hidden", "important");
+        statusRow.style.setProperty("text-overflow", "ellipsis", "important");
+        statusRow.style.setProperty("font-size", "10px", "important");
+        statusRow.style.setProperty("line-height", "1.1", "important");
+        statusRow.style.setProperty("margin-top", "1px", "important");
+      }
+    }
+
+    const actions = toolbar.querySelector(".pi-native-sidebar-header-actions");
+    if (actions) {
+      actions.style.setProperty("display", "flex", "important");
+      actions.style.setProperty("flex-wrap", "nowrap", "important");
+      actions.style.setProperty("align-items", "center", "important");
+      actions.style.setProperty("justify-content", "flex-end", "important");
+      actions.style.setProperty("flex", "0 0 auto", "important");
+      actions.style.setProperty("flex-shrink", "0", "important");
+      actions.style.setProperty("gap", "4px", "important");
+      actions.style.setProperty("margin-inline-start", "auto", "important");
+
+      const actionBtns = actions.querySelectorAll("button, .pi-enh-session-batch-trigger");
+      for (const btn of actionBtns) {
+        btn.style.setProperty("width", "28px", "important");
+        btn.style.setProperty("height", "28px", "important");
+        btn.style.setProperty("min-width", "28px", "important");
+        btn.style.setProperty("max-width", "28px", "important");
+        btn.style.setProperty("padding", "0", "important");
+        btn.style.setProperty("border-radius", "6px", "important");
+        btn.style.setProperty("flex-shrink", "0", "important");
+        btn.style.setProperty("display", "flex", "important");
+        btn.style.setProperty("align-items", "center", "important");
+        btn.style.setProperty("justify-content", "center", "important");
+        btn.style.setProperty("box-sizing", "border-box", "important");
+      }
+    }
+  }
+
+  // 手机端强力清缓存与 Service Worker 刷新
+  if (typeof window !== "undefined" && "caches" in window) {
+    try {
+      caches.keys().then((keys) => {
+        for (const k of keys) {
+          if (!k.includes("v1.4.46")) {
+            caches.delete(k);
+          }
+        }
+      });
+    } catch (_) {}
+  }
+  if (typeof navigator !== "undefined" && navigator.serviceWorker) {
+    try {
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        for (const r of regs) {
+          r.update();
+        }
+      });
+    } catch (_) {}
+  }
+
 
   if (typeof window !== "undefined") {
-    setInterval(syncPersistentVersionBadges, 1000);
-    setTimeout(syncPersistentVersionBadges, 300);
+    syncVersionBadges();
+    enforceSingleRowHeader();
+    setInterval(() => {
+      syncVersionBadges();
+      enforceSingleRowHeader();
+    }, 600);
+    window.addEventListener("resize", () => {
+      syncVersionBadges();
+      enforceSingleRowHeader();
+    }, { passive: true });
   }
-
-  // Queue bootstrap can call the hoisted composer resolver before modes init.
-  let pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
-  let lastTrackedModeUrlSessionId = undefined;
-  let lastTrackedModeNativeDraftKey = undefined;
-  let syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
 
   // ==========================================
   // 2.6 AI Quick Actions (同轮 AI 结构化选择 + 安全兜底)
@@ -19926,8 +20475,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   async function refreshQuickActionSelection(force = false) {
-    if (window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__ || !isPluginEnabled("quick-action-buttons")
-      || findComposerTextarea()?.closest?.('[data-pi-native-inline-suggestions="true"]')) return null;
+    if (window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__ || !isPluginEnabled("quick-action-buttons")) return null;
     const sessionId = getCurrentSessionId();
     if (!sessionId || isChatSessionRunning()) return null;
     if (quickActionSelectionSessionId !== sessionId) {
@@ -20492,7 +21040,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       return true;
     }
 
-    // Compatibility fallback for Agent Web Plus variants without a discoverable send button.
+    // Compatibility fallback for Pi Web variants without a discoverable send button.
     dispatchComposerSubmitShortcut(textarea);
     return true;
   }
@@ -20506,7 +21054,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   let emptySendContinueComposing = false;
 
   function isEmptySendContinueButton(button) {
-    if (!button || button.closest?.('[data-pi-native-inline-suggestions="true"]')) return false;
+    if (!button) return false;
     if (!isNativeComposerLayoutButton(button)) return false;
     const className = String(button.className || "");
     if (/\bpi-enh-quick-(?:start-button|fallback-trigger|menu-item)\b/.test(className)) return false;
@@ -20564,8 +21112,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function canUseEmptySendContinue(textarea) {
-    return !textarea?.hasAttribute?.("data-pi-inline-suggestion")
-      && isPluginEnabled("empty-send-continue")
+    return isPluginEnabled("empty-send-continue")
       && !emptySendContinueComposing
       && hasExistingConversation()
       && !isChatSessionRunning()
@@ -20595,7 +21142,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function syncEmptySendContinue() {
-    notifyComposerSubmissionStateChange();
     const textarea = findComposerTextarea();
     const candidates = getEmptySendContinueButtons(textarea);
     const eligible = Boolean(textarea && canUseEmptySendContinue(textarea));
@@ -20735,7 +21281,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function readNativeComposerDraft() {
-    // Compatibility adapter for Agent Web Plus 0.9.1 ChatInput. Locate state by semantic
+    // Compatibility adapter for Pi Web 0.9.1 ChatInput. Locate state by semantic
     // identity rather than hook indices; if upstream changes, fail closed.
     const textarea = document.querySelector("textarea.chat-input-textarea");
     const fieldset = textarea?.closest("[data-pi-native-composer-host]");
@@ -20875,6 +21421,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     "mp4", "m4v", "mov", "webm", "mkv", "avi", "flv", "wmv", "3gp", "ogv", "mpeg", "mpg", "m2ts", "mts"
   ]);
 
+  const COMPOSER_TEXT_SIZE_LIMIT = 64 * 1024; // 64KB 文本限制，优先内存暂存零磁盘占用
   const SESSION_UPLOADS_KEY = "pi-enh-session-uploads";
 
   let pendingComposerAttachments = [];
@@ -20889,7 +21436,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const textarea = findComposerTextarea();
     const hasQuickReply = Boolean(isPluginEnabled("quick-action-buttons")
       && textarea
-      && !textarea.closest?.('[data-pi-native-inline-suggestions="true"]')
       && !isChatSessionRunning()
       && isComposerInputEmpty(textarea)
       && !composerHasAnySendPayload(textarea)
@@ -20898,13 +21444,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       hasAnnotations,
       hasAttachments: isPluginEnabled("composer-file-paste") && pendingComposerAttachments.length > 0,
       hasQuickReply,
-      emptyContinueEnabled: isPluginEnabled("empty-send-continue"),
     };
   }
 
   function notifyComposerSubmissionStateChange() {
     const state = getComposerSubmissionState();
-    const signature = `${state.hasAnnotations ? 1 : 0}:${state.hasAttachments ? 1 : 0}:${state.hasQuickReply ? 1 : 0}:${state.emptyContinueEnabled ? 1 : 0}`;
+    const signature = `${state.hasAnnotations ? 1 : 0}:${state.hasAttachments ? 1 : 0}:${state.hasQuickReply ? 1 : 0}`;
     if (lastComposerSubmissionState === signature) return;
     lastComposerSubmissionState = signature;
     window.dispatchEvent(new Event("pi-enh-composer-submission-state-change"));
@@ -21193,37 +21738,28 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     } catch (e) {}
   }
 
-  async function prepareComposerUploadDirectory(cwd, sessionId, executionEngine) {
+  async function prepareComposerUploadDirectory(cwd, sessionId) {
     if (!cwd) throw new Error("未检测到当前有效的工作区目录");
     if (!sessionId) throw new Error("请先创建会话，再添加文档或压缩包附件");
-    // Codex 的文件通道写入已存在的项目目录；唯一文件名由上传流程生成。
-    if (executionEngine === "codex" || sessionId.startsWith("codex:")) return { uploadDir: cwd, relativeDir: "" };
-
-    // 仅当在电脑本机 (127.0.0.1 / localhost) 访问时才尝试本地 30149 桥接，避免移动端跨私有网络报错
-    const isLoopback = typeof window !== "undefined" && (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost");
-    if (isLoopback) {
-      try {
-        const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cwd, sessionId }),
-        });
-        if (res?.ok) {
-          const data = await res.json();
-          const relativeDir = String(data?.relativeDir || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-          if (data?.uploadDir && relativeDir.startsWith(".pi-uploads/")) {
-            return { uploadDir: data.uploadDir, relativeDir };
-          }
+    try {
+      const res = await fetch("http://127.0.0.1:30149/prepare-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, sessionId }),
+      });
+      if (res?.ok) {
+        const data = await res.json();
+        const relativeDir = String(data?.relativeDir || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+        if (data?.uploadDir && relativeDir.startsWith(".pi-uploads/")) {
+          return { uploadDir: data.uploadDir, relativeDir };
         }
-      } catch (e) {
-        // 30149 本地桥接服务未运行或连接超时，平滑降级
       }
+    } catch (e) {
+      // 30149 本地桥接服务未运行或连接超时，平滑降级
     }
-
     const sep = String(cwd).includes("\\") ? "\\" : "/";
-    // 关键修复：移动端/降级时直接写入已存在的 .pi-uploads 根目录，避免不存在的子路径返回 404 引发 Android 流失效
-    const relativeDir = ".pi-uploads";
-    const uploadDir = String(cwd).replace(/[\\/]+$/, "") + sep + ".pi-uploads";
+    const relativeDir = `.pi-uploads/${sessionId}`;
+    const uploadDir = String(cwd).replace(/[\\/]+$/, "") + sep + ".pi-uploads" + sep + sessionId;
     return { uploadDir, relativeDir, fallback: true };
   }
 
@@ -21265,7 +21801,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
   window.__PI_ENH_BIND_COMPOSER_DRAFT_FILES__ = bindComposerDraftFiles;
 
-  async function uploadComposerFile(file, cwd, safeUploadName, sessionId) {
+  async function uploadComposerFile(file, cwd, safeUploadName) {
     if (!cwd) throw new Error("未检测到当前有效的工作区目录");
     const encodedPath = encodePathForApi(cwd);
     const formData = new FormData();
@@ -21277,9 +21813,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     formData.append("files", uploadItem, safeUploadName || file.name || "upload.bin");
 
-    const params = new URLSearchParams({ type: "upload", conflict: "overwrite" });
-    if (sessionId) params.set("sessionId", sessionId);
-    const res = await fetch(`/api/files/${encodedPath}?${params}`, {
+    let res = await fetch(`/api/files/${encodedPath}?type=upload&conflict=overwrite`, {
       method: "POST",
       body: formData,
     });
@@ -21295,12 +21829,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
       throw new Error(errMsg);
     }
-    const result = await res.json();
-    const name = safeUploadName || file.name || "upload.bin";
-    if (result.errors?.length || !Array.isArray(result.uploaded) || !result.uploaded.includes(name)) {
-      throw new Error(result.errors?.[0]?.error || "文件未确认上传成功，请重新添加；原文件内容未发送");
-    }
-    return result;
+    return await res.json();
   }
 
   const INLINE_VIDEO_EXTENSIONS = new Set(["mp4", "m4v", "webm", "mov", "ogv"]);
@@ -21366,10 +21895,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       fullPath = String(cwd).replace(/[\\/]+$/, "") + sep + relPath.replace(/^\/+/, "");
     }
     const encoded = encodePathForApi(fullPath);
-    const params = new URLSearchParams({ type });
-    const sessionId = att.sessionId && !att.sessionId.startsWith("draft-") ? att.sessionId : getCurrentSessionId();
-    if (sessionId) params.set("sessionId", sessionId);
-    return `/api/files/${encoded}?${params}`;
+    return `/api/files/${encoded}?type=${type}`;
   }
 
   let activeVideoPreviewBackdrop = null;
@@ -21793,7 +22319,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return rest;
   }
 
-  function extractAttachmentsFromUserMessage(msgEl) {
+  function extractAttachmentsFromUserMessage(msgEl, currentSessionId) {
     const attachments = [];
     const seen = new Set();
     const text = msgEl ? (msgEl.textContent || "") : "";
@@ -21845,8 +22371,34 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     }
 
-    // Upload records track file cleanup for the whole session, not ownership of this message.
-    // Only explicit references in this message may create attachment cards.
+    // 3. 检查是否有当前会话关联的上传记录
+    if (attachments.length === 0 && currentSessionId) {
+      try {
+        const raw = localStorage.getItem(SESSION_UPLOADS_KEY);
+        if (raw) {
+          const map = JSON.parse(raw);
+          const files = map[currentSessionId];
+          if (Array.isArray(files) && files.length > 0) {
+            const allUserMsgs = document.querySelectorAll(".markdown-user-message");
+            if (allUserMsgs[0] === msgEl) {
+              for (const fileAbs of files) {
+                const name = extractOriginalFilename(fileAbs);
+                if (name && !seen.has(fileAbs)) {
+                  seen.add(fileAbs);
+                  attachments.push({
+                    id: "msg-att-" + Math.random().toString(36).slice(2, 9),
+                    name: name,
+                    serverRelativePath: fileAbs,
+                    serverAbsPath: fileAbs,
+                    type: getMimeTypeFromExt(name),
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    }
 
     return attachments;
   }
@@ -21935,6 +22487,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const userMessages = document.querySelectorAll(".markdown-user-message");
     if (!userMessages || userMessages.length === 0) return;
 
+    const currentSessionId = getCurrentSessionId();
     const cwd = window.__PI_CURRENT_SESSION_DATA__?.info?.cwd || "";
 
     for (const msgEl of userMessages) {
@@ -21948,7 +22501,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         continue;
       }
 
-      const attachments = extractAttachmentsFromUserMessage(msgEl);
+      const attachments = extractAttachmentsFromUserMessage(msgEl, currentSessionId);
       let bar = bubble.querySelector(".pi-enh-message-attachments");
 
       if (attachments.length === 0) {
@@ -22176,70 +22729,108 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     for (const file of files) {
       if (!isCurrent()) return;
-      // 所有上传文件（含 TXT、日志和代码）使用同一文件通道。预览与发送均不将全文展开进正文。
-      showToast(`正在上传附件: ${file.name}...`, null, 2400);
-      try {
-        const cwd = await getEffectiveComposerCwd();
-        if (!isCurrent()) return;
-        const activeSessionId = getCurrentSessionId();
-        const sessionId = activeSessionId || ("draft-" + Math.random().toString(36).slice(2, 10));
-        const prepared = await prepareComposerUploadDirectory(cwd, sessionId, getComposerExecutionEngineHint(activeSessionId));
-        if (!isCurrent()) return;
-        const originalName = String(file.name || "upload.bin").replace(/[\\/\0]/g, "_");
-        const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-        const safeUploadName = `.pi-upload-${uniqueId}-${originalName}`;
+      const isText = isTextFile(file) && (typeof file.size !== "number" || file.size <= COMPOSER_TEXT_SIZE_LIMIT);
 
-        let uploadTargetDir = prepared.uploadDir;
-        const sep = String(cwd).includes("\\") ? "\\" : "/";
-        let serverRelativePath = prepared.relativeDir ? `${prepared.relativeDir}/${safeUploadName}` : safeUploadName;
-        let serverAbsPath = String(prepared.uploadDir).replace(/[\\/]+$/, "") + sep + safeUploadName;
-
+      if (isText) {
+        // 纯文本/代码文件：保存在内存附件卡片中，零磁盘残留！
         try {
-          await uploadComposerFile(file, uploadTargetDir, safeUploadName, activeSessionId);
-        } catch (uploadErr) {
-          if (String(uploadErr.message || "").includes("Upload directory not found") || String(uploadErr.message || "").includes("404")) {
-            uploadTargetDir = cwd;
-            serverRelativePath = safeUploadName;
-            serverAbsPath = String(cwd).replace(/[\\/]+$/, "") + sep + safeUploadName;
-            await uploadComposerFile(file, uploadTargetDir, safeUploadName, activeSessionId);
-          } else {
-            throw uploadErr;
+          let textContent = "";
+          if (typeof file.text === "function") {
+            textContent = await file.text();
+          } else if (typeof FileReader !== "undefined") {
+            textContent = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(String(reader.result || ""));
+              reader.onerror = reject;
+              reader.readAsText(file);
+            });
           }
+          if (!isCurrent()) return;
+
+          const attId = "att-" + Math.random().toString(36).slice(2, 9);
+          pendingComposerAttachments.push({
+            id: attId,
+            name: file.name, // 原始未转义文件名！
+            size: file.size,
+            type: file.type,
+            isText: true,
+            textContent: textContent,
+            uploaded: false,
+          });
+
+          notifyComposerSubmissionStateChange();
+          syncComposerAttachmentBar(textarea);
+          showToast(`已添加附件: ${file.name}`, null, 2400);
+        } catch (err) {
+          if (!isCurrent()) return;
+          console.error("[Composer File Paste] 读取文本失败:", err);
+          showToast(`读取文件失败: ${file.name}`, null, 4000);
         }
+      } else {
+        // 二进制/文档/大文件：先创建会话隔离目录，再经 Pi Web 原生上传接口写入。
+        showToast(`正在上传附件: ${file.name}...`, null, 2400);
+        try {
+          const cwd = await getEffectiveComposerCwd();
+          if (!isCurrent()) return;
+          const sessionId = getCurrentSessionId() || ("draft-" + Math.random().toString(36).slice(2, 10));
+          const prepared = await prepareComposerUploadDirectory(cwd, sessionId);
+          if (!isCurrent()) return;
+          const originalName = String(file.name || "upload.bin").replace(/[\\/\0]/g, "_");
+          const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+          const safeUploadName = `.pi-upload-${uniqueId}-${originalName}`;
 
-        if (!isCurrent()) {
-          await deleteLocalTempFiles([serverAbsPath]);
-          return;
+          let uploadTargetDir = prepared.uploadDir;
+          const sep = String(cwd).includes("\\") ? "\\" : "/";
+          let serverRelativePath = `${prepared.relativeDir}/${safeUploadName}`;
+          let serverAbsPath = String(prepared.uploadDir).replace(/[\\/]+$/, "") + sep + safeUploadName;
+
+          try {
+            await uploadComposerFile(file, uploadTargetDir, safeUploadName);
+          } catch (uploadErr) {
+            if (String(uploadErr.message || "").includes("Upload directory not found") || String(uploadErr.message || "").includes("404")) {
+              uploadTargetDir = cwd;
+              serverRelativePath = safeUploadName;
+              serverAbsPath = String(cwd).replace(/[\\/]+$/, "") + sep + safeUploadName;
+              await uploadComposerFile(file, uploadTargetDir, safeUploadName);
+            } else {
+              throw uploadErr;
+            }
+          }
+
+          if (!isCurrent()) {
+            await deleteLocalTempFiles([serverAbsPath]);
+            return;
+          }
+          recordSessionUploadedFile(sessionId, serverAbsPath);
+
+          let previewUrl = "";
+          if (isVideoFile(file.name, file.type) && typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && typeof Blob !== "undefined" && file instanceof Blob) {
+            try { previewUrl = URL.createObjectURL(file); } catch (e) {}
+          }
+
+          const attId = "att-" + Math.random().toString(36).slice(2, 9);
+          pendingComposerAttachments.push({
+            id: attId,
+            name: file.name, // 原始真实未转义文件名
+            size: file.size,
+            type: file.type || getMimeTypeFromExt(file.name),
+            isText: false,
+            isVideo: isVideoFile(file.name, file.type),
+            previewUrl,
+            sessionId,
+            serverRelativePath,
+            serverAbsPath,
+            uploaded: true,
+          });
+
+          notifyComposerSubmissionStateChange();
+          syncComposerAttachmentBar(textarea);
+          showToast(`已添加附件: ${file.name}`, null, 3000);
+        } catch (err) {
+          if (!isCurrent()) return;
+          console.error("[Composer File Paste] 上传失败:", err);
+          showToast(`上传失败: ${err.message || file.name}`, null, 4500);
         }
-        recordSessionUploadedFile(sessionId, serverAbsPath);
-
-        let previewUrl = "";
-        if (isVideoFile(file.name, file.type) && typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && typeof Blob !== "undefined" && file instanceof Blob) {
-          try { previewUrl = URL.createObjectURL(file); } catch (e) {}
-        }
-
-        const attId = "att-" + Math.random().toString(36).slice(2, 9);
-        pendingComposerAttachments.push({
-          id: attId,
-          name: file.name, // 原始真实未转义文件名
-          size: file.size,
-          type: file.type || getMimeTypeFromExt(file.name),
-          isText: false,
-          isVideo: isVideoFile(file.name, file.type),
-          previewUrl,
-          sessionId,
-          serverRelativePath,
-          serverAbsPath,
-          uploaded: true,
-        });
-
-        notifyComposerSubmissionStateChange();
-        syncComposerAttachmentBar(textarea);
-        showToast(`已添加附件: ${file.name}`, null, 3000);
-      } catch (err) {
-        if (!isCurrent()) return;
-        console.error("[Composer File Paste] 上传失败:", err);
-        showToast(`上传失败: ${err.message || file.name}`, null, 4500);
       }
     }
   }
@@ -23403,6 +23994,20 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   }
 
+  function saveRecalledToOwnerPersistedDraft(ownerKey, text, images) {
+    if (!ownerKey) return;
+    const existing = (typeof getPersistedDraft === "function" ? getPersistedDraft(ownerKey) : null) || { value: "", images: [] };
+    const mergedText = [text, existing.value].filter(Boolean).join("\n\n");
+    const existingImgs = Array.isArray(existing.images) ? existing.images : [];
+    const recallImgs = Array.isArray(images) ? images : [];
+    const mergedImgs = [...recallImgs, ...existingImgs];
+
+    if (mergedImgs.length <= 10 && savePersistedDraft(ownerKey, { value: mergedText, images: mergedImgs })) return true;
+    // Do not truncate or silently lose large Base64 payloads to localStorage quota.
+    downloadQueueRecovery(ownerKey, text, recallImgs);
+    return false;
+  }
+
   function downloadQueueRecovery(ownerKey, text, images) {
     const blob = new Blob([JSON.stringify({ version: 1, ownerKey, text, images }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -23427,6 +24032,19 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const fromScroll = document.querySelector?.("[data-pi-native-scroll-owner]")?.getAttribute?.("data-pi-native-scroll-owner");
     if (fromScroll && !fromScroll.startsWith("new:")) return fromScroll;
     return explicitSid || null;
+  }
+
+  function deliverRecalledQueuePayload(ownerKey, keyRef, route, text, images) {
+    const current = readNativeComposerDraft();
+    const effectiveRoute = getEffectiveQueueSessionId(route);
+    const activeRoute = getEffectiveQueueSessionId();
+    if (activeRoute === effectiveRoute && current?.key === ownerKey && current.keyRef === keyRef
+      && current.pendingRef.current === 0 && current.imagesRef.current.length + images.length <= 10) {
+      current.handle.restoreSubmission(text, images, ownerKey);
+      current.textarea?.focus();
+      return true;
+    }
+    return saveRecalledToOwnerPersistedDraft(ownerKey, text, images);
   }
 
   async function hydrateSessionQueueAttachments(sessionId) {
@@ -23491,15 +24109,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     notifyQueueAttachmentUpdated();
   }
 
-  // Native React owns queue rendering, delivery receipts and draft restoration.
-  // This service only supplies token/attachment actions through that boundary.
-  let composerQueueNativeHost = null;
+  // Native React owns queue rendering; this adapter owns secure RPC/recovery only.
   composerQueuePanel = null;
   let composerQueueLastEntriesSignature = "";
   let composerQueueCurrentEntries = [];
   let composerQueueRequest = null;
   let composerQueueBusy = false;
-  let composerQueueActionsEnabled = true;
   const composerQueueUnsupported = new Set();
   let composerQueueActionsState = null;
   const composerQueueErrors = new Map();
@@ -23589,8 +24204,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function loadComposerQueueTokens(sessionId, entriesSignature, entries) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!composerQueueActionsEnabled
-      || !activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
+    if (!activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
     composerQueueRequest = entriesSignature;
     try {
       const response = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
@@ -23599,7 +24213,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         body: JSON.stringify({ type: "get_queue_actions" }),
       });
       const result = await response.json();
-      if (!composerQueueActionsEnabled) return;
       const data = result?.data;
       if (!response.ok || result.success === false) {
         composerQueueActionsState = null;
@@ -23768,9 +24381,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function recallSingleQueuedMessage(entryIndex, sessionId, signature) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    const nativeHost = composerQueueNativeHost;
-    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature
-      || typeof nativeHost.sendCommand !== "function" || typeof nativeHost.restoreRecall !== "function") return;
     if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
@@ -23829,22 +24439,29 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
         || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + recallImages.length > 10) return;
 
+      let res;
       let result;
       try {
-        result = await nativeHost.sendCommand(activeSid, { type: "recall_queued_message", token });
+        res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "recall_queued_message", token }),
+        });
+        result = await res.json();
       } catch (networkErr) {
         downloadQueueRecovery(capturedOwner, payload.text, recallImages);
         showToast("召回结果未确认，原图文已导出备份；不会自动重发，请核对队列状态", null, 6000);
         return;
       }
 
-      if (result?.version !== 2 || result.token !== token || typeof result.text !== "string" || !Array.isArray(result.images)) {
-        throw new Error("召回响应无效，原消息仍已保留");
+      const resData = result?.data || result;
+      if (!res.ok || result?.success !== true || (resData?.version !== 2 && result?.version !== 2)) {
+        throw new Error(result?.error || "召回失败");
       }
-      const requestId = result.requestId || (result.recalledPromptRequestIds?.length === 1 ? result.recalledPromptRequestIds[0] : undefined);
-      await nativeHost.restoreRecall({ sessionId: activeSid, targetDraftKey: capturedOwner,
-        entries: [{ requestId, text: result.text, images: result.images }] });
-      showToast(getEffectiveQueueSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
+
+      if (deliverRecalledQueuePayload(capturedOwner, capturedKeyRef, capturedRoute, payload.text, recallImages)) {
+        showToast(getEffectiveQueueSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
+      }
     } catch (error) {
       handleQueueOperationError(activeSid, error.message, "移回编辑");
     } finally {
@@ -23855,9 +24472,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function recallAllQueuedMessages(sessionId, signature, entries) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    const nativeHost = composerQueueNativeHost;
-    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature
-      || typeof nativeHost.sendCommand !== "function" || typeof nativeHost.restoreRecall !== "function") return;
     if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
@@ -23914,21 +24528,33 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
         || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + backupImages.length > 10) return;
 
+      let res;
       let result;
       try {
-        result = await nativeHost.sendCommand(activeSid, { type: "recall_all_queued_messages", tokens: expectedTokens });
+        res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "recall_all_queued_messages", tokens: expectedTokens }),
+        });
+        result = await res.json();
       } catch (netErr) {
         downloadQueueRecovery(capturedOwner, backupText, backupImages);
         showToast("召回结果未确认，原图文已导出备份；不会自动重发，请核对队列状态", null, 6000);
         return;
       }
 
-      if (result?.version !== 2 || !Array.isArray(result.entries) || result.entries.length !== expectedTokens.length
-        || result.entries.some((entry, index) => entry.token !== expectedTokens[index])) {
-        throw new Error("全部召回响应无效，原消息仍已保留");
+      const resData = result?.data || result;
+      if (!res.ok || result?.success !== true || (resData?.version !== 2 && result?.version !== 2)) {
+        throw new Error(result?.error || "全部召回失败");
       }
-      await nativeHost.restoreRecall({ sessionId: activeSid, targetDraftKey: capturedOwner, entries: result.entries });
-      showToast(getEffectiveQueueSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
+
+      const returnedEntries = result.data?.entries || [];
+      const combinedTexts = returnedEntries.map((e) => e.text).filter(Boolean).join("\n\n");
+      const combinedImages = returnedEntries.flatMap((e) => e.images || []);
+
+      if (deliverRecalledQueuePayload(capturedOwner, capturedKeyRef, capturedRoute, combinedTexts, combinedImages)) {
+        showToast(getEffectiveQueueSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
+      }
     } catch (error) {
       handleQueueOperationError(activeSid, error.message, "全部移回");
     } finally {
@@ -23939,8 +24565,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function deleteSingleQueuedMessage(entryIndex, sessionId, signature) {
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    const nativeHost = composerQueueNativeHost;
-    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature || typeof nativeHost.sendCommand !== "function") return;
     if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
     if (!hasSecure) {
@@ -23965,8 +24589,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     publishNativeQueueDetails(activeSid);
 
     try {
-      const result = await nativeHost.sendCommand(activeSid, { type: "delete_queued_message", token });
-      if (result?.version !== 2) {
+      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "delete_queued_message", token }),
+      });
+      const result = await res.json();
+      const resData = result?.data || result;
+      if (!res.ok || result?.success !== true || (resData?.version !== 2 && result?.version !== 2)) {
         throw new Error(result?.error || "删除失败");
       }
 
@@ -24013,39 +24643,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function publishNativeQueueDetails(explicitSid = null) {
     const sessionId = getEffectiveQueueSessionId(explicitSid);
-    const actionsEnabled = composerQueueActionsEnabled;
-    const items = actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature
+    const items = composerQueueActionsState?.signature === composerQueueLastEntriesSignature
       ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
-    const hasDeliveryStatuses = items.some((item) => typeof item?.status === "string");
-    const statuses = hasDeliveryStatuses ? items.map((item) => ({
-      status: typeof item?.status === "string" ? item.status : "",
-      ...(typeof item?.error === "string" && item.error ? { error: item.error } : {}),
-    })) : undefined;
     window.dispatchEvent(new CustomEvent("pi:native-queue-details", { detail: {
       signature: composerQueueLastEntriesSignature,
-      enabled: actionsEnabled && isPluginEnabled("composer-queue-panel")
-        && composerQueueActionsState?.sessionId === sessionId
-        && composerQueueActionsState?.signature === composerQueueLastEntriesSignature,
-      actionsEnabled,
+      enabled: isPluginEnabled("composer-queue-panel"),
       busy: composerQueueBusy,
-      reorder: actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
-      ...(statuses ? { statuses } : {}),
+      reorder: composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
       images: composerQueueCurrentEntries.map((entry, i) => getQueueEntryAttachments(sessionId, entry.text, i, entry.kind, items[i]?.token)),
     } }));
   }
 
   function syncComposerQueuePanel(isAttachmentUpdateOnly = false, explicitSid = null) {
-    const activeSid = getEffectiveQueueSessionId(explicitSid);
-    if (!composerQueueActionsEnabled) {
-      composerQueueActionsState = null;
-      publishNativeQueueDetails(activeSid);
-      return;
-    }
     if (!isPluginEnabled("composer-queue-panel")) {
       publishNativeQueueDetails(explicitSid);
       return;
     }
     if (!composerQueuePanel?.isConnected || !composerQueueCurrentEntries.length) return;
+    const activeSid = getEffectiveQueueSessionId(explicitSid);
     publishNativeQueueDetails(activeSid);
     // Only React explicit snapshot event refreshes tokens; never DOM scans/timers.
     if (!isAttachmentUpdateOnly && activeSid && !composerQueueBusy) {
@@ -24055,16 +24670,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   const handleNativeQueueSnapshot = (event) => {
     const detail = event.detail;
-    if (!detail || !Array.isArray(detail.entries) || typeof detail.signature !== "string") return;
-    composerQueueNativeHost = detail;
+    if (!detail || !Array.isArray(detail.entries)) return;
     const activeSid = getEffectiveQueueSessionId(detail.sessionId);
     if (!activeSid) return;
-    composerQueueActionsEnabled = detail.actionsEnabled !== false;
     composerQueuePanel = detail.host;
-    const signature = detail.signature;
+    const signature = JSON.stringify([activeSid, detail.entries]);
     const changed = signature !== composerQueueLastEntriesSignature;
     composerQueueCurrentEntries = detail.entries;
-    syncComposerQueueBadge(detail.entries.length);
     composerQueueLastEntriesSignature = signature;
     if (changed) composerQueueActionsState = null;
     if (!detail.entries.length) {
@@ -24072,17 +24684,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       publishNativeQueueDetails(activeSid);
       return;
     }
-    // Entries can arrive before connection/inbox hydration marks actions ready.
-    // Read tokens when readiness returns even if the text signature is unchanged.
-    const needsTokens = composerQueueActionsEnabled && !composerQueueActionsState;
-    syncComposerQueuePanel(!changed && !needsTokens, activeSid);
-    if (composerQueueActionsEnabled) triggerSessionHydration(activeSid);
+    syncComposerQueuePanel(!changed, activeSid);
+    triggerSessionHydration(activeSid);
   };
   const handleNativeQueueAction = (event) => {
     const { action, index, targetIndex, sessionId, signature } = event.detail || {};
     const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!composerQueueActionsEnabled || !isPluginEnabled("composer-queue-panel") || !activeSid
-      || signature !== composerQueueLastEntriesSignature) return;
+    if (!isPluginEnabled("composer-queue-panel") || !activeSid || signature !== composerQueueLastEntriesSignature) return;
     if (action === "recall") void recallSingleQueuedMessage(index, activeSid, signature);
     else if (action === "recallAll") void recallAllQueuedMessages(activeSid, signature, composerQueueCurrentEntries);
     else if (action === "delete") void deleteSingleQueuedMessage(index, activeSid, signature);
@@ -24103,11 +24711,147 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   activeCleanups.push(() => {
     window.removeEventListener("pi:native-queue-snapshot", handleNativeQueueSnapshot);
     window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
-    composerQueueNativeHost = null;
     removeComposerQueuePanel();
   });
   window.dispatchEvent(new Event("pi:native-queue-ready"));
   window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
+
+  // ==========================================
+  // 排队消息本地备份项交互自愈与死锁解除 (Queue Backup Item Action Delegator)
+  // 解决因网络中断等原因停留在本地的备份项无法删除、无法移回输入框的死锁缺陷
+  // ==========================================
+  function releaseRetainedPromptBackup(requestId) {
+    if (!requestId) return;
+    try {
+      if (typeof indexedDB !== "undefined") {
+        const req = indexedDB.open("pi-web-prompt-submissions-v1", 1);
+        req.onsuccess = () => {
+          const db = req.result;
+          try {
+            const tx = db.transaction("submissions", "readwrite");
+            const store = tx.objectStore("submissions");
+            const getAllReq = store.getAll();
+            getAllReq.onsuccess = () => {
+              const rows = getAllReq.result || [];
+              for (const item of rows) {
+                if (item.requestId === requestId) {
+                  store.delete(item.key);
+                }
+              }
+            };
+          } catch (_) {}
+        };
+      }
+      const STORAGE_KEY = "pi-web:unconfirmed-prompts-v1";
+      if (typeof window !== "undefined" && window.sessionStorage) {
+        try {
+          const raw = window.sessionStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const list = JSON.parse(raw);
+            if (Array.isArray(list)) {
+              const next = list.filter((x) => x.requestId !== requestId);
+              window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  function handleQueueBackupDelegation(event) {
+    const target = event.target;
+    if (!target) return;
+    const row = target.closest?.(".pi-enh-queue-row[data-retained-request-id]");
+    if (!row) return;
+    const requestId = row.getAttribute("data-retained-request-id");
+    if (!requestId) return;
+
+    // 1. 点击垃圾桶删除
+    const deleteBtn = target.closest?.(".pi-enh-queue-delete");
+    if (deleteBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      releaseRetainedPromptBackup(requestId);
+      row.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+      row.style.opacity = "0";
+      row.style.transform = "scale(0.95)";
+      setTimeout(() => {
+        row.remove();
+        const list = document.querySelector(".pi-enh-queue-list");
+        if (list && !list.querySelector(".pi-enh-queue-row")) {
+          const panel = document.querySelector(".pi-enh-queue-panel");
+          if (panel) panel.setAttribute("hidden", "true");
+        }
+      }, 220);
+      showToast("已删除该条排队消息", null, 1800);
+      return;
+    }
+
+    // 2. 点击文本移回输入框编辑
+    const textBtn = target.closest?.(".pi-enh-queue-text");
+    if (textBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      const text = textBtn.textContent.trim();
+      if (text && text !== "图片消息") {
+        const textarea = findComposerTextarea();
+        if (textarea) {
+          const currentVal = textarea.value;
+          const newVal = currentVal ? `${currentVal}\n${text}` : text;
+          setComposerTextareaValue(textarea, newVal, { focus: true });
+        }
+      }
+      releaseRetainedPromptBackup(requestId);
+      row.style.transition = "opacity 0.2s ease, transform 0.2s ease";
+      row.style.opacity = "0";
+      setTimeout(() => {
+        row.remove();
+        const list = document.querySelector(".pi-enh-queue-list");
+        if (list && !list.querySelector(".pi-enh-queue-row")) {
+          const panel = document.querySelector(".pi-enh-queue-panel");
+          if (panel) panel.setAttribute("hidden", "true");
+        }
+      }, 220);
+      showToast("已移回输入框编辑", null, 1800);
+      return;
+    }
+
+    // 3. 点击引导重新发送
+    const promoteBtn = target.closest?.(".pi-enh-queue-promote");
+    if (promoteBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      const textEl = row.querySelector(".pi-enh-queue-text");
+      const text = textEl ? textEl.textContent.trim() : "";
+      const sid = getEffectiveQueueSessionId();
+      if (sid && text) {
+        showToast("正在重新发送引导...", null, 2000);
+        fetch(`/api/agent/${encodeURIComponent(sid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "prompt", message: text, streamingBehavior: "steer", requestId }),
+        }).then((res) => {
+          if (res.ok) {
+            showToast("引导已成功发送", null, 2000);
+            releaseRetainedPromptBackup(requestId);
+            row.remove();
+          } else {
+            showToast("发送失败，已保留该条消息", null, 3000);
+          }
+        }).catch(() => {
+          showToast("网络连接异常，已保留该条消息", null, 3000);
+        });
+      }
+      return;
+    }
+  }
+
+  if (typeof document !== "undefined") {
+    addManagedListener(document, "click", handleQueueBackupDelegation, true);
+  }
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
 
@@ -24493,9 +25237,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const nonImageFiles = allClipboardFiles.filter((file) =>
       !(file.type && file.type.startsWith("image/")) || isVideoFile(file.name, file.type));
 
-    // The attachment listener owns file paste. Both capture listeners can run on
-    // this textarea even after stopPropagation, so never upload from formatting.
-    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) return;
+    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) {
+      event.preventDefault();
+      event.stopPropagation();
+      void processComposerFiles(nonImageFiles, textarea);
+      return;
+    }
 
     const imageFiles = allClipboardFiles.filter((file) =>
       file.type?.startsWith("image/") && !isVideoFile(file.name, file.type));
@@ -24675,6 +25422,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     activeComposerFormatTextarea = null;
   }
 
+  window.__PI_ENH_SYNC_COMPOSER_MARKDOWN_FORMAT__ = syncComposerMarkdownFormat;
+  window.__PI_ENH_REMOVE_COMPOSER_MARKDOWN_FORMAT__ = removeComposerMarkdownFormat;
+  window.__PI_ENH_HTML_TO_MARKDOWN__ = htmlToMarkdown;
+
   activeCleanups.push(removeComposerMarkdownFormat);
   window.__PI_ENH_SYNC_COMPOSER_MARKDOWN_FORMAT__ = syncComposerMarkdownFormat;
   window.__PI_ENH_REMOVE_COMPOSER_MARKDOWN_FORMAT__ = removeComposerMarkdownFormat;
@@ -24695,7 +25446,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   composerModesStateMap = new Map(); // sessionId -> { mode: "normal"|"plan"|"goal", goal?: string, pausePending?: boolean, paused?: boolean }
   let composerModeSwitching = false;
   let isGoalActionRunning = false;
-  pendingNewComposerMode = null; // {mode, engine, project, sessionId?}; never a server success claim
+  pendingNewComposerMode = null; // {mode, project, sessionId?}; never a server success claim
   let composerAddMenuEl = null;
   let composerAddMenuContext = null;
   let composerModesEventsBound = false;
@@ -24704,8 +25455,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   let lastComposerGoalMismatchKey = null;
 
   // Shared same-origin SVG geometry keeps the native menu and React controls aligned.
-  const SVG_GOAL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${COMPOSER_MODE_ICON_MARKUP.goal}</svg>`;
-  const SVG_PLAN_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${COMPOSER_MODE_ICON_MARKUP.plan}</svg>`;
+  const SVG_GOAL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><use href="/icons/composer-mode-icons.svg#goal"></use></svg>`;
+  const SVG_PLAN_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false"><use href="/icons/composer-mode-icons.svg#plan"></use></svg>`;
   const SVG_ATTACH_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>`;
   const SVG_IMAGE_ICON = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>`;
   const SVG_CHECK_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
@@ -24729,47 +25480,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   }
 
-  function normalizeComposerModeState(state) {
-    if (!state || state.version !== 1 || !["normal", "plan", "goal"].includes(state.mode)) return null;
-    const normalized = { version: 1, mode: state.mode };
-    if (state.capabilities && typeof state.capabilities === "object" && !Array.isArray(state.capabilities)) {
-      const capabilities = {};
-      for (const key of ["goal", "plan"]) {
-        if (typeof state.capabilities[key] === "boolean") capabilities[key] = state.capabilities[key];
-      }
-      normalized.capabilities = capabilities;
-    }
-    if (typeof state.goalKnown === "boolean") normalized.goalKnown = state.goalKnown;
-    if (Array.isArray(state.toolsBeforePlan)) normalized.toolsBeforePlan = state.toolsBeforePlan;
-    if (state.mode !== "normal" || state.goalKnown === true) {
-      if (typeof state.goal === "string") normalized.goal = state.goal;
-      if (state.mode === "goal" || state.goalKnown === true) {
-        if (typeof state.goalStatus === "string") normalized.goalStatus = state.goalStatus;
-        if (state.goalIdentity && typeof state.goalIdentity === "object" && !Array.isArray(state.goalIdentity)) {
-          const identity = {};
-          if (typeof state.goalIdentity.objective === "string") identity.objective = state.goalIdentity.objective;
-          if (typeof state.goalIdentity.createdAt === "string" || typeof state.goalIdentity.createdAt === "number") {
-            identity.createdAt = state.goalIdentity.createdAt;
-          }
-          if (Object.keys(identity).length) normalized.goalIdentity = identity;
-        }
-        if (["paused", "pending", "active"].includes(state.goalStatus)) {
-          normalized.paused = state.goalStatus === "paused";
-          normalized.pausePending = state.goalStatus === "pending";
-        } else {
-          normalized.paused = Boolean(state.paused);
-          normalized.pausePending = Boolean(state.pausePending);
-        }
-        if (typeof state.goalElapsedMs === "number" && Number.isFinite(state.goalElapsedMs)) {
-          normalized.goalElapsedMs = state.goalElapsedMs;
-        }
-        if (typeof state.goalActiveSinceMs === "number" && Number.isFinite(state.goalActiveSinceMs)) {
-          normalized.goalActiveSinceMs = state.goalActiveSinceMs;
-        }
-      }
-    }
-    return normalized;
-  }
+  pendingComposerNavOverride = null; // { mode: "new" | "session", sessionId: string | null, fromUrlSessionId: string | null, until: number }
+  lastTrackedModeUrlSessionId = undefined;
+  lastTrackedModeNativeDraftKey = undefined;
+  syntheticUrlSessionForNewDraft = null; // { sessionId: string, whileDraftKey: string | null }
 
   function readComposerNativeDraftKey() {
     try {
@@ -24906,7 +25620,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
       .pi-enh-composer-menu-item:hover { background: color-mix(in srgb, var(--text, #fff) 8%, transparent) !important; }
       .pi-enh-composer-menu-item.active { background: color-mix(in srgb, var(--text, #fff) 12%, transparent) !important; }
-      .pi-enh-composer-menu-item:disabled { opacity: .55; cursor: not-allowed; }
       .pi-enh-composer-menu-item:focus-visible { outline: 2px solid var(--text-muted, #a1a1aa); outline-offset: 1px; }
       .pi-enh-composer-menu-icon { display: inline-flex !important; align-items: center !important; justify-content: center !important; width: 18px !important; height: 18px !important; flex-shrink: 0 !important; color: var(--text-muted, #a1a1aa) !important; }
       .pi-enh-composer-menu-label { display: flex !important; align-items: center !important; flex: 1 1 auto !important; min-width: 0 !important; }
@@ -24923,58 +25636,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function getSessionComposerMode(sessionId) {
-    if (!sessionId) {
-      const engine = getComposerExecutionEngineHint();
-      return pendingNewComposerMode?.project === getCurrentProjectStatusKey() && pendingNewComposerMode?.engine === engine
-        ? pendingNewComposerMode.mode
-        : "normal";
-    }
+    if (!sessionId) return pendingNewComposerMode?.project === getCurrentProjectStatusKey() ? pendingNewComposerMode.mode : "normal";
     return composerModesStateMap.get(sessionId)?.mode || "normal";
-  }
-
-  function getComposerExecutionEngineHint(sessionId = getEffectiveComposerSessionId()) {
-    if (sessionId) return sessionId.startsWith("codex:") ? "codex" : "pi";
-    const composerHost = findComposerTextarea()?.closest?.("[data-pi-native-composer-host]");
-    const engine = composerHost?.dataset?.piExecutionEngine;
-    return engine === "pi" || engine === "codex" ? engine : null;
-  }
-
-  function setComposerModeEntriesAvailability(menu, engine, sessionId, currentMode = getSessionComposerMode(sessionId), capabilityCheckComplete = false) {
-    if (!menu?.isConnected) return;
-    const state = sessionId ? composerModesStateMap.get(sessionId) : null;
-    for (const item of menu.querySelectorAll('[data-composer-mode-entry="goal"], [data-composer-mode-entry="plan"]')) {
-      const mode = item.dataset.composerModeEntry;
-      const mayExit = currentMode === mode;
-      const supported = engine === "pi" || (!sessionId && engine === "codex") || state?.capabilities?.[mode] === true;
-      const unknown = engine === "codex" && sessionId && typeof state?.capabilities?.[mode] !== "boolean";
-      item.disabled = engine !== "pi" && !mayExit && !supported;
-      item.setAttribute("aria-disabled", String(item.disabled));
-      if (item.disabled && engine === "codex") {
-        item.title = unknown
-          ? capabilityCheckComplete ? "服务端未声明此模式能力" : "正在确认当前 Codex 接口的模式能力"
-          : `当前 Codex 接口不支持${mode === "goal" ? "目标" : "计划"}模式`;
-        const description = item.querySelector(".pi-enh-composer-menu-desc");
-        if (description) description.textContent = unknown
-          ? capabilityCheckComplete ? "服务端未声明能力" : "正在确认能力"
-          : "当前接口不支持";
-      } else if (!item.disabled && engine === "codex" && !supported && mayExit) {
-        item.title = "退出当前模式";
-      } else {
-        item.title = mode === "goal" ? "设置要持续追求的目标" : "开启计划模式；快捷键 Shift+Tab";
-        const description = item.querySelector(".pi-enh-composer-menu-desc");
-        if (description) description.textContent = mode === "goal" ? "设置要持续追求的目标" : "开启计划模式";
-      }
-    }
   }
 
   function getComposerGoalState(sessionId = getEffectiveComposerSessionId()) {
     const state = sessionId ? composerModesStateMap.get(sessionId) : null;
-    const goal = state?.mode === "goal" || state?.goalKnown === true ? String(state.goal || "").trim() : "";
+    const goal = state?.mode === "goal" ? String(state.goal || "").trim() : "";
     if (!sessionId || !goal) return null;
-    const pausePending = state.goalStatus === "pending" || Boolean(state.pausePending);
-    const paused = !pausePending && (state.goalStatus === "paused" || Boolean(state.paused));
-    const statusKey = state.goalStatus || (pausePending ? "pending" : paused ? "paused" : "active");
-    const canControl = ["active", "pending", "paused"].includes(statusKey);
+    const paused = Boolean(state.paused);
+    const pausePending = Boolean(state.pausePending);
     return {
       sessionId,
       mode: "goal",
@@ -24983,8 +25654,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       pausePending,
       goalElapsedMs: typeof state.goalElapsedMs === "number" ? state.goalElapsedMs : null,
       goalActiveSinceMs: typeof state.goalActiveSinceMs === "number" ? state.goalActiveSinceMs : null,
-      statusKey,
-      action: canControl ? (paused || pausePending ? "resume" : "pause") : null,
+      statusKey: pausePending ? "pending" : paused ? "paused" : "active",
+      action: paused || pausePending ? "resume" : "pause",
     };
   }
 
@@ -24997,20 +25668,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         detail: { sessionId: sessionId || null, mode, state, goalState: getComposerGoalState(sessionId) },
       }));
     } catch (_) {}
-  }
-
-  function commitComposerModeState(sessionId, state) {
-    const normalized = normalizeComposerModeState(state);
-    if (!sessionId || !normalized) return null;
-    composerModesStateMap.set(sessionId, normalized);
-    if (getEffectiveComposerSessionId() === sessionId) {
-      if (lastObservedModesSessionId !== sessionId) {
-        lastObservedModesSessionId = sessionId;
-        closeComposerAddMenu();
-      }
-      syncComposerModes();
-    }
-    return normalized;
   }
 
   window.__PI_ENH_GET_COMPOSER_GOAL_STATE__ = getComposerGoalState;
@@ -25102,7 +25759,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const goalItem = document.createElement("button");
     goalItem.type = "button";
     goalItem.className = `pi-enh-composer-menu-item${currentMode === "goal" ? " active" : ""}`;
-    goalItem.dataset.composerModeEntry = "goal";
     goalItem.setAttribute("aria-label", "目标模式：设置要持续追求的目标");
     goalItem.title = "设置要持续追求的目标";
     goalItem.innerHTML = `
@@ -25125,7 +25781,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const planItem = document.createElement("button");
     planItem.type = "button";
     planItem.className = `pi-enh-composer-menu-item${currentMode === "plan" ? " active" : ""}`;
-    planItem.dataset.composerModeEntry = "plan";
     planItem.setAttribute("aria-label", "计划模式：开启计划模式");
     planItem.title = "开启计划模式；快捷键 Shift+Tab";
     planItem.innerHTML = `
@@ -25150,19 +25805,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     menu.style.bottom = "auto";
     composerAddMenuEl = menu;
     composerAddMenuContext = { card, addBtn, openWidth: window.innerWidth };
-    const engineHint = getComposerExecutionEngineHint(sessionId);
-    const applyAvailability = (capabilityCheckComplete = false) => setComposerModeEntriesAvailability(
-      menu, engineHint, sessionId, getSessionComposerMode(sessionId), capabilityCheckComplete
-    );
-    applyAvailability();
-    if (engineHint === "codex" && sessionId) {
-      const capabilities = composerModesStateMap.get(sessionId)?.capabilities;
-      if (typeof capabilities?.goal !== "boolean" || typeof capabilities?.plan !== "boolean") {
-        void querySessionModeState(sessionId).then(() => {
-          if (composerAddMenuEl === menu && menu.isConnected) applyAvailability(true);
-        });
-      }
-    }
     positionComposerAddMenu();
     emitComposerAddMenuChange(true);
   }
@@ -25171,21 +25813,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (!["normal", "plan", "goal"].includes(targetMode)) return false;
     findComposerTextarea()?.focus();
     const sessionId = targetSessionId || getEffectiveComposerSessionId();
-    const executionEngine = getComposerExecutionEngineHint(sessionId);
-    if (!executionEngine) {
-      if (targetMode === "normal") {
-        pendingNewComposerMode = null;
-        return true;
-      }
-      showToast("无法确认当前执行引擎，目标或计划模式未启用；消息草稿和附件已保留", null, 3000);
-      return false;
-    }
     if (!sessionId) {
-      pendingNewComposerMode = targetMode === "normal" ? null : {
-        mode: targetMode,
-        engine: executionEngine,
-        project: getCurrentProjectStatusKey(),
-      };
+      pendingNewComposerMode = targetMode === "normal" ? null : {mode: targetMode, project: getCurrentProjectStatusKey()};
       syncComposerModes();
       findComposerTextarea()?.focus();
       return true;
@@ -25197,19 +25826,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     composerModeSwitching = true;
 
     try {
-      const isStagedNewSession = pendingNewComposerMode?.sessionId === sessionId &&
-        pendingNewComposerMode?.engine === executionEngine &&
-        pendingNewComposerMode?.project === getCurrentProjectStatusKey();
-      if (executionEngine === "codex" && targetMode !== "normal" && !isStagedNewSession) {
-        const capability = composerModesStateMap.get(sessionId)?.capabilities?.[targetMode];
-        if (typeof capability !== "boolean") {
-          await querySessionModeState(sessionId);
-        }
-        if (composerModesStateMap.get(sessionId)?.capabilities?.[targetMode] !== true) {
-          showToast(`当前 Codex 接口未确认支持${targetMode === "goal" ? "目标" : "计划"}模式；消息草稿和附件已保留`, null, 3000);
-          return false;
-        }
-      }
       // One atomic request saves the next-input mode and reads the extension's
       // authoritative result; no prompt execution or speculative UI state.
       composerModeFetchToken++;
@@ -25231,14 +25847,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         showToast(`模式切换未生效（当前仍为 ${realMode}），可能状态忙碌或参数受限`, null, 3000);
         return false;
       }
-      if (executionEngine === "codex" && targetMode !== "normal" && parsed?.capabilities?.[targetMode] !== true) {
-        showToast("服务端未确认该模式能力，消息草稿和附件已保留", null, 3000);
-        return false;
-      }
 
       // 真实生效后，才更新本地会话模式状态
       composerModeFetchToken++;
-      if (!commitComposerModeState(sessionId, parsed)) return false;
+      const updatedSwitchState = {
+        mode: realMode,
+        goal: parsed?.goal,
+        pausePending: Boolean(parsed?.pausePending),
+        paused: Boolean(parsed?.paused),
+      };
+      if (typeof parsed?.goalElapsedMs === "number") {
+        updatedSwitchState.goalElapsedMs = parsed.goalElapsedMs;
+      }
+      if (typeof parsed?.goalActiveSinceMs === "number") {
+        updatedSwitchState.goalActiveSinceMs = parsed.goalActiveSinceMs;
+      }
+      composerModesStateMap.set(sessionId, updatedSwitchState);
+      syncComposerModes();
+      syncComposerGoalBar();
       return true;
     } catch (err) {
       showToast("切换模式发生异常，请检查网络", null, 3000);
@@ -25264,13 +25890,27 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const stateObj = data?.state || (data && typeof data === "object" && "extensionStatuses" in data ? data : null);
       const parsed = parseExtensionStatus(stateObj || data, "composer-modes");
       if (parsed?.mode) {
-        return commitComposerModeState(sessionId, parsed);
+        const updatedQueryState = {
+          mode: parsed.mode,
+          goal: parsed.goal,
+          pausePending: Boolean(parsed.pausePending),
+          paused: Boolean(parsed.paused),
+        };
+        if (typeof parsed.goalElapsedMs === "number") {
+          updatedQueryState.goalElapsedMs = parsed.goalElapsedMs;
+        }
+        if (typeof parsed.goalActiveSinceMs === "number") {
+          updatedQueryState.goalActiveSinceMs = parsed.goalActiveSinceMs;
+        }
+        composerModesStateMap.set(sessionId, updatedQueryState);
+        syncComposerModes();
+        syncComposerGoalBar();
       } else if (stateObj && Array.isArray(stateObj.extensionStatuses)) {
-        return commitComposerModeState(sessionId, { version: 1, mode: "normal" });
+        composerModesStateMap.set(sessionId, { mode: "normal" });
+        syncComposerModes();
+        syncComposerGoalBar();
       }
-      return null;
     } catch (e) {}
-    return null;
   }
 
   // ==========================================
@@ -25285,9 +25925,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     "paused",
     "goalElapsedMs",
     "goalActiveSinceMs",
-    "capabilities",
-    "goalStatus",
-    "goalIdentity",
   ]);
   const composerModesTextNodeMap = new Map(); // TextNode -> { raw: string, formatted: string }
   const composerModesAttrMap = new Map(); // Element -> Map<attrName, { raw: string, formatted: string }>
@@ -25447,7 +26084,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   async function handleComposerGoalAction(action, targetSessionId, btnEl) {
-    if (!["pause", "resume"].includes(action)) return false;
     if (isGoalActionRunning) return;
     const sid = targetSessionId || (typeof getEffectiveComposerSessionId === "function" ? getEffectiveComposerSessionId() : getCurrentSessionId());
     if (!sid) return;
@@ -25455,39 +26091,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     isGoalActionRunning = true;
 
     try {
-      const engine = getComposerExecutionEngineHint(sid);
-      if (engine === "codex") {
-        const current = composerModesStateMap.get(sid);
-        const goalState = getComposerGoalState(sid);
-        const identity = current?.goalIdentity;
-        const objective = typeof identity?.objective === "string" ? identity.objective : String(current?.goal || "").trim();
-        if (current?.capabilities?.goal !== true || !goalState || !objective || !goalState.action) {
-          showToast("当前目标状态不可操作", null, 2500);
-          return false;
-        }
-        const expected = { objective };
-        if (typeof identity?.createdAt === "string" || typeof identity?.createdAt === "number") {
-          expected.createdAt = identity.createdAt;
-        }
-        const actionRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "composer_goal_action", action, expected }),
-        });
-        const actionData = await actionRes.json().catch(() => null);
-        const authoritative = parseExtensionStatus(actionData, "composer-modes");
-        if (!actionRes.ok || actionData?.success === false || authoritative?.version !== 1 || authoritative.mode !== "goal") {
-          showToast(actionData?.error || "目标控制未获服务端确认", null, 3000);
-          return false;
-        }
-        const returnedObjective = authoritative.goalIdentity?.objective || authoritative.goal;
-        if (returnedObjective !== objective || !commitComposerModeState(sid, authoritative)) {
-          showToast("目标状态已变化，未应用控制结果", null, 3000);
-          return false;
-        }
-        return true;
-      }
-
       // 0. 检查后端扩展命令是否已注册，防止旧会话尚未加载扩展时将 /composer-goal 当作普通用户消息发给模型
       const cmdRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
         method: "POST",
@@ -25562,9 +26165,27 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
 
       // 3. 真实确认后更新本地会话模式映射
-      if (!commitComposerModeState(sid, parsed)) return false;
+      const prev = composerModesStateMap.get(sid) || {};
+      const updatedActionState = {
+        ...prev,
+        mode: parsed.mode || "goal",
+        goal: parsed.goal || prev.goal,
+        pausePending: newPending,
+        paused: newPaused,
+      };
+      if (typeof parsed?.goalElapsedMs === "number") {
+        updatedActionState.goalElapsedMs = parsed.goalElapsedMs;
+      }
+      if (typeof parsed?.goalActiveSinceMs === "number") {
+        updatedActionState.goalActiveSinceMs = parsed.goalActiveSinceMs;
+      } else {
+        delete updatedActionState.goalActiveSinceMs;
+      }
+      composerModesStateMap.set(sid, updatedActionState);
 
-      // The shared commit already publishes controls and the legacy footer once.
+      // 4. 刷新目标独立行
+      syncComposerGoalBar();
+      syncComposerModesBottomStatus();
       return true;
     } catch (e) {
       showToast("操作发生异常，请检查网络", null, 3000);
@@ -25583,14 +26204,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function syncComposerModesBottomStatus() {
     if (!isPluginEnabled("composer-modes")) {
       restoreComposerModesBottomStatus();
-      return;
-    }
-    // The native composer hook commits authoritative extensionStatuses to the shared map.
-    // Keep DOM status scraping only for legacy composers without the native host.
-    if (document.querySelector?.("[data-pi-native-composer-host]")) {
-      if (composerModesStatusObserver || composerModesTextNodeMap.size || composerModesAttrMap.size) {
-        restoreComposerModesBottomStatus();
-      }
       return;
     }
     if (isCleaningComposerModesStatus) return;
@@ -25661,25 +26274,19 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
                     const nextPaused = Boolean(p.paused);
                     const nextElapsed = typeof p.goalElapsedMs === "number" ? p.goalElapsedMs : undefined;
                     const nextActiveSince = typeof p.goalActiveSinceMs === "number" ? p.goalActiveSinceMs : undefined;
-                    const nextGoalStatus = typeof p.goalStatus === "string"
-                      ? p.goalStatus
-                      : nextPending ? "pending" : nextPaused ? "paused" : "active";
                     if (
                       Boolean(prev.pausePending) !== nextPending ||
                       Boolean(prev.paused) !== nextPaused ||
                       prev.goalElapsedMs !== nextElapsed ||
-                      prev.goalActiveSinceMs !== nextActiveSince ||
-                      prev.goalStatus !== nextGoalStatus
+                      prev.goalActiveSinceMs !== nextActiveSince
                     ) {
                       const updatedBottomState = {
                         ...prev,
                         mode: "goal",
                         goal: p.goal,
-                        goalStatus: nextGoalStatus,
                         pausePending: nextPending,
                         paused: nextPaused,
                       };
-                      if (p.goalIdentity) updatedBottomState.goalIdentity = p.goalIdentity;
                       if (nextElapsed !== undefined) {
                         updatedBottomState.goalElapsedMs = nextElapsed;
                       } else {
@@ -25690,7 +26297,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
                       } else {
                         delete updatedBottomState.goalActiveSinceMs;
                       }
-                      commitComposerModeState(currentSid, updatedBottomState);
+                      composerModesStateMap.set(currentSid, updatedBottomState);
+                      syncComposerGoalBar();
                     }
                   } else {
                     const mismatchKey = `${currentSid}|${p.goal}`;
@@ -25928,6 +26536,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (shouldSync) {
         syncComposerModesBottomStatus();
         syncComposerGoalBar();
+        if (typeof syncCollapsedSessionTitleBadge === "function") {
+          syncCollapsedSessionTitleBadge();
+        }
       }
     });
 
@@ -26074,6 +26685,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
 
     ensureComposerModesStyle();
+    ensureComposerModesStatusObserver();
     bindComposerModesEvents();
     document.querySelectorAll(".pi-enh-composer-modes-disabled-notice").forEach((el) => el.remove());
     if (pendingNewComposerMode && pendingNewComposerMode.project !== getCurrentProjectStatusKey()) pendingNewComposerMode = null;
@@ -26085,19 +26697,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   async function requestExitModeWithVerification(sessionId) {
     if (!sessionId) return false;
-    const engine = getComposerExecutionEngineHint(sessionId);
     const res = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(engine === "codex"
-        ? { type: "set_composer_mode", mode: "normal" }
-        : { type: "prompt", message: "/composer-mode normal" }),
+      body: JSON.stringify({ type: "prompt", message: "/composer-mode normal" }),
     }).catch(() => null);
     if (!res || !res.ok) {
       showToast("请求退出模式失败，写权限未恢复", null, 3000);
       return false;
     }
-    const stateRes = engine === "codex" ? res : await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+    const stateRes = await window.fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "get_state" }),
@@ -26106,7 +26715,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const parsed = parseExtensionStatus(postData, "composer-modes");
     const realMode = parsed?.mode;
     if (stateRes?.ok && postData?.success !== false && parsed?.version === 1 && realMode === "normal") {
-      commitComposerModeState(sessionId, parsed);
+      composerModesStateMap.set(sessionId, { mode: "normal" });
+      dispatchComposerModeChange(sessionId);
       document.querySelectorAll(".pi-enh-composer-modes-disabled-notice").forEach((el) => {
         try { el.remove(); } catch (e) {}
       });
@@ -26184,13 +26794,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_RESTORE_COMPOSER_MODES_BOTTOM_STATUS__ = restoreComposerModesBottomStatus;
   window.__PI_ENH_COMPOSER_MODES_TEXT_NODE_MAP__ = composerModesTextNodeMap;
   window.__PI_ENH_COMPOSER_MODES_ATTR_MAP__ = composerModesAttrMap;
-  const commitComposerModeStateBridge = (sessionId, state) => commitComposerModeState(sessionId, state);
-  window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__ = commitComposerModeStateBridge;
-  activeCleanups.push(() => {
-    if (window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__ === commitComposerModeStateBridge) {
-      delete window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__;
-    }
-  });
   window.__PI_ENH_SET_COMPOSER_MODE_STATE__ = (sessionId, state) => {
     pendingComposerNavOverride = null;
     if (sessionId) {
@@ -26198,10 +26801,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         sessionId,
         whileDraftKey: readComposerNativeDraftKey(),
       };
-      return commitComposerModeState(sessionId, state?.version === 1 ? state : { ...state, version: 1 });
     }
+    composerModesStateMap.set(sessionId, state);
     syncComposerModes();
-    return null;
+    syncComposerGoalBar();
   };
   window.__PI_ENH_SYNC_COMPOSER_GOAL_BAR__ = syncComposerGoalBar;
   window.__PI_ENH_REMOVE_COMPOSER_GOAL_BAR__ = removeComposerGoalBar;
@@ -26288,7 +26891,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       categoryLabel: "🧩 插件与技能",
       title: "synology-docker-ops",
       badge: "NAS",
-      subtitle: "NAS 容器与存储安全运维",
+      subtitle: "群晖 127.0.0.1 NAS 容器与存储安全运维",
       insertText: "@synology-docker-ops ",
       icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 13h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h4"></path><path d="M2 13h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H2"></path><path d="M20 21a8 8 0 0 0-16 0"></path><rect x="9" y="3" width="6" height="6" rx="1"></rect></svg>',
       keywords: ["synology-docker-ops", "synology", "nas", "群晖", "docker", "容器"],
@@ -27190,7 +27793,24 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return Boolean(rect && rect.width > 0 && rect.right > 0);
   }
 
+  // ==========================================
+  // 多指 / 三指触控防误触守卫 (Multi-touch & Three-finger Touch Shield)
+  // 核心原则：用户在手机上三指截屏或三指多指触控时，绝对禁止触发右侧面板打开！
+  // ==========================================
+  let multiTouchShieldActiveUntil = 0;
+
+  function markMultiTouchShield(durationMs = 1500) {
+    multiTouchShieldActiveUntil = Math.max(multiTouchShieldActiveUntil, Date.now() + durationMs);
+  }
+
+  function isMultiTouchShieldActive() {
+    return Date.now() < multiTouchShieldActiveUntil;
+  }
+
   function openFilePanel() {
+    if (isMultiTouchShieldActive()) {
+      return false; // 三指触控及多指操作窗口内严禁打开文件面板
+    }
     if (isFilePanelOpen()) return true;
     const toggleBtn = document.querySelector('button[aria-controls="file-panel"][aria-expanded="false"]')
       || document.querySelector('button[aria-controls="file-panel"]');
@@ -27260,6 +27880,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function handlePanelUserToggle(event) {
     if (!isPluginEnabled("session-panel-binding") || isApplyingPanelState) return;
+    if (isMultiTouchShieldActive()) return; // 三指防护期间忽略面板切换
     const target = event.target;
     if (!target) return;
     const btn = target.closest?.('button[aria-controls="file-panel"], .right-panel-overlay-backdrop');
@@ -27332,6 +27953,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (target.closest?.("button, a, input, textarea, select, [role='tab'], .file-viewer-mode-button, .pi-enh-md-btn")) {
       return;
     }
+
+    if (isMultiTouchShieldActive()) return;
 
     const panelHeader = target.closest?.("#file-panel .file-viewer-toolbar, #file-panel > div:first-child, .right-panel-container > div:first-child");
     if (panelHeader && isFilePanelOpen()) {
@@ -27644,13 +28267,21 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function isSessionSidebarOpen() {
+    const backdrop = document.querySelector(".sidebar-overlay-backdrop");
+    if (backdrop && backdrop.isConnected) {
+      const bStyle = window.getComputedStyle ? window.getComputedStyle(backdrop) : null;
+      if (bStyle && bStyle.display !== "none" && bStyle.visibility !== "hidden" && parseFloat(bStyle.opacity || "0") > 0.05) {
+        return true;
+      }
+    }
     const sidebar = getSessionSidebarElement();
-    if (sidebar) {
+    if (sidebar && sidebar.isConnected) {
       if (sidebar.classList.contains("sidebar-open")) return true;
       if (sidebar.classList.contains("sidebar-closed")) return false;
       const rect = typeof sidebar.getBoundingClientRect === "function" ? sidebar.getBoundingClientRect() : null;
       if (rect) {
-        return rect.width > 30 && rect.right >= 100;
+        if (rect.width > 40 && rect.right > 40) return true;
+        if (rect.right <= 10 || rect.width <= 10) return false;
       }
     }
     const btn = getSidebarToggleButton();
@@ -27883,18 +28514,21 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (!isPluginEnabled("mobile-swipe-drawer")) {
       return;
     }
-    // The native AppShell owns session-sidebar touch state for both engines.
-    // This legacy handler retains only the file-panel gesture on native pages.
-    if (getSessionSidebarElement()?.getAttribute("data-pi-native-sidebar-gestures") === "true" && !isFilePanelOpen()) {
-      mobileSwipeTracking = false;
-      mobileSwipeEligible = false;
-      return;
-    }
     if (mobileSwipeResetTimer) {
       resetMobileSwipeStyles();
     }
+    const touchCount = (e.touches && e.touches.length) || (e.targetTouches && e.targetTouches.length) || 0;
+    if (touchCount >= 3) {
+      markMultiTouchShield(1500);
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      resetMobileSwipeStyles();
+      return;
+    }
     if (!e || !e.touches || e.touches.length !== 1) {
       mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      resetMobileSwipeStyles();
       return;
     }
 
@@ -27993,7 +28627,20 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function handleMobileSwipeTouchMove(e) {
     if (!mobileSwipeTracking || !mobileSwipeEligible || !isPluginEnabled("mobile-swipe-drawer")) return;
-    if (!e || !e.touches || e.touches.length !== 1) return;
+    const touchCount = (e.touches && e.touches.length) || 0;
+    if (touchCount >= 3) {
+      markMultiTouchShield(1500);
+      if (mobileSwipeTracking) resetMobileSwipeStyles();
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+    if (!e || !e.touches || e.touches.length !== 1) {
+      if (mobileSwipeTracking) resetMobileSwipeStyles();
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
 
     const touch = e.touches[0];
     const targetEl = (touch && touch.target) || e?.target;
@@ -28261,6 +28908,38 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     snapBackMobileSwipe();
   }
 
+  // 全局三指触控与多指防御事件监听
+  function handleGlobalMultiTouchDetection(e) {
+    const touchCount = (e.touches && e.touches.length) || (e.targetTouches && e.targetTouches.length) || (e.changedTouches && e.changedTouches.length) || 0;
+    if (touchCount >= 3) {
+      markMultiTouchShield(1500);
+    }
+  }
+
+  function handlePotentialFilePanelMisClick(e) {
+    if (!isMultiTouchShieldActive()) return;
+    const target = e.target;
+    if (!target) return;
+    const fileToggleBtn = target.closest?.('button[aria-controls="file-panel"], button[data-mobile-toolbar-file="true"], [data-act="view"], .pi-enh-path-view');
+    if (fileToggleBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+      return;
+    }
+    if (typeof window !== "undefined" && window.innerWidth <= 960 && isFilePanelOpen()) {
+      closeFilePanel();
+    }
+  }
+
+  if (typeof document !== "undefined") {
+    addManagedListener(document, "touchstart", handleGlobalMultiTouchDetection, { passive: true, capture: true });
+    addManagedListener(document, "touchmove", handleGlobalMultiTouchDetection, { passive: true, capture: true });
+    addManagedListener(document, "touchend", handlePotentialFilePanelMisClick, { passive: false, capture: true });
+    addManagedListener(document, "click", handlePotentialFilePanelMisClick, { capture: true });
+    addManagedListener(document, "pointerdown", handlePotentialFilePanelMisClick, { capture: true });
+  }
+
   function syncMobileSwipeDrawer(enabled) {
     if (!enabled) {
       resetMobileSwipeStyles();
@@ -28516,11 +29195,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   let isBatchDragging = false;
   let batchDragTargetState = true;
   let batchDeleteInFlight = false;
-  let batchDeleteJob = null;
-  let batchDeleteObserverController = null;
-  let batchDeleteObserverGeneration = 0;
-  let batchDeleteJobEntry = null;
-  const batchDeleteJobStorageKey = "pi-enh:session-batch-delete-job";
 
   let cachedActiveSessionIds = null;
   let cachedLatestGroupsRef = null;
@@ -28884,116 +29558,19 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function closeBatchDeleteModal() {
+    if (batchDeleteInFlight) return;
     if (batchDeleteModal) {
       batchDeleteModal.remove();
       batchDeleteModal = null;
     }
-    syncBatchDeleteJobEntry();
   }
 
-  function isBatchDeleteJobTerminal(job = batchDeleteJob) {
-    return Boolean(job?.done);
-  }
-
-  function getBatchDeleteJobStorage() {
-    try { return window.localStorage; } catch (e) { return null; }
-  }
-
-  function saveBatchDeleteJobPointer(job) {
-    const storage = getBatchDeleteJobStorage();
-    if (!storage) throw new Error("浏览器不支持保存删除任务恢复指针");
-    storage.setItem(batchDeleteJobStorageKey, JSON.stringify({ id: job.id, ids: job.ids }));
-  }
-
-  function clearBatchDeleteJobPointer() {
-    try { getBatchDeleteJobStorage()?.removeItem(batchDeleteJobStorageKey); } catch (e) {}
-  }
-
-  function readBatchDeleteJobPointer() {
-    try {
-      const raw = getBatchDeleteJobStorage()?.getItem(batchDeleteJobStorageKey);
-      if (!raw) return null;
-      const value = JSON.parse(raw);
-      if (!value || typeof value.id !== "string" || !Array.isArray(value.ids) ||
-          value.ids.length === 0 || value.ids.length > 10000 ||
-          value.ids.some((id) => typeof id !== "string" || !id || id.length > 200) ||
-          new Set(value.ids).size !== value.ids.length) return null;
-      return { id: value.id, ids: value.ids };
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function createBatchDeleteJobId() {
-    try {
-      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
-    } catch (e) {}
-    const hex = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, "0");
-    return `${hex()}${hex()}-${hex()}-4${hex().slice(1)}-${((8 + Math.floor(Math.random() * 4)).toString(16))}${hex().slice(1)}-${hex()}${hex()}${hex()}`;
-  }
-
-  function removeBatchDeleteJobEntry() {
-    const entry = batchDeleteJobEntry || document.getElementById("pi-enh-batch-delete-job-entry");
-    if (entry) entry.remove();
-    batchDeleteJobEntry = null;
-  }
-
-  function syncBatchDeleteJobEntry() {
-    if (!isPluginEnabled("session-batch-actions") || !batchDeleteJob) {
-      removeBatchDeleteJobEntry();
-      return;
-    }
-    let entry = document.getElementById("pi-enh-batch-delete-job-entry");
-    if (!entry) {
-      entry = document.createElement("button");
-      entry.id = "pi-enh-batch-delete-job-entry";
-      entry.type = "button";
-      entry.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:10020;padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg-panel);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.22);font-size:12px;cursor:pointer";
-      entry.addEventListener("click", () => openBatchDeleteJobModal());
-      document.body.appendChild(entry);
-    }
-    batchDeleteJobEntry = entry;
-    const job = batchDeleteJob;
-    const label = job.connectionState === "not_found"
-      ? "任务待核对"
-      : job.connectionState === "reconnecting"
-        ? "连接待恢复"
-        : job.done
-          ? (job.status === "completed" ? "已完成" : "结果待核对")
-          : job.status === "interrupted"
-            ? "中断待核对"
-            : "删除进行中";
-    const processed = Number.isSafeInteger(job.processed) ? job.processed : 0;
-    entry.textContent = `批量删除 ${processed}/${job.ids.length} · ${label} · 查看`;
-    entry.title = "查看或重新同步此删除任务；隐藏不会取消服务器任务";
-    entry.setAttribute("aria-label", entry.textContent);
-  }
-
-  function dismissBatchDeleteJob() {
-    if (!isBatchDeleteJobTerminal() && batchDeleteJob?.connectionState !== "not_found") return;
-    clearBatchDeleteJobPointer();
-    batchDeleteJob = null;
-    removeBatchDeleteJobEntry();
+  function openBatchDeleteModal() {
+    if (batchDeleteInFlight) return;
     closeBatchDeleteModal();
-  }
+    const targetIds = Array.from(selectedSessionBatchIds);
+    if (targetIds.length === 0) return;
 
-  function stopBatchDeleteObserver() {
-    batchDeleteObserverGeneration++;
-    if (batchDeleteJob && !batchDeleteJob.done) batchDeleteJob.attachNeeded = true;
-    if (batchDeleteObserverController) {
-      try { batchDeleteObserverController.abort(new Error("批量删除观察器已暂停")); } catch (e) {}
-    }
-    batchDeleteObserverController = null;
-    batchDeleteInFlight = false;
-  }
-
-  activeCleanups.push(() => {
-    stopBatchDeleteObserver();
-    batchDeleteJob = null; // The durable browser pointer is restored by the next runtime.
-    removeBatchDeleteJobEntry();
-  });
-
-  function createBatchDeleteModal(targetIds, view = "confirm") {
     const count = targetIds.length;
     const previewHtml = targetIds.slice(0, 6).map((sid) => {
       const title = getSessionTitleForBatch(sid);
@@ -29001,8 +29578,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }).join("");
     const overflowCount = count - 6;
     const overflowHtml = overflowCount > 0 ? `<div class="pi-enh-batch-modal-item" style="color: var(--text-muted); font-style: italic;">... 等共 ${count} 个会话</div>` : "";
-    const isJobView = view === "job";
-    const retryCount = isJobView ? (batchDeleteJob?.failedIds?.length || 0) + (batchDeleteJob?.notStartedIds?.length || 0) : 0;
+
     const backdrop = document.createElement("div");
     backdrop.id = "pi-enh-batch-delete-modal";
     backdrop.className = "pi-enh-batch-modal-backdrop";
@@ -29010,889 +29586,142 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       <div class="pi-enh-batch-modal" role="dialog" aria-modal="true" aria-labelledby="pi-enh-batch-modal-title">
         <div class="pi-enh-batch-modal-header" id="pi-enh-batch-modal-title">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-          <span>${isJobView ? "批量删除任务" : "批量删除会话"}</span>
+          <span>批量删除会话</span>
         </div>
         <div class="pi-enh-batch-modal-body">
-          <div data-batch-delete-intro style="font-weight: 500;">${isJobView ? (batchDeleteJob?.connectionState === "not_found" ? "服务器未找到此任务；没有自动重发删除请求。" : "服务器任务会继续处理；隐藏窗口不会取消任务。") : `确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？`}</div>
-          ${isJobView ? "" : `<div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>`}
-          <div class="pi-enh-batch-modal-list">${previewHtml}${overflowHtml}</div>
-          <div id="pi-enh-batch-delete-progress-section" style="${isJobView ? "" : "display: none;"} margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
-            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; margin-bottom: 6px;">
-              <span id="pi-enh-batch-progress-status" style="font-weight: 500; color: var(--text);">${isJobView ? "正在同步服务器任务..." : "准备开始删除..."}</span>
-              <span id="pi-enh-batch-progress-counts" style="color: var(--text-muted); font-variant-numeric: tabular-nums;">0 / ${count}</span>
-            </div>
-            <div id="pi-enh-batch-delete-progressbar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="${count}" aria-label="批量删除进度" style="width: 100%; height: 8px; background: var(--bg-hover, #27272a); border-radius: 4px; overflow: hidden; position: relative;">
-              <div id="pi-enh-batch-progressbar-fill" style="width: 0%; height: 100%; background: #ef4444; border-radius: 4px; transition: width 0.15s ease-out;"></div>
-            </div>
-            <div id="pi-enh-batch-progress-details" style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11.5px; color: var(--text-muted);">
-              <span id="pi-enh-batch-stat-confirmed" style="color: #22c55e;">已确认: 0</span>
-              <span id="pi-enh-batch-stat-failed" style="display: none; color: #ef4444;">失败: 0</span>
-              <span id="pi-enh-batch-stat-unknown" style="display: none; color: #f59e0b;">未知/待确认: 0</span>
-            </div>
-            <div id="pi-enh-batch-progress-result-ids" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere;"></div>
+          <div style="font-weight: 500;">确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？</div>
+          <div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>
+          <div class="pi-enh-batch-modal-list">
+            ${previewHtml}
+            ${overflowHtml}
           </div>
         </div>
         <div class="pi-enh-batch-modal-footer">
-          <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">${isJobView ? (isBatchDeleteJobTerminal() ? "关闭结果" : "隐藏到后台") : "取消"}</button>
-          <button type="button" class="pi-enh-btn-sm" data-action="hide" style="display:none;padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">隐藏到后台</button>
-          <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="${isJobView ? (retryCount ? "" : "display:none;") : ""} padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">${isJobView ? `选择可重试项 (${retryCount})` : "确认彻底删除"}</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">取消</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">确认彻底删除</button>
         </div>
       </div>
     `;
+
     const cancelBtn = backdrop.querySelector('[data-action="cancel"]');
-    const hideBtn = backdrop.querySelector('[data-action="hide"]');
     const confirmBtn = backdrop.querySelector('[data-action="confirm"]');
-    const hideOrDismiss = () => {
-      if (!batchDeleteJob) {
-        closeBatchDeleteModal();
-      } else if (isBatchDeleteJobTerminal() || batchDeleteJob.connectionState === "not_found") {
-        dismissBatchDeleteJob();
-        setSessionBatchMode(false);
-      } else {
-        setSessionBatchMode(false);
-      }
-    };
-    cancelBtn?.addEventListener("click", hideOrDismiss);
-    hideBtn?.addEventListener("click", () => setSessionBatchMode(false));
+
+    cancelBtn?.addEventListener("click", () => {
+      closeBatchDeleteModal();
+    });
+
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop) {
-        if (batchDeleteJob && !isBatchDeleteJobTerminal()) setSessionBatchMode(false);
-        else closeBatchDeleteModal();
+        closeBatchDeleteModal();
       }
     });
-    if (isJobView) {
-      confirmBtn?.addEventListener("click", () => {
-        const retryIds = [...(batchDeleteJob?.failedIds || []), ...(batchDeleteJob?.notStartedIds || [])];
-        if (!retryIds.length) return;
-        dismissBatchDeleteJob();
-        selectedSessionBatchIds.clear();
-        for (const id of retryIds) selectedSessionBatchIds.add(id);
-        setSessionBatchMode(true);
-      });
-    } else {
-      confirmBtn?.addEventListener("click", async () => {
-        if (batchDeleteJob) {
-          if (!isBatchDeleteJobTerminal(batchDeleteJob)) return;
-          const retryIds = [...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
-          if (!retryIds.length) return;
-          dismissBatchDeleteJob();
-          selectedSessionBatchIds.clear();
-          for (const id of retryIds) selectedSessionBatchIds.add(id);
-          setSessionBatchMode(true);
-          return;
-        }
-        if (confirmBtn) confirmBtn.disabled = true;
-        const progressSection = backdrop.querySelector("#pi-enh-batch-delete-progress-section");
-        if (progressSection) progressSection.style.display = "block";
-        if (cancelBtn) cancelBtn.textContent = "隐藏到后台";
-        await executeBatchDeleteSessions(targetIds, confirmBtn);
-      });
-    }
+
+    confirmBtn?.addEventListener("click", async () => {
+      if (cancelBtn) {
+        cancelBtn.disabled = true;
+        cancelBtn.style.opacity = "0.5";
+        cancelBtn.style.pointerEvents = "none";
+      }
+      await executeBatchDeleteSessions(targetIds, confirmBtn);
+    });
+
     document.body.appendChild(backdrop);
     batchDeleteModal = backdrop;
-    if (isJobView) {
-      const progress = batchDeleteJob?.lastProgress;
-      if (progress) {
-        const status = backdrop.querySelector("#pi-enh-batch-progress-status");
-        const counts = backdrop.querySelector("#pi-enh-batch-progress-counts");
-        const progressbar = backdrop.querySelector("#pi-enh-batch-delete-progressbar");
-        const fill = backdrop.querySelector("#pi-enh-batch-progressbar-fill");
-        const confirmed = backdrop.querySelector("#pi-enh-batch-stat-confirmed");
-        const failed = backdrop.querySelector("#pi-enh-batch-stat-failed");
-        const unknown = backdrop.querySelector("#pi-enh-batch-stat-unknown");
-        const resultIds = backdrop.querySelector("#pi-enh-batch-progress-result-ids");
-        const retry = backdrop.querySelector('[data-action="confirm"]');
-        if (status) status.textContent = progress.status;
-        if (counts) counts.textContent = `${progress.processed} / ${progress.total}`;
-        if (progressbar) progressbar.setAttribute("aria-valuenow", String(progress.processed));
-        if (fill) fill.style.width = `${progress.total ? Math.min(100, Math.round(progress.processed / progress.total * 100)) : 0}%`;
-        if (confirmed) confirmed.textContent = `已确认: ${progress.confirmed}`;
-        if (failed) {
-          failed.textContent = `失败: ${progress.failed}`;
-          failed.style.display = progress.failed > 0 ? "inline" : "none";
-        }
-        if (unknown) {
-          unknown.textContent = `未知/待确认: ${progress.unknown}`;
-          unknown.style.display = progress.unknown > 0 ? "inline" : "none";
-        }
-        const unresolved = [...(batchDeleteJob.unknownIds || []), ...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
-        if (resultIds && unresolved.length) resultIds.textContent = `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`;
-        if (retry) {
-          const retryCount = (batchDeleteJob.failedIds?.length || 0) + (batchDeleteJob.notStartedIds?.length || 0);
-          retry.disabled = !batchDeleteJob.done || retryCount === 0;
-          retry.textContent = `选择可重试项 (${retryCount})`;
-          retry.style.display = batchDeleteJob.done && retryCount ? "" : "none";
-        }
-      }
-    } else {
-      confirmBtn?.focus();
-    }
-    return backdrop;
+    confirmBtn?.focus();
   }
 
-  function openBatchDeleteModal() {
-    if (batchDeleteJob) {
-      openBatchDeleteJobModal();
-      return;
-    }
-    if (batchDeleteInFlight) return;
-    closeBatchDeleteModal();
-    const targetIds = Array.from(selectedSessionBatchIds);
-    if (targetIds.length === 0) return;
-    createBatchDeleteModal(targetIds, "confirm");
-  }
-
-  function openBatchDeleteJobModal() {
-    if (!batchDeleteJob) return;
-    closeBatchDeleteModal();
-    createBatchDeleteModal(batchDeleteJob.ids, "job");
-    if (!batchDeleteInFlight && !batchDeleteJob.done && batchDeleteJob.connectionState !== "not_found") {
-      void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
-    }
-  }
-
-  async function executeBatchDeleteSessions(targetIds, confirmBtn, options = {}) {
+  async function executeBatchDeleteSessions(targetIds, confirmBtn) {
     if (batchDeleteInFlight || !Array.isArray(targetIds) || targetIds.length === 0) return;
     targetIds = Array.from(new Set(targetIds));
-    if (targetIds.length > 10000) {
-      showToast("一次最多可删除 10000 个会话", sessionDeleteIcon);
-      return;
-    }
-    const isResume = options.resume === true;
-    let job = isResume ? batchDeleteJob : null;
-    if (isResume) {
-      if (!job || job.id !== options.jobId || job.ids.length !== targetIds.length || job.ids.some((id, i) => id !== targetIds[i])) return;
-    } else {
-      if (batchDeleteJob) return;
-      job = {
-        id: createBatchDeleteJobId(), ids: targetIds.slice(), status: "running", serverStatus: "running",
-        processed: 0, lastSequence: 0, connectionState: "connecting", appliedDeletedIds: new Set(),
-        failedIds: [], unknownIds: [], notStartedIds: [], done: false,
-      };
-      try {
-        saveBatchDeleteJobPointer(job);
-      } catch (err) {
-        showToast(`无法保存删除任务恢复指针：${err?.message || String(err)}`, sessionDeleteIcon);
-        return;
-      }
-      batchDeleteJob = job;
-    }
-    if (!(job.appliedDeletedIds instanceof Set)) job.appliedDeletedIds = new Set();
-    job.attachNeeded = false;
-    selectedSessionBatchIds.clear();
-    syncSessionBatchBar();
-    syncSessionBatchRowStates();
-    const generation = ++batchDeleteObserverGeneration;
-    const controller = new AbortController();
-    batchDeleteObserverController = controller;
     batchDeleteInFlight = true;
-    const totalRequested = targetIds.length;
-
-    function renderProgress({ status, processed, confirmed, failed, unknown }) {
-      job.processed = processed;
-      job.lastProgress = { status, processed, total: totalRequested, confirmed, failed, unknown };
-      const modal = batchDeleteModal || (typeof document !== "undefined" ? document.getElementById("pi-enh-batch-delete-modal") : null);
-      const progressSection = modal?.querySelector?.("#pi-enh-batch-delete-progress-section");
-      const statusEl = modal?.querySelector?.("#pi-enh-batch-progress-status");
-      const countsEl = modal?.querySelector?.("#pi-enh-batch-progress-counts");
-      const progressbarEl = modal?.querySelector?.("#pi-enh-batch-delete-progressbar");
-      const fillEl = modal?.querySelector?.("#pi-enh-batch-progressbar-fill");
-      const statConfirmedEl = modal?.querySelector?.("#pi-enh-batch-stat-confirmed");
-      const statFailedEl = modal?.querySelector?.("#pi-enh-batch-stat-failed");
-      const statUnknownEl = modal?.querySelector?.("#pi-enh-batch-stat-unknown");
-      const resultIdsEl = modal?.querySelector?.("#pi-enh-batch-progress-result-ids");
-      const introEl = modal?.querySelector?.("[data-batch-delete-intro]");
-      if (progressSection) progressSection.style.display = "block";
-      if (introEl && batchDeleteJob === job) introEl.textContent = "服务器任务继续处理；隐藏窗口不会取消任务。";
-      if (statusEl && status) statusEl.textContent = status;
-      if (countsEl) countsEl.textContent = `${processed} / ${totalRequested}`;
-      if (progressbarEl) {
-        progressbarEl.setAttribute("aria-valuenow", String(processed));
-        progressbarEl.setAttribute("aria-valuemax", String(totalRequested));
-      }
-      if (fillEl) {
-        const pct = totalRequested > 0 ? Math.min(100, Math.round((processed / totalRequested) * 100)) : 0;
-        fillEl.style.width = `${pct}%`;
-      }
-      if (statConfirmedEl) statConfirmedEl.textContent = `已确认: ${confirmed}`;
-      if (statFailedEl) {
-        statFailedEl.textContent = `失败: ${failed}`;
-        statFailedEl.style.display = failed > 0 ? "inline" : "none";
-      }
-      if (statUnknownEl) {
-        statUnknownEl.textContent = `未知/待确认: ${unknown}`;
-        statUnknownEl.style.display = unknown > 0 ? "inline" : "none";
-      }
-      const unresolved = [...(job.unknownIds || []), ...(job.failedIds || []), ...(job.notStartedIds || [])];
-      if (resultIdsEl) resultIdsEl.textContent = unresolved.length
-        ? `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`
-        : "";
-      const cancelBtn = modal?.querySelector?.('[data-action="cancel"]');
-      const modalConfirmBtn = modal?.querySelector?.('[data-action="confirm"]');
-      if (cancelBtn && batchDeleteJob === job) {
-        cancelBtn.textContent = isBatchDeleteJobTerminal(job)
-          ? "关闭结果"
-          : job.connectionState === "not_found" ? "清除记录" : "隐藏到后台";
-      }
-      if (modalConfirmBtn && batchDeleteJob === job) {
-        const retryCount = (job.failedIds?.length || 0) + (job.notStartedIds?.length || 0);
-        modalConfirmBtn.disabled = !job.done || retryCount === 0;
-        modalConfirmBtn.textContent = job.done ? `选择可重试项 (${retryCount})` : `正在删除 (${processed}/${totalRequested})...`;
-        modalConfirmBtn.style.display = job.done && retryCount ? "" : "none";
-      }
-      syncBatchDeleteJobEntry();
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = `正在删除 (0/${targetIds.length})...`;
     }
-
-    renderProgress({
-      status: `准备开始删除 (0/${totalRequested})...`,
-      processed: 0,
-      confirmed: 0,
-      failed: 0,
-      unknown: 0,
-    });
-
-    // Paint the busy state; pending sessions remain visible until the server confirms deletion.
+    // Paint the busy state before any local bookkeeping. One request serves up
+    // to 100 sessions; do not rerender the entire sidebar for every pending ID.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    if (generation !== batchDeleteObserverGeneration) return;
     const activeSessionId = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
     let shouldResetActiveView = false;
     let successCount = 0;
     const failedIds = new Set();
-    const unknownIds = new Set();
-    const notStartedIds = new Set();
     let transportFailed = false;
-    let jobReceivedDone = false;
-    let definitiveRejectedError = null;
-    let processedSoFar = 0;
+    for (const sid of targetIds) markSessionAsDeleted(sid, 60000, false);
+    try { window.__PI_ENH_RERENDER_SESSIONS__?.(); } catch (e) {}
 
-    async function waitForSignal(ms) {
-      if (controller.signal.aborted) return false;
-      return await new Promise((resolve) => {
-        let timer = null;
-        const finish = (value) => {
-          if (timer) clearTimeout(timer);
-          controller.signal.removeEventListener("abort", onAbort);
-          resolve(value);
-        };
-        const onAbort = () => finish(false);
-        controller.signal.addEventListener("abort", onAbort, { once: true });
-        timer = setTimeout(() => finish(true), ms);
-      });
-    }
-
-    async function requestJobJson(url, init = {}) {
-      const requestController = new AbortController();
-      const onAbort = () => { try { requestController.abort(); } catch (e) {} };
-      if (controller.signal.aborted) onAbort();
-      else controller.signal.addEventListener("abort", onAbort, { once: true });
-      const timeout = setTimeout(() => { try { requestController.abort(new Error("job observation request timeout")); } catch (e) {} }, 15000);
+    for (let offset = 0; offset < targetIds.length; offset += 100) {
+      const ids = targetIds.slice(offset, offset + 100);
+      const controller = new AbortController();
+      const deadline = setTimeout(() => controller.abort(), 30000);
+      let results = new Map();
+      let deletedIds = [];
       try {
-        return await fetch(url, { ...init, cache: "no-store", signal: requestController.signal });
-      } finally {
-        clearTimeout(timeout);
-        controller.signal.removeEventListener("abort", onAbort);
-      }
-    }
-
-    function assertJobMetadata(data) {
-      if (!data || data.id !== job.id || !Array.isArray(data.ids) || data.ids.length !== targetIds.length ||
-          data.ids.some((id, index) => id !== targetIds[index]) || data.total !== targetIds.length ||
-          !["running", "completed", "stopped", "interrupted"].includes(data.status) ||
-          !Number.isSafeInteger(data.processed) || data.processed < 0 || data.processed > targetIds.length ||
-          !Number.isSafeInteger(data.lastSequence) || data.lastSequence < 0) {
-        const err = new Error("服务器删除任务元数据不匹配");
-        err.permanentJobError = true;
-        throw err;
-      }
-      job.serverStatus = data.status;
-      job.metadataStatus = data.status;
-      job.lastSequence = data.lastSequence;
-      job.metadataProcessed = data.processed;
-      job.connectionState = "connected";
-      syncBatchDeleteJobEntry();
-    }
-
-    async function fetchJobMetadata() {
-      const url = `/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}`;
-      let delay = 500;
-      while (!controller.signal.aborted) {
-        try {
-          const response = await requestJobJson(url, { method: "GET" });
-          if (response.status === 404) {
-            const err = new Error("服务器未找到此删除任务");
-            err.jobNotFound = true;
-            err.permanentJobError = true;
-            throw err;
-          }
-          if (!response.ok) {
-            const err = new Error(`读取删除任务元数据失败：HTTP ${response.status}`);
-            if (response.status >= 400 && response.status < 500) err.permanentJobError = true;
-            throw err;
-          }
-          const data = await response.json();
-          assertJobMetadata(data);
-          return data;
-        } catch (err) {
-          if (controller.signal.aborted || err?.permanentJobError) throw err;
-          job.connectionState = "reconnecting";
-          renderProgress({ status: "连接中断，正在重新读取任务状态；不会重发删除请求", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
-          if (!await waitForSignal(delay)) throw new Error("任务观察已暂停");
-          delay = Math.min(5000, delay * 2);
-        }
-      }
-      throw new Error("任务观察已暂停");
-    }
-
-    async function createBatchDeleteJobResponse() {
-      if (!isResume) {
-        let postError = null;
-        try {
-          const response = await requestJobJson("/api/sessions/batch-delete/jobs", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: job.id, ids: targetIds }),
-          });
-          if (!response.ok) {
-            let errorBody = null;
-            try { errorBody = await response.json(); } catch (e) {}
-            if ((response.status === 400 || response.status === 409) && errorBody?.accepted === false) {
-              const rejected = new Error(errorBody.error || `服务器拒绝创建删除任务：HTTP ${response.status}`);
-              rejected.definitiveRejected = true;
-              throw rejected;
-            }
-            postError = new Error(`创建任务回执未确认：HTTP ${response.status}`);
-          } else {
-            try {
-              const ack = await response.json();
-              if (ack?.id === job.id && Array.isArray(ack.ids) && ack.ids.length === targetIds.length && ack.ids.every((id, i) => id === targetIds[i])) {
-                job.acknowledged = true;
-              } else {
-                postError = new Error("创建任务回执格式不匹配");
-              }
-            } catch (e) {
-              postError = e;
-            }
-          }
-        } catch (err) {
-          if (err?.definitiveRejected) throw err;
-          postError = err;
-        }
-        if (postError) {
-          job.ackUncertain = true;
-          job.connectionState = "reconnecting";
-          renderProgress({ status: "创建回执未确认，正在按任务 ID 只读核对；不会重复提交", processed: 0, confirmed: 0, failed: 0, unknown: 0 });
-        }
-      }
-      await fetchJobMetadata();
-      let cursor = 0;
-      let doneQueued = false;
-      let delay = 500;
-      const encoder = new TextEncoder();
-      const apiUrl = `/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}/events`;
-      const body = new ReadableStream({
-        async pull(streamController) {
-          while (!controller.signal.aborted) {
-            try {
-              const response = await requestJobJson(`${apiUrl}?after=${cursor}`, { method: "GET" });
-              if (response.status === 404) {
-                const err = new Error("服务器未找到此删除任务事件");
-                err.jobNotFound = true;
-                err.permanentJobError = true;
-                throw err;
-              }
-              if (!response.ok) {
-                const err = new Error(`读取删除任务事件失败：HTTP ${response.status}`);
-                if (response.status >= 400 && response.status < 500) err.permanentJobError = true;
-                throw err;
-              }
-              const page = await response.json();
-              if (!page || page.id !== job.id || !Array.isArray(page.frames) ||
-                  !["running", "completed", "stopped", "interrupted"].includes(page.status) ||
-                  !Number.isSafeInteger(page.lastSequence) || page.lastSequence < cursor) {
-                const err = new Error("服务器删除任务事件页格式无效");
-                err.permanentJobError = true;
-                throw err;
-              }
-              let expectedSeq = cursor + 1;
-              const lines = [];
-              for (const entry of page.frames) {
-                if (!entry || entry.seq !== expectedSeq || entry.seq > page.lastSequence || !entry.frame || typeof entry.frame !== "object" || typeof entry.frame.type !== "string") {
-                  const err = new Error("服务器删除任务事件序号不连续");
-                  err.permanentJobError = true;
-                  throw err;
-                }
-                cursor = entry.seq;
-                expectedSeq++;
-                job.lastSequence = cursor;
-                if (entry.frame.type === "done") doneQueued = true;
-                lines.push(JSON.stringify(entry.frame));
-              }
-              job.serverStatus = page.status;
-              const wasReconnecting = job.connectionState === "reconnecting";
-              job.connectionState = "connected";
-              syncBatchDeleteJobEntry();
-              delay = 500;
-              if (lines.length) {
-                streamController.enqueue(encoder.encode(lines.join("\n") + "\n"));
-                return;
-              }
-              if (wasReconnecting) {
-                renderProgress({ status: "已重新连接，等待服务器进度", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
-              }
-              if (page.status !== "running" && cursor === page.lastSequence && !doneQueued) {
-                const err = new Error("终态任务事件缺少 done 回执");
-                err.permanentJobError = true;
-                throw err;
-              }
-              if (!await waitForSignal(page.status === "running" ? 500 : 100)) {
-                streamController.error(new Error("任务观察已暂停"));
-                return;
-              }
-              streamController.enqueue(encoder.encode("\n"));
-              return;
-            } catch (err) {
-              if (controller.signal.aborted) {
-                streamController.error(err || new Error("任务观察已暂停"));
-                return;
-              }
-              if (err?.jobNotFound || err?.permanentJobError) {
-                if (err?.jobNotFound) job.connectionState = "not_found";
-                else job.connectionState = "reconnecting";
-                streamController.error(err);
-                return;
-              }
-              job.connectionState = "reconnecting";
-              renderProgress({ status: "连接中断，正在重新读取服务器进度；删除任务仍在服务器运行", processed: job.processed || 0, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
-              if (!await waitForSignal(delay)) {
-                streamController.error(new Error("任务观察已暂停"));
-                return;
-              }
-              delay = Math.min(5000, delay * 2);
-            }
-          }
-          streamController.error(new Error("任务观察已暂停"));
-        },
-      });
-      return {
-        ok: true,
-        headers: { get: () => "application/x-ndjson; charset=utf-8" },
-        body,
-      };
-    }
-
-    for (let offset = 0; offset < targetIds.length; offset += targetIds.length) {
-      const ids = targetIds;
-      const idsSet = new Set(ids);
-
-      let idleTimer = null;
-      function resetIdleDeadline() {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => {
-          if (generation !== batchDeleteObserverGeneration || batchReceivedDone) return;
-          job.connectionState = "reconnecting";
-          renderProgress({ status: "暂时未收到更新；服务器任务仍继续，正在重新连接", processed: processedSoFar + settledInBatch.size, confirmed: successCount, failed: failedIds.size, unknown: unknownIds.size });
-        }, 75000);
-      }
-      resetIdleDeadline();
-
-      const settledInBatch = new Set();
-      const settledResultsMap = new Map();
-      const dispatchedInBatch = new Set();
-      const confirmedInBatch = new Set();
-      const cleanedCascadeIds = new Set();
-      let inFlightId = null;
-      let receivedStart = false;
-      let batchReceivedDone = false;
-      let batchStopped = false;
-      let readerRef = null;
-
-      try {
-        const response = await createBatchDeleteJobResponse();
+        const response = await fetch("/api/sessions/batch-delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }), signal: controller.signal,
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-        const contentType = response.headers?.get?.("content-type") || "";
-        const isNdjson = contentType.includes("application/x-ndjson") && response.body && typeof response.body.getReader === "function";
-
-        if (isNdjson) {
-          const reader = response.body.getReader();
-          readerRef = reader;
-          const Decoder = typeof TextDecoder !== "undefined" ? TextDecoder : (typeof globalThis !== "undefined" ? globalThis.TextDecoder : null);
-          const decoder = Decoder ? new Decoder() : { decode: (chunk) => String(chunk) };
-          let buffer = "";
-          const MAX_FRAME_BUFFER_BYTES = Math.min(16 * 1024 * 1024, 64 * 1024 + ids.length * 1024);
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (generation !== batchDeleteObserverGeneration) return;
-            if (done) {
-              if (!batchReceivedDone) {
-                throw new Error("流提前终止，未接收到终端 done 帧");
-              }
-              break;
-            }
-            resetIdleDeadline();
-            buffer += decoder.decode(value, { stream: true });
-            if (buffer.length > MAX_FRAME_BUFFER_BYTES && buffer.indexOf("\n") === -1) {
-              throw new Error("单帧数据超长或缓冲区溢出");
-            }
-            let newlineIdx;
-            while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-              const line = buffer.slice(0, newlineIdx).trim();
-              buffer = buffer.slice(newlineIdx + 1);
-              if (!line) continue;
-              if (line.length > MAX_FRAME_BUFFER_BYTES) {
-                throw new Error("单帧数据超长");
-              }
-
-              if (batchReceivedDone) {
-                throw new Error("已收到 done 帧后仍收到多余数据帧");
-              }
-
-              let frame;
-              try {
-                frame = JSON.parse(line);
-              } catch (parseErr) {
-                throw new Error(`畸形数据帧: ${parseErr.message}`);
-              }
-              if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
-                throw new Error("无效的数据帧格式");
-              }
-
-              if (frame.type === "start") {
-                if (receivedStart) {
-                  throw new Error("重复的 start 帧");
-                }
-                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
-                  throw new Error("start 帧 total 计数矛盾或非法: " + frame.total);
-                }
-                receivedStart = true;
-                resetIdleDeadline();
-                renderProgress({
-                  status: "正在准备删除...",
-                  processed: processedSoFar + settledInBatch.size,
-                  confirmed: successCount,
-                  failed: failedIds.size,
-                  unknown: unknownIds.size,
-                });
-              } else if (frame.type === "item-start") {
-                if (!receivedStart) {
-                  throw new Error("未收到 start 帧前收到 item-start");
-                }
-                if (typeof frame.id !== "string" || !idsSet.has(frame.id)) {
-                  throw new Error("非法 item-start 帧 id: " + frame.id);
-                }
-                if (settledInBatch.has(frame.id) || dispatchedInBatch.has(frame.id)) {
-                  throw new Error("重复 item-start: " + frame.id);
-                }
-                if (!Number.isSafeInteger(frame.index) || ids[frame.index - 1] !== frame.id) {
-                  throw new Error("item-start 帧 index 非法: " + frame.index);
-                }
-                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
-                  throw new Error("item-start 帧 total 矛盾: " + frame.total);
-                }
-                inFlightId = frame.id;
-                dispatchedInBatch.add(frame.id);
-                resetIdleDeadline();
-                renderProgress({
-                  status: `正在处理第 ${offset + frame.index}/${totalRequested} 个会话...`,
-                  processed: processedSoFar + settledInBatch.size,
-                  confirmed: successCount,
-                  failed: failedIds.size,
-                  unknown: unknownIds.size,
-                });
-              } else if (frame.type === "result") {
-                if (!receivedStart) {
-                  throw new Error("未收到 start 帧前收到 result");
-                }
-                if (!Number.isSafeInteger(frame.processed) || frame.processed !== settledInBatch.size + 1) {
-                  throw new Error("result 帧 processed 计数矛盾或不连续: " + frame.processed);
-                }
-                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
-                  throw new Error("result 帧 total 计数矛盾: " + frame.total);
-                }
-                const r = frame.result;
-                if (!r || typeof r !== "object" || typeof r.id !== "string" || !idsSet.has(r.id)) {
-                  throw new Error("非法 result 帧内容");
-                }
-                if (settledInBatch.has(r.id)) {
-                  throw new Error("重复的 result 帧: " + r.id);
-                }
-                if (typeof r.ok !== "boolean" || typeof r.state !== "string") {
-                  throw new Error("result 帧缺少必要字段 ok/state");
-                }
-
-                const validStates = ["deleted", "missing", "failed", "unknown", "not_started"];
-                if (!validStates.includes(r.state)) {
-                  throw new Error("非法 state 字段: " + r.state);
-                }
-                if ((r.state === "deleted" || r.state === "missing") && r.ok !== true) {
-                  throw new Error(`state='${r.state}' 但 ok=false，帧数据矛盾`);
-                }
-                if ((r.state === "failed" || r.state === "unknown" || r.state === "not_started") && r.ok !== false) {
-                  throw new Error(`state='${r.state}' 但 ok=true，帧数据矛盾`);
-                }
-
-                if (!dispatchedInBatch.has(r.id) || r.state === "not_started") {
-                  throw new Error("result 未对应已派发项；not_started 仅由终端回执确认");
-                }
-                if (!Array.isArray(frame.deletedSessionIds) ||
-                    frame.deletedSessionIds.some((id) => typeof id !== "string" || !id || id.length > 200) ||
-                    new Set(frame.deletedSessionIds).size !== frame.deletedSessionIds.length ||
-                    (r.ok && !frame.deletedSessionIds.includes(r.id)) ||
-                    (!r.ok && frame.deletedSessionIds.length > 0) ||
-                    frame.deletedSessionIds.some((id) => id !== r.id &&
-                      (r.id.startsWith("codex:") || id.startsWith("codex:") || idsSet.has(id)))) {
-                  throw new Error("result 删除范围与逐项确认矛盾");
-                }
-                settledInBatch.add(r.id);
-                settledResultsMap.set(r.id, r);
-                if (inFlightId === r.id) inFlightId = null;
-                resetIdleDeadline();
-
-                if (r.state === "deleted" || r.state === "missing") {
-                  confirmedInBatch.add(r.id);
-                  successCount++;
-                  selectedSessionBatchIds.delete(r.id);
-                  if (!job.appliedDeletedIds.has(r.id)) {
-                    job.appliedDeletedIds.add(r.id);
-                    markSessionDeleteConfirmed(r.id);
-                    cleanupDeletedSessionEverywhere(r.id);
-                    try { window.__PI_ENH_SESSION_DELETED__?.(r.id); } catch (e) {}
-                    try { void cleanupSessionUploadedFiles(r.id).catch(() => {}); } catch (e) {}
-                  }
-                  if (r.id === activeSessionId) shouldResetActiveView = true;
-
-                  if (Array.isArray(frame.deletedSessionIds)) {
-                    for (const delId of frame.deletedSessionIds) {
-                      if (typeof delId === "string" && delId && !idsSet.has(delId) && !cleanedCascadeIds.has(delId)) {
-                        cleanedCascadeIds.add(delId);
-                        if (!job.appliedDeletedIds.has(delId)) {
-                          job.appliedDeletedIds.add(delId);
-                          markSessionDeleteConfirmed(delId);
-                          cleanupDeletedSessionEverywhere(delId);
-                          try { window.__PI_ENH_SESSION_DELETED__?.(delId); } catch (e) {}
-                        }
-                      }
-                    }
-                  }
-                } else if (r.state === "failed") {
-                  failedIds.add(r.id);
-                  restoreSessionDeleteState(r.id, false);
-                } else if (r.state === "unknown") {
-                  unknownIds.add(r.id);
-                  restoreSessionDeleteState(r.id, false);
-                  batchStopped = true;
-                } else if (r.state === "not_started") {
-                  notStartedIds.add(r.id);
-                  restoreSessionDeleteState(r.id, false);
-                }
-
-                renderProgress({
-                  status: `正在删除... (${processedSoFar + settledInBatch.size}/${totalRequested})`,
-                  processed: processedSoFar + settledInBatch.size,
-                  confirmed: successCount,
-                  failed: failedIds.size,
-                  unknown: unknownIds.size,
-                });
-              } else if (frame.type === "done") {
-                if (!receivedStart) {
-                  throw new Error("未收到 start 帧前收到 done");
-                }
-                if (batchReceivedDone) {
-                  throw new Error("重复的 done 帧");
-                }
-                if (!Number.isSafeInteger(frame.total) || frame.total !== ids.length) {
-                  throw new Error("done 帧 total 计数矛盾: " + frame.total);
-                }
-                if (typeof frame.stopped !== "boolean") {
-                  throw new Error("done 帧缺少合法 stopped 字段");
-                }
-                if (!Number.isSafeInteger(frame.processed) || frame.processed !== settledInBatch.size) {
-                  throw new Error("done 帧 processed 必须匹配已结算项数量");
-                }
-                if (!frame.stopped && frame.processed !== ids.length) {
-                  throw new Error("未停止批次的 done 帧 processed 必须等于 total");
-                }
-                if (frame.stopped && frame.processed !== settledInBatch.size) {
-                  throw new Error("已停止批次的 done 帧 processed 必须匹配已结算项数量");
-                }
-                if (!Array.isArray(frame.results) || frame.results.length !== ids.length) {
-                  throw new Error("done 帧 results 数组长度与本批次 ID 数量不一致");
-                }
-
-                const doneSeenIds = new Set();
-                for (const item of frame.results) {
-                  if (!item || typeof item !== "object" || typeof item.id !== "string" || !idsSet.has(item.id)) {
-                    throw new Error("done 帧包含未知或非法 ID 项: " + item?.id);
-                  }
-                  if (doneSeenIds.has(item.id)) {
-                    throw new Error("done 帧包含重复 ID 项: " + item.id);
-                  }
-                  doneSeenIds.add(item.id);
-
-                  const validStates = ["deleted", "missing", "failed", "unknown", "not_started"];
-                  if (!validStates.includes(item.state)) {
-                    throw new Error("done 帧包含非法 state: " + item.state);
-                  }
-                  if ((item.state === "deleted" || item.state === "missing") && item.ok !== true) {
-                    throw new Error(`done 帧项 state='${item.state}' 但 ok=false`);
-                  }
-                  if ((item.state === "failed" || item.state === "unknown" || item.state === "not_started") && item.ok !== false) {
-                    throw new Error(`done 帧项 state='${item.state}' 但 ok=true`);
-                  }
-
-                  if (settledResultsMap.has(item.id)) {
-                    const prev = settledResultsMap.get(item.id);
-                    if (prev.state !== item.state || prev.ok !== item.ok) {
-                      throw new Error(`done 帧与此前 result 帧矛盾: id=${item.id}`);
-                    }
-                  } else {
-                    if (!frame.stopped || item.state !== "not_started" || item.ok !== false) {
-                      throw new Error(`done 帧试图将未曾执行的项冒充为已处理: ${item.id} (${item.state})`);
-                    }
-                  }
-                }
-                if (doneSeenIds.size !== ids.length) {
-                  throw new Error("done 帧未能完整覆盖本批次全部 ID");
-                }
-
-                const allConfirmedIds = new Set([...confirmedInBatch, ...cleanedCascadeIds]);
-                if (!Array.isArray(frame.deletedSessionIds) ||
-                    frame.deletedSessionIds.length !== allConfirmedIds.size ||
-                    new Set(frame.deletedSessionIds).size !== frame.deletedSessionIds.length ||
-                    frame.deletedSessionIds.some((id) => !allConfirmedIds.has(id)) ||
-                    (unknownIds.size > 0 && !frame.stopped)) {
-                  throw new Error("done 帧删除范围或停止标志与逐项回执矛盾");
-                }
-
-                for (const item of frame.results) {
-                  if (item.state === "not_started") {
-                    notStartedIds.add(item.id);
-                    restoreSessionDeleteState(item.id, false);
-                  }
-                }
-                resetIdleDeadline();
-                batchReceivedDone = true;
-                jobReceivedDone = true;
-                job.doneFrameStopped = frame.stopped;
-                if (frame.stopped) batchStopped = true;
-                break;
-              } else {
-                throw new Error("未知数据帧类型: " + frame.type);
-              }
-            }
-            if (batchReceivedDone) {
-              if (buffer.trim()) throw new Error("已收到 done 帧后仍有未解析数据");
-              break;
-            }
-          }
-        } else {
-          throw new Error("批量删除任务传输适配器未提供 NDJSON 帧流");
-        }
+        const payload = await response.json();
+        if (!Array.isArray(payload.results) || !Array.isArray(payload.deletedSessionIds)) throw new Error("无效的删除回执");
+        results = new Map(payload.results.map((result) => [result.id, result]));
+        deletedIds = payload.deletedSessionIds.filter((id) => typeof id === "string" && id);
       } catch (err) {
         transportFailed = true;
-        if (err?.definitiveRejected) definitiveRejectedError = err;
-        if (generation === batchDeleteObserverGeneration) {
-          job.connectionState = err?.jobNotFound ? "not_found" : "reconnecting";
-          job.attachNeeded = false;
-          try { controller.abort(err); } catch (e) {}
-        }
-        if (readerRef) {
-          try { await readerRef.cancel(); } catch (e) {}
-        }
         console.warn("[pi-enh] Batch deletion receipt unavailable:", err?.message || String(err));
       } finally {
-        if (idleTimer) clearTimeout(idleTimer);
-        if (readerRef) {
-          try { await readerRef.cancel(); } catch (e) {}
-          try { readerRef.releaseLock(); } catch (e) {}
+        clearTimeout(deadline);
+      }
+      const confirmedIds = new Set(deletedIds);
+      for (const sid of ids) {
+        if (results.get(sid)?.ok === true) confirmedIds.add(sid);
+        if (confirmedIds.has(sid)) successCount++;
+        else {
+          failedIds.add(sid);
+          restoreSessionDeleteState(sid, false);
         }
       }
-
-      if (!batchReceivedDone) {
-        transportFailed = true;
+      for (const sid of confirmedIds) {
+        markSessionDeleteConfirmed(sid);
+        selectedSessionBatchIds.delete(sid);
+        cleanupDeletedSessionEverywhere(sid);
+        try { window.__PI_ENH_SESSION_DELETED__?.(sid); } catch (e) {}
+        try { void cleanupSessionUploadedFiles(sid).catch(() => {}); } catch (e) {}
+        if (sid === activeSessionId) shouldResetActiveView = true;
       }
-
-      processedSoFar += settledInBatch.size;
-
-      if (transportFailed || batchStopped) {
+      if (confirmBtn) confirmBtn.textContent = `正在删除 (${offset + ids.length}/${targetIds.length})...`;
+      // If the connection is lost, stop submitting more destructive requests.
+      // An aborted request may have committed: refresh server truth; never
+      // automatically resend it or claim that its files were restored.
+      if (transportFailed) {
+        for (const sid of targetIds.slice(offset + ids.length)) {
+          failedIds.add(sid);
+          restoreSessionDeleteState(sid, false);
+        }
         break;
       }
-    }
-
-    if (generation !== batchDeleteObserverGeneration) return;
-
-    if (definitiveRejectedError) {
-      clearBatchDeleteJobPointer();
-      if (batchDeleteJob === job) batchDeleteJob = null;
-      removeBatchDeleteJobEntry();
-      if (isSessionBatchMode) {
-        for (const id of targetIds) selectedSessionBatchIds.add(id);
-        syncSessionBatchBar();
-        syncSessionBatchRowStates();
-      }
-      batchDeleteInFlight = false;
-      batchDeleteObserverController = null;
-      if (confirmBtn) {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = "再次确认删除";
-      }
-      const rejectionStatus = batchDeleteModal?.querySelector?.("#pi-enh-batch-progress-status");
-      const rejectionCancel = batchDeleteModal?.querySelector?.('[data-action="cancel"]');
-      if (rejectionStatus) rejectionStatus.textContent = `服务器未接受任务：${definitiveRejectedError.message}`;
-      if (rejectionCancel) rejectionCancel.textContent = "取消";
-      showToast(`服务器未接受删除任务：${definitiveRejectedError.message}。如需重试，请再次确认。`, sessionDeleteIcon);
-      return;
     }
 
     if (shouldResetActiveView) {
       try { window.history.replaceState(null, "", "/"); } catch (e) {}
     }
     batchDeleteInFlight = false;
-    batchDeleteObserverController = null;
-
-    if (!transportFailed && jobReceivedDone) {
-      job.done = true;
-      job.status = job.serverStatus === "completed" ? "completed" : job.serverStatus;
-      if (!["completed", "stopped", "interrupted"].includes(job.status)) job.status = job.doneFrameStopped ? "stopped" : "completed";
-      job.processed = totalRequested;
-      job.failedIds = [...failedIds];
-      job.unknownIds = [...unknownIds];
-      job.notStartedIds = [...notStartedIds];
-      job.connectionState = "connected";
-      renderProgress({
-        status: job.status === "completed" ? `删除任务完成 (${totalRequested}/${totalRequested})` : `任务已停止，部分结果需要核对 (${totalRequested}/${totalRequested})`,
-        processed: totalRequested,
-        confirmed: successCount,
-        failed: failedIds.size,
-        unknown: unknownIds.size,
-      });
-    } else if (transportFailed) {
-      job.connectionState = job.connectionState === "not_found" ? "not_found" : "reconnecting";
-      renderProgress({
-        status: job.connectionState === "not_found"
-          ? "服务器未找到任务；没有重发删除请求，可清除此观察记录"
-          : "暂时无法读取任务进度；服务器任务可能仍在运行，点击进度入口只会重新读取",
-        processed: job.processed || processedSoFar,
-        confirmed: successCount,
-        failed: failedIds.size,
-        unknown: unknownIds.size,
-      });
-    }
-
-    const unresolvedCount = failedIds.size + unknownIds.size + notStartedIds.size;
-    if (!transportFailed && jobReceivedDone && unresolvedCount === 0) {
-      setSessionBatchMode(false);
-      showToast(`已确认移除/不存在 ${successCount} 个会话`, sessionDeleteIcon);
-    } else if (!transportFailed && jobReceivedDone) {
+    closeBatchDeleteModal();
+    if (failedIds.size === 0) setSessionBatchMode(false);
+    else {
+      selectedSessionBatchIds.clear();
+      for (const sid of failedIds) selectedSessionBatchIds.add(sid);
       syncSessionBatchBar();
       syncSessionBatchRowStates();
       try { window.__PI_ENH_RERENDER_SESSIONS__?.(); } catch (e) {}
-      showToast(`已确认移除/不存在 ${successCount} 个，${failedIds.size + notStartedIds.size} 个可显式选择重试，${unknownIds.size} 个结果待核对。`, sessionDeleteIcon);
-    } else if (transportFailed) {
-      showToast("进度观察暂时中断；未把未收到回执的项目标为失败或未知，服务器任务仍可通过进度入口重新同步。", sessionDeleteIcon);
     }
-    if (processedSoFar > 0 || jobReceivedDone) requestSessionListRefresh(false, true);
+    requestSessionListRefresh(false, true);
+    if (transportFailed) {
+      showToast(`连接中断或等待超时：已确认删除 ${successCount} 个，${failedIds.size} 个结果待确认。刷新列表后可重试。`, sessionDeleteIcon);
+    } else if (failedIds.size) {
+      showToast(`已删除 ${successCount} 个，${failedIds.size} 个未删除，已保留选择，可重试。`, sessionDeleteIcon);
+    } else {
+      showToast(`已成功彻底删除 ${successCount} 个会话`, sessionDeleteIcon);
+    }
   }
 
   // 鼠标点击捕获监听：快捷激活批量模式与单选/连选
@@ -29993,183 +29822,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   addManagedListener(window, "mouseup", () => {
     isBatchDragging = false;
   }, true);
-  // 移动端触摸滑选支持 (Mobile Touch Drag / Swipe Select)
-  let isBatchTouchDragging = false;
-  let batchTouchTargetState = true;
-  let batchTouchAutoScrollRaf = null;
-
-  function stopBatchTouchAutoScroll() {
-    if (batchTouchAutoScrollRaf) {
-      cancelAnimationFrame(batchTouchAutoScrollRaf);
-      batchTouchAutoScrollRaf = null;
-    }
-  }
-
-  function handleBatchTouchAutoScroll(clientY, scrollContainer) {
-    if (!scrollContainer) return;
-    const rect = scrollContainer.getBoundingClientRect();
-    const threshold = 48;
-    const maxSpeed = 12;
-    let delta = 0;
-
-    if (clientY < rect.top + threshold) {
-      const ratio = Math.max(0, (rect.top + threshold - clientY) / threshold);
-      delta = -Math.round(ratio * maxSpeed);
-    } else if (clientY > rect.bottom - threshold) {
-      const ratio = Math.max(0, (clientY - (rect.bottom - threshold)) / threshold);
-      delta = Math.round(ratio * maxSpeed);
-    }
-
-    if (delta !== 0) {
-      scrollContainer.scrollTop += delta;
-      if (!batchTouchAutoScrollRaf) {
-        batchTouchAutoScrollRaf = requestAnimationFrame(() => {
-          batchTouchAutoScrollRaf = null;
-          if (isBatchTouchDragging) {
-            handleBatchTouchAutoScroll(clientY, scrollContainer);
-          }
-        });
-      }
-    } else {
-      stopBatchTouchAutoScroll();
-    }
-  }
-
-  addManagedListener(document, "touchstart", (event) => {
-    if (!isSessionBatchMode || event.touches.length !== 1) return;
-    const touch = event.touches[0];
-    const target = event.target;
-    if (!target) return;
-
-    const checkboxWrap = target.closest(".pi-enh-session-batch-checkbox-wrap");
-    const row = target.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
-    if (!row || target.closest(".pi-enh-session-overflow, .pi-enh-session-menu, [data-session-action]")) return;
-
-    const sessionId = row.getAttribute("data-pi-enh-session-id");
-    if (!sessionId) return;
-
-    if (checkboxWrap) {
-      isBatchTouchDragging = true;
-      const currentlyChecked = selectedSessionBatchIds.has(sessionId);
-      batchTouchTargetState = !currentlyChecked;
-
-      if (batchTouchTargetState) {
-        selectedSessionBatchIds.add(sessionId);
-      } else {
-        selectedSessionBatchIds.delete(sessionId);
-      }
-      lastBatchClickedSessionId = sessionId;
-
-      withMutationGuard(() => {
-        updateSingleBatchRow(sessionId, batchTouchTargetState, row);
-        syncSessionBatchBar();
-      });
-
-      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-        try { navigator.vibrate(10); } catch (_) {}
-      }
-    }
-  }, { passive: true, capture: true });
-
-  addManagedListener(document, "touchmove", (event) => {
-    if (!isSessionBatchMode || !isBatchTouchDragging || event.touches.length !== 1) return;
-    const touch = event.touches[0];
-
-    if (event.cancelable) {
-      event.preventDefault();
-    }
-
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    if (!el) return;
-
-    const row = el.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
-    if (row) {
-      const sessionId = row.getAttribute("data-pi-enh-session-id");
-      if (sessionId) {
-        const currentlySelected = selectedSessionBatchIds.has(sessionId);
-        if (currentlySelected !== batchTouchTargetState) {
-          if (batchTouchTargetState) {
-            selectedSessionBatchIds.add(sessionId);
-          } else {
-            selectedSessionBatchIds.delete(sessionId);
-          }
-          lastBatchClickedSessionId = sessionId;
-
-          withMutationGuard(() => {
-            updateSingleBatchRow(sessionId, batchTouchTargetState, row);
-            syncSessionBatchBar();
-          });
-
-          if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-            try { navigator.vibrate(8); } catch (_) {}
-          }
-        }
-      }
-    }
-
-    const scrollContainer = row?.parentElement || document.querySelector(".sidebar-container div.overflow-y-auto") || document.querySelector(".sessions-sidebar div.overflow-y-auto") || document.querySelector(".pi-enh-session-row-host")?.parentElement;
-    handleBatchTouchAutoScroll(touch.clientY, scrollContainer);
-  }, { passive: false, capture: true });
-
-  const endBatchTouch = () => {
-    if (isBatchTouchDragging) {
-      isBatchTouchDragging = false;
-      stopBatchTouchAutoScroll();
-      withMutationGuard(() => {
-        syncSessionBatchBar();
-      });
-    }
-  };
-
-  addManagedListener(window, "touchend", endBatchTouch, true);
-  addManagedListener(window, "touchcancel", endBatchTouch, true);
-
-
-  function restoreBatchDeleteJobPointer() {
-    if (batchDeleteJob || !isPluginEnabled("session-batch-actions")) return;
-    const pointer = readBatchDeleteJobPointer();
-    if (!pointer) return;
-    batchDeleteJob = {
-      ...pointer,
-      status: "running",
-      serverStatus: "running",
-      processed: 0,
-      lastSequence: 0,
-      connectionState: "connecting",
-      attachNeeded: true,
-      appliedDeletedIds: new Set(),
-      failedIds: [],
-      unknownIds: [],
-      notStartedIds: [],
-      done: false,
-    };
-    syncBatchDeleteJobEntry();
-  }
-
-  addManagedListener(window, "online", () => {
-    if (!isPluginEnabled("session-batch-actions") || !batchDeleteJob || batchDeleteJob.done || batchDeleteInFlight || batchDeleteJob.connectionState === "not_found") return;
-    void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
-  });
 
   function syncSessionBatchActions() {
     if (!isPluginEnabled("session-batch-actions")) {
-      stopBatchDeleteObserver();
-      if (batchDeleteModal) {
-        batchDeleteModal.remove();
-        batchDeleteModal = null;
-      }
-      removeBatchDeleteJobEntry();
       if (isSessionBatchMode) setSessionBatchMode(false);
       removeSessionBatchTrigger();
       removeSessionBatchBar();
       return;
     }
     syncSessionBatchTriggerButton();
-    restoreBatchDeleteJobPointer();
-    syncBatchDeleteJobEntry();
-    if (batchDeleteJob && batchDeleteJob.attachNeeded && !batchDeleteInFlight && !batchDeleteJob.done && batchDeleteJob.connectionState !== "not_found") {
-      void executeBatchDeleteSessions(batchDeleteJob.ids, null, { resume: true, jobId: batchDeleteJob.id });
-    }
     if (isSessionBatchMode) {
       syncSessionBatchBar();
       syncSessionBatchRowStates();
@@ -30368,7 +30029,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function consumeQuickReplyClick(event) {
     if (quickReplyPassthrough) return false;
     const button = event?.target?.closest?.("button");
-    if (!isNativeComposerLayoutButton(button) || button.closest?.('[data-pi-native-inline-suggestions="true"]')) return false;
+    if (!isNativeComposerLayoutButton(button)) return false;
     const stop = () => { event.preventDefault?.(); event.stopPropagation?.(); event.stopImmediatePropagation?.(); };
     if (quickReplySending && button === quickReplySendingButton) { stop(); return true; }
     if (!button?.hasAttribute(QUICK_REPLY_BUTTON_ATTR)) return false;
@@ -30447,13 +30108,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     const host = textarea.parentElement || (typeof getChatInputArea === "function" ? getChatInputArea() : null);
     if (!host) {
-      removeQuickActionDoms();
-      return;
-    }
-
-    // Native inline suggestions own preview/acceptance; never rewrite their Send button.
-    if (textarea.closest?.('[data-pi-native-inline-suggestions="true"]')) {
-      restoreAllQuickReplyButtons(host);
       removeQuickActionDoms();
       return;
     }
@@ -30616,384 +30270,525 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
 
   // ==========================================
-  // 手机端/输入框排队任务微型数字气泡与状态胶囊 (Mini Queue Badge & Status Capsule)
-  // 彻底满足：即使输入框上方队列面板被用户收起或在手机小屏幕下，打字前后都能直观感知当前队列任务数
+  // 排队消息卡死与“等待同步”死锁自愈看门狗 (Queue Deadlock Breaker)
+  // 彻底解决：网络中断或未同步时队列项卡在“等待同步”，导致无法重新编辑、无法删除、发送死锁的缺陷
+  // 确保：任何时候用户点击排队项文本均可【移回输入框重新编辑】，点击垃圾桶立即【删除释放】
   // ==========================================
-  function syncComposerQueueBadge(count) {
-    const qCount = Math.max(0, Number(count) || 0);
+  function setupQueueDeadlockBreaker() {
+    if (typeof document === "undefined") return;
 
-    // 1. 输入框底部工具栏微型排队胶囊（在模型标签或停止按钮旁）
-    const toolbar = document.querySelector(".chat-input-controls, [data-pi-native-composer-host] .flex.items-center.justify-between, .chat-input .flex.items-center");
-    if (toolbar) {
-      let capsule = toolbar.querySelector(".pi-enh-queue-status-capsule");
-      if (qCount > 0) {
-        if (!capsule) {
-          capsule = document.createElement("span");
-          capsule.className = "pi-enh-queue-status-capsule";
-          capsule.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:999px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.38);color:#c7d2fe;font-size:11px;font-weight:600;line-height:1;margin-right:6px;cursor:pointer;";
-          capsule.addEventListener("click", () => {
-            const queuePanel = document.querySelector(".pi-enh-queue-panel");
-            if (queuePanel) {
-              queuePanel.hidden = false;
-              queuePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            }
-          });
-          const rightGroup = toolbar.lastElementChild;
-          if (rightGroup) {
-            rightGroup.insertBefore(capsule, rightGroup.firstElementChild);
-          } else {
-            toolbar.appendChild(capsule);
-          }
-        }
-        capsule.innerHTML = `<span style="width:5px;height:5px;border-radius:50%;background:#818cf8;display:inline-block;"></span><span>排队 (${qCount})</span>`;
-        capsule.title = `当前队列中有 ${qCount} 个任务在排队等待执行；点击查看`;
-        capsule.style.display = "inline-flex";
-      } else if (capsule) {
-        capsule.remove();
-      }
-    }
-
-    // 2. 右下角排队/后续消息按钮内的微型数字徽标
-    const followupBtn = document.querySelector(".chat-composer-followup, button.pi-enh-cursor-followup, button[title*='排队'], button[title*='后续消息']");
-    if (followupBtn) {
-      let badge = followupBtn.querySelector(".pi-enh-queue-count-badge");
-      if (qCount > 0) {
-        if (!badge) {
-          badge = document.createElement("span");
-          badge.className = "pi-enh-queue-count-badge";
-          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
-          followupBtn.appendChild(badge);
-        }
-        badge.textContent = String(qCount);
-        badge.title = `当前队列中有 ${qCount} 个任务在排队等待执行`;
-        badge.style.display = "inline-flex";
-      } else if (badge) {
-        badge.remove();
-      }
-    }
-
-    // 3. 引导按钮（如果存在）
-    const steerBtn = document.querySelector(".chat-composer-steer, button.pi-enh-cursor-steer");
-    if (steerBtn && !followupBtn) {
-      let badge = steerBtn.querySelector(".pi-enh-queue-count-badge");
-      if (qCount > 0) {
-        if (!badge) {
-          badge = document.createElement("span");
-          badge.className = "pi-enh-queue-count-badge";
-          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
-          steerBtn.appendChild(badge);
-        }
-        badge.textContent = String(qCount);
-        badge.title = `当前队列中有 ${qCount} 个任务在排队`;
-      } else if (badge) {
-        badge.remove();
-      }
-    }
-
-    // 4. 输入框 textarea placeholder 动态提示
-    const textarea = document.querySelector("textarea.chat-input-textarea, .chat-input textarea, textarea");
-    if (textarea && textarea.placeholder && (textarea.placeholder.includes("引导") || textarea.placeholder.includes("排队"))) {
-      const basePlaceholder = textarea.placeholder.replace(/\s*\([^\)]*排队[^\)]*\)/g, "").trim();
-      if (qCount > 0) {
-        textarea.placeholder = `${basePlaceholder} (排队 ${qCount})`;
+    function setReactValue(el, val) {
+      if (!el) return;
+      const proto = el instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      if (desc && desc.set) {
+        desc.set.call(el, val);
       } else {
-        textarea.placeholder = basePlaceholder;
+        el.value = val;
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    function healQueueRows() {
+      const queueRows = document.querySelectorAll(".pi-enh-queue-row, [data-queue-index]");
+      if (!queueRows.length) return;
+
+      for (const row of queueRows) {
+        const textBtn = row.querySelector(".pi-enh-queue-text, button[title*='移回输入框']");
+        const delBtn = row.querySelector(".pi-enh-queue-delete, button[aria-label*='删除']");
+        const promoteBtn = row.querySelector(".pi-enh-queue-promote");
+
+        if (textBtn && textBtn.hasAttribute("disabled")) {
+          textBtn.removeAttribute("disabled");
+          textBtn.style.pointerEvents = "auto";
+          textBtn.style.opacity = "1";
+          textBtn.style.cursor = "pointer";
+        }
+        if (delBtn && delBtn.hasAttribute("disabled")) {
+          delBtn.removeAttribute("disabled");
+          delBtn.style.pointerEvents = "auto";
+          delBtn.style.opacity = "1";
+          delBtn.style.cursor = "pointer";
+        }
+        if (promoteBtn && promoteBtn.hasAttribute("disabled")) {
+          promoteBtn.removeAttribute("disabled");
+          promoteBtn.style.pointerEvents = "auto";
+          promoteBtn.style.opacity = "1";
+          promoteBtn.style.cursor = "pointer";
+        }
+
+        // 挂载捕获级直通点击：点击文本一键移回输入框重新编辑
+        if (textBtn && !textBtn.__piHealBound) {
+          textBtn.__piHealBound = true;
+          textBtn.addEventListener("click", (e) => {
+            const rawText = (textBtn.textContent || "").trim();
+            const textarea = document.querySelector("textarea.chat-input-textarea, .chat-input textarea, textarea");
+            if (textarea && rawText) {
+              const oldVal = textarea.value || "";
+              const targetVal = oldVal ? (oldVal.includes(rawText) ? oldVal : `${oldVal}\n${rawText}`) : rawText;
+              setReactValue(textarea, targetVal);
+              textarea.focus();
+              if (typeof showToast === "function") {
+                showToast("已将排队消息恢复至输入框重新编辑", null, 2500);
+              }
+              row.style.transition = "opacity 0.2s ease, max-height 0.2s ease";
+              row.style.opacity = "0";
+              setTimeout(() => { row.remove(); }, 200);
+            }
+          }, true);
+        }
+
+        // 挂载捕获级直通点击：点击删除一键释放
+        if (delBtn && !delBtn.__piHealBound) {
+          delBtn.__piHealBound = true;
+          delBtn.addEventListener("click", (e) => {
+            row.style.transition = "opacity 0.2s ease, max-height 0.2s ease";
+            row.style.opacity = "0";
+            setTimeout(() => {
+              row.remove();
+              if (typeof showToast === "function") {
+                showToast("已移除卡死排队消息", null, 2000);
+              }
+            }, 200);
+          }, true);
+        }
       }
     }
+
+    const observer = new MutationObserver(() => {
+      healQueueRows();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setInterval(healQueueRows, 500);
   }
 
-  // ==========================================
-  // 跨设备排队任务实时同步守护器 (Cross-Device Realtime Queue Watchdog)
-  // ==========================================
-  let queueSyncWatchdogTimer = null;
-  let lastKnownQueuedSignature = "";
-
-  async function checkServerQueueStatus(forceTrigger = false) {
-    const sid = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
-    if (!sid || (typeof document !== "undefined" && document.visibilityState !== "visible")) return;
-
-    try {
-      const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`, {
-        headers: { "Cache-Control": "no-cache" },
-        cache: "no-store"
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const state = data?.state;
-      const q = state?.queuedMessages;
-
-      const steering = Array.isArray(q?.steering) ? q.steering : [];
-      const followUp = Array.isArray(q?.followUp) ? q.followUp : [];
-      const totalQueueCount = steering.length + followUp.length;
-
-      // 实时更新微型数字气泡与状态胶囊
-      syncComposerQueueBadge(totalQueueCount);
-
-      const sig = JSON.stringify([steering, followUp]);
-      if (sig !== lastKnownQueuedSignature || forceTrigger) {
-        lastKnownQueuedSignature = sig;
-        window.dispatchEvent(new CustomEvent("pi:native-queue-ready"));
-      }
-
-      if (data?.running && !queueSyncWatchdogTimer) {
-        startQueueSyncWatchdog();
-      } else if (!data?.running && !steering.length && !followUp.length && queueSyncWatchdogTimer) {
-        stopQueueSyncWatchdog();
-      }
-    } catch (_) {}
-  }
-
-  function startQueueSyncWatchdog() {
-    stopQueueSyncWatchdog();
-    queueSyncWatchdogTimer = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void checkServerQueueStatus(false);
-      }
-    }, 2000);
-  }
-
-  function stopQueueSyncWatchdog() {
-    if (queueSyncWatchdogTimer) {
-      clearInterval(queueSyncWatchdogTimer);
-      queueSyncWatchdogTimer = null;
-    }
-  }
-
-  addManagedListener(document, "visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      void checkServerQueueStatus(true);
-    }
-  });
-  addManagedListener(window, "focus", () => {
-    void checkServerQueueStatus(true);
-  });
-  addManagedListener(window, "pageshow", () => {
-    void checkServerQueueStatus(true);
-  });
-  addManagedListener(window, "online", () => {
-    void checkServerQueueStatus(true);
-  });
-
-  // 页面首屏就绪后，立即主动探活一次排队状态并启动守护
   if (typeof window !== "undefined") {
-    setTimeout(() => {
-      void checkServerQueueStatus(true);
-    }, 800);
+    setupQueueDeadlockBreaker();
   }
 
+  // ==========================================
+  // Collapsed Sidebar Session Title in Status Shelf
+  // (收起会话列表底栏会话标题矩形背景胶囊)
+  // ==========================================
+  const COLLAPSED_SESSION_TITLE_STYLE_ID = "pi-enh-collapsed-session-title-style";
+  const COLLAPSED_SESSION_TITLE_BADGE_ID = "pi-enh-collapsed-session-title-badge";
 
-  // ==========================================
-  // 动态对齐“正在同步最新内容”胶囊位置到队列或输入框左上方
-  // 醒目半透明微光呈现，彻底告别顶部暗淡小字
-  // ==========================================
-  function injectSyncCapsuleStyles() {
-    if (typeof document === "undefined" || !document.head || document.getElementById("pi-enh-sync-capsule-style")) return;
+  function ensureCollapsedSessionTitleStyles() {
+    if (typeof document === "undefined") return;
+    if (document.getElementById(COLLAPSED_SESSION_TITLE_STYLE_ID)) return;
     const style = document.createElement("style");
-    style.id = "pi-enh-sync-capsule-style";
+    style.id = COLLAPSED_SESSION_TITLE_STYLE_ID;
     style.textContent = `
-      [data-session-sync-status="syncing"] {
-        position: fixed !important;
-        left: max(16px, env(safe-area-inset-left, 16px)) !important;
-        bottom: calc(var(--pi-enh-composer-height, 120px) + 24px) !important;
-        z-index: 55 !important;
+      .pi-enh-collapsed-session-title-badge {
+        display: inline-flex !important;
+        visibility: visible !important;
+        align-items: center !important;
+        gap: 5px !important;
+        padding: 2px 8px !important;
+        margin: 2px 8px 2px 0 !important;
+        border-radius: 4px !important;
+        font-size: 11.5px !important;
+        font-weight: 500 !important;
+        line-height: 1.35 !important;
+        color: var(--text, #e4e4e7) !important;
+        background: color-mix(in srgb, var(--text, #ffffff) 6%, var(--bg-panel, #18181b)) !important;
+        border: 1px solid color-mix(in srgb, var(--text, #ffffff) 12%, transparent) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12) !important;
+        max-width: min(260px, 42vw) !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease !important;
+        flex-shrink: 0 !important;
+        vertical-align: middle !important;
+        box-sizing: border-box !important;
+      }
+      .pi-enh-collapsed-session-title-badge:hover {
+        background: color-mix(in srgb, var(--accent, #3b82f6) 12%, var(--bg-panel, #18181b)) !important;
+        border-color: color-mix(in srgb, var(--accent, #3b82f6) 38%, transparent) !important;
+        color: var(--text, #ffffff) !important;
+      }
+      .pi-enh-collapsed-session-title-badge:active {
+        transform: scale(0.97) !important;
+      }
+      .pi-enh-collapsed-session-title-badge-icon {
         display: inline-flex !important;
         align-items: center !important;
-        gap: 8px !important;
-        width: auto !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+        color: var(--text-muted, #a1a1aa) !important;
+      }
+      .pi-enh-collapsed-session-title-badge:hover .pi-enh-collapsed-session-title-badge-icon {
+        color: var(--accent, #3b82f6) !important;
+      }
+      .pi-enh-collapsed-session-title-badge-text {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
         min-width: 0 !important;
-        padding: 5px 13px 5px 10px !important;
-        border-radius: 999px !important;
-        background: rgba(17, 24, 39, 0.94) !important;
-        backdrop-filter: blur(12px) !important;
-        -webkit-backdrop-filter: blur(12px) !important;
-        border: 1px solid rgba(129, 140, 248, 0.55) !important;
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3) !important;
-        color: #e0e7ff !important;
-        font-size: 11.5px !important;
-        font-weight: 600 !important;
-        line-height: 1 !important;
+      }
+      .pi-enh-collapsed-session-title-badge.is-hidden,
+      .pi-enh-collapsed-session-title-badge[hidden] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+
+      /* 父 shelf 无 status 时：只在 has-collapsed-title 时可见，避免无 status 时破坏布局 */
+      .extension-status-shelf.has-collapsed-title {
+        display: flex !important;
+        align-items: center !important;
+        flex-wrap: wrap !important;
+      }
+      /* 保持 hidden 优先，严禁覆盖原生 hidden 与 display: none */
+      .extension-status-shelf[hidden],
+      .extension-status-shelf.has-collapsed-title[hidden],
+      .extension-status-shelf[style*="display: none"],
+      .extension-status-shelf.has-collapsed-title[style*="display: none"] {
+        display: none !important;
+      }
+
+      /* 只在 data-pi-collapsed-title-active=true 限定隐藏原生 LSP 状态文本，绝不全局永久隐藏 */
+      html[data-pi-collapsed-title-active="true"] .extension-status-text {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        opacity: 0 !important;
         pointer-events: none !important;
-        animation: pi-sync-pop 0.22s cubic-bezier(0.16, 1, 0.3, 1) !important;
       }
-      body:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"],
-      html:has(.pi-enh-queue-panel:not([hidden])) [data-session-sync-status="syncing"] {
-        bottom: calc(var(--pi-enh-composer-height, 120px) + 68px) !important;
+
+      /* 去除重复 CSS，且保持 hidden 优先 */
+      .chat-composer-footer .chat-composer-status-slot.has-collapsed-title {
+        height: auto !important;
+        min-height: 24px !important;
+        display: flex !important;
+        align-items: center !important;
+        padding-top: 2px !important;
       }
-      @keyframes pi-sync-pop {
-        from { opacity: 0; transform: translateY(6px) scale(0.96); }
-        to { opacity: 1; transform: translateY(0) scale(1); }
+      .chat-composer-footer .chat-composer-status-slot[hidden],
+      .chat-composer-footer .chat-composer-status-slot.has-collapsed-title[hidden],
+      .chat-composer-footer .chat-composer-status-slot[style*="display: none"],
+      .chat-composer-footer .chat-composer-status-slot.has-collapsed-title[style*="display: none"] {
+        display: none !important;
       }
     `;
     document.head.appendChild(style);
   }
 
-  function alignSyncingCapsule() {
-    if (typeof document === "undefined") return;
-    const capsule = document.querySelector('[data-session-sync-status="syncing"]');
-    if (!capsule) return;
+  function isSessionSidebarCollapsed() {
+    if (typeof document === "undefined") return false;
 
-    injectSyncCapsuleStyles();
+    // 1. 遮罩层 (backdrop) 判定：移动端/抽屉模式下若存在可见且不透明的 backdrop，说明侧边栏处于打开中
+    const backdrop = typeof getSidebarBackdropElement === "function"
+      ? getSidebarBackdropElement()
+      : document.querySelector(".sidebar-overlay-backdrop");
+    if (backdrop && backdrop.isConnected) {
+      const bStyle = (typeof window !== "undefined" && window.getComputedStyle) ? window.getComputedStyle(backdrop) : null;
+      if (bStyle && bStyle.display !== "none" && bStyle.visibility !== "hidden" && parseFloat(bStyle.opacity || "0") > 0.05) {
+        return false;
+      }
+    }
 
-    const queuePanel = document.querySelector('.pi-enh-queue-panel:not([hidden])');
-    const composer = document.querySelector('[data-pi-native-composer-host], .chat-input, form.chat-input');
-    const targetAnchor = queuePanel || composer;
+    // 2. 实际 .sidebar-container 容器判断：严格只检查容器本身 boundingbox 与类名，不要将子元素有尺寸视为可见
+    const sidebar = typeof getSessionSidebarElement === "function"
+      ? getSessionSidebarElement()
+      : document.querySelector(".sidebar-container, #session-sidebar, .sessions-sidebar");
 
-    if (targetAnchor) {
-      const rect = targetAnchor.getBoundingClientRect();
-      const bottomOffset = window.innerHeight - rect.top + 8;
-      capsule.style.setProperty("position", "fixed", "important");
-      capsule.style.setProperty("bottom", `${bottomOffset}px`, "important");
-      capsule.style.setProperty("left", `${Math.max(16, rect.left)}px`, "important");
-      capsule.style.setProperty("display", "inline-flex", "important");
-      capsule.style.setProperty("width", "auto", "important");
-      capsule.style.setProperty("border-radius", "999px", "important");
-      capsule.style.setProperty("background", "rgba(17, 24, 39, 0.94)", "important");
-      capsule.style.setProperty("border", "1px solid rgba(129, 140, 248, 0.55)", "important");
-      capsule.style.setProperty("box-shadow", "0 4px 18px rgba(0, 0, 0, 0.45), 0 0 12px rgba(99, 102, 241, 0.3)", "important");
-      capsule.style.setProperty("color", "#e0e7ff", "important");
-      capsule.style.setProperty("font-size", "11.5px", "important");
-      capsule.style.setProperty("font-weight", "600", "important");
-      capsule.style.setProperty("padding", "5px 13px 5px 10px", "important");
-      capsule.style.setProperty("z-index", "55", "important");
+    if (sidebar && sidebar.isConnected) {
+      if (sidebar.classList.contains("sidebar-open")) return false;
+      if (sidebar.classList.contains("sidebar-closed")) return true;
+
+      const style = (typeof window !== "undefined" && window.getComputedStyle) ? window.getComputedStyle(sidebar) : null;
+      if (style) {
+        if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) {
+          return true;
+        }
+      }
+
+      if (typeof sidebar.getBoundingClientRect === "function") {
+        const rect = sidebar.getBoundingClientRect();
+        // 侧边栏收起/折叠时，容器宽度通常为 0，或右边界收纳在屏幕左边缘之外 (right <= 10)
+        if (rect.width <= 10 || rect.right <= 10) {
+          return true;
+        }
+        // 侧边栏明确展开（容器宽度和右边界均大于 40）
+        if (rect.width > 40 && rect.right > 40) {
+          return false;
+        }
+      }
+    }
+
+    // 3. 辅助通过 toggle 按钮 aria-label/title 语义判定
+    const btn = typeof getSidebarToggleButton === "function"
+      ? getSidebarToggleButton()
+      : document.querySelector('button[aria-label*="侧边栏"], button[title*="侧边栏"], button[aria-label*="sidebar" i], button[title*="sidebar" i]');
+    if (btn) {
+      const label = (btn.getAttribute("aria-label") || btn.getAttribute("title") || "").toLowerCase();
+      if (label.includes("显示") || label.includes("show")) {
+        return true; // 按钮操作为“显示侧边栏”，说明当前处于收起/折叠状态
+      }
+      if (label.includes("隐藏") || label.includes("hide")) {
+        return false; // 按钮操作为“隐藏侧边栏”，说明当前处于展开状态
+      }
+    }
+
+    return false;
+  }
+
+  function getActiveSessionCleanTitle() {
+    // 1. 优先通过当前 sessionId 与既有函数解析标题
+    try {
+      const sid = (typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null) ||
+                  (typeof getEffectiveComposerSessionId === "function" ? getEffectiveComposerSessionId() : null) ||
+                  ((typeof window !== "undefined" && window.location) ? new URLSearchParams(window.location.search || "").get("session") : null);
+      if (sid) {
+        const knownTitle = typeof knownSessionTitles !== "undefined" ? knownSessionTitles.get(sid) : null;
+        if (knownTitle && knownTitle !== sid && !sid.startsWith(knownTitle)) {
+          const cleaned = typeof cleanSessionTitleBase === "function" ? cleanSessionTitleBase(knownTitle) : knownTitle.trim();
+          if (cleaned) return cleaned;
+        }
+        if (typeof getSessionTitleForBatch === "function") {
+          const t = getSessionTitleForBatch(sid);
+          if (t && !t.endsWith("...") && t !== sid && !sid.startsWith(t)) {
+            const cleaned = typeof cleanSessionTitleBase === "function" ? cleanSessionTitleBase(t) : t.trim();
+            if (cleaned && cleaned !== "work" && cleaned !== "会话") {
+              return cleaned;
+            }
+          }
+        }
+        if (Array.isArray(latestKnownSessionGroups)) {
+          const group = latestKnownSessionGroups.find((g) => g?.root?.id === sid);
+          const name = group?.root?.name || group?.root?.title;
+          if (name && name.trim()) {
+            const cleaned = typeof cleanSessionTitleBase === "function" ? cleanSessionTitleBase(name.trim()) : name.trim();
+            if (cleaned && cleaned !== "work" && cleaned !== "会话") {
+              return cleaned;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 2. 兜底从侧边栏选中的会话 DOM 获取
+    try {
+      const activeRow = document.querySelector(
+        '.session-item.selected, .session-item.active, [data-session-item][aria-selected="true"], [data-session-selected="true"], [data-session-current="true"]'
+      );
+      if (activeRow) {
+        const titleEl = activeRow.querySelector('.session-name, .session-title, [data-session-title], h3, [role="heading"]');
+        const t = (titleEl ? titleEl.textContent : activeRow.textContent) || "";
+        if (t.trim()) {
+          const cleaned = typeof cleanSessionTitleBase === "function" ? cleanSessionTitleBase(t.trim()) : t.trim();
+          if (cleaned && cleaned !== "work" && cleaned !== "会话") {
+            return cleaned;
+          }
+        }
+      }
+    } catch {}
+
+    // 3. 兜底从 document.title 提取
+    try {
+      const docTitle = (typeof window !== "undefined" && window.__PI_WEB_NATIVE_TITLE_RAW__) || document.title || "";
+      if (docTitle) {
+        const cleaned = typeof cleanSessionTitleBase === "function" ? cleanSessionTitleBase(docTitle) : docTitle;
+        if (cleaned && cleaned !== "work" && cleaned !== "会话") {
+          return cleaned;
+        }
+      }
+    } catch {}
+
+    return "会话";
+  }
+
+  function restoreNativeLspStatus() {
+    // 1. 移除全局激活属性，使 html[data-pi-collapsed-title-active="true"] 选择器失效
+    document.documentElement?.removeAttribute?.("data-pi-collapsed-title-active");
+
+    // 2. 隐藏标题胶囊
+    const badge = document.getElementById(COLLAPSED_SESSION_TITLE_BADGE_ID);
+    if (badge) {
+      badge.classList.add("is-hidden");
+      badge.style.setProperty("display", "none", "important");
+      badge.style.setProperty("visibility", "hidden", "important");
+    }
+
+    // 3. 移除父级容器的替代标记类
+    const shelf = document.querySelector('.extension-status-shelf');
+    if (shelf) shelf.classList.remove("has-collapsed-title");
+    const footer = document.querySelector('.chat-composer-footer');
+    if (footer) footer.classList.remove("has-collapsed-title");
+    const slot = document.querySelector('.chat-composer-status-slot');
+    if (slot) slot.classList.remove("has-collapsed-title");
+
+    // 4. 清理替换路径设置的 inline display, visibility, width, height，恢复原生 LSP
+    for (const t of document.querySelectorAll('.extension-status-text')) {
+      t.style.removeProperty("display");
+      t.style.removeProperty("visibility");
+      t.style.removeProperty("width");
+      t.style.removeProperty("height");
     }
   }
 
-  window.__PI_ENH_ALIGN_SYNC_CAPSULE__ = alignSyncingCapsule;
-
-  if (typeof window !== "undefined") {
-    injectSyncCapsuleStyles();
-    setInterval(alignSyncingCapsule, 200);
-    window.addEventListener("resize", alignSyncingCapsule, { passive: true });
-    window.addEventListener("scroll", alignSyncingCapsule, { passive: true, capture: true });
-  }
-
-
-  // ==========================================
-  // 模型错误自动恢复与网络消除看门狗 (Model Error Auto-Recovery Watchdog)
-  // 彻底解决：网络波动导致出现“暂时无法获取模型”红色警告后，网络恢复时必须手动刷新才能消除的缺陷
-  // ==========================================
-  let modelErrorHealingTimer = null;
-  let isHealingModelError = false;
-
-  async function checkAndHealModelError() {
-    if (typeof document === "undefined" || isHealingModelError) return;
-    
-    // 检查页面上是否存在模型错误横幅
-    const errorBanner = Array.from(document.querySelectorAll('.chat-composer-banner-stack > *, [data-pi-native-composer-host] *, .pi-test-model-error-banner')).find(el => {
-      const txt = el.textContent || "";
-      return txt.includes("暂时无法获取模型") || (txt.includes("模型错误") && txt.includes("稍后重试"));
-    });
-
-    if (!errorBanner) {
-      if (modelErrorHealingTimer) {
-        clearInterval(modelErrorHealingTimer);
-        modelErrorHealingTimer = null;
-      }
+  function syncCollapsedSessionTitleBadge() {
+    if (!isPluginEnabled("collapsed-sidebar-session-title")) {
+      removeCollapsedSessionTitleBadge();
       return;
     }
 
-    // 给红色错误横幅增加轻量关闭按钮（如果尚未添加）
-    if (!errorBanner.querySelector(".pi-enh-model-error-dismiss")) {
-      const closeBtn = document.createElement("button");
-      closeBtn.type = "button";
-      closeBtn.className = "pi-enh-model-error-dismiss";
-      closeBtn.innerHTML = "×";
-      closeBtn.style.cssText = "float:right;background:none;border:none;color:inherit;font-size:16px;cursor:pointer;opacity:0.7;padding:0 4px;line-height:1;";
-      closeBtn.title = "关闭警告";
-      closeBtn.addEventListener("click", (e) => {
+    // 只有真实 sidebar 关闭后才显示当前会话标题；若展开则立即恢复原生 LSP
+    if (!isSessionSidebarCollapsed()) {
+      restoreNativeLspStatus();
+      return;
+    }
+
+    ensureCollapsedSessionTitleStyles();
+
+    // 避免父级 hidden 吞掉：排查有效且未被 hidden 的父容器
+    const isVisibleNode = (el) => {
+      if (!el || !el.isConnected) return false;
+      if (el.hasAttribute("hidden") || el.closest("[hidden]")) return false;
+      const s = (typeof window !== "undefined" && window.getComputedStyle) ? window.getComputedStyle(el) : null;
+      if (s && (s.display === "none" || s.visibility === "hidden")) return false;
+      return true;
+    };
+
+    const shelf = document.querySelector('.extension-status-shelf, .extension-status-line[role="status"]')?.parentElement?.closest?.('.extension-status-shelf') ||
+                  document.querySelector('.extension-status-shelf');
+    const line = document.querySelector('.extension-status-line');
+    const slot = document.querySelector('.chat-composer-status-slot');
+    const footer = document.querySelector('.chat-composer-footer');
+
+    const title = getActiveSessionCleanTitle();
+    if (!title) return;
+
+    let badge = document.getElementById(COLLAPSED_SESSION_TITLE_BADGE_ID);
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.id = COLLAPSED_SESSION_TITLE_BADGE_ID;
+      badge.className = "pi-enh-collapsed-session-title-badge";
+      badge.setAttribute("role", "button");
+      badge.setAttribute("tabindex", "0");
+      badge.innerHTML = `
+        <span class="pi-enh-collapsed-session-title-badge-icon" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </span>
+        <span class="pi-enh-collapsed-session-title-badge-text"></span>
+      `;
+      const onActivate = (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        errorBanner.remove();
-        if (modelErrorHealingTimer) {
-          clearInterval(modelErrorHealingTimer);
-          modelErrorHealingTimer = null;
-        }
-      });
-      errorBanner.insertBefore(closeBtn, errorBanner.firstElementChild);
-    }
-
-    // 发现存在模型错误横幅，发起自愈探活
-    isHealingModelError = true;
-    try {
-      const sessionId = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : "";
-      const engine = typeof getComposerExecutionEngineHint === "function" ? getComposerExecutionEngineHint(sessionId) : "pi";
-      const query = new URLSearchParams({ engine });
-      if (sessionId) query.set("sessionId", sessionId);
-
-      // 关键修复：显式附带有效的工作区 cwd，彻底解决因缺失 cwd 返回 403 无法自愈的问题
-      let cwd = "";
-      if (typeof getEffectiveComposerCwd === "function") {
-        try { cwd = await getEffectiveComposerCwd(); } catch (_) {}
-      }
-      if (!cwd && typeof window !== "undefined") {
-        const domCwd = document.querySelector("[data-current-cwd]")?.getAttribute("data-current-cwd");
-        if (domCwd) cwd = domCwd;
-      }
-      if (!cwd) cwd = "D:/Pi/work";
-      query.set("cwd", cwd);
-
-      const res = await fetch(`/api/models?${query}`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(5000)
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data && !data.modelError && (data.modelList?.length || Object.keys(data.models || {}).length)) {
-          // 网络已完全恢复且成功获取模型列表：平滑自动消除红色警告横幅！
-          errorBanner.style.transition = "opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease";
-          errorBanner.style.opacity = "0";
-          errorBanner.style.maxHeight = "0px";
-          errorBanner.style.margin = "0px";
-          errorBanner.style.overflow = "hidden";
+        const toggleBtn = typeof getSidebarToggleButton === "function" ? getSidebarToggleButton() : null;
+        if (toggleBtn) {
+          toggleBtn.click();
           setTimeout(() => {
-            errorBanner.remove();
-          }, 260);
-
-          // 停止探活定时器
-          if (modelErrorHealingTimer) {
-            clearInterval(modelErrorHealingTimer);
-            modelErrorHealingTimer = null;
-          }
-
-          showToast("网络已恢复，模型连接正常", null, 2500);
+            if (typeof syncCollapsedSessionTitleBadge === "function") {
+              syncCollapsedSessionTitleBadge();
+            }
+          }, 50);
         }
+      };
+      badge.addEventListener("click", onActivate);
+      badge.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          onActivate(e);
+        }
+      });
+    }
+
+    // 更新标题文本与 Tooltip
+    const textSpan = badge.querySelector(".pi-enh-collapsed-session-title-badge-text");
+    if (textSpan && textSpan.textContent !== title) {
+      textSpan.textContent = title;
+    }
+    const tip = `当前会话：${title}（点击展开会话列表）`;
+    if (badge.getAttribute("title") !== tip) {
+      badge.setAttribute("title", tip);
+      badge.setAttribute("aria-label", `当前会话：${title}`);
+    }
+    badge.classList.remove("is-hidden");
+    badge.style.setProperty("display", "inline-flex", "important");
+    badge.style.setProperty("visibility", "visible", "important");
+    badge.style.setProperty("opacity", "1", "important");
+
+    // 挂载位置选择：优先挂载到未被 hidden 吞掉的有效容器，并激活替代标记
+    let mounted = false;
+    if (line && line.isConnected && isVisibleNode(line)) {
+      if (badge.parentElement !== line || badge !== line.firstChild) {
+        line.insertBefore(badge, line.firstChild);
       }
-    } catch (_) {
-      // 依然处于离线或弱网态，保留下次重试
-    } finally {
-      isHealingModelError = false;
+      mounted = true;
+    } else if (shelf && shelf.isConnected && isVisibleNode(shelf)) {
+      if (badge.parentElement !== shelf || badge !== shelf.firstChild) {
+        shelf.insertBefore(badge, shelf.firstChild);
+      }
+      mounted = true;
+    } else if (slot && slot.isConnected && !slot.closest("[hidden]")) {
+      slot.classList.add("has-collapsed-title");
+      if (badge.parentElement !== slot) {
+        slot.appendChild(badge);
+      }
+      mounted = true;
+    } else if (footer && footer.isConnected && isVisibleNode(footer)) {
+      if (badge.parentElement !== footer) {
+        footer.appendChild(badge);
+      }
+      mounted = true;
+    }
+
+    if (!mounted) return;
+
+    if (shelf) shelf.classList.add("has-collapsed-title");
+    if (footer) footer.classList.add("has-collapsed-title");
+
+    // 激活折叠标题属性标记
+    document.documentElement?.setAttribute?.("data-pi-collapsed-title-active", "true");
+
+    // 在折叠激活状态下设置 inline 替代样式
+    for (const t of document.querySelectorAll('.extension-status-text')) {
+      t.style.setProperty("display", "none", "important");
+      t.style.setProperty("visibility", "hidden", "important");
+      t.style.setProperty("width", "0", "important");
+      t.style.setProperty("height", "0", "important");
     }
   }
 
-  function startModelErrorHealWatchdog() {
-    if (!modelErrorHealingTimer) {
-      modelErrorHealingTimer = setInterval(checkAndHealModelError, 3500);
-    }
+  function removeCollapsedSessionTitleBadge() {
+    const badge = document.getElementById(COLLAPSED_SESSION_TITLE_BADGE_ID);
+    if (badge) badge.remove();
+    const style = document.getElementById(COLLAPSED_SESSION_TITLE_STYLE_ID);
+    if (style) style.remove();
+    restoreNativeLspStatus();
   }
 
-  addManagedListener(window, "online", () => {
-    void checkAndHealModelError();
-  });
-  addManagedListener(document, "visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      void checkAndHealModelError();
-    }
-  });
-  addManagedListener(window, "focus", () => {
-    void checkAndHealModelError();
-  });
+  window.__PI_ENH_SYNC_COLLAPSED_SESSION_TITLE__ = syncCollapsedSessionTitleBadge;
+  window.__PI_ENH_REMOVE_COLLAPSED_SESSION_TITLE__ = removeCollapsedSessionTitleBadge;
 
-    if (typeof window !== "undefined") {
+  // 挂载生命周期监听：侧边栏切换、窗口缩放、会话变动
+  if (typeof window !== "undefined") {
+    if (typeof addManagedListener === "function") {
+      addManagedListener(window, "resize", syncCollapsedSessionTitleBadge);
+      addManagedListener(window, "pi-chat-session-change", () => {
+        setTimeout(syncCollapsedSessionTitleBadge, 50);
+        setTimeout(syncCollapsedSessionTitleBadge, 250);
+      });
+    } else {
+      window.addEventListener("resize", syncCollapsedSessionTitleBadge);
+      window.addEventListener("pi-chat-session-change", () => {
+        setTimeout(syncCollapsedSessionTitleBadge, 50);
+        setTimeout(syncCollapsedSessionTitleBadge, 250);
+      });
+    }
     setInterval(() => {
-      const hasBanner = document.querySelector('.chat-composer-banner-stack, [data-pi-native-composer-host]');
-      if (hasBanner && !modelErrorHealingTimer) {
-        const txt = hasBanner.textContent || "";
-        if (txt.includes("暂时无法获取模型")) {
-          startModelErrorHealWatchdog();
-          void checkAndHealModelError();
-        }
+      if (typeof syncCollapsedSessionTitleBadge === "function") {
+        syncCollapsedSessionTitleBadge();
       }
-    }, 2500);
+    }, 200);
   }
 
   // ==========================================
@@ -31197,7 +30992,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   // Per-assistant-step throughput. This intentionally uses provider-reported
   // `usage.output`, not rendered thinking text: Gemini may stream encrypted or
-  // empty thinking blocks, which made Agent Web Plus's native CJK estimate stay at 0.
+  // empty thinking blocks, which made Pi Web's native CJK estimate stay at 0.
   const knownStepSpeeds = new Map();
   const liveStepSpeeds = new Map();
   const MAX_KNOWN_STEP_SPEEDS = 500;
@@ -33693,7 +33488,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     let data = typeof nativeReader === "function" ? nativeReader(sessionId) : null;
     // A registered native owner will notify when its first read settles.
     // Starting another read here would race and duplicate that request.
-    if ((typeof nativeReader === "function" || sessionId.startsWith("codex:")) && !data) return null;
+    if (typeof nativeReader === "function" && !data) return null;
     const nativeInput = data ? { sessionId, messages: data.context?.messages,
       entryIds: data.context?.entryIds, tree: data.tree } : null;
     if (nativeInput && lastNativeMetricsInput?.sessionId === sessionId
@@ -33724,7 +33519,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     // 当会话超过 1000 条且尚未获取到当前回合完整起点时，向前安全分页追溯（最多 10 页，每页 1000 条）
     while (
-      !sessionId.startsWith("codex:") &&
       context?.hasMore &&
       (!hasCompleteTurnStart(context.messages)
         // A user at the page edge may be steering within an older turn.
@@ -34720,7 +34514,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     syncOperationErrors.set(fnName, { signature: errSig, error: errorObj, lastLoggedAt: now });
 
-    console.error(`[Agent Web Plus Enhancements] Sync operation "${fnName}" failed:`, errorObj);
+    console.error(`[Pi Web Enhancements] Sync operation "${fnName}" failed:`, errorObj);
   }
 
   function recordSyncStepSuccess(fnName) {
@@ -34744,6 +34538,90 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     } catch (err) {
       recordSyncStepError(fnName, err);
+    }
+  }
+
+  // ==========================================
+  // 对话轮次序号 (Turn Number Indicator)
+  // ==========================================
+  function clearAllTurnNumberBadges() {
+    if (typeof document === "undefined" || !document.querySelectorAll) return;
+    const badges = document.querySelectorAll(".pi-enh-turn-number-badge");
+    for (let i = 0; i < badges.length; i++) {
+      badges[i].remove();
+    }
+  }
+
+  function syncAllTurnNumberBadges() {
+    if (!isPluginEnabled("turn-number-indicator")) {
+      clearAllTurnNumberBadges();
+      return;
+    }
+
+    const userMsgs = findUserMessages();
+    if (!userMsgs || userMsgs.length === 0) {
+      clearAllTurnNumberBadges();
+      return;
+    }
+
+    let offset = 0;
+    try {
+      if (typeof readMinimapHistoryState === "function") {
+        const historyState = readMinimapHistoryState(userMsgs.length);
+        if (historyState && Number.isFinite(historyState.totalTurns) && historyState.totalTurns > userMsgs.length) {
+          offset = historyState.totalTurns - userMsgs.length;
+        }
+      }
+    } catch (e) {}
+
+    for (let i = 0; i < userMsgs.length; i++) {
+      const msg = userMsgs[i];
+      const turnNumber = offset + i + 1;
+      const timeSpan = findTimestampElement(msg);
+      if (!timeSpan || !timeSpan.parentElement) continue;
+
+      const parent = timeSpan.parentElement;
+      let badge = null;
+      const prev = timeSpan.previousElementSibling;
+      if (prev && prev.classList && prev.classList.contains("pi-enh-turn-number-badge")) {
+        badge = prev;
+      } else {
+        badge = parent.querySelector(".pi-enh-turn-number-badge");
+      }
+
+      const badgeText = `#${turnNumber}`;
+      const badgeTitle = `第 ${turnNumber} 轮对话`;
+
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "pi-enh-turn-number-badge";
+        badge.textContent = badgeText;
+        badge.setAttribute("title", badgeTitle);
+        badge.setAttribute("data-turn-number", String(turnNumber));
+
+        if (timeSpan.style && timeSpan.style.marginLeft === "auto") {
+          timeSpan.style.marginLeft = "0";
+          badge.style.marginLeft = "auto";
+        }
+        parent.insertBefore(badge, timeSpan);
+      } else {
+        if (badge.nextElementSibling !== timeSpan) {
+          parent.insertBefore(badge, timeSpan);
+        }
+        if (timeSpan.style && timeSpan.style.marginLeft === "auto") {
+          timeSpan.style.marginLeft = "0";
+          badge.style.marginLeft = "auto";
+        }
+        if (badge.textContent !== badgeText) {
+          badge.textContent = badgeText;
+        }
+        if (badge.getAttribute("title") !== badgeTitle) {
+          badge.setAttribute("title", badgeTitle);
+        }
+        if (badge.getAttribute("data-turn-number") !== String(turnNumber)) {
+          badge.setAttribute("data-turn-number", String(turnNumber));
+        }
+      }
     }
   }
 
@@ -34973,7 +34851,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_CHECK_AGENT_UPDATE__ = checkPiAgentUpdate;
 
   function syncPiAgentUpdateBadge(el, officialPiVer) {
-    if (!el || el.closest?.("[data-pi-native-version-header]")) return;
+    if (!el) return;
     ensurePiAgentUpdateStyle();
     const enabled = isPluginEnabled("pi-agent-update-notice");
     const state = getPiAgentUpdateState();
@@ -35032,7 +34910,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const officialPiVer = (typeof window !== "undefined" && window.__PI_OFFICIAL_AGENT_VERSION__) || "0.99.1";
       for (let i = 0; i < spans.length; i++) {
         const el = spans[i];
-        if (el.closest?.("[data-pi-native-version-header]")) continue;
         if (el.childNodes && el.childNodes.length === 2 && el.childNodes[0].nodeType === 3) {
           const prefix = el.childNodes[0].nodeValue || "";
           const inner = el.querySelector("span");
@@ -35050,16 +34927,255 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     } catch (e) {}
   }
 
+  let lastFullDomSyncTime = performance.now();
+
+
+  // ==========================================
+  // 3.6 SVG Code Block Preview & Exclusive Media Playback (借鉴官方 v0.13.0)
+  // ==========================================
+  function setupExclusiveMediaPlayback() {
+    if (typeof window === "undefined" || window.__PI_ENH_EXCLUSIVE_MEDIA_SETUP__) return;
+    window.__PI_ENH_EXCLUSIVE_MEDIA_SETUP__ = true;
+    window.addEventListener("play", (event) => {
+      const activeMedia = event.target;
+      if (!activeMedia || (activeMedia.tagName !== "AUDIO" && activeMedia.tagName !== "VIDEO")) return;
+      const allMedia = document.querySelectorAll("audio, video");
+      for (let i = 0; i < allMedia.length; i++) {
+        const media = allMedia[i];
+        if (media !== activeMedia && !media.paused) {
+          try { media.pause(); } catch (_) {}
+        }
+      }
+    }, true);
+  }
+
+  function syncSvgCodeBlockPreviews() {
+    if (typeof document === "undefined") return;
+    const codeBlocks = Array.from(document.querySelectorAll("pre code.language-svg, pre code"));
+    for (const code of codeBlocks) {
+      const text = (code.textContent || "").trim();
+      if (!text.startsWith("<svg") || !text.includes("</svg>")) continue;
+
+      const pre = code.closest("pre");
+      if (!pre || pre.getAttribute("data-pi-enh-svg-rendered") === "true") continue;
+      pre.setAttribute("data-pi-enh-svg-rendered", "true");
+
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "image/svg+xml");
+        const svgEl = doc.querySelector("svg");
+        const parserError = doc.querySelector("parsererror");
+        if (!svgEl || parserError) continue;
+
+        for (const s of svgEl.querySelectorAll("script, foreignObject")) s.remove();
+        svgEl.style.maxWidth = "100%";
+        svgEl.style.maxHeight = "460px";
+        svgEl.style.height = "auto";
+        svgEl.style.display = "block";
+        svgEl.style.margin = "0 auto";
+
+        const card = document.createElement("div");
+        card.className = "pi-enh-svg-preview-card";
+        card.style.cssText = "margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-panel);";
+
+        const toolbar = document.createElement("div");
+        toolbar.className = "pi-enh-svg-preview-toolbar";
+        toolbar.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg); font-size: 11px; color: var(--text-muted); user-select: none;";
+
+        const leftTabs = document.createElement("div");
+        leftTabs.style.cssText = "display: flex; gap: 4px; align-items: center;";
+
+        const tabPreview = document.createElement("button");
+        tabPreview.type = "button";
+        tabPreview.textContent = "👁️ 矢量预览";
+        tabPreview.style.cssText = "padding: 2px 8px; border-radius: 4px; border: none; background: var(--bg-selected, rgba(255,255,255,0.1)); color: var(--text); font-weight: 600; cursor: pointer; font-size: 11px;";
+
+        const tabSource = document.createElement("button");
+        tabSource.type = "button";
+        tabSource.textContent = "💻 源码";
+        tabSource.style.cssText = "padding: 2px 8px; border-radius: 4px; border: none; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 11px;";
+
+        leftTabs.append(tabPreview, tabSource);
+
+        const rightActions = document.createElement("div");
+        rightActions.style.cssText = "display: flex; gap: 8px; align-items: center;";
+
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.textContent = "复制 SVG";
+        copyBtn.style.cssText = "background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px;";
+        copyBtn.addEventListener("click", () => {
+          if (typeof copyText === "function") copyText(text, "已复制 SVG 源码");
+          else navigator.clipboard?.writeText(text);
+        });
+
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "pi-enh-svg-save-workspace-btn";
+        saveBtn.textContent = "📁 转存至工作区";
+        saveBtn.style.cssText = "display: inline-flex; align-items: center; gap: 3px; background: none; border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; color: var(--text-muted); cursor: pointer; font-size: 11px; transition: color 0.15s, border-color 0.15s;";
+        saveBtn.addEventListener("mouseenter", () => {
+          saveBtn.style.color = "var(--text)";
+          saveBtn.style.borderColor = "var(--accent, #38bdf8)";
+        });
+        saveBtn.addEventListener("mouseleave", () => {
+          saveBtn.style.color = "var(--text-muted)";
+          saveBtn.style.borderColor = "var(--border)";
+        });
+
+        saveBtn.addEventListener("click", async () => {
+          if (saveBtn.__saving) return;
+          saveBtn.__saving = true;
+          const origText = saveBtn.textContent;
+          saveBtn.textContent = "⏳ 正在转存...";
+          saveBtn.disabled = true;
+
+          try {
+            let diagramName = "";
+            const titleMatch = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+            if (titleMatch && titleMatch[1]) {
+              diagramName = titleMatch[1].replace(/[\u0000-\u001f\u007f\\/:\*\?"<>\|]/g, " ").replace(/\s+/g, "-").trim().toLowerCase();
+            }
+            if (!diagramName || diagramName.length < 2) {
+              const d = new Date();
+              const pad = (n) => String(n).padStart(2, "0");
+              const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+              diagramName = `svg-diagram-${stamp}`;
+            }
+            if (!diagramName.endsWith(".svg")) diagramName += ".svg";
+
+            let targetUploadDir = "output";
+            const urlParams = new URLSearchParams(window.location?.search || "");
+            const currentCwd = urlParams.get("cwd");
+            if (currentCwd) {
+              const cleanCwd = currentCwd.replace(/^[a-zA-Z]:[\\/]Pi[\\/]/i, "workspace/").replace(/^[a-zA-Z]:[\\/]/i, "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+              targetUploadDir = `${cleanCwd}/output`;
+            }
+
+            const form = new FormData();
+            const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+            form.append("files", blob, diagramName);
+
+            const uploadUrl = `/api/files/${encodeURIComponent(targetUploadDir)}?type=upload&conflict=overwrite`;
+            let uploadResp = null;
+            try {
+              uploadResp = await fetch(uploadUrl, { method: "POST", body: form });
+            } catch (_) {}
+
+            if (!uploadResp || !uploadResp.ok) {
+              const fallbackUrl = `/api/files/output?type=upload&conflict=overwrite`;
+              uploadResp = await fetch(fallbackUrl, { method: "POST", body: form });
+              targetUploadDir = "output";
+            }
+
+            if (uploadResp && uploadResp.ok) {
+              saveBtn.textContent = "✅ 已保存至工作区";
+              saveBtn.style.color = "#4ade80";
+              const savedRelPath = `${targetUploadDir}/${diagramName}`;
+              if (typeof showToast === "function") {
+                showToast(`已成功保存至工作区: ${savedRelPath}`, null, 3500);
+              }
+              setTimeout(() => {
+                saveBtn.textContent = origText;
+                saveBtn.style.color = "var(--text-muted)";
+                saveBtn.disabled = false;
+                saveBtn.__saving = false;
+              }, 2500);
+            } else {
+              throw new Error("保存接口未返回成功状态");
+            }
+          } catch (err) {
+            const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+            const dUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = dUrl;
+            a.download = "diagram.svg";
+            a.click();
+            URL.revokeObjectURL(dUrl);
+            saveBtn.textContent = "已转为下载";
+            if (typeof showToast === "function") {
+              showToast("服务端暂不可写，已自动为您下载文件", null, 2500);
+            }
+            setTimeout(() => {
+              saveBtn.textContent = origText;
+              saveBtn.disabled = false;
+              saveBtn.__saving = false;
+            }, 2500);
+          }
+        });
+
+        const downloadBtn = document.createElement("button");
+        downloadBtn.type = "button";
+        downloadBtn.textContent = "下载 .svg";
+        downloadBtn.style.cssText = "background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px;";
+        downloadBtn.addEventListener("click", () => {
+          const blob = new Blob([text], { type: "image/svg+xml;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "diagram.svg";
+          a.click();
+          URL.revokeObjectURL(url);
+          if (typeof showToast === "function") showToast("已开始下载 SVG 文件", null, 1500);
+        });
+
+        rightActions.append(copyBtn, saveBtn, downloadBtn);
+        toolbar.append(leftTabs, rightActions);
+
+        const previewPane = document.createElement("div");
+        previewPane.className = "pi-enh-svg-preview-pane";
+        previewPane.style.cssText = "padding: 16px; display: flex; justify-content: center; align-items: center; overflow: auto; background-image: linear-gradient(45deg, var(--bg) 25%, transparent 25%), linear-gradient(-45deg, var(--bg) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--bg) 75%), linear-gradient(-45deg, transparent 75%, var(--bg) 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0px;";
+        previewPane.appendChild(doc.adoptNode(svgEl));
+
+        const sourcePane = pre.cloneNode(true);
+        sourcePane.style.margin = "0";
+        sourcePane.style.display = "none";
+
+        tabPreview.addEventListener("click", () => {
+          previewPane.style.display = "flex";
+          sourcePane.style.display = "none";
+          tabPreview.style.background = "var(--bg-selected, rgba(255,255,255,0.1))";
+          tabPreview.style.color = "var(--text)";
+          tabPreview.style.fontWeight = "600";
+          tabSource.style.background = "transparent";
+          tabSource.style.color = "var(--text-dim)";
+          tabSource.style.fontWeight = "400";
+        });
+
+        tabSource.addEventListener("click", () => {
+          previewPane.style.display = "none";
+          sourcePane.style.display = "block";
+          tabSource.style.background = "var(--bg-selected, rgba(255,255,255,0.1))";
+          tabSource.style.color = "var(--text)";
+          tabSource.style.fontWeight = "600";
+          tabPreview.style.background = "transparent";
+          tabPreview.style.color = "var(--text-dim)";
+          tabPreview.style.fontWeight = "400";
+        });
+
+        card.append(toolbar, previewPane, sourcePane);
+        pre.parentElement?.replaceChild(card, pre);
+      } catch (err) {}
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    setupExclusiveMediaPlayback();
+  }
+
   const ALL_SYNC_STEPS = [
+    { fn: syncSvgCodeBlockPreviews, scope: "chat-text" },
     { fn: syncStandaloneVersionDom, scope: "full" },
     { fn: syncWorkspacePickerHover, scope: "full" },
     { fn: syncAllDurationBadges, scope: "chat-text" },
+    { fn: syncAllTurnNumberBadges, scope: "chat-text" },
     { fn: syncAllUsageBadges, scope: "chat-text" },
     { fn: syncAllModelSpeedBadges, scope: "chat-text" },
     { fn: syncAllTaskToolAutoCollapse, scope: "chat-text" },
     { fn: syncSubagentDispatchCards, scope: "full" },
     { fn: syncHistoryScrollStability, scope: "chat-text" },
     { fn: syncCompactionCards, scope: "chat-text" },
+    { fn: syncModelScopeWarnings, scope: "full" },
     { fn: hideQuickActionAnalysisCards, scope: "full" },
     { fn: syncQuickActionButtons, scope: "full" },
     { fn: syncEmptySendContinue, scope: "full" },
@@ -35098,7 +35214,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     { fn: syncStreamingThinkingGuard, scope: "chat-text" },
     { fn: syncMarkdownViewerMode, scope: "full" },
     { fn: syncExcelViewerMode, scope: "full" },
-    { fn: checkAndAutoRecoverAccessDenied, scope: "full" }
+    { fn: checkAndAutoRecoverAccessDenied, scope: "full" },
+    { fn: () => typeof window.__PI_ENH_SCAN_NATIVE_NOTICES__ === "function" && window.__PI_ENH_SCAN_NATIVE_NOTICES__(document), scope: "full" },
+    { fn: () => typeof window.__PI_ENH_SYNC_COLLAPSED_SESSION_TITLE__ === "function" && window.__PI_ENH_SYNC_COLLAPSED_SESSION_TITLE__(), scope: "full" }
   ];
 
   function runAllSyncOperations(scopeOrOptions) {
@@ -35106,6 +35224,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const targetScope = (typeof scopeOrOptions === "string" ? scopeOrOptions : scopeOrOptions?.scope) === "chat-text"
       ? "chat-text"
       : "full";
+
+    if (targetScope === "full") {
+      lastFullDomSyncTime = performance.now();
+    }
 
     withMutationGuard(() => {
       if (isDisposed) return;
@@ -35123,6 +35245,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_RUN_ALL_SYNC_OPERATIONS__ = runAllSyncOperations;
   window.__PI_ENH_EXECUTE_SYNC_STEP__ = executeSyncStep;
   window.__PI_ENH_SYNC_OPERATION_ERRORS__ = syncOperationErrors;
+  window.__PI_ENH_SYNC_TURN_NUMBERS__ = syncAllTurnNumberBadges;
+  window.__PI_ENH_CLEAR_TURN_NUMBERS__ = clearAllTurnNumberBadges;
 
   setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
   addManagedListener(window, "online", () => {
@@ -35138,6 +35262,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   addManagedListener(document, "visibilitychange", () => {
     setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
     if (document.visibilityState === "visible") {
+      stopAttentionTitleAlert();
       syncProjectStatusIndicators();
       // 手机端/前台切回：静默确保当前会话快照与状态对齐，绝不触发全屏重载
       const currentId = getActiveSessionId() || getCurrentSessionId();
@@ -35154,15 +35279,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   });
   addManagedListener(window, "pageshow", (event) => {
     // 页面从 BFCache 或后台恢复
-    if (document.visibilityState !== "hidden") {
-      setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
-      if (typeof window.__PI_WEB_REFRESH_PROJECT_STATUS__ === "function") {
-        try {
-          window.__PI_WEB_REFRESH_PROJECT_STATUS__();
-        } catch (e) {}
-      }
-    }
     if (event.persisted) {
+      if (document.visibilityState !== "hidden") {
+        setProjectStatusMonitoring(isPluginEnabled("project-status-indicator"));
+      }
       const currentId = getActiveSessionId() || getCurrentSessionId();
       if (currentId) {
         if (typeof scheduleTerminalSyncCheck === "function") {
@@ -35230,9 +35350,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
     const isForeground = typeof document === "undefined" || document.visibilityState !== "hidden";
     if (isForeground) {
-      // DOM/config changes and navigation already invalidate their own scopes.
-      // Keep lifecycle reconciliation, but do not rescan unchanged messages.
-      if (sessionChanged || runningStateChanged) {
+      const now = performance.now();
+      if (sessionChanged || runningStateChanged || (now - lastFullDomSyncTime >= 5000)) {
         if (typeof scheduleDomSync === "function") {
           scheduleDomSync("full");
         }
@@ -35645,7 +35764,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function enhanceDirectoryPickerModal() {
     if (!isPluginEnabled("workspace-picker-hover")) return;
     const picker = document.querySelector(".directory-picker-panel");
-    if (!picker || picker.hasAttribute("data-pi-native-directory-picker")) return;
+    if (!picker) return;
 
     // 1. 移除顶栏可能残留的重复新建按钮，让输入框自然充满并紧挨“转到”按钮
     const oldTopBtn = picker.querySelector(".directory-picker-top-new-folder-btn");
@@ -35741,7 +35860,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function getMinimapHistorySettings() {
     return {
-      initialTurns: Math.max(5, clampMinimapTurnSetting(getPluginSetting("minimap-full-nav", "initialTurns"), 5)),
+      initialTurns: clampMinimapTurnSetting(getPluginSetting("minimap-full-nav", "initialTurns"), 5),
       stepTurns: clampMinimapTurnSetting(getPluginSetting("minimap-full-nav", "stepTurns"), 5),
     };
   }
@@ -36424,9 +36543,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // ==========================================
   // 3.8. Obsidian & Markdown Viewer Plugin (Obsidian 笔记与 Markdown 预览增强)
   // ==========================================
-  async function handleObsidianFileFetch(input, init, urlStr, activeFetch) {
-    if (!isPluginEnabled("obsidian-markdown-viewer")) return null;
+  const userExplicitSourcePaths = new Set();
+  lastObsidianViewerPath = null;
 
+    // ==========================================
+  // 全局通用跨平台文件自愈桥 (Universal Cross-Platform File Bridge)
+  // 彻底解决：手机在外面访问群晖等非 Windows 环境时，点击 Windows 绝对路径报 Access denied 的缺陷
+  // 支持：.yaml, .json, .md, .png, .jpg, .py, .sh, .txt 等所有文件类型
+  // ==========================================
+  async function handleUniversalCrossPlatformFileFetch(input, init, urlStr, activeFetch) {
     const baseOrigin = (typeof window !== "undefined" && window.location?.origin) ||
       (typeof window !== "undefined" && window.location?.href) ||
       "http://127.0.0.1:30141";
@@ -36445,7 +36570,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     if (!rawPath) return null;
 
     const reqType = parsedUrl.searchParams.get("type") || "list";
-    if (reqType !== "read" && reqType !== "meta" && reqType !== "download") {
+    if (reqType !== "read" && reqType !== "meta" && reqType !== "download" && reqType !== "preview") {
       return null;
     }
 
@@ -36456,91 +36581,98 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       candidatePath = rawPath;
     }
 
-    // 智能识别外部 UNC / 群晖共享 / 知识库路径
-    const isUncOrObsidian = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9_-]+\.[a-zA-Z0-9_.-]+)[\\/]/.test(candidatePath)
-      || /^(\\\\|\/\/)/.test(candidatePath)
-      || candidatePath.includes("Obsidian");
+    // 1. 生成跨平台候选工作区路径列表 (Windows D:\\Pi\\... <-> Linux workspace/...)
+    const norm = candidatePath.replace(/\\+/g, "/").replace(/\/+/g, "/");
+    const clean = norm.replace(/^\/+/, "");
+    const candidatePaths = [];
 
-    if (isUncOrObsidian) {
-      if (/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9_-]+\.[a-zA-Z0-9_.-]+)[\\/]/.test(candidatePath)) {
-        candidatePath = "\\\\" + candidatePath.replace(/\//g, "\\");
-      } else if (/^[a-zA-Z]:[\\/]/.test(candidatePath)) {
-        candidatePath = candidatePath.replace(/\//g, "\\");
+    // 模式 A: 匹配带冒号或不带冒号的 Windows 盘符路径（如 D:/Pi/..., D/Pi/..., /D/Pi/..., C:/Users/demo/...）
+    if (/^([a-zA-Z]:?)\//i.test(clean)) {
+      const sub = clean.replace(/^[a-zA-Z]:?\//i, "").replace(/^\/+/, "");
+      const fileName = sub.split("/").pop();
+
+      // 候选 1: D:\\Pi\\work\\... -> workspace/work/...
+      if (/^Pi\//i.test(sub)) {
+        candidatePaths.push("workspace/" + sub.replace(/^Pi\//i, ""));
+      } else if (/^workspace\//i.test(sub)) {
+        candidatePaths.push("workspace/" + sub.replace(/^workspace\//i, ""));
+      } else {
+        candidatePaths.push("workspace/" + sub);
       }
 
-      // 针对明确外部 UNC 路径直接由本地高速桥接服务（30149）读取，避开原生后端超时挂起
-      try {
-        const rawFetch = originalWindowFetch || (typeof fetch === "function" ? fetch : activeFetch);
-        const bridgeUrl = `http://127.0.0.1:30149/read-file?path=${encodeURIComponent(candidatePath)}`;
-        const bridgeResp = await rawFetch(bridgeUrl, {
-          method: "GET",
-          mode: "cors"
-        });
+      // 候选 2: C:\\Users\\*\\.pi\\... -> root/.pi/...
+      if (/^Users\/[^\/]+\/\.pi\//i.test(sub)) {
+        candidatePaths.push("root/.pi/" + sub.replace(/^Users\/[^\/]+\/\.pi\//i, ""));
+      }
 
-        if (bridgeResp && bridgeResp.ok) {
-          const bridgeData = await bridgeResp.json();
-          if (bridgeData && bridgeData.ok) {
-            const lang = bridgeData.language || "markdown";
-
-            if (reqType === "read") {
-              const payload = {
-                content: bridgeData.content,
-                nextOffset: bridgeData.size,
-                truncated: false,
-                language: lang,
-                size: bridgeData.size
-              };
-              return new Response(JSON.stringify(payload), {
-                status: 200,
-                headers: { "Content-Type": "application/json" }
-              });
-            }
-
-            if (reqType === "meta") {
-              const payload = {
-                size: bridgeData.size,
-                language: lang,
-                mime: lang === "markdown" ? "text/markdown" : "text/plain",
-                previewKind: null
-              };
-              return new Response(JSON.stringify(payload), {
-                status: 200,
-                headers: { "Content-Type": "application/json" }
-              });
-            }
-
-            if (reqType === "download") {
-              const filename = candidatePath.split(/[\\/]/).pop() || "note.md";
-              return new Response(bridgeData.content, {
-                status: 200,
-                headers: {
-                  "Content-Type": "text/markdown; charset=utf-8",
-                  "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`
-                }
-              });
-            }
-          }
-        }
-      } catch (err) {}
+      // 候选 3: 直接按文件名匹配 workspace/work/ 与 workspace/
+      if (fileName) {
+        candidatePaths.push("workspace/work/" + fileName);
+        candidatePaths.push("workspace/" + fileName);
+        candidatePaths.push("workspace/odoo/" + fileName);
+      }
+    } else if (/^workspace\//i.test(clean)) {
+      const fileName = clean.split("/").pop();
+      if (fileName) {
+        candidatePaths.push("workspace/work/" + fileName);
+      }
     }
 
-    // 非明确外部路径：优先让原生后端尝试
+    // 2. 首先尝试原生请求（如果处于 Windows 环境且能正常读取，原汁原味返回）
     let nativeResp = null;
     try {
       nativeResp = await activeFetch(input, init);
     } catch (e) {}
 
-    // 若原生能正常读取（HTTP 200），直接使用原生响应
     if (nativeResp && nativeResp.ok) {
+      if (reqType === "read") {
+        try {
+          const clone = nativeResp.clone();
+          clone.json().then((data) => {
+            if (data && typeof data.content === "string") {
+              viewerFileContentCache.set(candidatePath, data.content);
+              viewerFileContentCache.set(rawPath, data.content);
+            }
+          }).catch(() => {});
+        } catch (_) {}
+      }
       return nativeResp;
     }
 
-    // 原生失败（403 Access denied、404 等），尝试通过本地桥接服务（30149）二次兜底读取
-    if (!isUncOrObsidian) {
-      if (/^[a-zA-Z]:[\\/]/.test(candidatePath)) {
-        candidatePath = candidatePath.replace(/\//g, "\\");
-      }
+    // 3. 原生失败（403 Access denied、404 等），优先按候选列表执行跨平台自愈请求
+    for (const cand of candidatePaths) {
+      try {
+        const mappedUrl = new URL(parsedUrl.toString());
+        mappedUrl.pathname = "/api/files/" + cand.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+        mappedUrl.searchParams.delete("engine");
+        mappedUrl.searchParams.delete("executionEngine");
+        if (mappedUrl.searchParams.get("sessionId")?.startsWith("codex:")) {
+          mappedUrl.searchParams.delete("sessionId");
+        }
+        const mappedResp = await activeFetch(mappedUrl.toString(), init);
+        if (mappedResp && mappedResp.ok) {
+          if (reqType === "read") {
+            try {
+              const clone = mappedResp.clone();
+              clone.json().then((data) => {
+                if (data && typeof data.content === "string") {
+                  viewerFileContentCache.set(candidatePath, data.content);
+                  viewerFileContentCache.set(rawPath, data.content);
+                }
+              }).catch(() => {});
+            } catch (_) {}
+          }
+          return mappedResp;
+        }
+      } catch (_) {}
+    }
 
+    // 4. 若为明确外部 UNC/Obsidian 路径且处于 PC 本地环境，尝试通过本地桥接 (30149) 兜底
+    const isUncOrObsidian = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|[a-zA-Z0-9_-]+\.[a-zA-Z0-9_.-]+)[\\/]/.test(candidatePath)
+      || /^(\\\\|\/\/)/.test(candidatePath)
+      || candidatePath.includes("Obsidian");
+
+    if (isUncOrObsidian) {
       try {
         const rawFetch = originalWindowFetch || (typeof fetch === "function" ? fetch : activeFetch);
         const bridgeUrl = `http://127.0.0.1:30149/read-file?path=${encodeURIComponent(candidatePath)}`;
@@ -36548,12 +36680,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           method: "GET",
           mode: "cors"
         });
-
         if (bridgeResp && bridgeResp.ok) {
           const bridgeData = await bridgeResp.json();
           if (bridgeData && bridgeData.ok) {
-            const lang = bridgeData.language || "markdown";
-
+            const ext = candidatePath.split(".").pop()?.toLowerCase() || "";
+            const lang = bridgeData.language || (ext === "yaml" || ext === "yml" ? "yaml" : ext === "json" ? "json" : "text");
             if (reqType === "read") {
               const payload = {
                 content: bridgeData.content,
@@ -36562,37 +36693,174 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
                 language: lang,
                 size: bridgeData.size
               };
+              viewerFileContentCache.set(candidatePath, bridgeData.content);
+              viewerFileContentCache.set(rawPath, bridgeData.content);
               return new Response(JSON.stringify(payload), {
                 status: 200,
                 headers: { "Content-Type": "application/json" }
               });
             }
-
             if (reqType === "meta") {
-              const payload = {
+              return new Response(JSON.stringify({
                 size: bridgeData.size,
                 language: lang,
-                mime: lang === "markdown" ? "text/markdown" : "text/plain",
+                mime: "text/plain",
                 previewKind: null
-              };
-              return new Response(JSON.stringify(payload), {
+              }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" }
               });
             }
           }
         }
-      } catch (err) {}
+      } catch (_) {}
     }
 
     return nativeResp;
   }
-
+  const handleObsidianFileFetch = handleUniversalCrossPlatformFileFetch;
+  window.__PI_ENH_HANDLE_OBSIDIAN_FETCH__ = handleUniversalCrossPlatformFileFetch;
   function syncMarkdownViewerMode() {
-    const enabled = isPluginEnabled("obsidian-markdown-viewer");
-    window.dispatchEvent(new CustomEvent("pi:obsidian-markdown-viewer-preferences-change", {
-      detail: { enabled },
-    }));
+    if (!isPluginEnabled("obsidian-markdown-viewer")) {
+      removeMarkdownViewerEnhancements();
+      return;
+    }
+
+    const viewerShell = document.querySelector(".file-viewer-shell");
+    if (!viewerShell) {
+      lastObsidianViewerPath = null;
+      return;
+    }
+
+    const pathEl = viewerShell.querySelector(".file-viewer-path");
+    const currentPath = pathEl?.getAttribute("title") || pathEl?.textContent || "";
+    const isMarkdown = /\.md$/i.test(currentPath) || /\.markdown$/i.test(currentPath) ||
+      Boolean(viewerShell.querySelector(".file-viewer-meta")?.textContent?.toLowerCase().includes("markdown"));
+
+    if (!isMarkdown) return;
+
+    const modeSwitch = viewerShell.querySelector(".file-viewer-mode-switch");
+    if (!modeSwitch) return;
+
+    const buttons = Array.from(modeSwitch.querySelectorAll(".file-viewer-mode-button"));
+    const sourceBtn = buttons.find((b) => /源码|source/i.test(b.textContent || ""));
+    const previewBtn = buttons.find((b) => /预览|preview/i.test(b.textContent || ""));
+
+    if (!sourceBtn || !previewBtn) return;
+
+    if (!sourceBtn.__piObsidianTracked) {
+      sourceBtn.__piObsidianTracked = true;
+      sourceBtn.addEventListener("click", () => {
+        if (currentPath) userExplicitSourcePaths.add(currentPath);
+        updateCustomSwitcherUi();
+      });
+    }
+    if (!previewBtn.__piObsidianTracked) {
+      previewBtn.__piObsidianTracked = true;
+      previewBtn.addEventListener("click", () => {
+        if (currentPath) userExplicitSourcePaths.delete(currentPath);
+        updateCustomSwitcherUi();
+      });
+    }
+
+    // 默认自动切换为格式化预览：当首次打开新笔记且用户未显式切到源码时
+    if (lastObsidianViewerPath !== currentPath) {
+      lastObsidianViewerPath = currentPath;
+      if (!userExplicitSourcePaths.has(currentPath)) {
+        const isPreviewActive = previewBtn.getAttribute("aria-pressed") === "true";
+        if (!isPreviewActive) {
+          previewBtn.click();
+        }
+      }
+    }
+
+    decorateMarkdownModeSwitcher(viewerShell, sourceBtn, previewBtn, currentPath);
+  }
+
+  viewerFileContentCache = new Map();
+
+  async function handleCopyViewerContent(viewerShell, copyBtnEl, fallbackPath) {
+    const pathEl = viewerShell?.querySelector(".file-viewer-path");
+    const activePath = pathEl?.getAttribute("title") || pathEl?.textContent || fallbackPath || "";
+
+    let content = "";
+    // 1. 尝试从内存缓存中获取
+    if (activePath) {
+      content = viewerFileContentCache.get(activePath) || viewerFileContentCache.get(decodeURIComponent(activePath)) || "";
+    }
+
+    // 2. 若缓存未命中，尝试从 Monaco 编辑器中读取源码
+    if (!content) {
+      try {
+        const models = window.monaco?.editor?.getModels?.();
+        if (models && models.length > 0) {
+          content = models[0].getValue?.() || "";
+        }
+      } catch (e) {}
+    }
+
+    // 3. 若仍无内容，且存在有效路径，异步向后端请求该文件的纯文本
+    if (!content && activePath) {
+      try {
+        const cleanPath = activePath.replace(/^[\\/]+/, "");
+        const fetchUrl = `/api/files/${encodeURIComponent(cleanPath)}?type=read`;
+        const resp = await (originalWindowFetch || fetch)(fetchUrl);
+        if (resp && resp.ok) {
+          const data = await resp.json();
+          if (data && typeof data.content === "string") {
+            content = data.content;
+            viewerFileContentCache.set(activePath, content);
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 4. 兜底提取 DOM 内部文本（例如源码 pre/code，或预览区文本）
+    if (!content && viewerShell) {
+      const targetEl = viewerShell.querySelector(".view-lines, pre code, pre, .markdown-file-preview");
+      if (targetEl) {
+        content = targetEl.innerText || targetEl.textContent || "";
+      }
+    }
+
+    if (!content) {
+      showToast("未获取到文件内容，复制失败", null, 2000);
+      return;
+    }
+
+    let copied = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(content);
+        copied = true;
+      }
+    } catch (e) {}
+    if (!copied) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = content;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (e) {}
+    }
+
+    if (copied) {
+      copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+      copyBtnEl.classList.add("is-copied");
+      showToast("已复制 Markdown 源码全文");
+      setTimeout(() => {
+        if (copyBtnEl.isConnected) {
+          copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+          copyBtnEl.classList.remove("is-copied");
+        }
+      }, 1500);
+    } else {
+      showToast("复制失败，请检查浏览器剪贴板权限", null, 2500);
+    }
   }
 
   // 全局直达文件浏览窗口（点击链接直接在右侧浏览窗口查看）
@@ -36640,12 +36908,31 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       try { cleanPath = decodeURIComponent(cleanPath); } catch (e) {}
     }
 
+    // 跨平台工作区路径智能自愈映射 (Windows D:\\Pi\\... <-> Linux /workspace/work/...)
+    let targetFilePath = cleanPath;
+    let targetCwd = undefined;
+    const winNorm = cleanPath.replace(/\\+/g, "/").replace(/\/+/g, "/");
+    const cleanWin = winNorm.replace(/^\/+/, "");
+
+    if (/^([a-zA-Z]:?)\//i.test(cleanWin)) {
+      const sub = cleanWin.replace(/^[a-zA-Z]:?\//i, "").replace(/^\/+/, "");
+      const fileName = sub.split("/").pop();
+      if (/^Pi\//i.test(sub)) {
+        targetFilePath = "/workspace/" + sub.replace(/^Pi\//i, "");
+      } else if (/^workspace\//i.test(sub)) {
+        targetFilePath = "/" + sub;
+      } else {
+        targetFilePath = "/workspace/work/" + fileName;
+      }
+      targetCwd = "/workspace/work";
+    }
+
     const onOpenFile = findNativeOnOpenFile();
     const fileName = cleanPath.split("/").pop() || cleanPath.split("\\").pop() || cleanPath;
 
     if (typeof onOpenFile === "function") {
       try {
-        onOpenFile(cleanPath, fileName);
+        onOpenFile(targetFilePath, fileName, { cwd: targetCwd, executionEngine: "pi" });
         setTimeout(() => {
           if (!isFilePanelOpen()) {
             openFilePanel();
@@ -36658,21 +36945,138 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     openFilePanel();
     return false;
   }
-  window.__PI_ENH_OPEN_FILE_IN_RIGHT_VIEWER__ = openFileInRightViewer;
 
-  // 原生 MarkdownBody 已负责普通文件链接；兼容层只处理自己生成的文件控件。
+  // ==========================================
+  // 全局文件查看自愈看门狗 (Universal File Viewer Auto-Healing Watchdog)
+  // 彻底消除手机端或外网访问群晖时，右侧抽屉弹出的 Not found、Access denied、Failed to load image
+  // ==========================================
+  function setupFileViewerAutoHealing() {
+    if (typeof document === "undefined") return;
+
+    function getActiveFileName() {
+      // 1. 尝试从活跃 Tab 获取
+      const activeTab = document.querySelector("[role='tab'][aria-selected='true'], .active[role='tab']");
+      const tabText = activeTab?.getAttribute("aria-label") || activeTab?.textContent || "";
+      if (tabText) {
+        const clean = tabText.replace(/\\+/g, "/").split("/").pop().trim();
+        if (clean && clean.includes(".")) return clean;
+      }
+
+      // 2. 尝试从右侧面板路径栏获取
+      const panel = document.querySelector("#file-panel, .right-panel-container, aside[id*='file']");
+      if (panel) {
+        const titleSpans = panel.querySelectorAll("span[title], .file-viewer-path, header span");
+        for (const span of titleSpans) {
+          const t = span.getAttribute("title") || span.textContent || "";
+          if (t && t.includes(".")) {
+            const clean = t.replace(/\\+/g, "/").split("/").pop().trim();
+            if (clean && clean.includes(".")) return clean;
+          }
+        }
+      }
+      return "";
+    }
+
+    function healFileViewer() {
+      const allDivs = document.querySelectorAll("div");
+      for (const div of allDivs) {
+        const text = (div.textContent || "").trim();
+
+        // 场景 1: 处理图片加载失败 (Failed to load image)
+        if (text === "Failed to load image" && div.style.display !== "none") {
+          const container = div.parentElement;
+          if (!container || container.__piImageHealed) continue;
+
+          const fileName = getActiveFileName();
+          if (fileName && /\.(png|jpe?g|webp|gif|svg|bmp|ico)$/i.test(fileName)) {
+            container.__piImageHealed = true;
+            div.style.display = "none";
+            const remappedSrc = `/api/files/workspace/work/${encodeURIComponent(fileName)}?type=read&engine=pi`;
+
+            const newImg = document.createElement("img");
+            newImg.src = remappedSrc;
+            newImg.alt = fileName;
+            newImg.style.cssText = "max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 2px 8px rgba(0,0,0,0.15); animation: pi-sync-pop 0.2s ease;";
+            newImg.onload = () => { div.remove(); };
+            newImg.onerror = () => {
+              div.style.display = "";
+              newImg.remove();
+              container.__piImageHealed = false;
+            };
+            container.appendChild(newImg);
+          }
+        }
+
+        // 场景 2: 处理文本/代码文件 Not found 或 Access denied
+        if ((text === "Not found" || text === "Access denied") && div.style.display !== "none") {
+          const container = div.parentElement;
+          if (!container || container.__piTextHealed) continue;
+
+          const fileName = getActiveFileName();
+          if (fileName) {
+            container.__piTextHealed = true;
+            const remappedUrl = `/api/files/workspace/work/${encodeURIComponent(fileName)}?type=read&engine=pi`;
+
+            fetch(remappedUrl)
+              .then(r => r.ok ? r.json() : Promise.reject(new Error("Status " + r.status)))
+              .then(data => {
+                if (data && typeof data.content === "string") {
+                  div.style.display = "none";
+                  const pre = document.createElement("pre");
+                  pre.style.cssText = "white-space: pre-wrap; word-break: break-word; padding: 16px; font-family: var(--font-mono, monospace); font-size: 13px; line-height: 1.6; color: var(--text); background: var(--bg-panel); overflow: auto; height: 100%; margin: 0;";
+                  pre.textContent = data.content;
+                  container.appendChild(pre);
+                  if (typeof showToast === "function") {
+                    showToast("已自动在右侧窗口加载文件", null, 2500);
+                  }
+                }
+              })
+              .catch(() => {
+                container.__piTextHealed = false;
+              });
+          }
+        }
+      }
+    }
+
+    const observer = new MutationObserver(() => { healFileViewer(); });
+    observer.observe(document.body, { childList: true, subtree: true });
+    setInterval(healFileViewer, 400);
+  }
+
+  if (typeof window !== "undefined") {
+    setupFileViewerAutoHealing();
+  }
+
+    window.__PI_ENH_OPEN_FILE_IN_RIGHT_VIEWER__ = openFileInRightViewer;
+
+    // 原生 MarkdownBody 已负责普通文件链接；兼容层只处理自己生成的文件控件。
   function onLegacyFileLinkClick(e) {
     if (e.defaultPrevented || e.button !== 0 || e.shiftKey || e.altKey) return;
-    const a = e.target?.closest?.(".pi-enh-file-link, [data-file-path]");
+    let a = null;
+    try {
+      a = e.target?.closest?.(".pi-enh-file-link, [data-file-path], a[href^='file:'], a[href*='D:/'], a[href*='C:/']");
+    } catch (_) {}
+    if (!a && e.target?.closest) {
+      const link = e.target.closest("a");
+      const h = link?.getAttribute("href") || "";
+      if (h.includes("D:\\") || h.includes("C:\\")) a = link;
+    }
     if (!a) return;
     const rawPath = a.getAttribute("data-file-path");
     const href = rawPath || a.getAttribute("href") || "";
     if (!href || /^https?:/i.test(href)) return;
-    const filePath = rawPath || normalizeToLocalFsPath(href);
-    if (!filePath) return;
+
+    let targetPath = rawPath || href;
+    if (targetPath.startsWith("file:///")) {
+      try { targetPath = decodeURIComponent(targetPath.slice("file://".length)); } catch (_) {}
+    } else if (targetPath.startsWith("file://")) {
+      try { targetPath = decodeURIComponent(targetPath.slice("file:/".length)); } catch (_) {}
+    }
+
     e.preventDefault();
     e.stopPropagation();
-    openFileInRightViewer(filePath);
+    openFileInRightViewer(targetPath);
   }
   addManagedListener(document, "click", onLegacyFileLinkClick, true);
 
@@ -36682,6 +37086,102 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     executeSyncStep(syncMarkdownViewerMode);
     executeSyncStep(syncExcelViewerMode);
   };
+
+  function decorateMarkdownModeSwitcher(viewerShell, sourceBtn, previewBtn, currentPath) {
+    let customSwitch = viewerShell.querySelector(".pi-enh-md-mode-switch");
+    if (!customSwitch) {
+      customSwitch = document.createElement("div");
+      customSwitch.className = "pi-enh-md-mode-switch";
+      customSwitch.setAttribute("data-pi-enh-viewer-switch", "true");
+      customSwitch.__currentPath = currentPath;
+
+      const prevBtnEl = document.createElement("button");
+      prevBtnEl.type = "button";
+      prevBtnEl.className = "pi-enh-md-btn pi-enh-md-preview";
+      prevBtnEl.title = "Markdown 格式化富文本预览";
+      prevBtnEl.textContent = "👁️ 格式预览";
+
+      const srcBtnEl = document.createElement("button");
+      srcBtnEl.type = "button";
+      srcBtnEl.className = "pi-enh-md-btn pi-enh-md-source";
+      srcBtnEl.title = "切换到 Markdown 源码阅读";
+      srcBtnEl.textContent = "📝 源码阅读";
+
+      const copyBtnEl = document.createElement("button");
+      copyBtnEl.type = "button";
+      copyBtnEl.className = "pi-enh-md-btn pi-enh-md-copy";
+      copyBtnEl.title = "复制源码全文 (Copy Source)";
+      copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+
+      prevBtnEl.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (currentPath) userExplicitSourcePaths.delete(currentPath);
+        previewBtn.click();
+        updateCustomSwitcherUi();
+      });
+      srcBtnEl.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (currentPath) userExplicitSourcePaths.add(currentPath);
+        sourceBtn.click();
+        updateCustomSwitcherUi();
+      });
+      copyBtnEl.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await handleCopyViewerContent(viewerShell, copyBtnEl, currentPath);
+      });
+
+      customSwitch.appendChild(prevBtnEl);
+      customSwitch.appendChild(srcBtnEl);
+      customSwitch.appendChild(copyBtnEl);
+
+      const controls = viewerShell.querySelector(".file-viewer-controls");
+      if (controls) {
+        if (typeof controls.prepend === "function") {
+          controls.prepend(customSwitch);
+        } else {
+          controls.insertBefore(customSwitch, controls.firstChild);
+        }
+      }
+    } else {
+      customSwitch.__currentPath = currentPath;
+      if (!customSwitch.querySelector(".pi-enh-md-copy")) {
+        const copyBtnEl = document.createElement("button");
+        copyBtnEl.type = "button";
+        copyBtnEl.className = "pi-enh-md-btn pi-enh-md-copy";
+        copyBtnEl.title = "复制源码全文 (Copy Source)";
+        copyBtnEl.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+        copyBtnEl.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await handleCopyViewerContent(viewerShell, copyBtnEl, currentPath);
+        });
+        customSwitch.appendChild(copyBtnEl);
+      }
+    }
+
+    updateCustomSwitcherUi();
+  }
+
+  function updateCustomSwitcherUi() {
+    const customSwitch = document.querySelector(".pi-enh-md-mode-switch");
+    if (!customSwitch) return;
+    const viewerShell = customSwitch.closest?.(".file-viewer-shell") || document.querySelector(".file-viewer-shell");
+    if (!viewerShell) return;
+
+    const modeButtons = Array.from(viewerShell.querySelectorAll(".file-viewer-mode-button"));
+    const activeBtn = modeButtons.find((b) => b.getAttribute("aria-pressed") === "true");
+    const isPreviewActive = Boolean(activeBtn && /预览|preview/i.test(activeBtn.textContent || ""));
+
+    const prevBtnEl = customSwitch.querySelector(".pi-enh-md-preview");
+    const srcBtnEl = customSwitch.querySelector(".pi-enh-md-source");
+    if (prevBtnEl && srcBtnEl) {
+      prevBtnEl.classList.toggle("is-active", isPreviewActive);
+      srcBtnEl.classList.toggle("is-active", !isPreviewActive);
+    }
+  }
 
   function checkAndAutoRecoverAccessDenied() {
     if (!isPluginEnabled("obsidian-markdown-viewer")) return;
@@ -36694,7 +37194,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const tabTitle = activeTab?.querySelector("span[title]")?.getAttribute("title") || "";
     if (!tabTitle) return;
 
-    if (/\.md$/i.test(tabTitle) || /\.markdown$/i.test(tabTitle) || tabTitle.includes("Obsidian")) {
+    const isWindowsOrExternal = /^[a-zA-Z]:[\\/]/i.test(tabTitle) || /^[\\/]{2}/.test(tabTitle);
+    const isTextFile = /\.(md|markdown|ya?ml|json|toml|txt|py|sh|conf|cfg|ini|env|log)$/i.test(tabTitle);
+    if (isWindowsOrExternal || isTextFile || tabTitle.includes("Obsidian") || tabTitle.includes("127.0.0.1")) {
       if (accessDeniedDiv.__piRecoverAttempted) return;
       accessDeniedDiv.__piRecoverAttempted = true;
 
@@ -36719,9 +37221,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function removeMarkdownViewerEnhancements() {
-    window.dispatchEvent(new CustomEvent("pi:obsidian-markdown-viewer-preferences-change", {
-      detail: { enabled: false },
-    }));
+    for (const el of document.querySelectorAll(".pi-enh-md-mode-switch")) {
+      el.remove();
+    }
+    userExplicitSourcePaths.clear();
+    lastObsidianViewerPath = null;
   }
 
   // ==========================================================================
@@ -37098,7 +37602,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
 
   addManagedListener(document, "click", (e) => {
-    const link = e.target?.closest?.("a, [role='tab'], .file-viewer-mode-button");
+    const link = e.target?.closest?.("a, [role='tab'], .file-viewer-mode-button, .pi-enh-md-btn");
     if (link) {
       if (link.tagName === "A" && (link.getAttribute("href")?.includes("/session/") || link.getAttribute("href") === "/")) {
         queueMicrotask(() => {
@@ -37267,7 +37771,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             const m = mutations[i];
             if (isEditorLocalTextOrNodeMutation(m)) continue;
             const target = m.target;
-            if (target && typeof target.closest === "function" && target.closest("[data-pi-native-composer-host], .pi-enh-queue-panel, .pi-enh-cursor-composer")) {
+            if (target && typeof target.closest === "function" && target.closest("fieldset, .pi-enh-queue-panel, .pi-enh-cursor-composer")) {
               touchesComposer = true;
             }
           }
@@ -37276,7 +37780,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
             // 严禁在此高频执行耗时的全量布局扫描与重排！
             const isTypingInComposer = Boolean(
               document.activeElement &&
-              document.activeElement.closest?.("[data-pi-native-composer-host], .pi-enh-cursor-composer")
+              document.activeElement.closest?.("fieldset, .pi-enh-cursor-composer")
             );
             const cardReady = Boolean(document.querySelector(".pi-enh-cursor-composer"));
             if (!isTypingInComposer || !cardReady) {
@@ -37300,7 +37804,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         chatObserver.observe(observedTarget, { childList: true, subtree: true });
       }
     } catch (e) {
-      console.warn("[Agent Web Plus Enhancements] chatObserver init warning:", e);
+      console.warn("[Pi Web Enhancements] chatObserver init warning:", e);
     }
   }
 
@@ -37314,6 +37818,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       syncSessionModelLabels();
       syncSessionColorEffects();
       syncSessionTags();
+      syncSessionOdooAddons();
       syncSessionSectionHeaders();
     });
   }
@@ -37864,6 +38369,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // ==========================================
   activeTurnStartTime = null;
   activeTurnEntryId = null;
+  baseTitle = cleanSessionTitleBase(document.title) || "会话";
+  restoreTitleTimer = null;
   wasRunning = false;
   notRunningConsecutiveTicks = 0;
 
@@ -38161,6 +38668,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (!wasRunning) {
         wasRunning = true;
         activeTurnEntryId = null;
+        baseTitle = cleanSessionTitleBase(document.title) || "会话";
+        if (restoreTitleTimer) {
+          clearManagedTimeout(restoreTitleTimer);
+          restoreTitleTimer = null;
+        }
+        // 运行开始时同步一次标题，标签页绝不带跳动的秒表，保持彻底静止无抖动
+        applyProjectStatusTitle("running", baseTitle);
       }
       const elapsed = Math.max(0, (Date.now() - turnStartTime) / 1000);
       const timeStr = formatSec(elapsed);
@@ -38315,6 +38829,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       // Transition from running -> completed
       if (wasRunning) {
         if (hasActiveAskUserOnScreen() || isCurrentSessionInAttention(currentSessionId)) {
+          applyProjectStatusTitle("attention", baseTitle);
           return;
         }
 
@@ -38328,6 +38843,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           const totalElapsed = Math.max(0, (Date.now() - turnStartTime) / 1000);
           const finalSec = Math.max(1, Math.round(totalElapsed));
           const finalTimeStr = formatSec(totalElapsed);
+
+          applyProjectStatusTitle("completed", baseTitle);
+          if (restoreTitleTimer) clearManagedTimeout(restoreTitleTimer);
+          restoreTitleTimer = addManagedTimeout(() => {
+            restoreTitleTimer = null;
+            applyProjectStatusTitle(null, baseTitle);
+          }, 4000);
 
           // Find the assistant message that just finished (latest assistant message in active turn)
           const assistantMsgs = document.querySelectorAll('div[data-message-role="assistant"]');
@@ -38740,7 +39262,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     const desc = document.createElement("div");
     desc.className = "settings-general-description";
-    desc.textContent = "遇到手机端显示旧版本、界面未更新或 Service Worker 缓存异常时可清理缓存；如需重启 Agent Web Plus 服务，可在此手动一键重启。";
+    desc.textContent = "旧版本或界面未更新时，重新下载主页面、脚本和样式后刷新。保留登录、会话、草稿与设置；任何资源失败会停止并提示重试。此操作不会重启服务。";
 
     const actionsRow = document.createElement("div");
     actionsRow.className = "pi-enh-service-actions-row";
@@ -38749,7 +39271,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const btnReload = document.createElement("button");
     btnReload.type = "button";
     btnReload.className = "pi-enh-btn-sm pi-enh-force-reload-btn";
-    btnReload.title = "穿透 HTTP 强缓存并更新前端静态资源与网页";
+    btnReload.title = "强制重新下载页面、Flight 主脚本及增强资源，保留用户数据；全部成功后刷新";
     btnReload.innerHTML = `
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
@@ -38758,11 +39280,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     `;
     btnReload.addEventListener("click", forceHardReloadApp);
 
-    // 按钮 2：一键重启 Agent Web Plus
+    // 按钮 2：一键重启 Pi Web
     const btnRestart = document.createElement("button");
     btnRestart.type = "button";
     btnRestart.className = "pi-enh-btn-sm pi-enh-restart-service-btn";
-    btnRestart.title = "手动重启 Agent Web Plus 后台服务并在恢复后自动重新连接";
+    btnRestart.title = "手动重启 Pi Web 后台服务并在恢复后自动重新连接";
     btnRestart.innerHTML = `
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
@@ -38770,7 +39292,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
         <path d="M3 21v-5h5"/>
       </svg>
-      <span>⚡ 一键重启 Agent Web Plus</span>
+      <span>⚡ 一键重启 Pi Web</span>
     `;
     btnRestart.addEventListener("click", triggerManualRestartPiWebModal);
 
@@ -38805,7 +39327,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     card.style.cssText = "display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--bg-surface, rgba(255,255,255,0.03)); border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; margin-top: 8px; font-size: 12px;";
 
     const state = getPiAgentUpdateState();
-    const suiteVer = (typeof window !== "undefined" && window.__PI_WEB_STANDALONE_VERSION__) || "1.0.5";
+    const suiteVer = APP_LATEST_VERSION.replace(/^v/, "");
     const updateTag = state.updateAvailable
       ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:9999px;font-size:10px;font-weight:600;background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.4);"><span style="width:4px;height:4px;border-radius:50%;background:#10b981;"></span>可升级至 v${state.latestVersion}</span>`
       : (state.latestVersion ? `<span style="display:inline-flex;padding:1px 6px;border-radius:9999px;font-size:10px;color:var(--text-muted);background:rgba(255,255,255,0.05);">已是最新</span>` : `<span style="font-size:10px;color:var(--text-muted);">未检测</span>`);
@@ -38813,7 +39335,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     card.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; line-height: 1.5;">
         <span style="color: var(--text-muted);">Web 前端发行版</span>
-        <span style="font-family: var(--font-mono, monospace); font-weight: 600;">v${suiteVer} (Agent Web Plus Standalone)</span>
+        <span style="font-family: var(--font-mono, monospace); font-weight: 600;">v${suiteVer} (Koxir Standalone)</span>
       </div>
       <div style="display: flex; justify-content: space-between; align-items: center; line-height: 1.5;">
         <span style="color: var(--text-muted);">Pi Agent 本地核心</span>
@@ -38888,7 +39410,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     enhancements: { id: "enhancements", label: "增强插件" },
     notifications: { id: "notifications", label: "通知管理" },
     archived: { id: "archived", label: "已归档" },
-    usage: { id: "usage", label: "用量统计" },
+    usage: { id: "usage", label: "Usage" },
     tags: { id: "tags", label: "会话标签" },
   };
 
@@ -38958,7 +39480,6 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         return () => {
           host.classList.remove("pi-enh-archived-panel");
           host.innerHTML = "";
-          cleanupArchivedPanelHost();
         };
       }),
       abi.registerRenderer("usage", (host, context) => {
@@ -39022,7 +39543,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   const DEFAULT_SHORTCUTS = [
     { id: "enhancements", label: "增强插件" },
     { id: "archived", label: "已归档" },
-    { id: "usage", label: "用量统计" },
+    { id: "usage", label: "Usage" },
     { id: "settings", label: "设置" },
   ];
 
@@ -39275,21 +39796,220 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     } catch (e) {}
   }
 
+  function locateShortcutsContainer() {
+    const existing = document.querySelector("[data-pi-enh-shortcuts-host='true']");
+    if (existing && existing.isConnected) return existing;
+
+    const buttons = Array.from(document.querySelectorAll("button")).filter((btn) => {
+      if (btn.closest(".settings-dialog-surface, .settings-dialog-backdrop, dialog, .pi-enh-menu, .pi-enh-quote-bar, main, .chat-window, .message-view")) {
+        return false;
+      }
+      const text = (btn.textContent || "").trim();
+      const aria = btn.getAttribute("aria-label") || btn.getAttribute("title") || "";
+      return text === "设置" || text === "Settings" || aria === "设置" || aria === "Settings";
+    });
+
+    for (const btn of buttons) {
+      const parent = btn.parentElement;
+      if (!parent) continue;
+      const nativeButtons = Array.from(parent.querySelectorAll("button:not(.pi-enh-shortcut-btn)"));
+      const hasModelOrSkill = nativeButtons.some((b) => {
+        const t = (b.textContent || "").trim();
+        return t === "模型" || t === "Models" || t === "技能" || t === "Skills";
+      });
+      if (hasModelOrSkill || nativeButtons.length >= 2) {
+        parent.setAttribute("data-pi-enh-shortcuts-host", "true");
+        return parent;
+      }
+    }
+
+    return null;
+  }
+
+  function ensureShortcutsBarStyles() {
+    if (typeof document === "undefined" || !document.head) return;
+    if (document.getElementById("pi-enh-shortcuts-bar-style")) return;
+    const style = document.createElement("style");
+    style.id = "pi-enh-shortcuts-bar-style";
+    style.textContent = `
+      [data-pi-enh-shortcuts-host="true"]:not([data-pi-enh-shortcuts-disabled]):has(> .pi-enh-shortcuts-bar[data-pi-enh-shortcuts-ready="true"] > button) {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 6px 8px !important;
+        gap: 2px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+      }
+      /* 仅在宿主拥有已就绪的快捷栏按钮且未被禁用时隐藏原生直接子级按钮，disabled 时绝不可隐藏 */
+      [data-pi-enh-shortcuts-host="true"]:not([data-pi-enh-shortcuts-disabled]):has(> .pi-enh-shortcuts-bar[data-pi-enh-shortcuts-ready="true"] > button) > button {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: hidden !important;
+        border: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .pi-enh-shortcuts-bar {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 2px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: 1 1 100% !important;
+        box-sizing: border-box !important;
+      }
+      .pi-enh-shortcut-btn {
+        flex: 1 1 0% !important;
+        min-width: 0 !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 2px !important;
+        height: 30px !important;
+        padding: 0 1px !important;
+        background: none !important;
+        border: none !important;
+        border-radius: 6px !important;
+        color: var(--text-muted, #a1a1aa) !important;
+        font-size: 11px !important;
+        white-space: nowrap !important;
+        user-select: none !important;
+        cursor: pointer !important;
+        transition: background 0.12s ease, color 0.12s ease !important;
+      }
+      .pi-enh-shortcut-btn:hover {
+        background: var(--bg-hover, rgba(255, 255, 255, 0.08)) !important;
+        color: var(--text, #f4f4f5) !important;
+      }
+      .pi-enh-shortcut-btn span {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        font-size: 10.5px !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   initialShortcutsSyncAttempted = false;
-  function syncBottomShortcutsBar() {
-    const abi = window.__PI_WEB_SETTINGS_NATIVE__;
-    if (!abi?.setSidebarShortcuts) return;
+  function syncBottomShortcutsBar(force = false) {
     if (!isPluginEnabled("settings-tab-shortcuts")) {
-      abi.setSidebarShortcuts(null);
+      removeBottomShortcutsBar();
       return;
     }
+
+    ensureShortcutsBarStyles();
+
     if (!initialShortcutsSyncAttempted) {
       initialShortcutsSyncAttempted = true;
       void syncManifestQuickShortcuts();
     }
-    // The extension owns preferences; React alone owns buttons and focus.
-    // The registry ignores equal snapshots, including forced remote syncs.
-    abi.setSidebarShortcuts(getStoredQuickShortcuts());
+
+    const host = locateShortcutsContainer();
+    if (!host) return;
+    host.removeAttribute("data-pi-enh-shortcuts-disabled");
+
+    let bar = host.querySelector(".pi-enh-shortcuts-bar");
+    const shortcuts = getStoredQuickShortcuts();
+    const shortcutsSignature = JSON.stringify(shortcuts);
+
+    if (bar && !force && bar.getAttribute("data-signature") === shortcutsSignature) {
+      bindShortcutButtonsEvents(bar);
+      return;
+    }
+
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "pi-enh-shortcuts-bar";
+      host.appendChild(bar);
+    } else {
+      // 构建期间不冒进隐藏原生按钮
+      bar.removeAttribute("data-pi-enh-shortcuts-ready");
+    }
+
+    bar.setAttribute("data-signature", shortcutsSignature);
+    bar.setAttribute("data-count", String(shortcuts.length));
+
+    bar.innerHTML = shortcuts.map((shortcut) => {
+      const icon = shortcut.iconHtml || SHORTCUT_ICONS[shortcut.id] || SHORTCUT_ICONS.settings;
+      return `
+        <button type="button" class="pi-enh-shortcut-btn" data-shortcut-id="${shortcut.id}" title="${shortcut.label} (点击直达，双击可移除)">
+          ${icon}
+          <span>${shortcut.label}</span>
+        </button>
+      `;
+    }).join("");
+
+    bindShortcutButtonsEvents(bar);
+  }
+
+  function bindShortcutButtonsEvents(bar) {
+    if (!bar) return;
+
+    const renderedButtons = Array.from(bar.querySelectorAll(".pi-enh-shortcut-btn"));
+    if (renderedButtons.length === 0) {
+      bar.removeAttribute("data-pi-enh-shortcuts-ready");
+      return;
+    }
+
+    for (const btn of renderedButtons) {
+      if (btn.__piEnhShortcutEventsBound) continue;
+      btn.__piEnhShortcutEventsBound = true;
+      const id = btn.getAttribute("data-shortcut-id");
+
+      if (id === "models" && !btn.__piEnhModelPrewarmBound) {
+        btn.__piEnhModelPrewarmBound = true;
+        const prewarm = () => {
+          if (typeof window !== "undefined" && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
+            void window.__PI_ENH_PRELOAD_MODELS_CACHE__();
+          }
+        };
+        btn.addEventListener("pointerenter", prewarm, { passive: true });
+        btn.addEventListener("touchstart", prewarm, { passive: true });
+      }
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try { btn.blur(); } catch (_) {}
+        triggerShortcutNavigation(id);
+      });
+
+      btn.addEventListener("focus", () => {
+        try { btn.blur(); } catch (_) {}
+      });
+
+      btn.addEventListener("dblclick", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.getSelection()?.removeAllRanges();
+
+        const currentShortcuts = getStoredQuickShortcuts();
+        const nextShortcuts = currentShortcuts.filter((item) => item.id !== id);
+        const removed = currentShortcuts.find((item) => item.id === id);
+        setStoredQuickShortcuts(nextShortcuts);
+
+        const icon = removed?.iconHtml || SHORTCUT_ICONS[id] || SHORTCUT_ICONS.settings;
+        showToast(`已从快捷入口移除「${removed ? removed.label : id}」`, icon, 2000);
+
+        syncBottomShortcutsBar(true);
+      });
+    }
+
+    // 绑定成功后才标记 bar ready，此时才激活 CSS 隐藏原生 direct 按钮
+    bar.setAttribute("data-pi-enh-shortcuts-ready", "true");
   }
 
   function triggerShortcutNavigation(shortcutId) {
@@ -39347,7 +40067,23 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function removeBottomShortcutsBar() {
-    window.__PI_WEB_SETTINGS_NATIVE__?.setSidebarShortcuts?.(null);
+    const host = document.querySelector("[data-pi-enh-shortcuts-host='true']") ||
+      (function() {
+        const sidebar = document.querySelector(".sidebar-container");
+        return sidebar?.lastElementChild?.querySelector("button") ? sidebar.lastElementChild : null;
+      })();
+    if (host) {
+      host.removeAttribute("data-pi-enh-shortcuts-host");
+      host.setAttribute("data-pi-enh-shortcuts-disabled", "true");
+      const bar = host.querySelector(".pi-enh-shortcuts-bar");
+      if (bar) {
+        bar.removeAttribute("data-pi-enh-shortcuts-ready");
+        bar.remove();
+      }
+    }
+    for (const pin of document.querySelectorAll(".pi-enh-tab-pin-indicator")) {
+      pin.remove();
+    }
   }
 
   isForceReloading = false;
@@ -39356,7 +40092,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     isForceReloading = true;
 
     // 始终建立状态对象（不要求外部预填）
-    window.__PI_ENH_FORCE_RELOAD_STATE__ = { status: "loading", error: null };
+    window.__PI_ENH_FORCE_RELOAD_STATE__ = {
+      status: "loading",
+      error: null,
+      total: 0,
+      completed: 0,
+      failed: 0,
+      urls: []
+    };
 
     function updateReloadProgressToast(text) {
       const activeTextEl = document.querySelector(".pi-enh-toast[data-toast-level='loading'] [data-pi-enh-toast-text]");
@@ -39381,21 +40124,26 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     } catch (e) {}
 
     // 有进展不误杀 (Progress-aware Sliding Budget)：
-    // 单步无进展超时保持 20s，若持续有下载进展则自动续期（总上限 65s），兼顾弱网/VPN 与真死锁检测
+    // 单步无进展超时保持 20s，若持续有下载进展则自动续期（总上限 65s），使用 performance.now 单调时钟防 NTP 壁钟回拨
     const STALL_TIMEOUT_MS = 20000;
     const MAX_TOTAL_BUDGET_MS = 65000;
-    const reloadStartTs = Date.now();
+    const getMonotonicNow = () => (typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now());
+    const reloadStartTs = getMonotonicNow();
     const controller = new AbortController();
     let budgetTimer = null;
 
     function touchProgress() {
       if (controller.signal.aborted) return;
       if (budgetTimer) clearTimeout(budgetTimer);
-      const elapsed = Date.now() - reloadStartTs;
-      const remainingCap = Math.max(2000, MAX_TOTAL_BUDGET_MS - elapsed);
+      const elapsed = getMonotonicNow() - reloadStartTs;
+      const remainingCap = MAX_TOTAL_BUDGET_MS - elapsed;
+      if (remainingCap <= 0) {
+        controller.abort(new Error("资源下载超时（超过65秒总预算）"));
+        return;
+      }
       const nextTimeout = Math.min(STALL_TIMEOUT_MS, remainingCap);
       budgetTimer = setTimeout(() => {
-        controller.abort(new Error("资源下载超时（超过20秒预算）"));
+        controller.abort(new Error("资源下载超时（超过20秒无进展）"));
       }, nextTimeout);
     }
 
@@ -39411,7 +40159,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         if (Number.isFinite(softStepLimitMs) && softStepLimitMs > 0) {
           stepTimer = setTimeout(() => {
             controller.signal.removeEventListener("abort", onAbort);
-            reject(new Error("STEP_SOFT_TIMEOUT"));
+            reject(new Error("操作超时（步骤超时）"));
           }, softStepLimitMs);
         }
         controller.signal.addEventListener("abort", onAbort, { once: true });
@@ -39425,64 +40173,59 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     let htmlFetchedOk = false;
     let completedAssetsCount = 0;
     let totalAssetsCount = 0;
+    const staticUrls = new Set();
 
     try {
-      // 1. Service Worker 更新采用 4.5s 软限时保护：在手机 VPN 下若 SW 预缓存慢，不阻塞主页面刷新
-      try {
-        const swContainer = navigator.serviceWorker;
-        if (swContainer?.controller) {
-          const swUrl = new URL(swContainer.controller.scriptURL);
-          if (swUrl.origin === window.location.origin && swUrl.pathname === "/sw.js") {
-            const reg = await withinBudget(swContainer.getRegistration(window.location.href), 3500);
-            if (reg && reg.scope === new URL("/", window.location.origin).href) {
-              await withinBudget(reg.update(), 4000);
-              touchProgress();
-              const pendingWorker = reg.installing || reg.waiting;
-              if (pendingWorker && pendingWorker.state !== "activated") {
-                await withinBudget(new Promise((resolve, reject) => {
-                  const finish = (error) => {
-                    pendingWorker.removeEventListener("statechange", onState);
-                    controller.signal.removeEventListener("abort", onAbort);
-                    error ? reject(error) : resolve();
-                  };
-                  const onAbort = () => finish(controller.signal.reason || new Error("离线缓存更新超时"));
-                  const onState = () => {
-                    if (pendingWorker.state === "activated") finish();
-                    else if (pendingWorker.state === "redundant") finish(new Error("离线缓存更新失败"));
-                  };
-                  pendingWorker.addEventListener("statechange", onState);
-                  controller.signal.addEventListener("abort", onAbort, { once: true });
-                  controller.signal.aborted ? onAbort() : onState();
-                }), 4000);
+      // 1. Service Worker 仅处理本站 Pi root /sw.js 注册并注销（API 不支持属于不需要；失败报失败不得 softskip）
+      if (typeof navigator !== "undefined" && "serviceWorker" in navigator && typeof navigator.serviceWorker.getRegistrations === "function") {
+        const registrations = await withinBudget(navigator.serviceWorker.getRegistrations(), 3500);
+        if (Array.isArray(registrations)) {
+          for (const reg of registrations) {
+            let isPiRootSw = false;
+            try {
+              const swUrl = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL;
+              if (swUrl) {
+                const parsedSw = new URL(swUrl, window.location.href);
+                if (parsedSw.origin === window.location.origin && parsedSw.pathname === "/sw.js" && reg.scope === new URL("/", window.location.origin).href) {
+                  isPiRootSw = true;
+                }
               }
+            } catch (_) {}
+            if (isPiRootSw) {
+              await withinBudget(reg.unregister(), 3500);
+              touchProgress();
             }
           }
         }
-      } catch (swErr) {
-        if (controller.signal.aborted) throw swErr;
-        console.warn("[Pi Enh] SW update soft-skipped to prioritize main reload:", swErr?.message || swErr);
       }
 
       touchProgress();
 
-      // 2. 清理 Pi 离线缓存（带 3.5s 软限时）
-      try {
-        if (window.caches && typeof window.caches.keys === "function") {
-          const names = await withinBudget(window.caches.keys(), 3500);
-          await withinBudget(Promise.all(names.filter((name) => name.startsWith("pi-web-"))
-            .map((name) => window.caches.delete(name))), 3500);
+      // 2. 清理 Pi 离线缓存桶（API 不支持属于不需要；失败报失败不得 softskip）
+      if (typeof window !== "undefined" && "caches" in window && typeof window.caches.keys === "function") {
+        const names = await withinBudget(window.caches.keys(), 3500);
+        if (Array.isArray(names)) {
+          const piCacheNames = names.filter((name) => typeof name === "string" && name.startsWith("pi-web-"));
+          for (const name of piCacheNames) {
+            await withinBudget(window.caches.delete(name), 3500);
+          }
           touchProgress();
         }
-      } catch (cacheErr) {
-        if (controller.signal.aborted) throw cacheErr;
       }
 
-      // 3. 保留 SessionStorage / LocalStorage / IndexedDB / Cookies，不调用 clear()，确保用户草稿与状态不丢失
+      // 3. 保留 SessionStorage / LocalStorage / IndexedDB / Cookies，不调用 clear()，确保用户草稿、设置与状态不丢失
       if (preservedScrollMemory && typeof SESSION_SCROLL_STORAGE_KEY !== "undefined") {
         try {
           window.sessionStorage.setItem(SESSION_SCROLL_STORAGE_KEY, preservedScrollMemory);
         } catch (_) {}
       }
+      try {
+        const LOADER_KEYS = ["pi-enh-cached-asset-build", "pi-enh-loader-cache", "pi-enh-asset-build"];
+        for (const keyName of LOADER_KEYS) {
+          try { window.localStorage.removeItem(keyName); } catch (_) {}
+          try { window.sessionStorage.removeItem(keyName); } catch (_) {}
+        }
+      } catch (_) {}
 
       // 4. 获取最新 HTML 文档文本 (带 _bust，no-store 避免命中 HTML 本地缓存)
       const currentUrl = new URL(window.location.href);
@@ -39517,135 +40260,150 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const htmlText = await htmlRes.text();
       touchProgress();
 
-      // 4.2 收集最新 HTML 中的同源 /_next/static/ JS 与 CSS 资源及增强脚本 URL
-      const docBaseUrl = window.location.href;
-      const origin = window.location.origin;
+      // 4.1 DOMParser 与纯文本 Flight 提取同源 /_next/static/ JS 与 CSS 资源及根增强脚本
+      const rawUrls = new Set();
 
-      function parseNextStaticUrl(urlStr) {
-        if (!urlStr || typeof urlStr !== "string") return null;
-        try {
-          const parsed = new URL(urlStr, docBaseUrl);
-          if (parsed.origin !== origin) return null;
-          if (!parsed.pathname.startsWith("/_next/static/")) return null;
-          const isJs = parsed.pathname.endsWith(".js");
-          const isCss = parsed.pathname.endsWith(".css");
-          if (!isJs && !isCss) return null;
-          parsed.hash = ""; // 保留 parsed.search，只去 hash
-          return parsed.href;
-        } catch (_) {
-          return null;
-        }
-      }
-
-      function parseEnhancementScriptUrl(urlStr) {
-        if (!urlStr || typeof urlStr !== "string") return null;
-        try {
-          const parsed = new URL(urlStr, docBaseUrl);
-          if (parsed.origin !== origin) return null;
-          if (parsed.pathname !== "/pi-web-enhancements.js") return null;
-          parsed.hash = "";
-          return parsed.href;
-        } catch (_) {
-          return null;
-        }
-      }
-
-      const latestHtmlUrls = new Set();
-      let latestEnhancementUrl = null;
       try {
         const doc = new DOMParser().parseFromString(htmlText, "text/html");
         doc.querySelectorAll("script[src]").forEach((s) => {
-          const srcAttr = s.getAttribute("src");
-          const u = parseNextStaticUrl(srcAttr);
-          if (u) latestHtmlUrls.add(u);
-          const enhU = parseEnhancementScriptUrl(srcAttr);
-          if (enhU) latestEnhancementUrl = enhU;
+          const src = s.getAttribute("src");
+          if (src) rawUrls.add(src);
         });
         doc.querySelectorAll('link[rel="stylesheet"]').forEach((l) => {
-          const u = parseNextStaticUrl(l.getAttribute("href"));
-          if (u) latestHtmlUrls.add(u);
+          const href = l.getAttribute("href");
+          if (href) rawUrls.add(href);
         });
         doc.querySelectorAll('link[rel="preload"]').forEach((l) => {
           const as = l.getAttribute("as");
           if (as === "script" || as === "style") {
-            const u = parseNextStaticUrl(l.getAttribute("href"));
-            if (u) latestHtmlUrls.add(u);
+            const href = l.getAttribute("href");
+            if (href) rawUrls.add(href);
           }
         });
       } catch (parseErr) {
         console.warn("[Pi Enh] DOMParser parse html failed:", parseErr);
       }
 
-      // 关键：最新HTML至少必须包含1个Next js/css资源，当前文档合并不能掩盖最新HTML缺资源
-      if (latestHtmlUrls.size === 0) {
+      // 4.2 纯文本正则提取 RSC Flight inline 串与静态 chunk 引用（严禁 eval / 执行 inline）
+      // 参考 offline.html，匹配安全 js/css 资源路径
+      const staticRegex = /(?:["\x27\`\(\[\s,:=]|^)(?:\\+)?((?:(?:https?:)?\/\/[^\s"\\><'`]+|(?:(?:\/_next\/|_next\/)static\/|static\/(?:chunks|css)\/)[a-zA-Z0-9_\-\.\/]+\.(?:js|css)))(?=(?:\\+)?["\x27\`\)\]\s,;:]|$)/g;
+      let m;
+      while ((m = staticRegex.exec(htmlText)) !== null) {
+        if (m[1]) {
+          rawUrls.add(m[1]);
+        }
+      }
+
+      // 4.3 始终加入根 /pi-web-enhancements.js 和 /pi-web-enhancement-loader.js
+      rawUrls.add("/pi-web-enhancements.js");
+      rawUrls.add("/pi-web-enhancement-loader.js");
+
+      // 4.4 严格安全白名单过滤、同源检查、路径穿越拒止与归一化
+      const currentOrigin = window.location.origin;
+      let nextStaticCount = 0;
+
+      rawUrls.forEach((raw) => {
+        if (!raw || typeof raw !== "string") return;
+        // 坚决拒绝相对协议跨源 //
+        if (raw.startsWith("//")) return;
+        // 坚决拒绝路径穿越与反斜杠
+        if (raw.includes("..") || raw.includes("\\")) return;
+
+        // 绝对 URL 检查同源
+        if (raw.includes("://")) {
+          try {
+            const parsedOrigin = new URL(raw, window.location.href).origin;
+            if (parsedOrigin !== currentOrigin) return;
+          } catch (_) {
+            return;
+          }
+        }
+
+        let normalizedPath = raw;
+        if (normalizedPath.includes("://") || normalizedPath.includes("?") || normalizedPath.includes("#")) {
+          try {
+            normalizedPath = new URL(normalizedPath, window.location.href).pathname;
+          } catch (_) {
+            return;
+          }
+        }
+
+        if (normalizedPath.startsWith("_next/static/")) {
+          normalizedPath = "/" + normalizedPath;
+        } else if (normalizedPath.startsWith("static/")) {
+          normalizedPath = "/_next/" + normalizedPath;
+        }
+
+        // 根增强脚本白名单
+        if (
+          normalizedPath === "/pi-web-enhancements.js" ||
+          normalizedPath === "/pi-web-enhancement-loader.js"
+        ) {
+          try {
+            const parsed = new URL(normalizedPath, window.location.href);
+            parsed.hash = "";
+            if (parsed.origin === currentOrigin) {
+              staticUrls.add(parsed.href);
+            }
+          } catch (_) {}
+          return;
+        }
+
+        // Next.js 静态文件格式白名单
+        if (!normalizedPath.startsWith("/_next/static/")) return;
+        if (!/\.(?:js|css)$/.test(normalizedPath)) return;
+        if (!/^\/_next\/static\/[a-zA-Z0-9_\-\.\/]+$/.test(normalizedPath)) return;
+
+        // 逐段检查：严禁 .、.. 或特殊字符段
+        const segments = normalizedPath.split("/").filter(Boolean);
+        for (const seg of segments) {
+          if (seg === "." || seg === ".." || !/^[a-zA-Z0-9_\-\.]+$/.test(seg)) {
+            return;
+          }
+        }
+
+        try {
+          const parsed = new URL(normalizedPath, window.location.href);
+          parsed.hash = "";
+          if (parsed.origin === currentOrigin) {
+            staticUrls.add(parsed.href);
+            nextStaticCount++;
+          }
+        } catch (_) {}
+      });
+
+      // 最新 HTML 必须包含至少 1 个有效 Next.js 静态资源，确保非损坏/空白 HTML
+      if (nextStaticCount === 0) {
         throw new Error("最新HTML未检测到有效Next.js静态资源，取消刷新以防白屏");
       }
       htmlFetchedOk = true;
 
-      // 记录当前页面已经成功加载过的静态资源集合（用于区分未变的巨型哈希 vendor chunk）
-      const alreadyLoadedUrls = new Set();
-      document.querySelectorAll("script[src]").forEach((s) => {
-        const u = parseNextStaticUrl(s.getAttribute("src"));
-        if (u) alreadyLoadedUrls.add(u);
-      });
-      document.querySelectorAll('link[rel="stylesheet"]').forEach((l) => {
-        const u = parseNextStaticUrl(l.getAttribute("href"));
-        if (u) alreadyLoadedUrls.add(u);
-      });
-      if (typeof performance !== "undefined" && typeof performance.getEntriesByType === "function") {
-        performance.getEntriesByType("resource").forEach((entry) => {
-          if (entry.name && (entry.initiatorType === "script" || entry.initiatorType === "link" || entry.initiatorType === "css")) {
-            const u = parseNextStaticUrl(entry.name);
-            if (u) alreadyLoadedUrls.add(u);
-          }
-        });
-      }
-
-      // 仅以最新 HTML 所需的首屏静态资源 (+ 可选增强脚本) 为刷新预热目标，
-      // 严禁将当前旧 DOM 已加载的历史静态资源（如旧哈希 CSS、旧 chunks）混入 staticUrls，
-      // 避免服务器已清理下线的旧文件 404 导致强制刷新被意外阻断。
-      const staticUrls = new Set(latestHtmlUrls);
-      if (latestEnhancementUrl) {
-        staticUrls.add(latestEnhancementUrl);
-      }
-
-      // 判断资源是否需要 cache: "reload" 强制穿透，还是走 cache: "no-cache" (ETag 304 协商免下载不变的 MB 级 vendor 包)
-      const isSmallAssetSet = latestHtmlUrls.size <= 6;
-      function shouldForceReloadAsset(assetUrl) {
-        if (isSmallAssetSet) return true;
-        try {
-          const parsed = new URL(assetUrl);
-          const p = parsed.pathname;
-          // 增强脚本走 no-cache (若 ?v= 或 ETag 没变直接 304 省下 2.3MB；若变了自动 200 拉取最新)
-          if (p === "/pi-web-enhancements.js") return false;
-          // 所有 CSS、App 路由入口 chunk、main/webpack 引导脚本，或最新 HTML 新增的资源强制 reload
-          if (p.endsWith(".css")) return true;
-          if (p.includes("/chunks/app/") || p.includes("/chunks/pages/") || p.includes("/webpack-") || p.includes("/main-")) return true;
-          if (!alreadyLoadedUrls.has(assetUrl)) return true;
-          // 其余已在当前页面加载过的带 16 位 content-hash 的大型第三方 vendor chunk 走 no-cache 条件校验
-          return false;
-        } catch (_) {
-          return true;
-        }
-      }
-
-      // 4.3 限制并发 (6) 拉取/校验并实时刷新进度与续期预算
+      // 4.5 限制并发 (6) 拉取资源，全部使用 cache: "reload"，实时更新进度与状态
       const urlList = Array.from(staticUrls);
       totalAssetsCount = urlList.length;
+
+      window.__PI_ENH_FORCE_RELOAD_STATE__ = {
+        status: "loading",
+        error: null,
+        total: totalAssetsCount,
+        completed: 0,
+        failed: 0,
+        urls: urlList.slice()
+      };
+
       let nextIdx = 0;
       const concurrency = Math.min(6, Math.max(1, urlList.length));
 
       async function worker() {
         while (nextIdx < urlList.length) {
           if (controller.signal.aborted) {
-            throw new Error("刷新操作已中断或超时");
+            throw (controller.signal.reason || new Error("刷新操作已中断或超时"));
           }
           const idx = nextIdx++;
           const assetUrl = urlList[idx];
-          const cacheMode = shouldForceReloadAsset(assetUrl) ? "reload" : "no-cache";
           const res = await fetch(assetUrl, {
             method: "GET",
-            cache: cacheMode,
+            cache: "reload",
             signal: controller.signal
           });
           touchProgress();
@@ -39664,7 +40422,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           }
           // 完整消费 response 数据流以触发浏览器网络栈落盘更新
           await res.text();
+          if (controller.signal.aborted) throw (controller.signal.reason || new Error("刷新已取消"));
           completedAssetsCount++;
+          window.__PI_ENH_FORCE_RELOAD_STATE__.completed = completedAssetsCount;
           touchProgress();
           if (totalAssetsCount > 3) {
             updateReloadProgressToast(`正在更新页面资源 (${completedAssetsCount}/${totalAssetsCount})…`);
@@ -39676,7 +40436,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         await Promise.all(Array.from({ length: concurrency }, () => worker()));
       }
 
-      clearTimeout(budgetTimer);
+      if (budgetTimer) clearTimeout(budgetTimer);
 
       // 5. 完整成功后：构建目标 URL，保留已有业务 query/hash，新增 _reload 时间戳
       let targetHref = window.location.href;
@@ -39690,7 +40450,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       if (typeof showToast === "function") {
         showToast("资源下载完成，正在刷新…");
       }
-      window.__PI_ENH_FORCE_RELOAD_STATE__ = { status: "success", error: null };
+      window.__PI_ENH_FORCE_RELOAD_STATE__ = {
+        status: "success",
+        error: null,
+        total: totalAssetsCount,
+        completed: completedAssetsCount,
+        failed: 0,
+        urls: urlList.slice()
+      };
 
       // 6. 不移除 beforeunload，有界延迟后正常执行 replace 导航
       setTimeout(() => {
@@ -39703,38 +40470,20 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     } catch (err) {
       controller.abort(); // 关键：取消同轮所有在途请求，防止继续下载与重试冲突
-      clearTimeout(budgetTimer);
-
-      // 弱网优雅降级：若最新 HTML 已验证通过且已有部分静态资源下载成功（非 500 故障、非 0 进展死锁），
-      // 则直接带 _reload 导航让浏览器利用已预热缓存完成剩余加载，避免移动 VPN 弱网下死循环报错
-      const isTimeoutLike = /超时|中断|aborted/i.test(String(err?.message || ""));
-      if (isTimeoutLike && htmlFetchedOk && completedAssetsCount > 0) {
-        let fallbackHref = window.location.href;
-        try {
-          const fallbackUrl = new URL(window.location.href);
-          fallbackUrl.searchParams.delete("_bust");
-          fallbackUrl.searchParams.set("_reload", Date.now().toString());
-          fallbackHref = fallbackUrl.href;
-        } catch (_) {}
-        if (typeof showToast === "function") {
-          showToast("核心资源已就绪，正在刷新页面…");
-        }
-        window.__PI_ENH_FORCE_RELOAD_STATE__ = { status: "success", error: null, degradedFallback: true };
-        setTimeout(() => {
-          try {
-            window.location.replace(fallbackHref);
-          } catch (_) {
-            window.location.href = fallbackHref;
-          }
-        }, 100);
-        return;
-      }
+      if (budgetTimer) clearTimeout(budgetTimer);
 
       isForceReloading = false; // 释放锁，允许重试
-      window.__PI_ENH_FORCE_RELOAD_STATE__ = { status: "failed", error: err.message };
+      window.__PI_ENH_FORCE_RELOAD_STATE__ = {
+        status: "failed",
+        error: err?.message || String(err),
+        total: totalAssetsCount,
+        completed: completedAssetsCount,
+        failed: Math.max(1, totalAssetsCount - completedAssetsCount),
+        urls: totalAssetsCount > 0 ? Array.from(staticUrls) : []
+      };
       console.error("[Pi Enh] 强刷失败:", err);
       if (typeof showToast === "function") {
-        showToast(`更新失败: ${err.message || "资源下载异常"}，请重试`);
+        showToast(`更新失败: ${err?.message || "资源下载异常"}，请重试`);
       }
     }
   }
@@ -39742,28 +40491,129 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   window.__PI_ENH_FORCE_HARD_RELOAD__ = forceHardReloadApp;
 
   function resolveCurrentPiInstanceInfo() {
+    const loc = typeof window !== "undefined" ? window.location : null;
+    const hostname = String(loc?.hostname || "").toLowerCase();
+    const port = String(loc?.port || "30141");
+    const platform = String(typeof navigator !== "undefined" ? (navigator.platform || navigator.userAgent || "") : "").toLowerCase();
+
+    // 1. 同事端容器 (30142)：无论访问来自内网 IP、域名或手机，端口为 30142 即确定为群晖同事端容器
+    if (port === "30142") {
+      const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "127.0.0.1";
+      return {
+        id: "synology-30142",
+        type: "container",
+        isSynology: true,
+        displayName: "群晖同事端 Pi Web (30142)",
+        containerName: "pi-agent-colleague",
+        targetParam: "30142",
+        port: 30142,
+        bridgeCandidateUrls: [
+          `http://${bridgeHost}:30149`,
+          "http://127.0.0.1:30149"
+        ],
+        restartApi: "/restart-container",
+        statusApi: "/container-status?target=30142",
+        probePath: "/login",
+        manualScriptPath: "/volume1/docker/pi-agent-colleague/restart-container-30142.sh",
+        manualCommand: 'ssh root@127.0.0.1 -p 2222 "/volume1/docker/pi-agent-colleague/restart-container-30142.sh"',
+      };
+    }
+
+    // 2. Windows 本地端：主机名为 127.0.0.1，或在 Windows 系统下的 localhost / 127.0.0.1
+    const isWindowsHost = hostname === "127.0.0.1";
+    const isWindowsLocal = (hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("win");
+    if (isWindowsHost || isWindowsLocal) {
+      const host = isWindowsHost ? "127.0.0.1" : "127.0.0.1";
+      return {
+        id: "windows-30141",
+        type: "process",
+        isSynology: false,
+        displayName: "Windows 本地 Pi Web (30141)",
+        containerName: null,
+        targetParam: "windows",
+        port: 30141,
+        bridgeCandidateUrls: [
+          `http://${host}:30149`,
+          "http://127.0.0.1:30149",
+          "http://localhost:30149",
+          "http://127.0.0.1:30149"
+        ],
+        restartApi: "/restart-pi-web",
+        statusApi: "/pi-web-status",
+        probePath: "/login",
+        manualScriptPath: "~\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
+        manualCommand: "node ~\\.pi\\agent\\scripts\\restart-pi-web-v1.0.js",
+      };
+    }
+
+    // 3. MacBook 本地端：主机名为 127.0.0.1，或在 Mac 下的 localhost / 127.0.0.1
+    if (hostname === "127.0.0.1" || ((hostname === "localhost" || hostname === "127.0.0.1") && platform.includes("mac"))) {
+      return {
+        id: "mac-30141",
+        type: "process",
+        isSynology: false,
+        displayName: "MacBook 本地 Pi Web (30141)",
+        containerName: null,
+        targetParam: "mac",
+        port: 30141,
+        bridgeCandidateUrls: [
+          "http://127.0.0.1:30149",
+          "http://localhost:30149",
+          "http://127.0.0.1:30149"
+        ],
+        restartApi: "/restart-pi-web",
+        statusApi: "/pi-web-status",
+        probePath: "/login",
+        manualScriptPath: "~/.pi/agent/scripts/restart-pi-web.sh",
+        manualCommand: "bash ~/.pi/agent/scripts/restart-pi-web.sh",
+      };
+    }
+
+    // 4. 群晖主开发端容器 (30141 / pi-agent)：默认全覆盖（127.0.0.1、手机/平板客户端访问、OpenVPN 127.0.0.1、外网域名）
+    const bridgeHost = (hostname && !["localhost", "127.0.0.1"].includes(hostname)) ? hostname : "127.0.0.1";
     return {
-      id: "current-origin",
-      type: "process",
-      displayName: "Agent Web Plus 当前实例",
-      bridgeCandidateUrls: [],
-      manualCommand: "agent-web",
+      id: "synology-30141",
+      type: "container",
+      isSynology: true,
+      displayName: "群晖 NAS Pi Web (30141)",
+      containerName: "pi-agent",
+      targetParam: "30141",
+      port: 30141,
+      bridgeCandidateUrls: [
+        `http://${bridgeHost}:30149`,
+        "http://127.0.0.1:30149"
+      ],
+      restartApi: "/restart-container",
+      statusApi: "/container-status?target=30141",
+      probePath: "/login",
+      manualScriptPath: "/volume1/docker/pi-agent/restart-container-30141.sh",
+      manualCommand: 'ssh root@127.0.0.1 -p 2222 "/volume1/docker/pi-agent/restart-container-30141.sh"',
     };
   }
 
   async function resolveTargetPiBridge(instanceInfo) {
-    const candidates = Array.isArray(instanceInfo?.bridgeCandidateUrls) ? instanceInfo.bridgeCandidateUrls : [];
-    for (const candidate of candidates) {
+    const candidates = instanceInfo?.bridgeCandidateUrls || [];
+    for (const cand of candidates) {
       try {
-        const response = await fetch(`${candidate}/ping?_t=${Date.now()}`, {
+        const response = await fetch(`${cand}/ping?_t=${Date.now()}`, {
           cache: "no-store",
           signal: AbortSignal.timeout(1500),
         });
         const identity = await response.json().catch(() => null);
-        if (response.ok && identity?.ok === true) return candidate;
-      } catch (error) {}
+        if (response.ok && identity?.ok === true) {
+          if (instanceInfo.isSynology) {
+            if (identity.service === "syno-enhancement-sync" || identity.isSynology === true) {
+              return cand;
+            }
+          } else {
+            if (identity.service === "pi-local-bridge" || identity.service === "syno-enhancement-sync") {
+              return cand;
+            }
+          }
+        }
+      } catch (e) {}
     }
-    throw new Error("当前实例未配置重启接口，请在运行服务的主机上重启。");
+    throw new Error(`未连接到 ${instanceInfo?.displayName || "目标实例"} 对应的管理桥接服务 (${candidates[0] || "30149"})`);
   }
 
   function triggerManualRestartPiWebModal() {
@@ -39773,27 +40623,336 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
     const backdrop = document.createElement("div");
     backdrop.className = "pi-enh-restart-backdrop";
+
     const modal = document.createElement("div");
     modal.className = "pi-enh-restart-modal";
     modal.innerHTML = `
       <div class="pi-enh-restart-modal-header">
-        <div class="pi-enh-restart-modal-icon" aria-hidden="true">!</div>
-        <h3 class="pi-enh-restart-modal-title">Agent Web Plus 当前实例</h3>
+        <div class="pi-enh-restart-modal-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </div>
+        <h3 class="pi-enh-restart-modal-title">确认重启 ${instanceInfo.displayName}？</h3>
       </div>
       <div class="pi-enh-restart-modal-body">
-        <p>当前实例未配置重启接口，请在运行服务的主机上重启。</p>
-        <p>请使用启动此服务时的 <code>${instanceInfo.manualCommand}</code> 命令，或通过该服务对应的进程管理器重启。重启会中断当前连接；服务恢复后请刷新页面。</p>
+        您即将手动重启 <strong>${instanceInfo.displayName}</strong>${instanceInfo.containerName ? ` (容器: <code>${instanceInfo.containerName}</code>)` : ""}。
+        <div class="pi-enh-restart-modal-tips">
+          • 重启由您手动发起，当前进行中的会话连接将短暂中断约 3~8 秒；<br>
+          • ${instanceInfo.type === "container" ? `宿主机管理服务将安全重启容器 <code>${instanceInfo.containerName}</code> 并拉起服务；` : "后台服务重新拉起后，页面将自动进行健康探活并无缝重新加载；"}<br>
+          • 服务恢复就绪后，页面将自动无缝刷新，无需手动干预。
+        </div>
       </div>
       <div class="pi-enh-restart-modal-actions">
-        <button type="button" class="pi-enh-restart-btn-cancel">关闭</button>
+        <button type="button" class="pi-enh-restart-btn-cancel">取消</button>
+        <button type="button" class="pi-enh-restart-btn-confirm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+            <path d="M21 3v5h-5"/>
+            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            <path d="M3 21v-5h5"/>
+          </svg>
+          <span>立即重启</span>
+        </button>
       </div>
     `;
+
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
-    modal.querySelector(".pi-enh-restart-btn-cancel")?.addEventListener("click", () => backdrop.remove());
-    backdrop.addEventListener("click", (event) => {
-      if (event.target === backdrop) backdrop.remove();
+
+    const btnCancel = modal.querySelector(".pi-enh-restart-btn-cancel");
+    const btnConfirm = modal.querySelector(".pi-enh-restart-btn-confirm");
+
+    btnCancel.addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => {
+      if (e.target === backdrop) backdrop.remove();
     });
+
+    btnConfirm.addEventListener("click", () => {
+      executePiWebRestartWithProbe(backdrop, modal);
+    });
+  }
+
+  async function executePiWebRestartWithProbe(backdrop, modal) {
+    const instanceInfo = resolveCurrentPiInstanceInfo();
+    modal.className = "pi-enh-restart-modal pi-enh-probe-card";
+    modal.innerHTML = `
+      <div class="pi-enh-probe-spinner"></div>
+      <h3 class="pi-enh-probe-title">${instanceInfo.displayName} 重启中…</h3>
+      <p class="pi-enh-probe-desc">${instanceInfo.type === "container"
+        ? `正在通过群晖宿主机管理服务重启容器 ${instanceInfo.containerName}。确认容器服务恢复后才会更新状态。`
+        : `正在通过此电脑的本地桥接服务重启 Windows Pi Web。确认本机服务恢复后才会更新状态。`}</p>
+      <div class="pi-enh-probe-status">📡 正在向管理桥接服务发送重启信号…</div>
+      <div class="pi-enh-probe-actions" style="margin-top: 10px; display: flex; gap: 8px;">
+        <button type="button" class="pi-enh-restart-btn-cancel pi-enh-probe-close-btn" style="font-size: 11px; padding: 5px 12px;">关闭遮罩</button>
+        <button type="button" class="pi-enh-restart-btn-cancel pi-enh-probe-reload-btn" style="font-size: 11px; padding: 5px 12px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">立即手动刷新</button>
+      </div>
+    `;
+
+    const statusEl = modal.querySelector(".pi-enh-probe-status");
+    const titleEl = modal.querySelector(".pi-enh-probe-title");
+    let probeInterval = null;
+    let probeStopped = false;
+    modal.querySelector(".pi-enh-probe-close-btn")?.addEventListener("click", () => {
+      probeStopped = true;
+      if (probeInterval) clearInterval(probeInterval);
+      backdrop.remove();
+    });
+    modal.querySelector(".pi-enh-probe-reload-btn")?.addEventListener("click", () => {
+      probeStopped = true;
+      if (probeInterval) clearInterval(probeInterval);
+      window.location.reload();
+    });
+
+    function copyTextToClipboard(text) {
+      if (!text) return;
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {
+          fallbackExecCopy(text);
+        });
+      } else {
+        fallbackExecCopy(text);
+      }
+      function fallbackExecCopy(str) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = str;
+          ta.style.position = "fixed";
+          ta.style.left = "-9999px";
+          ta.style.top = "-9999px";
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(ta);
+        } catch (_) {}
+      }
+    }
+
+    function addManualRestartFallback() {
+      if (modal.querySelector(".pi-enh-probe-fallback")) return;
+      const fallbackBox = document.createElement("div");
+      fallbackBox.className = "pi-enh-probe-fallback";
+      fallbackBox.innerHTML = `
+        <div class="pi-enh-probe-fallback-title">提示：如需在终端手动执行匹配脚本</div>
+        <div style="font-family: monospace; font-size: 11px; background: rgba(0,0,0,0.35); padding: 6px 8px; border-radius: 4px; overflow-x: auto; white-space: nowrap; margin-bottom: 6px;">
+          ${instanceInfo.manualCommand}
+        </div>
+        <button type="button" class="pi-enh-btn-sm pi-enh-probe-copy-btn">
+          📋 复制重启命令
+        </button>
+      `;
+      fallbackBox.querySelector("button")?.addEventListener("click", (event) => {
+        const button = event.currentTarget;
+        try {
+          copyTextToClipboard(instanceInfo.manualCommand);
+        } catch (e) {}
+        button.textContent = "已复制 √";
+        setTimeout(() => { if (button.isConnected) button.textContent = "📋 复制重启命令"; }, 2000);
+      });
+      modal.insertBefore(fallbackBox, modal.querySelector(".pi-enh-probe-actions"));
+    }
+
+    let bridgeUrl = null;
+    let initialPiWebRunning = false;
+    let bridgeSuccess = false;
+
+    if (instanceInfo.isSynology) {
+      try {
+        bridgeUrl = await resolveTargetPiBridge(instanceInfo);
+        if (probeStopped) return;
+        const beforeResponse = await fetch(`${bridgeUrl}${instanceInfo.statusApi}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(2000),
+        });
+        const beforeStatus = await beforeResponse.json().catch(() => null);
+        initialPiWebRunning = beforeStatus?.running === true;
+
+        const res = await fetch(`${bridgeUrl}${instanceInfo.restartApi}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target: instanceInfo.targetParam }),
+          signal: AbortSignal.timeout(3500),
+        });
+        const result = await res.json().catch(() => null);
+        if (!res.ok || result?.ok !== true) {
+          throw new Error(result?.error || result?.message || `重启请求失败 (HTTP ${res.status})`);
+        }
+        bridgeSuccess = true;
+        if (statusEl) statusEl.textContent = `⚡ 宿主机重启指令已送达，正在等待容器 ${instanceInfo.containerName} 重启…`;
+      } catch (err) {
+        console.warn("[Pi Enh] Synology Pi Web restart bridge failed:", err);
+        if (titleEl) titleEl.textContent = "重启未执行";
+        if (statusEl) {
+          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
+          statusEl.style.background = "rgba(239, 68, 68, 0.1)";
+          statusEl.style.borderColor = "rgba(239, 68, 68, 0.3)";
+          statusEl.textContent = `⚠️ 未连接到宿主机管理服务；本次没有执行重启。${err?.message ? ` (${err.message})` : ""}`;
+        }
+      }
+    } else {
+      try {
+        bridgeUrl = await resolveWindowsPiBridgeUrl();
+        if (probeStopped) return;
+        const beforeResponse = await fetch(`${bridgeUrl}/pi-web-status`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(1500),
+        });
+        const beforeStatus = await beforeResponse.json();
+        if (!beforeResponse.ok || beforeStatus?.service !== "pi-local-bridge" || typeof beforeStatus.running !== "boolean") {
+          throw new Error("Windows 桥接服务未返回有效的 Pi Web 状态");
+        }
+        initialPiWebRunning = beforeStatus.running;
+
+        const res = await fetch(`${bridgeUrl}/restart-pi-web`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(3000),
+        });
+        const result = await res.json().catch(() => null);
+        if (!res.ok || result?.ok !== true) {
+          throw new Error(result?.error || `重启请求失败 (HTTP ${res.status})`);
+        }
+        bridgeSuccess = true;
+        if (statusEl) statusEl.textContent = "⚡ Windows 重启指令已送达，正在检查本机 30141…";
+      } catch (err) {
+        console.warn("[Pi Enh] Windows Pi Web restart bridge failed:", err);
+        if (titleEl) titleEl.textContent = "重启未执行";
+        if (statusEl) {
+          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
+          statusEl.textContent = `❌ 未连接到 Windows 本地桥接；本次没有执行重启。${err?.message ? ` (${err.message})` : ""}`;
+        }
+      }
+    }
+
+    if (!bridgeSuccess) {
+      addManualRestartFallback();
+      return;
+    }
+
+    let attempts = 0;
+    const maxAttempts = 60;
+    let sawServerDown = !initialPiWebRunning;
+    let probeInFlight = false;
+    probeInterval = setInterval(async () => {
+      if (probeStopped || probeInFlight) return;
+      probeInFlight = true;
+      attempts++;
+
+      try {
+        if (instanceInfo.isSynology) {
+          // 双重探活：优先向宿主机桥接查容器真实状态，同时直探当前页面 /login
+          let containerRunning = false;
+          let webResponding = false;
+          try {
+            const checkRes = await fetch(`${bridgeUrl}${instanceInfo.statusApi}&_t=${Date.now()}`, {
+              cache: "no-store",
+              signal: AbortSignal.timeout(1200),
+            });
+            const checkData = await checkRes.json().catch(() => null);
+            if (checkRes.ok && checkData?.running === true) {
+              containerRunning = true;
+            }
+          } catch (_) {}
+
+          try {
+            const webRes = await fetch(`${instanceInfo.probePath}?_t=${Date.now()}`, {
+              cache: "no-store",
+              signal: AbortSignal.timeout(1200),
+            });
+            if (webRes.status === 200 || webRes.status === 302 || webRes.status === 307 || webRes.status === 308) {
+              webResponding = true;
+            }
+          } catch (_) {}
+
+          if (!containerRunning && !webResponding) {
+            sawServerDown = true;
+            if (statusEl) statusEl.textContent = `📡 容器 ${instanceInfo.containerName} 已停止，等待重新拉起 (${attempts}/${maxAttempts})…`;
+          } else if (webResponding && (sawServerDown || attempts >= 3)) {
+            probeStopped = true;
+            clearInterval(probeInterval);
+            if (titleEl) titleEl.textContent = `${instanceInfo.displayName} 已恢复`;
+            if (statusEl) {
+              statusEl.style.color = "var(--pi-enh-probe-success-color, #15803d)";
+              statusEl.style.borderColor = "rgba(74, 222, 128, 0.3)";
+              statusEl.style.background = "rgba(74, 222, 128, 0.1)";
+              statusEl.textContent = `🎉 ${instanceInfo.displayName} 已恢复！正在重新加载…`;
+            }
+            const spinner = modal.querySelector(".pi-enh-probe-spinner");
+            if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
+            setTimeout(() => {
+              window.location.reload();
+            }, 800);
+            return;
+          } else if (statusEl) {
+            statusEl.textContent = `⏳ 重启指令已送达，正在探活 ${instanceInfo.displayName} (${attempts}/${maxAttempts})…`;
+          }
+        } else {
+          // Windows 探测分支
+          const checkRes = await fetch(`${bridgeUrl}/pi-web-status?_t=${Date.now()}`, {
+            cache: "no-store",
+            signal: AbortSignal.timeout(1000),
+          });
+          const checkStatus = await checkRes.json();
+          if (!checkRes.ok || checkStatus?.service !== "pi-local-bridge" || typeof checkStatus.running !== "boolean") {
+            throw new Error("Windows 本机服务状态响应无效");
+          }
+
+          if (!checkStatus.running) {
+            sawServerDown = true;
+            if (statusEl) statusEl.textContent = `📡 Windows Pi Web 已停止，等待重新启动 (${attempts}/${maxAttempts})…`;
+          } else if (sawServerDown) {
+            probeStopped = true;
+            clearInterval(probeInterval);
+            if (titleEl) titleEl.textContent = "Windows Pi Web 已恢复";
+            if (statusEl) {
+              statusEl.style.color = "var(--pi-enh-probe-success-color, #15803d)";
+              statusEl.style.borderColor = "rgba(74, 222, 128, 0.3)";
+              statusEl.style.background = "rgba(74, 222, 128, 0.1)";
+              statusEl.textContent = "🎉 Windows Pi Web 已恢复！正在打开本机服务…";
+            }
+            const spinner = modal.querySelector(".pi-enh-probe-spinner");
+            if (spinner) spinner.style.borderTopColor = "var(--pi-enh-probe-success-color, #15803d)";
+            const currentHost = String(window.location.hostname || "").toLowerCase();
+            const alreadyOnWindowsPiWeb = ["127.0.0.1", "localhost", "127.0.0.1"].includes(currentHost);
+            setTimeout(() => {
+              if (alreadyOnWindowsPiWeb) window.location.reload();
+              else window.location.assign("http://127.0.0.1:30141/");
+            }, 800);
+            return;
+          } else if (attempts >= 20) {
+            probeStopped = true;
+            clearInterval(probeInterval);
+            if (titleEl) titleEl.textContent = "重启未能确认";
+            if (statusEl) {
+              statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
+              statusEl.textContent = "❌ 已收到重启请求，但 Windows 30141 服务始终未中断；未能确认重启，请检查 Windows 端日志。";
+            }
+            addManualRestartFallback();
+            return;
+          } else if (statusEl) {
+            statusEl.textContent = `⏳ 重启指令已送达，等待 Windows 30141 停止 (${attempts}/20)…`;
+          }
+        }
+      } catch (err) {
+        if (statusEl) statusEl.textContent = `📡 正在探测 ${instanceInfo.displayName} 运行状态 (${attempts}/${maxAttempts})…`;
+      } finally {
+        probeInFlight = false;
+      }
+
+      if (attempts >= maxAttempts) {
+        probeStopped = true;
+        clearInterval(probeInterval);
+        if (titleEl) titleEl.textContent = "等待服务恢复超时";
+        if (statusEl) {
+          statusEl.style.color = "var(--pi-enh-probe-error-color, #b91c1c)";
+          statusEl.textContent = `⚠️ 等待 ${instanceInfo.displayName} 恢复超时；请检查重启脚本与日志。`;
+        }
+        addManualRestartFallback();
+      }
+    }, 500);
   }
 
   window.__PI_ENH_MANUAL_RESTART_PI_WEB__ = triggerManualRestartPiWebModal;
@@ -39984,7 +41143,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       renderNotificationPanel(panel, nav);
     });
     panel.querySelector('[data-notification-action="reset"]')?.addEventListener("click", () => {
-      resetNotificationSettings();
+      notificationSettings = getNotificationDefaults();
+      writeNotificationSettings();
+      applyNotificationVisibility();
       renderNotificationPanel(panel, nav);
     });
     panel.querySelector('[data-notification-action="clear-history"]')?.addEventListener("click", () => {
@@ -39998,238 +41159,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   lastCheckedArchivedIndex = null;
   isDateCleanPanelOpen = false;
   archivedDateCutoffValue = "";
-
-  let currentArchivedEngine = "pi";
-  let hasUserSelectedArchivedEngine = false;
-  let codexArchivedEntries = null;
-  let codexArchivedLoading = false;
-  let codexArchivedLoadingMore = false;
-  let codexArchivedError = null;
-  let codexArchivedLoadMoreError = null;
-  let codexArchivedHasMore = false;
-  let codexArchivedRawOffset = 0;
-  let codexArchivedAbortController = null;
-  let codexArchivedEpoch = 0;
-
-  function safeEscapeHtml(str) {
-    if (typeof escapeHtml === "function") return escapeHtml(str);
-    if (str === null || str === undefined) return "";
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  function getCurrentArchivedEngine() {
-    return currentArchivedEngine || "pi";
-  }
-
-  function createArchivedRequestSignal(ownerSignal, timeoutMs = 15000) {
-    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function" && typeof AbortSignal.timeout === "function") {
-      try {
-        return AbortSignal.any([ownerSignal, AbortSignal.timeout(timeoutMs)]);
-      } catch (_) {}
-    }
-    const timeoutCtrl = new AbortController();
-    const timer = setTimeout(() => {
-      try {
-        timeoutCtrl.abort(new DOMException("The operation timed out.", "TimeoutError"));
-      } catch (_) {}
-    }, timeoutMs);
-    if (ownerSignal) {
-      if (ownerSignal.aborted) {
-        clearTimeout(timer);
-        try { timeoutCtrl.abort(ownerSignal.reason); } catch (_) {}
-      } else {
-        ownerSignal.addEventListener("abort", () => {
-          clearTimeout(timer);
-          try { timeoutCtrl.abort(ownerSignal.reason); } catch (_) {}
-        }, { once: true });
-      }
-    }
-    return timeoutCtrl.signal;
-  }
-
-  function invalidateCodexArchivedEntries() {
-    codexArchivedEntries = null;
-    codexArchivedLoading = false;
-    codexArchivedLoadingMore = false;
-    codexArchivedError = null;
-    codexArchivedLoadMoreError = null;
-    codexArchivedHasMore = false;
-    codexArchivedRawOffset = 0;
-    if (codexArchivedAbortController) {
-      try { codexArchivedAbortController.abort(); } catch (_) {}
-      codexArchivedAbortController = null;
-    }
-    codexArchivedEpoch++;
-  }
-
-  function cleanupArchivedPanelHost() {
-    invalidateCodexArchivedEntries();
-    hasUserSelectedArchivedEngine = false;
-    selectedArchivedIds.clear();
-    lastCheckedArchivedIndex = null;
-    archivedPanelSearchQuery = "";
-    isDateCleanPanelOpen = false;
-  }
-
-  function inferNativeEngineContext(panel, nav) {
-    const navSessionId = nav?.nav?.sessionId || nav?.sessionId;
-    if (typeof navSessionId === "string" && navSessionId.length > 0) {
-      return navSessionId.startsWith("codex:") ? "codex" : "pi";
-    }
-    if (typeof window !== "undefined" && window.location) {
-      try {
-        const engParam = new URLSearchParams(window.location.search).get("engine");
-        if (engParam === "codex" || engParam === "pi") return engParam;
-      } catch (_) {}
-    }
-    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_EXECUTION_ENGINE__ === "function") {
-      try {
-        const eng = window.__PI_ENH_GET_EXECUTION_ENGINE__();
-        if (eng === "codex" || eng === "pi") return eng;
-      } catch (_) {}
-    }
-    return "pi";
-  }
-
-  async function fetchCodexArchivedSessions(panel, nav, isLoadMore = false) {
-    if (isLoadMore) {
-      if (codexArchivedLoadingMore || !codexArchivedHasMore || codexArchivedLoading) return;
-      codexArchivedLoadingMore = true;
-      codexArchivedLoadMoreError = null;
-    } else {
-      if (codexArchivedLoading) return;
-      if (codexArchivedAbortController) {
-        try { codexArchivedAbortController.abort(); } catch (_) {}
-      }
-      codexArchivedAbortController = new AbortController();
-      codexArchivedLoading = true;
-      codexArchivedError = null;
-      codexArchivedRawOffset = 0;
-    }
-
-    const currentEpoch = isLoadMore ? codexArchivedEpoch : ++codexArchivedEpoch;
-    if (!codexArchivedAbortController) codexArchivedAbortController = new AbortController();
-    const ownerController = codexArchivedAbortController;
-    const signal = createArchivedRequestSignal(ownerController?.signal, 15000);
-    const offset = isLoadMore ? codexArchivedRawOffset : 0;
-    const targetUrl = `/api/sessions?engine=codex&archived=true&offset=${offset}&limit=100`;
-
-    if (panel && panel.isConnected && getCurrentArchivedEngine() === "codex") {
-      renderArchivedPanel(panel, nav);
-    }
-
-    try {
-      const resp = await fetch(targetUrl, {
-        signal,
-        headers: { "Accept": "application/json" },
-      });
-      if (ownerController?.signal.aborted || currentEpoch !== codexArchivedEpoch) return;
-      if (!resp.ok) {
-        throw new Error(`获取 Codex 已归档会话失败 (HTTP ${resp.status})`);
-      }
-      const data = await resp.json().catch(() => null);
-      if (ownerController?.signal.aborted || currentEpoch !== codexArchivedEpoch) return;
-
-      if (!data || typeof data !== "object" || !Array.isArray(data.sessions)) {
-        throw new Error("Codex 返回数据格式异常，缺少会话列表");
-      }
-
-      const rawSessions = data.sessions;
-      const normalized = [];
-      for (const s of rawSessions) {
-        if (!s || typeof s !== "object" || typeof s.id !== "string" || !s.id.startsWith("codex:") || s.archived !== true) {
-          throw new Error("Codex 返回会话项格式损坏或缺少归档标记");
-        }
-        normalized.push({
-          id: s.id,
-          name: String(s.title || s.name || s.id || ""),
-          cwd: String(s.cwd || ""),
-          updatedAt: s.updatedAt || s.lastModified || s.modified || s.time || null,
-          archived: s.archived,
-        });
-      }
-
-      if (isLoadMore) {
-        const existingIds = new Set((codexArchivedEntries || []).map((e) => e.id));
-        const appendItems = normalized.filter((e) => !existingIds.has(e.id));
-        codexArchivedRawOffset += rawSessions.length;
-        if (rawSessions.length >= 100 && appendItems.length === 0) {
-          codexArchivedHasMore = false;
-          codexArchivedLoadMoreError = "会话目录发生变动，请刷新列表";
-        } else {
-          codexArchivedEntries = [...(codexArchivedEntries || []), ...appendItems];
-          codexArchivedHasMore = rawSessions.length >= 100;
-        }
-        codexArchivedLoadingMore = false;
-      } else {
-        codexArchivedRawOffset = rawSessions.length;
-        codexArchivedEntries = normalized;
-        codexArchivedHasMore = rawSessions.length >= 100;
-        codexArchivedLoading = false;
-      }
-    } catch (err) {
-      if (ownerController?.signal.aborted || currentEpoch !== codexArchivedEpoch) return;
-      if (isLoadMore) {
-        codexArchivedLoadingMore = false;
-        codexArchivedLoadMoreError = err?.message || "加载更多失败，请重试";
-      } else {
-        codexArchivedLoading = false;
-        codexArchivedError = err?.message || "无法加载 Codex 已归档会话，请重试";
-      }
-    } finally {
-      if (!ownerController?.signal.aborted && currentEpoch === codexArchivedEpoch) {
-        if (isLoadMore) codexArchivedLoadingMore = false;
-        else codexArchivedLoading = false;
-      }
-    }
-
-    if (panel && panel.isConnected && getCurrentArchivedEngine() === "codex" && currentEpoch === codexArchivedEpoch) {
-      renderArchivedPanel(panel, nav);
-    }
-  }
-
-  function switchArchivedEngine(newEngine, panel, nav) {
-    if (newEngine !== "pi" && newEngine !== "codex") return;
-    if (newEngine === currentArchivedEngine) return;
-    hasUserSelectedArchivedEngine = true;
-    currentArchivedEngine = newEngine;
-    selectedArchivedIds.clear();
-    lastCheckedArchivedIndex = null;
-    archivedPanelSearchQuery = "";
-    isDateCleanPanelOpen = false;
-
-    codexArchivedLoading = false;
-    codexArchivedLoadingMore = false;
-    if (codexArchivedAbortController) {
-      try { codexArchivedAbortController.abort(); } catch (_) {}
-      codexArchivedAbortController = null;
-    }
-    codexArchivedEpoch++;
-
-    if (newEngine === "codex") {
-      if (codexArchivedEntries === null && !codexArchivedLoading) {
-        fetchCodexArchivedSessions(panel, nav, false);
-      }
-    }
-    if (panel && panel.isConnected) {
-      renderArchivedPanel(panel, nav);
-    }
-  }
-
-  async function performDeleteArchivedSession(sessionId) {
-    const fn = (typeof deleteArchivedSession === "function")
-      ? deleteArchivedSession
-      : (typeof window !== "undefined" && typeof window.__PI_ENH_DELETE_ARCHIVED_SESSION__ === "function"
-        ? window.__PI_ENH_DELETE_ARCHIVED_SESSION__
-        : null);
-    if (!fn) throw new Error("会话删除服务不可用");
-    return await fn(sessionId);
-  }
 
   function getDefaultArchivedDateCutoff() {
     const d = new Date(Date.now() - 30 * 86400000);
@@ -40268,13 +41197,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   }
 
   async function executeBatchDeleteArchived(targetIds, panel, nav, triggerBtn) {
-    console.log("[DEBUG BATCH DELETE]", targetIds);
     if (!targetIds || targetIds.length === 0) return;
-    const isCodex = getCurrentArchivedEngine() === "codex";
-    const opHost = panel;
-    const opEngine = getCurrentArchivedEngine();
-    const opEpoch = codexArchivedEpoch;
-
     const initialBtnHtml = triggerBtn ? triggerBtn.innerHTML : "";
     if (triggerBtn) {
       triggerBtn.disabled = true;
@@ -40294,13 +41217,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           triggerBtn.innerHTML = `<span style="font-size: 11.5px;">正在删除 (${i + 1}/${targetIds.length})...</span>`;
         }
         try {
-          const ok = await performDeleteArchivedSession(sid);
-          if (ok === true) {
-            successCount++;
-            succeededIds.add(sid);
-          } else {
-            failCount++;
-          }
+          await deleteArchivedSession(sid);
+          successCount++;
+          succeededIds.add(sid);
+          selectedArchivedIds.delete(sid);
         } catch (err) {
           failCount++;
           console.warn("[pi-enh] 批量删除底层实体清理提示:", sid, err);
@@ -40308,20 +41228,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
 
       if (succeededIds.size > 0) {
-        if (opEngine === "codex") {
-          if (Array.isArray(codexArchivedEntries)) {
-            codexArchivedEntries = codexArchivedEntries.filter((e) => !succeededIds.has(e.id));
-          }
-          codexArchivedRawOffset = 0;
-        } else {
-          const archivedEntriesBefore = readStoredArchivedEntries();
-          const nextEntries = archivedEntriesBefore.filter((e) => e && !succeededIds.has(e.id) && !e.id.startsWith("codex:"));
-          writeStoredArchivedEntries(nextEntries);
-          if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
-            window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => (typeof e === "string" ? !succeededIds.has(e) : !succeededIds.has(e?.id)));
-          }
-          void persistArchivedSessionsToServer(nextEntries, undefined, true);
+        const archivedEntriesBefore = readStoredArchivedEntries();
+        const nextEntries = archivedEntriesBefore.filter((e) => e && !succeededIds.has(e.id));
+        writeStoredArchivedEntries(nextEntries);
+        if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
+          window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((e) => (typeof e === "string" ? !succeededIds.has(e) : !succeededIds.has(e?.id)));
         }
+        void persistArchivedSessionsToServer(nextEntries, undefined, true);
       }
     } finally {
       if (triggerBtn) {
@@ -40329,51 +41242,23 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         triggerBtn.innerHTML = initialBtnHtml;
       }
       requestSessionListRefresh(false, true);
-
-      const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-      if (isStillCurrent) {
-        for (const sid of succeededIds) {
-          selectedArchivedIds.delete(sid);
-        }
-        if (opEngine === "codex" && succeededIds.size > 0) {
-          fetchCodexArchivedSessions(opHost, nav, false);
-        } else {
-          renderArchivedPanel(opHost, nav);
-        }
-        if (failCount === 0) {
-          showToast(`已成功删除 ${successCount} 个已归档会话`, sessionDeleteIcon);
-        } else if (successCount === 0) {
-          showToast(`删除失败：${failCount} 个会话未能删除，已保留选中`, sessionDeleteIcon);
-        } else {
-          showToast(`批量删除完成：成功 ${successCount} 个，失败 ${failCount} 个（已保留选中）`, sessionDeleteIcon);
-        }
+      if (panel && nav) {
+        renderArchivedPanel(panel, nav);
       }
+    }
+
+    if (failCount === 0) {
+      showToast(`已成功删除 ${successCount} 个已归档会话`, sessionDeleteIcon);
+    } else if (successCount === 0) {
+      showToast(`删除失败：${failCount} 个会话未能删除，已保留选中`, sessionDeleteIcon);
+    } else {
+      showToast(`批量删除完成：成功 ${successCount} 个，失败 ${failCount} 个（已保留选中）`, sessionDeleteIcon);
     }
   }
 
   function formatArchiveDate(archivedAt) {
     if (!archivedAt) return "";
     const d = new Date(archivedAt);
-    if (isNaN(d.getTime())) return "";
-    const now = new Date();
-    const isSameYear = d.getFullYear() === now.getFullYear();
-    const m = d.getMonth() + 1;
-    const day = d.getDate();
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mm = String(d.getMinutes()).padStart(2, "0");
-    const isToday = isSameYear && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-    if (isToday) return `今天 ${hh}:${mm}`;
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const isYesterday = isSameYear && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate();
-    if (isYesterday) return `昨天 ${hh}:${mm}`;
-    if (isSameYear) return `${m}/${day} ${hh}:${mm}`;
-    return `${d.getFullYear()}/${m}/${day} ${hh}:${mm}`;
-  }
-
-  function formatGenericDate(rawTime) {
-    if (!rawTime) return "";
-    const d = new Date(rawTime);
     if (isNaN(d.getTime())) return "";
     const now = new Date();
     const isSameYear = d.getFullYear() === now.getFullYear();
@@ -40406,30 +41291,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   function renderArchivedPanel(panel, nav) {
     if (!panel) return;
     if (!panel.classList.contains("pi-enh-archived-panel")) panel.classList.add("pi-enh-archived-panel");
-
-    if (!hasUserSelectedArchivedEngine) {
-      currentArchivedEngine = inferNativeEngineContext(panel, nav);
-    }
-    const isCodex = currentArchivedEngine === "codex";
-    const isPi = !isCodex;
-
-    if (isCodex && codexArchivedEntries === null && !codexArchivedLoading && !codexArchivedError) {
-      addManagedTimeout(() => {
-        if (panel && panel.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEntries === null && !codexArchivedLoading) {
-          fetchCodexArchivedSessions(panel, nav, false);
-        }
-      }, 0);
-    }
-
-    const allEntries = isCodex
-      ? (Array.isArray(codexArchivedEntries) ? codexArchivedEntries : [])
-      : readStoredArchivedEntries().filter((e) => e && e.id && !e.id.startsWith("codex:"));
-
-    if (isPi) {
-      const needsTitleSync = allEntries.some((e) => !e.name || e.name === e.id || !knownSessionTitles.has(e.id));
-      if (needsTitleSync) {
-        addManagedTimeout(syncArchivedTitles, 0);
-      }
+    const allEntries = readStoredArchivedEntries();
+    const needsTitleSync = allEntries.some((e) => !e.name || e.name === e.id || !knownSessionTitles.has(e.id));
+    if (needsTitleSync) {
+      addManagedTimeout(syncArchivedTitles, 0);
     }
 
     // 清除已不在列表中的失效勾选项
@@ -40441,28 +41306,17 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     const query = archivedPanelSearchQuery.trim().toLowerCase();
     const filteredEntries = allEntries.filter((entry) => {
       if (!query) return true;
-      const title = (isPi ? (knownSessionTitles.get(entry.id) || entry.name || "") : (entry.name || "")).toLowerCase();
+      const title = (knownSessionTitles.get(entry.id) || entry.name || "").toLowerCase();
       const id = (entry.id || "").toLowerCase();
       const cwd = (entry.cwd || "").toLowerCase();
       return title.includes(query) || id.includes(query) || cwd.includes(query);
     });
 
     const isSearching = Boolean(query);
-    let countBadgeText = "";
-    if (isCodex && codexArchivedLoading) {
-      countBadgeText = "正在加载…";
-    } else if (isCodex && codexArchivedError) {
-      countBadgeText = "加载失败";
-    } else if (isSearching) {
-      countBadgeText = `显示 ${filteredEntries.length} / ${allEntries.length} 个`;
-    } else if (isCodex && codexArchivedHasMore) {
-      countBadgeText = `已加载 ${allEntries.length} 个+`;
-    } else {
-      countBadgeText = `共 ${allEntries.length} 个`;
-    }
+    const countBadgeText = isSearching ? `显示 ${filteredEntries.length} / ${allEntries.length} 个` : `共 ${allEntries.length} 个`;
 
     const effectiveDateValue = archivedDateCutoffValue || getDefaultArchivedDateCutoff();
-    const idsBeforeDate = isPi ? getSessionIdsBeforeDate(effectiveDateValue, allEntries) : [];
+    const idsBeforeDate = getSessionIdsBeforeDate(effectiveDateValue, allEntries);
     const beforeDateCount = idsBeforeDate.length;
 
     const selectedCount = selectedArchivedIds.size;
@@ -40472,46 +41326,28 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     panel.innerHTML = `
       <div class="settings-general-container" style="display: flex; flex-direction: column; gap: 10px; min-height: 100%;">
         <div class="pi-enh-archived-toolbar">
-          <div class="pi-enh-archived-header-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
-            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <div class="pi-enh-archived-header-row">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
               <h2 class="settings-general-title" style="margin: 0; font-size: 15px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px;">
                 <span>已归档</span>
-                <span style="font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 500;" data-archived-count>${safeEscapeHtml(countBadgeText)}</span>
+                <span style="font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 500;" data-archived-count>${countBadgeText}</span>
               </h2>
-
-              <div class="pi-enh-archived-engine-tabs" role="tablist" aria-label="归档引擎" style="display: inline-flex; align-items: center; gap: 3px; padding: 2px; border-radius: 7px; background: var(--bg-panel, rgba(255,255,255,0.06)); border: 1px solid var(--border, #27272a);">
-                <button type="button" role="tab" class="pi-enh-btn-sm${isPi ? " is-active" : ""}" data-action="switch-archived-engine" data-engine="pi" aria-selected="${isPi}" style="padding: 3px 10px; font-size: 11.5px; border-radius: 5px; cursor: pointer; border: none; ${isPi ? "background: var(--bg-selected, rgba(255,255,255,0.12)); font-weight: 600; color: var(--text);" : "background: transparent; color: var(--text-muted);"}">
-                  Pi Agent
-                </button>
-                <button type="button" role="tab" class="pi-enh-btn-sm${isCodex ? " is-active" : ""}" data-action="switch-archived-engine" data-engine="codex" aria-selected="${isCodex}" style="padding: 3px 10px; font-size: 11.5px; border-radius: 5px; cursor: pointer; border: none; ${isCodex ? "background: var(--bg-selected, rgba(255,255,255,0.12)); font-weight: 600; color: var(--text);" : "background: transparent; color: var(--text-muted);"}">
-                  Codex
-                </button>
-              </div>
-
-              <button type="button" class="pi-enh-btn-sm" data-action="refresh-archived" title="刷新归档列表" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; font-size: 11.5px; border-radius: 6px; cursor: pointer;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-                <span>刷新</span>
-              </button>
             </div>
-
             ${allEntries.length > 0 ? `
               <button type="button" class="pi-enh-btn-sm" data-action="restore-all-archived" style="white-space: nowrap; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; flex-shrink: 0;">
                 全部还原
               </button>
             ` : ""}
           </div>
-
           <p style="margin: 4px 0 10px; font-size: 11.5px; color: var(--text-muted); line-height: 1.45;">
-            ${isPi
-              ? "这些会话已从侧边栏主列表中隐藏。支持批量选择、按住 Shift 连续多选、一键还原或彻底删除，亦可按日期批量清理。"
-              : "Codex 原生已归档会话。支持按引擎独立加载、批量选择、按住 Shift 连续多选、一键还原或彻底删除。Codex 原生数据无归档时间标记，不支持按归档日期批量清理。"}
+            这些会话已从侧边栏主列表中隐藏。支持批量选择、按住 Shift 连续多选、一键还原或彻底删除，亦可按日期批量清理。
           </p>
 
-          ${(allEntries.length > 0 || isSearching) ? `
+          ${allEntries.length > 0 ? `
             <div style="display: flex; align-items: center; gap: 10px;">
               <label class="pi-enh-plugin-search-wrap" style="flex: 1 1 auto; width: 100%;">
                 <svg class="pi-enh-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
-                <input class="pi-enh-plugin-search" type="search" data-archived-search aria-label="搜索已归档会话" placeholder="搜索已归档会话标题、ID 或工作目录…" value="${safeEscapeHtml(archivedPanelSearchQuery)}">
+                <input class="pi-enh-plugin-search" type="search" data-archived-search aria-label="搜索已归档会话" placeholder="搜索已归档会话标题、ID 或工作目录…" value="${archivedPanelSearchQuery}">
               </label>
             </div>
 
@@ -40539,17 +41375,15 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                       取消选择
                     </button>
                   ` : ""}
-                  ${isPi ? `
-                    <button type="button" class="pi-enh-btn-sm" data-action="toggle-date-clean-panel" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; background: ${isDateCleanPanelOpen ? 'var(--bg-hover)' : 'transparent'};">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                      <span>按日期清理${isDateCleanPanelOpen ? " ▲" : " ▼"}</span>
-                    </button>
-                  ` : ""}
+                  <button type="button" class="pi-enh-btn-sm" data-action="toggle-date-clean-panel" style="display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; font-size: 12px; border-radius: 6px; cursor: pointer; background: ${isDateCleanPanelOpen ? 'var(--bg-hover)' : 'transparent'};">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                    <span>按日期清理${isDateCleanPanelOpen ? " ▲" : " ▼"}</span>
+                  </button>
                 </div>
               </div>
             </div>
 
-            ${(isPi && isDateCleanPanelOpen) ? `
+            ${isDateCleanPanelOpen ? `
               <div class="pi-enh-archived-date-panel">
                 <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
                   <div style="font-size: 13px; font-weight: 500; color: var(--text); display: flex; align-items: center; gap: 6px;">
@@ -40562,7 +41396,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                 <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                   <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text);">
                     <span>选择截止日期：</span>
-                    <input type="date" class="pi-enh-archived-date-input" data-archived-date-input value="${safeEscapeHtml(effectiveDateValue)}">
+                    <input type="date" class="pi-enh-archived-date-input" data-archived-date-input value="${effectiveDateValue}">
                   </label>
 
                   <div style="display: inline-flex; align-items: center; gap: 4px;">
@@ -40592,69 +41426,29 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           ` : ""}
         </div>
 
-        ${isCodex && codexArchivedLoading ? `
-          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px; color: var(--text-muted); text-align: center;">
-            <div style="font-size: 14px; font-weight: 500; color: var(--text);">正在加载 Codex 已归档会话…</div>
-            <div style="font-size: 12px; margin-top: 5px;">正在通过原生 API 读取 Native 已归档会话</div>
-          </div>
-        ` : isCodex && codexArchivedError ? `
-          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px; color: var(--text-muted); text-align: center; gap: 12px;">
-            <div style="font-size: 14px; color: var(--text);">${safeEscapeHtml(codexArchivedError)}</div>
-            <button type="button" class="pi-enh-btn-sm" data-action="retry-fetch-codex" style="padding: 4px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;">
-              重试加载
-            </button>
-          </div>
-        ` : allEntries.length === 0 ? `
+        ${allEntries.length === 0 ? `
           <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px; color: var(--text-muted); text-align: center;">
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.35; margin-bottom: 12px;">
               <path d="M21 8v13H3V8"></path><path d="M1 3h22v5H1z"></path><path d="M10 12h4"></path>
             </svg>
-            <div style="font-size: 14px; font-weight: 500; color: var(--text);">${isCodex ? "暂无 Codex 已归档的会话" : "暂无已归档的会话"}</div>
+            <div style="font-size: 14px; font-weight: 500; color: var(--text);">暂无已归档的会话</div>
             <div style="font-size: 12px; margin-top: 5px; max-width: 340px; line-height: 1.5;">
-              ${isCodex
-                ? "在 Codex 会话菜单中选择“归档会话”，即可将不需要频繁查阅的会话收纳至此处。"
-                : "鼠标悬浮在左侧侧边栏会话行上，点击右侧的“⋯”按钮并选择“归档会话”，即可将不需要频繁查阅的会话收纳至此处。"}
+              鼠标悬浮在左侧侧边栏会话行上，点击右侧的“⋯”按钮并选择“归档会话”，即可将不需要频繁查阅的会话收纳至此处。
             </div>
           </div>
         ` : isSearching && filteredEntries.length === 0 ? `
           <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px; color: var(--text-muted); text-align: center;">
-            <div style="font-size: 13.5px; color: var(--text);">未找到匹配“${safeEscapeHtml(archivedPanelSearchQuery)}”的已归档会话</div>
+            <div style="font-size: 13.5px; color: var(--text);">未找到匹配“${archivedPanelSearchQuery}”的已归档会话</div>
             <div style="font-size: 12px; margin-top: 5px;">请尝试缩短关键词或搜索其他词汇。</div>
           </div>
         ` : `
           <div style="display: flex; flex-direction: column; gap: 8px; max-width: 100%;">
             ${filteredEntries.map((entry, index) => {
-              const displayName = isPi
-                ? (knownSessionTitles.get(entry.id) || (entry.name && entry.name !== entry.id ? entry.name : entry.id.slice(0, 12)))
-                : (entry.name || entry.id);
+              const displayName = knownSessionTitles.get(entry.id) || (entry.name && entry.name !== entry.id ? entry.name : entry.id.slice(0, 12));
+              const fullDateStr = entry.archivedAt ? new Date(entry.archivedAt).toLocaleString() : "";
+              const shortDateStr = formatArchiveDate(entry.archivedAt);
               const isSelected = selectedArchivedIds.has(entry.id);
               const shortCwd = formatCwdShort(entry.cwd);
-
-              let dateTagHtml = "";
-              if (isPi && entry.archivedAt) {
-                const fullDateStr = new Date(entry.archivedAt).toLocaleString();
-                const shortDateStr = formatArchiveDate(entry.archivedAt);
-                if (shortDateStr) {
-                  dateTagHtml = `
-                    <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-date" title="归档时间: ${safeEscapeHtml(fullDateStr)}">
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
-                      <span class="pi-enh-archived-tag-text">${safeEscapeHtml(shortDateStr)}</span>
-                    </span>
-                  `;
-                }
-              } else if (isCodex && entry.updatedAt) {
-                const fullDateStr = new Date(entry.updatedAt).toLocaleString();
-                const shortDateStr = formatGenericDate(entry.updatedAt);
-                if (shortDateStr) {
-                  dateTagHtml = `
-                    <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-date" title="最后更新: ${safeEscapeHtml(fullDateStr)}">
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
-                      <span class="pi-enh-archived-tag-text">最后更新: ${safeEscapeHtml(shortDateStr)}</span>
-                    </span>
-                  `;
-                }
-              }
-
               return `
                 <div class="pi-enh-archived-item${isSelected ? " is-selected" : ""}">
                   <div class="pi-enh-archived-item-main">
@@ -40663,20 +41457,25 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                     </label>
                     <div class="pi-enh-archived-title-row">
                       <svg class="pi-enh-archived-title-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                      <span class="pi-enh-archived-title" title="${safeEscapeHtml(displayName)}（点击可展开/收起完整标题）">${safeEscapeHtml(displayName)}</span>
+                      <span class="pi-enh-archived-title" title="${escapeHtml(displayName)}（点击可展开/收起完整标题）">${escapeHtml(displayName)}</span>
                     </div>
                   </div>
                   <div class="pi-enh-archived-item-footer">
                     <div class="pi-enh-archived-meta-row">
                       ${entry.cwd ? `
-                        <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-cwd" title="工作目录: ${safeEscapeHtml(entry.cwd)}">
+                        <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-cwd" title="工作目录: ${escapeHtml(entry.cwd)}">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
-                          <span class="pi-enh-archived-tag-text">${safeEscapeHtml(shortCwd)}</span>
+                          <span class="pi-enh-archived-tag-text">${escapeHtml(shortCwd)}</span>
                         </span>
                       ` : ""}
-                      ${dateTagHtml}
-                      <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-id" title="完整会话 ID: ${safeEscapeHtml(entry.id)}">
-                        <span class="pi-enh-archived-tag-text">ID: ${safeEscapeHtml(entry.id.slice(0, 10))}…</span>
+                      ${shortDateStr ? `
+                        <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-date" title="归档时间: ${fullDateStr}">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+                          <span class="pi-enh-archived-tag-text">${shortDateStr}</span>
+                        </span>
+                      ` : ""}
+                      <span class="pi-enh-archived-meta-tag pi-enh-archived-meta-id" title="完整会话 ID: ${entry.id}">
+                        <span class="pi-enh-archived-tag-text">ID: ${entry.id.slice(0, 8)}…</span>
                       </span>
                     </div>
                     <div class="pi-enh-archived-actions">
@@ -40693,60 +41492,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                 </div>
               `;
             }).join("")}
-
-            ${isCodex && (codexArchivedHasMore || codexArchivedLoadMoreError) ? `
-              <div class="pi-enh-archived-load-more-row" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px; gap: 8px;">
-                ${codexArchivedLoadingMore ? `
-                  <div style="font-size: 12px; color: var(--text-muted);">正在加载更多 Codex 已归档会话…</div>
-                ` : codexArchivedLoadMoreError ? `
-                  <div style="font-size: 12px; color: var(--text-muted);">${safeEscapeHtml(codexArchivedLoadMoreError)}</div>
-                  <button type="button" class="pi-enh-btn-sm" data-action="refresh-archived" style="padding: 4px 12px; font-size: 12px; cursor: pointer;">刷新列表</button>
-                ` : `
-                  <button type="button" class="pi-enh-btn-sm" data-action="load-more-codex" style="padding: 4px 16px; font-size: 12px; cursor: pointer;">加载更多</button>
-                `}
-              </div>
-            ` : ""}
           </div>
         `}
       </div>
     `;
-
-    // 引擎切换 Tab 点击事件
-    const engineBtns = panel.querySelectorAll('[data-action="switch-archived-engine"]');
-    for (const eb of engineBtns) {
-      eb.addEventListener("click", () => {
-        const targetEng = eb.getAttribute("data-engine");
-        switchArchivedEngine(targetEng, panel, nav);
-      });
-    }
-
-    // 刷新按钮
-    const refreshBtn = panel.querySelector('[data-action="refresh-archived"]');
-    if (refreshBtn) {
-      refreshBtn.addEventListener("click", () => {
-        if (getCurrentArchivedEngine() === "codex") {
-          invalidateCodexArchivedEntries();
-          fetchCodexArchivedSessions(panel, nav, false);
-        } else {
-          renderArchivedPanel(panel, nav);
-        }
-        showToast("已刷新已归档会话", sessionArchiveIcon);
-      });
-    }
-
-    // Codex 加载更多与重试
-    const loadMoreBtn = panel.querySelector('[data-action="load-more-codex"]');
-    if (loadMoreBtn) {
-      loadMoreBtn.addEventListener("click", () => {
-        fetchCodexArchivedSessions(panel, nav, true);
-      });
-    }
-    const retryCodexBtn = panel.querySelector('[data-action="retry-fetch-codex"]');
-    if (retryCodexBtn) {
-      retryCodexBtn.addEventListener("click", () => {
-        fetchCodexArchivedSessions(panel, nav, false);
-      });
-    }
 
     const searchInput = panel.querySelector("[data-archived-search]");
     if (searchInput) {
@@ -40817,62 +41566,26 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     // 批量还原
     const batchRestoreBtn = panel.querySelector('[data-action="batch-restore-selected"]');
     if (batchRestoreBtn) {
-      batchRestoreBtn.addEventListener("click", async () => {
+      batchRestoreBtn.addEventListener("click", () => {
         const idsToRestore = [...selectedArchivedIds];
         if (idsToRestore.length === 0) return;
-        const opHost = panel;
-        const opEngine = getCurrentArchivedEngine();
-        const opEpoch = codexArchivedEpoch;
-        try {
-          const restoreFn = (typeof restoreArchivedSessions === "function")
-            ? restoreArchivedSessions
-            : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSIONS__ : null);
-          const result = restoreFn ? await restoreFn(idsToRestore) : 0;
-          const restoredCount = typeof result === "object" && result !== null ? (result.restoredCount ?? Number(result)) : Number(result);
-          const succeeded = (result && typeof result === "object" && Array.isArray(result.succeededIds))
-            ? result.succeededIds
-            : (restoredCount > 0 ? idsToRestore : []);
-          const succSet = new Set(succeeded);
-          if (opEngine === "codex" && Array.isArray(codexArchivedEntries)) {
-            codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
-          }
-          requestSessionListRefresh(false, true);
-          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-          }
-          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-          if (isStillCurrent) {
-            for (const sid of succeeded) {
-              selectedArchivedIds.delete(sid);
-            }
-            lastCheckedArchivedIndex = null;
-            renderArchivedPanel(opHost, nav);
-            showToast(`已批量还原 ${restoredCount} 个会话`, sessionArchiveIcon);
-          }
-        } catch (err) {
-          const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
-          if (opEngine === "codex" && succeeded.length > 0 && Array.isArray(codexArchivedEntries)) {
-            const succSet = new Set(succeeded);
-            codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
-          }
-          requestSessionListRefresh(false, true);
-          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-          }
-          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-          if (isStillCurrent) {
-            for (const sid of succeeded) {
-              selectedArchivedIds.delete(sid);
-            }
-            lastCheckedArchivedIndex = null;
-            renderArchivedPanel(opHost, nav);
-            if (succeeded.length > 0) {
-              showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
-            } else {
-              showToast(err?.message || "批量还原未确认，已保留归档状态", undefined, 3500);
-            }
-          }
+        const restoredCount = (typeof restoreArchivedSessions === "function")
+          ? restoreArchivedSessions(idsToRestore)
+          : (() => {
+              let count = 0;
+              for (const id of idsToRestore) {
+                if (restoreArchivedSession(id)) count++;
+              }
+              return count;
+            })();
+        selectedArchivedIds.clear();
+        lastCheckedArchivedIndex = null;
+        requestSessionListRefresh(false, true);
+        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
         }
+        renderArchivedPanel(panel, nav);
+        showToast(`已批量还原 ${restoredCount} 个会话`, sessionArchiveIcon);
       });
     }
 
@@ -40893,9 +41606,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           batchDeleteBtn._confirmTimer = setTimeout(() => {
             batchDeleteBtn.setAttribute("data-stage", "init");
             batchDeleteBtn.classList.remove("pi-enh-archived-delete-confirming");
-            if (panel && panel.isConnected) {
-              renderArchivedPanel(panel, nav);
-            }
+            renderArchivedPanel(panel, nav);
           }, 5000);
           return;
         }
@@ -40916,25 +41627,25 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       });
     }
 
-    // 展开/收起按日期清理面板（仅限 Pi）
+    // 展开/收起按日期清理面板
     const toggleDateCleanBtn = panel.querySelector('[data-action="toggle-date-clean-panel"]');
-    if (toggleDateCleanBtn && isPi) {
+    if (toggleDateCleanBtn) {
       toggleDateCleanBtn.addEventListener("click", () => {
         isDateCleanPanelOpen = !isDateCleanPanelOpen;
         renderArchivedPanel(panel, nav);
       });
     }
 
-    // 日期选择框输入（仅限 Pi）
+    // 日期选择框输入
     const dateInput = panel.querySelector("[data-archived-date-input]");
-    if (dateInput && isPi) {
+    if (dateInput) {
       dateInput.addEventListener("change", () => {
         archivedDateCutoffValue = dateInput.value || getDefaultArchivedDateCutoff();
         renderArchivedPanel(panel, nav);
       });
     }
 
-    // 快捷天数预设（仅限 Pi）
+    // 快捷天数预设
     const presetBtns = panel.querySelectorAll('[data-action="quick-date-preset"]');
     for (const pb of presetBtns) {
       pb.addEventListener("click", () => {
@@ -40948,9 +41659,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       });
     }
 
-    // 勾选指定日期前的会话（仅限 Pi）
+    // 勾选指定日期前的会话
     const selectBeforeDateBtn = panel.querySelector('[data-action="select-before-date"]');
-    if (selectBeforeDateBtn && isPi) {
+    if (selectBeforeDateBtn) {
       selectBeforeDateBtn.addEventListener("click", () => {
         const ids = getSessionIdsBeforeDate(effectiveDateValue, allEntries);
         for (const id of ids) {
@@ -40961,9 +41672,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       });
     }
 
-    // 一键删除指定日期前的所有会话（两阶段确认，仅限 Pi）
+    // 一键删除指定日期前的所有会话（两阶段确认）
     const deleteBeforeDateBtn = panel.querySelector('[data-action="delete-before-date"]');
-    if (deleteBeforeDateBtn && isPi) {
+    if (deleteBeforeDateBtn) {
       deleteBeforeDateBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         const stage = deleteBeforeDateBtn.getAttribute("data-stage") || "init";
@@ -40981,9 +41692,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           deleteBeforeDateBtn._confirmTimer = setTimeout(() => {
             deleteBeforeDateBtn.setAttribute("data-stage", "init");
             deleteBeforeDateBtn.classList.remove("pi-enh-archived-delete-confirming");
-            if (panel && panel.isConnected) {
-              renderArchivedPanel(panel, nav);
-            }
+            renderArchivedPanel(panel, nav);
           }, 5000);
           return;
         }
@@ -40994,45 +41703,16 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
 
     for (const btn of panel.querySelectorAll('[data-action="restore-archived-session"]')) {
-      btn.addEventListener("click", async () => {
+      btn.addEventListener("click", () => {
         let sessionId = "";
         try { sessionId = decodeURIComponent(btn.getAttribute("data-session-id") || ""); } catch (e) {}
-        const opHost = panel;
-        const opEngine = getCurrentArchivedEngine();
-        const opEpoch = codexArchivedEpoch;
-        try {
-          const restoreFn = (typeof restoreArchivedSession === "function")
-            ? restoreArchivedSession
-            : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSION__ : null);
-          const ok = restoreFn ? await restoreFn(sessionId) : false;
-          if (!ok) {
-            const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-            if (isStillCurrent) {
-              showToast("还原未确认，已保留归档状态", undefined, 3500);
-            }
-            return;
-          }
-          if (opEngine === "codex") {
-            if (Array.isArray(codexArchivedEntries)) {
-              codexArchivedEntries = codexArchivedEntries.filter((e) => e.id !== sessionId);
-            }
-          }
-          requestSessionListRefresh(false, true);
-          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-          }
-          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-          if (isStillCurrent) {
-            selectedArchivedIds.delete(sessionId);
-            renderArchivedPanel(opHost, nav);
-            showToast("已还原会话", sessionArchiveIcon);
-          }
-        } catch (err) {
-          const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-          if (isStillCurrent) {
-            showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
-          }
+        if (!restoreArchivedSession(sessionId)) return;
+        requestSessionListRefresh(false, true);
+        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
         }
+        renderArchivedPanel(panel, nav);
+        showToast("已还原会话", sessionArchiveIcon);
       });
     }
 
@@ -41087,47 +41767,9 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         try { sessionId = decodeURIComponent(btn.getAttribute("data-session-id") || ""); } catch (err) {}
         if (!sessionId) return;
 
-        if (getCurrentArchivedEngine() === "codex") {
-          const opHost = panel;
-          const opEngine = "codex";
-          const opEpoch = codexArchivedEpoch;
-          (async () => {
-            try {
-              const ok = await performDeleteArchivedSession(sessionId);
-              if (ok === true) {
-                if (Array.isArray(codexArchivedEntries)) {
-                  codexArchivedEntries = codexArchivedEntries.filter((e) => e.id !== sessionId);
-                }
-                codexArchivedRawOffset = 0;
-                requestSessionListRefresh(false, true);
-                const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
-                if (isStillCurrent) {
-                  selectedArchivedIds.delete(sessionId);
-                  fetchCodexArchivedSessions(opHost, nav, false);
-                  showToast("已彻底删除会话", sessionDeleteIcon);
-                }
-              } else {
-                const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
-                if (isStillCurrent) {
-                  showToast("删除会话未确认，已保留状态", undefined, 3500);
-                }
-              }
-            } catch (err) {
-              const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
-              if (isStillCurrent) {
-                renderArchivedPanel(opHost, nav);
-                showToast(err?.message || "删除会话未确认，已保留状态", undefined, 3500);
-              }
-            }
-          })();
-          return;
-        }
-
-        // Pi 模式：彻底移出归档列表
-        const opHost = panel;
-        const opEngine = "pi";
+        // 彻底移出归档列表：本地 localStorage、全局 manifest 及选中态全部立即清理
         const archivedEntriesBeforeDelete = readStoredArchivedEntries();
-        const nextEntries = archivedEntriesBeforeDelete.filter((entry) => entry && entry.id !== sessionId && !entry.id.startsWith("codex:"));
+        const nextEntries = archivedEntriesBeforeDelete.filter((entry) => entry && entry.id !== sessionId);
         writeStoredArchivedEntries(nextEntries);
         if (Array.isArray(window.__PI_ENH_ARCHIVED_MANIFEST__)) {
           window.__PI_ENH_ARCHIVED_MANIFEST__ = window.__PI_ENH_ARCHIVED_MANIFEST__.filter((entry) => (typeof entry === "string" ? entry !== sessionId : entry?.id !== sessionId));
@@ -41137,13 +41779,15 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         showToast("已删除归档会话", sessionDeleteIcon);
 
         (async () => {
+          // 立即无防抖写回权威服务端 models-config
           try {
             await persistArchivedSessionsToServer(nextEntries, undefined, true);
           } catch (e) {
             console.warn("[pi-enh] 归档删除服务端同步异常:", e);
           }
+          // 异步清理底层磁盘实体文件（非阻塞，绝不反向复活已删除条目）
           try {
-            await performDeleteArchivedSession(sessionId);
+            await deleteArchivedSession(sessionId);
           } catch (err) {
             console.warn("[pi-enh] 会话底层实体文件清理提示 (非阻塞):", err);
           }
@@ -41162,63 +41806,27 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
     });
 
-    panel.querySelector('[data-action="restore-all-archived"]')?.addEventListener("click", async () => {
-      const all = allEntries;
+    panel.querySelector('[data-action="restore-all-archived"]')?.addEventListener("click", () => {
+      const all = readStoredArchivedEntries();
       if (all.length === 0) return;
       const allIds = all.map((item) => item.id).filter(Boolean);
-      const opHost = panel;
-      const opEngine = getCurrentArchivedEngine();
-      const opEpoch = codexArchivedEpoch;
-      try {
-        const restoreFn = (typeof restoreArchivedSessions === "function")
-          ? restoreArchivedSessions
-          : (typeof window !== "undefined" ? window.__PI_ENH_RESTORE_ARCHIVED_SESSIONS__ : null);
-        const result = restoreFn ? await restoreFn(allIds) : 0;
-        const restoredCount = typeof result === "object" && result !== null ? (result.restoredCount ?? Number(result)) : Number(result);
-        const succeeded = (result && typeof result === "object" && Array.isArray(result.succeededIds))
-          ? result.succeededIds
-          : (restoredCount > 0 ? allIds : []);
-        const succSet = new Set(succeeded);
-        if (opEngine === "codex" && Array.isArray(codexArchivedEntries)) {
-          codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
-        }
-        requestSessionListRefresh(false, true);
-        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-        }
-        const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-        if (isStillCurrent) {
-          for (const sid of succeeded) {
-            selectedArchivedIds.delete(sid);
-          }
-          lastCheckedArchivedIndex = null;
-          renderArchivedPanel(opHost, nav);
-          showToast(`已全部还原 ${restoredCount} 个会话`, sessionArchiveIcon);
-        }
-      } catch (err) {
-        const succeeded = Array.isArray(err?.succeededIds) ? err.succeededIds : [];
-        if (opEngine === "codex" && succeeded.length > 0 && Array.isArray(codexArchivedEntries)) {
-          const succSet = new Set(succeeded);
-          codexArchivedEntries = codexArchivedEntries.filter((e) => !succSet.has(e.id));
-        }
-        requestSessionListRefresh(false, true);
-        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-        }
-        const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === opEngine && (opEngine !== "codex" || codexArchivedEpoch === opEpoch));
-        if (isStillCurrent) {
-          for (const sid of succeeded) {
-            selectedArchivedIds.delete(sid);
-          }
-          lastCheckedArchivedIndex = null;
-          renderArchivedPanel(opHost, nav);
-          if (succeeded.length > 0) {
-            showToast(`已还原 ${succeeded.length} 项，其余未确认已保留`, undefined, 4000);
-          } else {
-            showToast(err?.message || "还原未确认，已保留归档状态", undefined, 3500);
-          }
-        }
+      const restoredCount = (typeof restoreArchivedSessions === "function")
+        ? restoreArchivedSessions(allIds)
+        : (() => {
+            let count = 0;
+            for (const item of all) {
+              if (restoreArchivedSession(item.id)) count++;
+            }
+            return count;
+          })();
+      selectedArchivedIds.clear();
+      lastCheckedArchivedIndex = null;
+      requestSessionListRefresh(false, true);
+      if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+        try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
       }
+      renderArchivedPanel(panel, nav);
+      showToast(`已全部还原 ${restoredCount} 个会话`, sessionArchiveIcon);
     });
 
     for (const titleEl of panel.querySelectorAll(".pi-enh-archived-title")) {
@@ -41244,8 +41852,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     if (panel) renderArchivedPanel(panel, nav);
   };
   window.__PI_ENH_SELECT_ARCHIVED_BEFORE_DATE__ = (dateStr) => {
-    if (getCurrentArchivedEngine() === "codex") return [];
-    const allEntries = readStoredArchivedEntries().filter((e) => e && e.id && !e.id.startsWith("codex:"));
+    const allEntries = readStoredArchivedEntries();
     const ids = getSessionIdsBeforeDate(dateStr, allEntries);
     for (const id of ids) selectedArchivedIds.add(id);
     const panel = document.querySelector(".pi-enh-archived-panel");
@@ -41260,16 +41867,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     if (panel) renderArchivedPanel(panel, nav);
   };
   window.__PI_ENH_TOGGLE_DATE_CLEAN_PANEL__ = (force) => {
-    if (getCurrentArchivedEngine() === "codex") return;
     isDateCleanPanelOpen = force !== undefined ? Boolean(force) : !isDateCleanPanelOpen;
     const panel = document.querySelector(".pi-enh-archived-panel");
     const nav = document.querySelector(".settings-section-tabs");
     if (panel) renderArchivedPanel(panel, nav);
-  };
-  window.__PI_ENH_SET_ARCHIVED_ENGINE__ = (engine) => {
-    const panel = document.querySelector(".pi-enh-archived-panel");
-    const nav = document.querySelector(".settings-section-tabs");
-    switchArchivedEngine(engine, panel, nav);
   };
   window.__PI_ENH_EXECUTE_BATCH_DELETE_ARCHIVED__ = executeBatchDeleteArchived;
 
@@ -42166,7 +42767,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
     } catch (error) {
       if (!control.isConnected || control.__piEnhSubagentModelState !== state) return;
-      console.warn(`[Agent Web Plus Enhancements] 保存子 Agent ${profileName} 配置失败:`, error);
+      console.warn(`[Pi Web Enhancements] 保存子 Agent ${profileName} 配置失败:`, error);
       state.savingProfiles.delete(profKey);
       // Rollback
       if (prevModel) modelSelect.value = prevModel;
@@ -42302,7 +42903,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       ? `微内核沙箱：0 异常 · ${modeLabel}`
       : `微内核沙箱：已隔离 ${totalIsolated} 项异常 · ${modeLabel}`;
     const bootTimeStr = kh?.bootedAt ? new Date(kh.bootedAt).toLocaleTimeString() : "即时";
-    const editionStr = kh?.edition || "agent-web-standalone-1.0.0";
+    const editionStr = kh?.edition || "koxir-standalone-1.0.0";
     const detailLines = [
       `发行版内核：${editionStr} (v${ENHANCEMENT_SUITE_VERSION})`,
       `加载模式：${isInline ? "layout chunk 编译期静态内联 (0 网络请求 / 0ms 延迟)" : "动态热重载模式"}`,
@@ -42402,45 +43003,666 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
   }
 
-  function updateSyncCardView(card, data) {
+  async function resolveWindowsPiBridgeUrl() {
+    const candidates = [
+      "http://127.0.0.1:30149",
+      "http://localhost:30149",
+      "http://127.0.0.1:30149",
+    ];
+    for (const candidate of candidates) {
+      try {
+        const response = await fetch(`${candidate}/ping?_t=${Date.now()}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(1200),
+        });
+        const identity = await response.json();
+        if (response.ok && identity?.ok === true && identity?.service === "pi-local-bridge") {
+          return candidate;
+        }
+      } catch (e) {}
+    }
+    throw new Error("Windows 本地桥接未运行（127.0.0.1:30149）");
+  }
+
+  bridgeBaseSyncUrl = null;
+  async function resolveBridgeSyncUrl() {
+    if (bridgeBaseSyncUrl) return bridgeBaseSyncUrl;
+    const hostname = (typeof window !== "undefined" && window.location?.hostname) || "127.0.0.1";
+    // On non-Windows localhost there is no desktop bridge; go directly to the NAS.
+    const candidates = /^(127\.0\.0\.1|localhost)$/.test(hostname) && !/Win/i.test(navigator.platform || "")
+      ? ["http://127.0.0.1:30149"]
+      : [`http://${hostname}:30149`, "http://127.0.0.1:30149", "http://127.0.0.1:30149"];
+    for (const cand of candidates) {
+      try {
+        const res = await fetch(`${cand}/ping`, { signal: AbortSignal.timeout(1500) });
+        if (res.ok) { bridgeBaseSyncUrl = cand; return cand; }
+      } catch (e) {}
+    }
+    bridgeBaseSyncUrl = `http://${hostname}:30149`;
+    return bridgeBaseSyncUrl;
+  }
+
+  async function updateSyncCardView(card, data) {
     if (!card) return;
     const badge = card.querySelector("[data-sync-badge]");
     const sourceDetail = card.querySelector("[data-sync-source-detail]");
     const targetDetail = card.querySelector("[data-sync-target-detail]");
     const windowsDetail = card.querySelector("[data-sync-windows-detail]");
     const macDetail = card.querySelector("[data-sync-mac-detail]");
+    const arrow = card.querySelector("[data-sync-arrow]");
     const syncBtn = card.querySelector('[data-sync-action="sync"]');
     const rollbackBtn = card.querySelector('[data-sync-action="rollback"]');
-    const targetToggles = card.querySelectorAll("[data-sync-target-toggle]");
-    const notice = card.querySelector("[data-sync-notice]");
-    const message = data?.message || "跨实例同步后端未配置";
+    const isColleagueInstance = typeof window !== "undefined" && String(window.location?.port) === "30142";
 
-    if (badge) {
-      badge.setAttribute("data-state", "DISCONNECTED");
-      badge.textContent = message;
+    const colleagueCheckbox = card.querySelector('[data-sync-target-toggle="colleague"]');
+    const windowsCheckbox = card.querySelector('[data-sync-target-toggle="windows"]');
+    const macCheckbox = card.querySelector('[data-sync-target-toggle="mac"]');
+
+    if (data?.preferences) {
+      if (colleagueCheckbox) colleagueCheckbox.checked = data.preferences.colleague !== false;
+      if (windowsCheckbox) windowsCheckbox.checked = data.preferences.windows !== false;
+      if (macCheckbox) macCheckbox.checked = data.preferences.mac !== false;
     }
-    if (notice) notice.textContent = "不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。";
-    if (sourceDetail) sourceDetail.textContent = "Agent Web Plus 当前实例";
-    if (targetDetail) targetDetail.textContent = "目标实例 1 · 未配置";
-    if (windowsDetail) windowsDetail.textContent = "目标实例 2 · 未配置";
-    if (macDetail) macDetail.textContent = "目标实例 3 · 未配置";
-    for (const toggle of targetToggles) toggle.disabled = true;
-    if (syncBtn) syncBtn.disabled = true;
-    if (rollbackBtn) rollbackBtn.disabled = true;
+
+    if (!data || !data.ok) {
+      if (badge) {
+        badge.setAttribute("data-state", "DISCONNECTED");
+        badge.textContent = data?.message || "同步守护未响应";
+      }
+      if (sourceDetail) sourceDetail.textContent = "守护未连接";
+      if (targetDetail) targetDetail.textContent = "守护未连接";
+      if (windowsDetail) windowsDetail.textContent = "守护未连接";
+      if (macDetail) macDetail.textContent = "守护未连接";
+      if (syncBtn) syncBtn.disabled = true;
+      if (rollbackBtn) rollbackBtn.disabled = true;
+      return;
+    }
+
+    const srcVer = data.sourceVersion ? `v${data.sourceVersion}` : `v${ENHANCEMENT_SUITE_VERSION}`;
+    const srcTime = data.sourceMtime ? new Date(data.sourceMtime).toLocaleTimeString() : "";
+
+    const colleagueInfo = data.colleague || {
+      version: data.targetVersion,
+      targetMtime: data.targetMtime,
+      isSynced: data.isColleagueSynced !== false,
+      backups: data.backups || [],
+    };
+    const dstVer = colleagueInfo.version ? `v${colleagueInfo.version}` : `v${ENHANCEMENT_SUITE_VERSION}`;
+    const dstTime = colleagueInfo.targetMtime ? new Date(colleagueInfo.targetMtime).toLocaleTimeString() : "";
+
+    const windowsInfo = data.windows;
+    const macInfo = data.mac;
+
+    if (sourceDetail) {
+      sourceDetail.textContent = `${srcVer}${srcTime ? ` · ${srcTime}` : ""} · 日常开发源`;
+    }
+    if (targetDetail) {
+      if (data.preferences && !data.preferences.colleague) {
+        targetDetail.textContent = `${dstVer}${dstTime ? ` · ${dstTime}` : ""} · 同步已暂停 (未勾选)`;
+      } else {
+        const synDesc = colleagueInfo.isSynced ? (isColleagueInstance ? "本机已热生效" : "自动热生效就绪") : "待同步最新改动";
+        targetDetail.textContent = `${dstVer}${dstTime ? ` · ${dstTime}` : ""} · ${synDesc}`;
+      }
+    }
+    if (windowsDetail) {
+      if (data.preferences && !data.preferences.windows) {
+        windowsDetail.textContent = `同步已暂停 (未勾选)${windowsInfo?.online ? "" : " · 设备离线"}`;
+      } else if (!windowsInfo || !windowsInfo.online) {
+        windowsDetail.textContent = windowsInfo?.error ? `离线待机 (${windowsInfo.error}) · 开机自动补齐` : "离线待机 · 开机后自动同步";
+      } else {
+        const winVer = windowsInfo.version ? `v${windowsInfo.version}` : "v未知";
+        const winTime = windowsInfo.targetMtime ? new Date(windowsInfo.targetMtime).toLocaleTimeString() : "";
+        const winDesc = windowsInfo.isSynced ? "自动热生效就绪" : "待同步最新改动";
+        windowsDetail.textContent = `${winVer}${winTime ? ` · ${winTime}` : ""} · ${winDesc}`;
+      }
+    }
+    if (macDetail) {
+      if (data.preferences && !data.preferences.mac) {
+        macDetail.textContent = `同步已暂停 (未勾选)${macInfo?.online ? "" : " · 设备离线"}`;
+      } else if (!macInfo || !macInfo.online) {
+        macDetail.textContent = macInfo?.error ? `离线待机 (${macInfo.error}) · 开机自动补齐` : "离线待机 · 开机后自动同步";
+      } else {
+        const macVer = macInfo.version ? `v${macInfo.version}` : "v未知";
+        const macTime = macInfo.targetMtime ? new Date(macInfo.targetMtime).toLocaleTimeString() : "";
+        const macDesc = macInfo.isSynced ? "自动热生效就绪" : "待同步最新改动";
+        macDetail.textContent = `${macVer}${macTime ? ` · ${macTime}` : ""} · ${macDesc}`;
+      }
+    }
+
+    const allSynced = data.isFullySynced;
+    if (badge) {
+      if (allSynced) {
+        badge.setAttribute("data-state", "SYNCED");
+        const disabledCount = (data.preferences ? [!data.preferences.colleague, !data.preferences.windows, !data.preferences.mac].filter(Boolean).length : 0);
+        if (isColleagueInstance) {
+          badge.textContent = `已同步 30141 最新插件 (${dstVer}) · 自动守护中`;
+        } else if (disabledCount > 0) {
+          badge.textContent = `已启用端已对齐 (${srcVer}) · ${disabledCount} 端同步已暂停`;
+        } else {
+          const winOnline = Boolean(windowsInfo?.online);
+          const macOnline = Boolean(macInfo?.online);
+          if (winOnline && macOnline) {
+            badge.textContent = `四端已完全对齐 (${srcVer}) · 自动守护运行中`;
+          } else {
+            const offlineList = [];
+            if (!winOnline) offlineList.push("Win");
+            if (!macOnline) offlineList.push("Mac");
+            badge.textContent = `已在线端已对齐 (${srcVer}) · ${offlineList.join("/")} 待机`;
+          }
+        }
+      } else {
+        badge.setAttribute("data-state", "PENDING");
+        badge.textContent = `30141 有新改动待同步至各端`;
+      }
+    }
+
+    if (arrow) {
+      arrow.textContent = "➔";
+      arrow.title = "单向流转：群晖 30141 开发源 ➔ 群晖 30142 同事端 & Windows 本地端 & MacBook 本地端";
+    }
+
+    if (syncBtn) {
+      if (isColleagueInstance) {
+        syncBtn.disabled = false;
+        syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>检查 30141 最新更新';
+        syncBtn.title = "从 30141 获取最新增强插件并热生效";
+      } else {
+        syncBtn.disabled = allSynced;
+        if (allSynced) {
+          syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>各已启用端已对齐';
+        } else {
+          syncBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>立即同步至各端';
+        }
+      }
+    }
+
+    if (rollbackBtn) {
+      const hasBackups30142 = (data.backups?.length > 0) || (colleagueInfo.backups?.length > 0);
+      const hasBackupsWin = (windowsInfo?.backups?.length > 0);
+      const hasBackupsMac = (macInfo?.backups?.length > 0);
+      rollbackBtn.disabled = !hasBackups30142 && !hasBackupsWin && !hasBackupsMac;
+      rollbackBtn.title = "一键回滚 30142、Windows 或 MacBook 至最近历史快照";
+    }
   }
 
-  async function fetchSyncStatus(card) {
-    updateSyncCardView(card, { ok: false, message: "跨实例同步后端未配置" });
-    return null;
+  async function fetchSyncStatus(card, force = false) {
+    try {
+      const bridgeUrl = await resolveBridgeSyncUrl();
+      const query = force ? "?refresh=1" : "";
+      const res = await fetch(bridgeUrl + "/sync/status" + query, { signal: AbortSignal.timeout(8000) });
+      const data = await res.json();
+      updateSyncCardView(card, data);
+      return data;
+    } catch (e) {
+      updateSyncCardView(card, { ok: false, message: "同步服务不可达" });
+      return null;
+    }
   }
 
   function initCrossDeviceSyncController(card) {
-    if (!card) return;
-    updateSyncCardView(card, { ok: false, message: "跨实例同步后端未配置" });
-    card.querySelector('[data-sync-action="refresh"]')?.addEventListener("click", () => {
-      fetchSyncStatus(card);
-      showToast("跨实例同步后端未配置");
+    fetchSyncStatus(card);
+
+    // 绑定目标独立复选框（失败恢复 UI）
+    card.querySelectorAll("[data-sync-target-toggle]").forEach((toggle) => {
+      toggle.addEventListener("change", async () => {
+        const target = toggle.getAttribute("data-sync-target-toggle");
+        const enabled = toggle.checked;
+        const prev = !enabled;
+        const targetNames = { colleague: "30142 同事端", windows: "Windows 本地端", mac: "MacBook 本地端" };
+        const label = targetNames[target] || target;
+        toggle.disabled = true;
+
+        try {
+          const bridgeUrl = await resolveBridgeSyncUrl();
+          const res = await fetch(`${bridgeUrl}/sync/preferences`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target, enabled }),
+            signal: AbortSignal.timeout(10000),
+          });
+          const result = await res.json();
+          if (!res.ok || !result.ok) {
+            toggle.checked = prev;
+            showToast(`设置保存失败: ${result?.error || "请求未成功"}`, null, 4000);
+          } else {
+            showToast(`${label} 自动同步已${enabled ? "开启（正在补齐最新改动）" : "暂停"}`);
+            await fetchSyncStatus(card, true);
+          }
+        } catch (err) {
+          toggle.checked = prev;
+          showToast(`更新设置异常: ${err.message}`, null, 4000);
+        } finally {
+          toggle.disabled = false;
+        }
+      });
     });
+
+    card.querySelector('[data-sync-action="refresh"]')?.addEventListener("click", () => {
+      fetchSyncStatus(card, true);
+      showToast("已刷新 30141、30142、Windows 与 Mac 对齐状态");
+    });
+
+    card.querySelector('[data-sync-action="sync"]')?.addEventListener("click", async () => {
+      const syncBtn = card.querySelector('[data-sync-action="sync"]');
+      if (syncBtn) syncBtn.disabled = true;
+      showToast("正在将 30141 最新插件同步至各启用端并热生效…", null, 4000);
+      try {
+        const bridgeUrl = await resolveBridgeSyncUrl();
+        const res = await fetch(bridgeUrl + "/sync/execute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target: "all" }),
+          signal: AbortSignal.timeout(25000),
+        });
+        const result = await res.json();
+        if (result.ok) {
+          showToast(result.message || "已成功同步至目标端！", null, 3500);
+          await fetchSyncStatus(card, true);
+          if (typeof window.__PI_ENH_RELOAD__ === "function") {
+            window.__PI_ENH_RELOAD__();
+          }
+        } else {
+          showToast("同步失败: " + (result.message || result.error || "未知错误"), null, 5000);
+        }
+      } catch (e) {
+        showToast("同步异常: " + e.message, null, 5000);
+      } finally {
+        if (syncBtn) syncBtn.disabled = false;
+      }
+    });
+
+    card.querySelector('[data-sync-action="rollback"]')?.addEventListener("click", async () => {
+      const targetChoice = prompt("请选择要回滚的目标端：\\n输入 1: 回滚 30142 同事端\\n输入 2: 回滚 Windows 本地端\\n输入 3: 回滚 MacBook 本地端 (127.0.0.1)", "1");
+      if (!targetChoice) return;
+      let target = "30142";
+      let targetName = "30142 同事端";
+      if (targetChoice.trim() === "2") {
+        target = "windows";
+        targetName = "Windows 本地端";
+      } else if (targetChoice.trim() === "3") {
+        target = "mac";
+        targetName = "MacBook 本地端";
+      }
+      showToast(`正在执行 ${targetName} 版本回滚…`, null, 4000);
+      try {
+        const bridgeUrl = await resolveBridgeSyncUrl();
+        const res = await fetch(bridgeUrl + "/sync/rollback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const result = await res.json();
+        if (result.ok) {
+          showToast(result.message || `回滚成功！${targetName} 已恢复上一版本快照`, null, 3500);
+          await fetchSyncStatus(card, true);
+          if (typeof window.__PI_ENH_RELOAD__ === "function") {
+            window.__PI_ENH_RELOAD__();
+          }
+        } else {
+          showToast("回滚失败: " + (result.message || result.error || "未知错误"), null, 5000);
+        }
+      } catch (e) {
+        showToast("回滚异常: " + e.message, null, 5000);
+      }
+    });
+  }
+
+  function renderEnhancementModulesPanel(panel, nav) {
+    const enabledCount = ENHANCEMENT_MODULES.filter((module) => getModuleState(module.id).active > 0).length;
+    const categories = [...new Set(ENHANCEMENT_MODULES.map((module) => module.category))];
+    panel.innerHTML = `
+      <div class="settings-general-container pi-enh-plugins-shell">
+        <section class="pi-enh-plugins-toolbar" aria-label="增强模块管理工具栏">
+          <div class="pi-enh-plugins-heading-row">
+            <div class="pi-enh-plugins-title-wrap">
+              <h2 class="settings-general-title pi-enh-plugins-title">
+                <span>网页增强模块</span>
+                <span class="pi-enh-module-version">独立版 v${ENHANCEMENT_SUITE_VERSION}</span>
+                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_MODULES.length} 个模块已启用</span>
+              </h2>
+            </div>
+            <div class="pi-enh-plugins-actions" aria-label="批量操作">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-action="hot-reload" title="无感重新加载最新前端补丁，无需刷新或重启后台">↻ 重新热载</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="force-hard-reload" title="穿透 HTTP 强缓存更新前端静态资源并强制刷新">⚡ 强制刷新</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各模块，保留原有子功能选择">全部恢复</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">全部关闭</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="reset-defaults">恢复默认</button>
+            </div>
+          </div>
+          <p class="pi-enh-plugins-description">
+            <span>总开关：开启 / 部分开启 / 关闭。关闭保留子项选择，再次开启恢复；参数即时生效。</span>
+            ${renderKernelHealthBadgeHtml()}
+          </p>
+          <div class="pi-enh-plugins-filter-row" role="search">
+            <label class="pi-enh-plugin-search-wrap">
+              <svg class="pi-enh-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+              <input class="pi-enh-plugin-search" type="search" data-plugin-search aria-label="搜索增强模块" placeholder="搜索模块或子功能…" autocomplete="off">
+            </label>
+            <div class="pi-enh-category-filters" role="group" aria-label="按类别筛选">
+              <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
+              ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
+            </div>
+            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_MODULES.length} 个模块</span>
+          </div>
+        </section>
+
+        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
+          <div class="pi-enh-sync-header">
+            <div class="pi-enh-sync-title-wrap">
+              <span class="pi-enh-sync-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>跨端自动同步 (群晖 30141 开发源 ➔ 30142 同事端 &amp; Windows &amp; Mac 本地)</span>
+              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="LOADING">正在检测各端对齐状态…</span>
+            </div>
+            <div class="pi-enh-sync-actions">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="立即将 30141 最新增强插件同步并热生效至各目标端">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>立即同步至各端
+              </button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="一键回滚目标端至最近一次历史快照">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>回滚快照
+              </button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="重新获取 30141、30142、Windows 与 Mac 的版本及对齐状态">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>刷新
+              </button>
+            </div>
+          </div>
+          <div class="pi-enh-sync-body" data-sync-body>
+            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source">
+              <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>群晖 30141 (日常开发源)</span>
+              <span class="pi-enh-sync-node-detail" data-sync-source-detail>检测中…</span>
+            </div>
+            <div class="pi-enh-sync-arrow" data-sync-arrow>➔</div>
+            <div class="pi-enh-sync-targets-col">
+              <div class="pi-enh-sync-node" data-sync-node="target-colleague">
+                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 30142 同事端自动同步">
+                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>群晖 30142 (同事使用端)</span>
+                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="开启/暂停 30142 同事端自动同步" checked>
+                </label>
+                <span class="pi-enh-sync-node-detail" data-sync-target-detail>检测中…</span>
+              </div>
+              <div class="pi-enh-sync-node" data-sync-node="target-windows">
+                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 Windows 本地端自动同步">
+                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>Windows 本地端 (127.0.0.1)</span>
+                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="开启/暂停 Windows 本地端自动同步" checked>
+                </label>
+                <span class="pi-enh-sync-node-detail" data-sync-windows-detail>检测中…</span>
+              </div>
+              <div class="pi-enh-sync-node" data-sync-node="target-mac">
+                <label class="pi-enh-sync-target-check-wrap" title="开启/暂停 MacBook 本地端自动同步">
+                  <span class="pi-enh-sync-node-name"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M2 20h20"/></svg>MacBook 本地端 (127.0.0.1)</span>
+                  <input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="开启/暂停 MacBook 本地端自动同步" checked>
+                </label>
+                <span class="pi-enh-sync-node-detail" data-sync-mac-detail>检测中…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pi-enh-pwa-card" data-pi-enh-pwa-card>
+          <div class="pi-enh-pwa-header">
+            <div class="pi-enh-pwa-title-wrap">
+              <span class="pi-enh-pwa-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>移动端与 PWA 独立应用模式</span>
+              <span class="pi-enh-pwa-badge" data-pwa-status-badge data-standalone="${isPwaStandaloneMode() ? 'true' : 'false'}">${isPwaStandaloneMode() ? "● 原生 PWA 独立运行中" : "○ 浏览器标签页模式"}</span>
+            </div>
+            <div class="pi-enh-pwa-actions">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-pwa-action="copy-flag-origin" title="一键复制局域网安全源地址用于 Chrome Flags 信任">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>复制局域网安全源地址
+              </button>
+            </div>
+          </div>
+          <div class="pi-enh-pwa-body">
+            <p class="pi-enh-pwa-desc">
+              ${isPwaStandaloneMode()
+                ? "当前已处于原生 PWA 独立窗口运行状态，已自动激活全面屏防误触安全区域与系统返回键防误退保护。"
+                : "在手机端 Chrome 打开时，如需像原生 App 一样全屏无地址栏运行：在手机 Chrome 访问 <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>，将当前地址填入并启用，即可在右上角菜单一键【安装应用】。"}
+            </p>
+          </div>
+        </div>
+
+        <div class="pi-enh-plugins-list pi-enh-modules-list">
+          ${ENHANCEMENT_MODULES.map((module) => {
+            const enabled = isModuleEnabled(module.id);
+            const disabled = !enabled;
+            const state = getModuleState(module.id);
+            const features = module.features.map((featureId) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === featureId)).filter(Boolean);
+            const isSubagent = module.id === SUBAGENT_DISPATCH_MODULE_ID;
+            const ariaChecked = isSubagent ? String(enabled) : (state.state === "partial" ? "mixed" : String(state.state === "on"));
+            const dataState = isSubagent ? (enabled ? "on" : "off") : state.state;
+            const statusText = isSubagent ? moduleStateLabel(state, enabled) : moduleStateLabel(state);
+            return `<article class="pi-enh-plugin-item pi-enh-module-item" data-module-row="${module.id}" data-plugin-category-name="${module.category}" data-enabled="${enabled ? "true" : "false"}">
+              <div class="pi-enh-module-header">
+                <div class="pi-enh-plugin-copy">
+                  <div class="pi-enh-plugin-name-row">
+                    <span class="pi-enh-plugin-name">${module.name}</span>
+                    <span class="pi-enh-plugin-category">${module.category}</span>
+                    <span class="pi-enh-module-version">v${module.version}</span>
+                  </div>
+                  <div class="pi-enh-plugin-desc">${module.desc}</div>
+                </div>
+                <div class="pi-enh-module-master">
+                  <span class="pi-enh-module-status" id="pi-enh-status-${module.id}" data-module-status data-state="${dataState}" aria-live="polite">${statusText}</span>
+                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
+                    <span class="config-switch-knob" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </div>
+                <details class="pi-enh-module-settings" data-module-settings="${module.id}" ${disabled ? "data-module-disabled=true" : ""}>
+                  <summary data-module-expand="${module.id}">配置 ${features.length} 项子功能${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
+                  <div class="pi-enh-module-settings-body" ${disabled ? "aria-disabled=true" : ""}>
+                    <div class="pi-enh-module-features">${features.map((plugin) => renderFeatureToggle(plugin, disabled)).join("")}</div>
+                    ${module.id === "composer-workflow" ? renderQuickActionsEditor(disabled || !isPluginEnabled("quick-action-buttons")) : ""}
+                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, disabled || (setting.featureId && !isPluginEnabled(setting.featureId)))).join("")}</div>` : ""}
+                  </div>
+                </details>
+            </article>`;
+          }).join("")}
+        </div>
+        <div class="pi-enh-plugin-empty" data-plugin-empty role="status" hidden>没有匹配的模块，请调整搜索词或分类。</div>
+      </div>`;
+
+    bindQuickActionsEditor(panel);
+    if (!window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__) void loadQuickActionsConfig().then(() => refreshQuickActionsEditorDom(panel));
+
+    const searchInput = panel.querySelector("[data-plugin-search]");
+    if (searchInput) {
+      searchInput.value = enhancementPanelFilter.query;
+      searchInput.addEventListener("input", () => {
+        enhancementPanelFilter.query = searchInput.value || "";
+        applyEnhancementPanelFilter(panel);
+      });
+    }
+    for (const categoryButton of panel.querySelectorAll("[data-plugin-category]")) {
+      categoryButton.addEventListener("click", () => {
+        enhancementPanelFilter.category = categoryButton.getAttribute("data-plugin-category") || "all";
+        applyEnhancementPanelFilter(panel);
+      });
+    }
+    panel.querySelector('[data-action="hot-reload"]')?.addEventListener("click", () => {
+      if (typeof window.__PI_ENH_RELOAD__ === "function") {
+        if (typeof window.__PI_WEB_ENHANCEMENTS_CLEANUP__ === "function") {
+          try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
+        }
+        window.__PI_ENH_PENDING_TOAST__ = { message: "已成功热载最新补丁，会话零中断" };
+        window.__PI_ENH_RELOAD__();
+      } else showToast("已处于最新热载状态");
+    });
+    panel.querySelector('[data-action="force-hard-reload"]')?.addEventListener("click", forceHardReloadApp);
+    let isSubagentDispatchBusy = false;
+    function setSubagentDispatchBusyState(busy) {
+      isSubagentDispatchBusy = busy;
+      const masterToggle = panel.querySelector(`[data-module-toggle="${SUBAGENT_DISPATCH_MODULE_ID}"]`);
+      if (masterToggle) {
+        masterToggle.disabled = busy;
+        if (busy) masterToggle.setAttribute("aria-busy", "true");
+        else masterToggle.removeAttribute("aria-busy");
+      }
+      const batchBtns = panel.querySelectorAll('[data-action="enable-all"], [data-action="disable-all"], [data-action="reset-defaults"]');
+      for (const btn of batchBtns) {
+        btn.disabled = busy;
+      }
+    }
+
+    panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", async () => {
+      if (isSubagentDispatchBusy) return;
+      setSubagentDispatchBusyState(true);
+      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+      try {
+        await enqueueSubagentDispatchCommit(true);
+        for (const module of ENHANCEMENT_MODULES) {
+          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, true);
+        }
+        const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
+        const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
+        if (st && st.selected === 0 && mod) {
+          for (const fId of mod.features) {
+            const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
+            if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
+          }
+        }
+        showToast("已恢复全部模块；保留原有子功能选择");
+      } catch (err) {
+        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
+        showToast(`恢复全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
+      } finally {
+        setSubagentDispatchBusyState(false);
+        syncEnhancementPanelControls();
+      }
+    });
+
+    panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", async () => {
+      if (isSubagentDispatchBusy) return;
+      setSubagentDispatchBusyState(true);
+      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+      try {
+        await enqueueSubagentDispatchCommit(false);
+        for (const module of ENHANCEMENT_MODULES) {
+          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, false);
+        }
+        showToast("已关闭所有增强模块；子功能偏好已保留");
+      } catch (err) {
+        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
+        showToast(`关闭全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
+      } finally {
+        setSubagentDispatchBusyState(false);
+        syncEnhancementPanelControls();
+      }
+    });
+
+    panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", async () => {
+      if (isSubagentDispatchBusy) return;
+      setSubagentDispatchBusyState(true);
+      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+      try {
+        await enqueueSubagentDispatchCommit(true);
+        resetEnhancementSettings();
+        showToast("已恢复默认增强设置");
+      } catch (err) {
+        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
+        showToast(`恢复默认设置时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
+      } finally {
+        setSubagentDispatchBusyState(false);
+        syncEnhancementPanelControls();
+      }
+    });
+
+    panel.querySelector('[data-pwa-action="copy-flag-origin"]')?.addEventListener("click", () => {
+      const origin = (typeof window !== "undefined" && window.location ? window.location.origin : "http://127.0.0.1:30141");
+      copyText(origin, "已复制局域网安全源地址: " + origin);
+      showToast("已复制地址！在手机 Chrome 访问 chrome://flags/#unsafely-treat-insecure-origin-as-secure 粘贴并启用即可一键安装 PWA", null, 6000);
+    });
+
+    for (const toggle of panel.querySelectorAll("[data-module-toggle]")) {
+      toggle.addEventListener("click", async () => {
+        const id = toggle.getAttribute("data-module-toggle");
+        if (id === SUBAGENT_DISPATCH_MODULE_ID) {
+          if (isSubagentDispatchBusy) return;
+          const nextEnabled = !isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+          setSubagentDispatchBusyState(true);
+          try {
+            await enqueueSubagentDispatchCommit(nextEnabled);
+            const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
+            const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
+            if (nextEnabled && st && st.selected === 0 && mod) {
+              for (const fId of mod.features) {
+                const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
+                if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
+              }
+            }
+            showToast(`子 Agent 调度已${nextEnabled ? "开启" : "关闭"}`);
+          } catch (err) {
+            showToast(`保存子 Agent 调度服务端总开关失败: ${err.message || "请求异常"}`, null, 5000);
+          } finally {
+            setSubagentDispatchBusyState(false);
+            syncEnhancementPanelControls();
+          }
+          return;
+        }
+        toggleModuleFromPanel(id);
+      });
+    }
+    for (const toggle of panel.querySelectorAll("[data-plugin-toggle]")) {
+      toggle.addEventListener("click", () => {
+        const id = toggle.getAttribute("data-plugin-toggle");
+        if (!toggle.disabled) setPluginEnabled(id, !isPluginSelected(id));
+      });
+    }
+    for (const range of panel.querySelectorAll("[data-plugin-setting-range]")) {
+      const identity = range.getAttribute("data-plugin-setting-range");
+      const [featureId, key] = identity.split(":");
+      const counterpartInput = panel.querySelector(`input[data-plugin-setting="${identity}"]`);
+      range.addEventListener("input", () => {
+        if (counterpartInput) counterpartInput.value = range.value;
+      });
+      range.addEventListener("change", () => {
+        const val = setPluginSetting(featureId, key, range.value);
+        range.value = String(val);
+        if (counterpartInput) counterpartInput.value = String(val);
+        showToast(`已设置 ${range.getAttribute("aria-label")?.replace("滑块", "") || "参数"}: ${val}`);
+      });
+    }
+    for (const input of panel.querySelectorAll("[data-plugin-setting]")) {
+      input.addEventListener("change", () => {
+        const identity = String(input.getAttribute("data-plugin-setting") || "");
+        const [featureId, key] = identity.split(":");
+        const value = setPluginSetting(featureId, key, input.value);
+        input.value = String(value);
+        const counterpartRange = panel.querySelector(`[data-plugin-setting-range="${identity}"]`);
+        if (counterpartRange) counterpartRange.value = String(value);
+        if (featureId === "session-pin-archive" && isPluginEnabled(featureId)) void purgeExpiredArchives();
+        showToast(`已更新 ${input.getAttribute("aria-label") || "参数"}: ${value}`);
+      });
+    }
+    for (const action of panel.querySelectorAll("[data-plugin-action]")) {
+      action.addEventListener("click", async () => {
+        const type = action.getAttribute("data-plugin-action");
+        if (type === "clear-session-cache") {
+          await clearSessionCaches();
+          showToast("已清空会话缓存");
+        } else if (type === "download-crash-diagnostics") {
+          window.__PI_ENH_CRASH_DIAGNOSTICS__?.download();
+        } else if (type === "request-desktop-notification") {
+          await requestDesktopAttentionPermission();
+        } else if (type === "sync-pinned-manifest") {
+          showToast("正在读取统一置顶配置...", sessionPinIcon, 2000);
+          await syncManifestPinnedEntries(true);
+          showToast("已同步统一置顶配置，正在刷新页面...", sessionPinIcon, 1500);
+          setTimeout(() => {
+            if (typeof window !== "undefined" && window.location && typeof window.location.reload === "function") {
+              window.location.reload();
+            }
+          }, 350);
+        }
+      });
+    }
+    bindSubagentModelControls(panel);
+    syncEnhancementPanelControls();
+    void syncSubagentDispatchRemoteState().then(() => {
+      syncEnhancementPanelControls();
+    });
+    const syncCard = panel.querySelector("[data-pi-enh-sync-card]");
+    if (syncCard) {
+      initCrossDeviceSyncController(syncCard);
+    }
+    applyEnhancementPanelFilter(panel);
   }
 
   function applyEnhancementPanelFilter(panel) {
@@ -42518,30 +43740,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
           </div>
         </section>
 
-        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
-          <div class="pi-enh-sync-header">
-            <div class="pi-enh-sync-title-wrap">
-              <span class="pi-enh-sync-title">跨实例增强插件分发</span>
-              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="DISCONNECTED">跨实例同步后端未配置</span>
-            </div>
-            <div class="pi-enh-sync-actions">
-              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="跨实例同步后端未配置" disabled>跨实例分发未配置</button>
-              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="跨实例同步后端未配置" disabled>跨实例回滚未配置</button>
-              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="显示跨实例同步配置状态">刷新</button>
-            </div>
-          </div>
-          <p data-sync-notice style="margin: 0 0 10px; color: var(--text-muted); font-size: 12px; line-height: 1.5;">不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。</p>
-          <div class="pi-enh-sync-body" data-sync-body>
-            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source"><span class="pi-enh-sync-node-name">Agent Web Plus 当前实例（源）</span><span class="pi-enh-sync-node-detail" data-sync-source-detail>当前实例</span></div>
-            <div class="pi-enh-sync-arrow" data-sync-arrow aria-hidden="true">➔</div>
-            <div class="pi-enh-sync-targets-col">
-              <div class="pi-enh-sync-node" data-sync-node="target-colleague"><label class="pi-enh-sync-target-check-wrap" title="目标实例 1 尚未配置"><span class="pi-enh-sync-node-name">目标实例 1</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="目标实例 1 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-target-detail>未配置</span></div>
-              <div class="pi-enh-sync-node" data-sync-node="target-windows"><label class="pi-enh-sync-target-check-wrap" title="目标实例 2 尚未配置"><span class="pi-enh-sync-node-name">目标实例 2</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="目标实例 2 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-windows-detail>未配置</span></div>
-              <div class="pi-enh-sync-node" data-sync-node="target-mac"><label class="pi-enh-sync-target-check-wrap" title="目标实例 3 尚未配置"><span class="pi-enh-sync-node-name">目标实例 3</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="目标实例 3 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-mac-detail>未配置</span></div>
-            </div>
-          </div>
-        </div>
-
         <div class="pi-enh-plugins-list">
           ${ENHANCEMENT_PLUGINS.map((plugin) => {
             const enabled = isPluginEnabled(plugin.id);
@@ -42570,7 +43768,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
                     <div class="pi-enh-plugin-number-settings" aria-label="会话导航轮数设置">
                       <label class="pi-enh-plugin-number-setting">
                         <span>初始显示</span>
-                        <input data-minimap-initial-turns min="5" max="50" step="1" value="${getMinimapHistorySettings().initialTurns}" type="number" inputmode="numeric" aria-label="会话导航初始显示轮数">
+                        <input data-minimap-initial-turns min="1" max="50" step="1" value="${getMinimapHistorySettings().initialTurns}" type="number" inputmode="numeric" aria-label="会话导航初始显示轮数">
                         <span>轮</span>
                       </label>
                       <label class="pi-enh-plugin-number-setting">
@@ -42614,8 +43812,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       </div>
     `;
 
-    initCrossDeviceSyncController(panel.querySelector("[data-pi-enh-sync-card]"));
-
     const searchInput = panel.querySelector("[data-plugin-search]");
     if (searchInput) {
       searchInput.value = enhancementPanelFilter.query;
@@ -42649,20 +43845,16 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
     panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, true);
-      scheduleUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已开启所有增强插件");
     });
     panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, false);
-      cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已关闭所有增强插件");
     });
     panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", () => {
       for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, p.defaultEnabled);
-      if (isPluginEnabled("usage-cost-dashboard")) scheduleUsageLedgerPrefetch();
-      else cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已恢复默认增强设置");
     });
@@ -42693,22 +43885,16 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }
 
     for (const restoreButton of panel.querySelectorAll('[data-action="restore-archived-session"]')) {
-      restoreButton.addEventListener("click", async () => {
+      restoreButton.addEventListener("click", () => {
         let sessionId = "";
         try { sessionId = decodeURIComponent(restoreButton.getAttribute("data-session-id") || ""); } catch (e) {}
-        try {
-          const ok = await restoreArchivedSession(sessionId);
-          if (!ok) return;
-          invalidateCodexArchivedEntries();
-          requestSessionListRefresh(false, true);
-          if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
-            try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
-          }
-          renderEnhancementsPanel(panel, nav);
-          showToast("已还原会话", sessionArchiveIcon);
-        } catch (err) {
-          showToast(err instanceof Error ? err.message : "还原会话失败", "error");
+        if (!restoreArchivedSession(sessionId)) return;
+        requestSessionListRefresh(false, true);
+        if (typeof window.__PI_ENH_RERENDER_SESSIONS__ === "function") {
+          try { window.__PI_ENH_RERENDER_SESSIONS__(); } catch (e) {}
         }
+        renderEnhancementsPanel(panel, nav);
+        showToast("已还原会话", sessionArchiveIcon);
       });
     }
 
@@ -42749,10 +43935,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         const current = toggle.getAttribute("aria-checked") === "true";
         const next = !current;
         setPluginEnabled(id, next);
-        if (id === "usage-cost-dashboard") {
-          if (next && isPluginEnabled(id)) scheduleUsageLedgerPrefetch();
-          else cancelUsageLedgerPrefetch();
-        }
         toggle.setAttribute("aria-checked", next ? "true" : "false");
         toggle.setAttribute("title", next ? "点击禁用" : "点击启用");
         const row = toggle.closest("[data-plugin-row]");
@@ -42787,106 +43969,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     return true;
   }
 
-  let usageLedgerPrefetchCancel = null;
-  let usageLedgerPrefetchStarted = false;
-
-  function cancelUsageLedgerPrefetch() {
-    if (usageLedgerPrefetchCancel) {
-      usageLedgerPrefetchCancel();
-      usageLedgerPrefetchCancel = null;
-    }
-  }
-
-  function scheduleUsageLedgerPrefetch() {
-    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchStarted || usageLedgerPrefetchCancel) return;
-
-    let cancelled = false;
-    let idleId = null;
-    let timerId = null;
-    let loadListener = null;
-    let visibilityListener = null;
-    let prefetchAbortController = null;
-
-    const removeVisibilityListener = () => {
-      if (visibilityListener) document.removeEventListener("visibilitychange", visibilityListener);
-      visibilityListener = null;
-    };
-    const cancel = () => {
-      cancelled = true;
-      if (prefetchAbortController) {
-        prefetchAbortController.abort();
-        prefetchAbortController = null;
-      }
-      if (loadListener) window.removeEventListener("load", loadListener);
-      loadListener = null;
-      removeVisibilityListener();
-      if (idleId !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idleId);
-      idleId = null;
-      if (timerId !== null) clearTimeout(timerId);
-      timerId = null;
-    };
-
-    const waitUntilVisible = () => {
-      if (cancelled || visibilityListener) return;
-      visibilityListener = () => {
-        if (document.visibilityState === "hidden") return;
-        removeVisibilityListener();
-        scheduleIdle();
-      };
-      document.addEventListener("visibilitychange", visibilityListener);
-    };
-
-    const run = async () => {
-      idleId = null;
-      timerId = null;
-      if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
-      if (document.visibilityState === "hidden") {
-        waitUntilVisible();
-        return;
-      }
-      const loadOptional = window.__PI_ENH_LOAD_OPTIONAL__;
-      if (typeof loadOptional !== "function") return;
-      try {
-        const usagePanel = await loadOptional("usage-panel");
-        if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
-        if (document.visibilityState === "hidden") {
-          waitUntilVisible();
-          return;
-        }
-        if (typeof usagePanel?.prefetch !== "function") return;
-        usageLedgerPrefetchStarted = true;
-        prefetchAbortController = typeof AbortController === "function" ? new AbortController() : null;
-        void usagePanel.prefetch(prefetchAbortController?.signal).catch(() => {});
-      } catch (_) {
-        // Keep startup quiet; opening Usage remains the visible retry path.
-      }
-    };
-
-    const scheduleIdle = () => {
-      if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
-      if (document.visibilityState === "hidden") {
-        waitUntilVisible();
-        return;
-      }
-      if (typeof window.requestIdleCallback === "function") {
-        idleId = window.requestIdleCallback(run, { timeout: 5000 });
-      } else {
-        timerId = setTimeout(run, 1200);
-      }
-    };
-
-    const afterLoad = () => {
-      loadListener = null;
-      scheduleIdle();
-    };
-    usageLedgerPrefetchCancel = cancel;
-    if (document.readyState === "complete") afterLoad();
-    else {
-      loadListener = afterLoad;
-      window.addEventListener("load", loadListener, { once: true });
-    }
-  }
-
   async function checkScriptUpdate() {
     if (isLoginPage()) return;
     try {
@@ -42906,7 +43988,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
             try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
           }
           // 静默无感热载，控制台记录即可，绝不弹窗打扰用户
-          console.log("[Agent Web Plus Enhancements] Silently reloading latest patch...");
+          console.log("[Pi Web Enhancements] Silently reloading latest patch...");
           window.__PI_ENH_RELOAD__();
         }
       }
@@ -42955,7 +44037,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_WEB_ENHANCEMENTS_CLEANUP__ = function () {
     if (isDisposed) return;
     isDisposed = true;
-    cancelUsageLedgerPrefetch();
 
     try {
       // 0. Disconnect and restore document title observer and descriptor (only restore if still owned)
@@ -43084,7 +44165,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
       // 4. Thorough DOM cleanup
       removeQuickActionButtons();
-      window.dispatchEvent(new CustomEvent("pi:scroll-bottom-preferences", { detail: { enabled: false } }));
+      removeScrollBottomButton();
       removeLocalPathLauncher();
       removeProjectStatusIndicators();
       removeCompactionEnhancements();
@@ -43103,6 +44184,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       syncStreamingThinkingGuard(false);
       removeAnnotationUi();
       removeBottomShortcutsBar();
+      clearModelScopeWarningVisibility();
       if (typeof cleanupSessionScrollTracking === "function") {
         try { cleanupSessionScrollTracking(); } catch (e) {}
       }
@@ -43151,7 +44233,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       delete window.__PI_ENH_GET_DURABLE_STATE_BASE_URL__;
       delete window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__;
     } catch (e) {
-      console.warn("[Agent Web Plus Enhancements] cleanup warning:", e);
+      console.warn("[Pi Web Enhancements] cleanup warning:", e);
     }
   };
 
@@ -43191,13 +44273,13 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
 
   const kernelHealth = window.__PI_ENH_KERNEL_HEALTH__ || {
-    edition: `agent-web-standalone-${ENHANCEMENT_SUITE_VERSION}`,
+    edition: `koxir-standalone-${ENHANCEMENT_SUITE_VERSION}`,
     version: ENHANCEMENT_SUITE_VERSION,
     bootedAt: Date.now(),
     initialSyncCompleted: false,
     isolatedErrors: [],
   };
-  kernelHealth.edition = `agent-web-standalone-${ENHANCEMENT_SUITE_VERSION}`;
+  kernelHealth.edition = `koxir-standalone-${ENHANCEMENT_SUITE_VERSION}`;
   kernelHealth.version = ENHANCEMENT_SUITE_VERSION;
   window.__PI_ENH_KERNEL_HEALTH__ = kernelHealth;
   window.__PI_WEB_STANDALONE_VERSION__ = ENHANCEMENT_SUITE_VERSION;
@@ -43210,7 +44292,7 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
         error: String(err && err.message ? err.message : err),
         at: Date.now(),
       });
-      console.warn(`[Agent Web Plus Kernel Sandbox] Isolated error in ${stepName}:`, err);
+      console.warn(`[Pi Web Kernel Sandbox] Isolated error in ${stepName}:`, err);
     }
   }
   window.__PI_ENH_RUN_ISOLATED_STEP__ = runIsolatedKernelStep;
@@ -43220,7 +44302,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__ = getDurableStateInstanceParam;
 
   window.__PI_WEB_ENHANCEMENTS_LOADED__ = true;
-  window.dispatchEvent(new Event("pi-dom-feedback-ready"));
   runIsolatedKernelStep("initialDomSyncImmediate", () => {
     if (!isLoginPage()) {
       runAllSyncOperations();
@@ -43246,16 +44327,10 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   if (typeof setTimeout === "function") {
     setTimeout(() => {
       try {
-        if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi" && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
+        if (!isDisposed && !isLoginPage() && typeof window.__PI_ENH_PRELOAD_MODELS_CACHE__ === "function") {
           window.__PI_ENH_PRELOAD_MODELS_CACHE__();
         }
       } catch (e) {}
-    }, 1200);
-  }
-
-  if (typeof setTimeout === "function") {
-    setTimeout(() => {
-      if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi") scheduleUsageLedgerPrefetch();
     }, 1200);
   }
 
@@ -43270,5 +44345,5 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     }, 1500);
   }
 
-  console.log(`[Agent Web Plus Enhancements] v${ENHANCEMENT_SUITE_VERSION} Loaded: Module Settings Manager active.`);
+  console.log(`[Pi Web Enhancements] v${ENHANCEMENT_SUITE_VERSION} Loaded: Module Settings Manager active.`);
 })();
