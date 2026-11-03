@@ -2,9 +2,8 @@
 .pi-enh-queue-panel[hidden] { display: none; }
 .pi-enh-queue-list { display: grid; gap: 0; padding: 1px 6px 7px; margin-bottom: -7px; border: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-bottom: 0; border-radius: 18px 18px 0 0; background: color-mix(in srgb, var(--bg-panel) 92%, black); max-height: 180px; overflow-y: auto; position: relative; overscroll-behavior: contain; }
 .pi-enh-queue-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; min-height: 35px; padding: 2px 8px; border: 0; border-radius: 0; background: transparent; box-sizing: border-box; }
-.pi-enh-queue-row { transition: transform 120ms ease; }
-.pi-enh-queue-row-dragging { transition: none; position: relative; z-index: 1; opacity: .96; cursor: grabbing; box-shadow: 0 5px 16px #0003; }
-.pi-enh-queue-row-target { box-shadow: inset 2px 0 var(--text-muted); }
+.pi-enh-queue-row-dragging { position: relative; z-index: 2; background: color-mix(in srgb, var(--text) 6%, transparent); cursor: grabbing; }
+.pi-enh-queue-drop-line { position: absolute; left: 8px; right: 8px; height: 2px; background: var(--accent, #3b82f6); border-radius: 1px; pointer-events: none; z-index: 10; margin-top: -1px; box-shadow: 0 0 6px rgba(59, 130, 246, 0.5); }
 .pi-enh-queue-panel button { display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; box-sizing: border-box; font: inherit; }
 .pi-enh-queue-panel :is(.pi-enh-queue-sort, .pi-enh-queue-promote, .pi-enh-queue-delete, .pi-enh-queue-more):hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .pi-enh-queue-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

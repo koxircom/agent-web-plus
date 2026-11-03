@@ -21,8 +21,8 @@ function getHash(filePath) {
   return hash.digest("hex");
 }
 
-function acquireLock(lockFile, timeoutMs = 8000) {
-  return acquireUsageLock(lockFile, { timeoutMs });
+function acquireLock(lockFile, timeoutMs = 8000, extraData = {}) {
+  return acquireUsageLock(lockFile, { timeoutMs, extraData });
 }
 
 function releaseLock(lockFile, fd = null) {
@@ -155,10 +155,17 @@ async function main() {
   }
 
   // 2. 独占锁竞争
+  const ownerRequestToken =
+    typeof payload.lockOwnerToken === "string" && payload.lockOwnerToken.trim()
+      ? payload.lockOwnerToken.trim()
+      : typeof payload.ownerRequestToken === "string" && payload.ownerRequestToken.trim()
+        ? payload.ownerRequestToken.trim()
+        : null;
   const lockTimeoutMs = typeof payload.lockTimeoutMs === "number" ? payload.lockTimeoutMs : 8000;
   let lockFd = null;
   try {
-    lockFd = acquireLock(lockFile, lockTimeoutMs);
+    const extraData = ownerRequestToken ? { ownerRequestToken } : {};
+    lockFd = acquireLock(lockFile, lockTimeoutMs, extraData);
   } catch (err) {
     console.error(`[pi-usage-seal-worker] Failed to acquire lock ${lockFile}: ${err.message}`);
     process.exit(1);

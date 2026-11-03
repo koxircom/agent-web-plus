@@ -25,9 +25,14 @@ const FAILURE_BACKOFF_MS = 5 * 60 * 1000;
 const PI_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const UNAVAILABLE: PiAgentReleaseStatus = Object.freeze({ latestVersion: null, releaseUrl: null });
 
+export interface PiAgentReleaseOptions {
+  cachedOnly?: boolean;
+  force?: boolean;
+}
+
 declare global {
   // Keep one checker across Next.js development hot reloads and route-module instances.
-  var __piAgentReleaseChecker: (() => Promise<PiAgentReleaseStatus>) | undefined;
+  var __piAgentReleaseChecker: ((options?: PiAgentReleaseOptions) => Promise<PiAgentReleaseStatus>) | undefined;
 }
 
 function statusFromTag(tagName: unknown, repository: string, tagPrefix: string): PiAgentReleaseStatus | null {
@@ -90,13 +95,17 @@ export function createGithubReleaseChecker({
   now = Date.now,
   successTtlMs = SUCCESS_TTL_MS,
   failureBackoffMs = FAILURE_BACKOFF_MS,
-}: PiAgentReleaseCheckerOptions = {}): () => Promise<PiAgentReleaseStatus> {
+}: PiAgentReleaseCheckerOptions = {}): (options?: PiAgentReleaseOptions) => Promise<PiAgentReleaseStatus> {
   const cache: PiAgentReleaseCache = { expiresAt: 0, retryAfter: 0 };
 
-  return async function getLatestPiAgentRelease(): Promise<PiAgentReleaseStatus> {
+  return async function getLatestPiAgentRelease(options?: PiAgentReleaseOptions): Promise<PiAgentReleaseStatus> {
     const currentTime = now();
-    if (cache.value && cache.expiresAt > currentTime) return cache.value;
+    const force = Boolean(options?.force);
+    const cachedOnly = Boolean(options?.cachedOnly);
+
     if (cache.inFlight) return cache.inFlight;
+    if (cache.value && cache.expiresAt > currentTime && !force) return cache.value;
+    if (cachedOnly) return UNAVAILABLE;
     if (cache.retryAfter > currentTime) return UNAVAILABLE;
 
     cache.inFlight = fetchLatestRelease(fetchImpl, repository, tagPrefix).then((status) => {
@@ -117,7 +126,7 @@ export function createGithubReleaseChecker({
 
 export const createPiAgentReleaseChecker = createGithubReleaseChecker;
 
-export function getLatestPiAgentRelease(): Promise<PiAgentReleaseStatus> {
+export function getLatestPiAgentRelease(options?: PiAgentReleaseOptions): Promise<PiAgentReleaseStatus> {
   globalThis.__piAgentReleaseChecker ??= createPiAgentReleaseChecker();
-  return globalThis.__piAgentReleaseChecker();
+  return globalThis.__piAgentReleaseChecker(options);
 }

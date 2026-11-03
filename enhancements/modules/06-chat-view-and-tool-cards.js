@@ -162,22 +162,50 @@
   window.__PI_ENH_KNOWN_TURN_METRICS__ = knownTurnMetrics;
   window.__PI_ENH_FORMAT_SEC__ = formatSec;
 
-  // Active session turn start tracking: sessionId -> { startTime: number, startEntryId: string | null, authoritative: boolean }
+  // Active session turn start tracking: sessionId -> { startTime: number, startEntryId: string | null, authoritative: boolean, taskId?: string, authoritativeTaskTiming?: boolean }
   const activeSessionTurns = new Map();
-  function recordActiveTurnStart(sessionId, startTime, entryId = null, authoritative = false) {
+  function recordActiveTurnStart(sessionId, startTime, entryId = null, authoritative = false, options = null) {
     if (!sessionId || !startTime || startTime <= 0) return;
     const existing = activeSessionTurns.get(sessionId);
+    const isAuthoritativeTiming = Boolean(options?.authoritativeTaskTiming);
+
+    // 权威 taskTiming 确立后，普通 metrics 解析出的旧 uTime 绝不允许覆盖
+    if (existing?.authoritativeTaskTiming && !isAuthoritativeTiming) {
+      return;
+    }
+
     // Ordinary composer/steering submissions only provide a provisional hint.
     // Once a turn has a start, never move it forward until a new agent_start
     // explicitly establishes an independent turn (or metrics calibrate it).
-    if (existing && !authoritative) {
+    if (existing && !authoritative && !isAuthoritativeTiming) {
       return;
     }
-    const validStartTime = Math.min(startTime, Date.now());
+
+    const rawTaskId = options?.taskId || (isAuthoritativeTiming ? null : existing?.taskId) || null;
+    const taskId = typeof rawTaskId === "string" && rawTaskId.trim().length > 0 ? rawTaskId.trim() : null;
+    if (isAuthoritativeTiming && !taskId) {
+      // 权威 taskTiming 必须有明确非空 string taskId，无 id 权威禁止确立
+      return;
+    }
+
+    // 迟到的旧 task 快照 / 旧 state / 旧 connected startedAt 更早，绝不可回退当前的最新任务
+    if (existing?.authoritativeTaskTiming && isAuthoritativeTiming && startTime < existing.startTime) {
+      return;
+    }
+
+    let validStartTime = Math.min(startTime, Date.now());
+
+    // 相同 taskId 恢复同 start 不重启，保持现有 startTime
+    if (existing?.authoritativeTaskTiming && isAuthoritativeTiming && taskId && existing.taskId === taskId) {
+      validStartTime = existing.startTime;
+    }
+
     activeSessionTurns.set(sessionId, {
       startTime: validStartTime,
       startEntryId: entryId || existing?.startEntryId || null,
-      authoritative: Boolean(authoritative),
+      authoritative: Boolean(authoritative || isAuthoritativeTiming),
+      taskId,
+      authoritativeTaskTiming: Boolean(isAuthoritativeTiming || (existing?.authoritativeTaskTiming && !options)),
     });
   }
   function getActiveTurnStartTime(sessionId) {
@@ -191,6 +219,10 @@
   function clearActiveTurn(sessionId) {
     if (!sessionId) return;
     activeSessionTurns.delete(sessionId);
+    if (sessionId === getCurrentSessionId()) {
+      activeTurnStartTime = null;
+      activeTurnEntryId = null;
+    }
   }
   window.__PI_ENH_ACTIVE_TURNS__ = activeSessionTurns;
   window.__PI_ENH_RECORD_ACTIVE_TURN_START__ = recordActiveTurnStart;
@@ -216,18 +248,52 @@
     const type = eventData.type;
     const now = Date.now();
 
+    // 优先 taskTiming 可信 id + startedAt 更新
+    const taskTiming = eventData.taskTiming;
+    const isValidTiming = taskTiming && typeof taskTiming === "object" && typeof taskTiming.startedAt === "number" && Number.isFinite(taskTiming.startedAt) && taskTiming.startedAt > 0;
+    const rawTaskId = taskTiming && typeof taskTiming === "object" ? (taskTiming.taskId || taskTiming.requestId) : null;
+    const taskId = typeof rawTaskId === "string" && rawTaskId.trim().length > 0 ? rawTaskId.trim() : null;
+
+    if (isValidTiming && taskId) {
+      const startedAt = Number(taskTiming.startedAt);
+      const existing = activeSessionTurns.get(sessionId);
+      if (existing?.authoritativeTaskTiming && existing.startTime && startedAt < existing.startTime) {
+        // 忽略 startedAt 更早的旧 task / 迟到的 state 快照，不可回退当前较新任务
+      } else if (existing?.authoritativeTaskTiming && existing.taskId && existing.taskId === taskId) {
+        // 同一任务已有权威计时，保持现有 startedAt，不重复重启
+      } else {
+        recordActiveTurnStart(sessionId, startedAt, null, true, { taskId, authoritativeTaskTiming: true });
+        if (sessionId === getCurrentSessionId()) {
+          activeTurnStartTime = startedAt;
+        }
+      }
+    }
+
+    // connected 空闲终态时清理旧计时，防止旧 timer 复活；若本地已有权威任务正在运行且为旧 connected，不可回退当前权威任务
+    if (type === "connected" && (!taskTiming || taskTiming === null) && eventData.isStreaming === false) {
+      const existing = activeSessionTurns.get(sessionId);
+      const observedAt = eventData.taskTimingObservedAt;
+      if (!existing?.authoritativeTaskTiming ||
+          (typeof observedAt === "number" && Number.isFinite(observedAt) && observedAt >= existing.startTime)) {
+        clearActiveTurn(sessionId);
+        scheduleModelSpeedSync();
+      }
+      return;
+    }
+
     if (type === "agent_start") {
       liveStepSpeeds.delete(sessionId);
-      // SSE agent_start is the only explicit boundary for a new independent
-      // turn. Invalidate both the per-session authoritative cache and the
-      // current-page fallback so the stopwatch cannot inherit an old turn.
-      clearActiveTurn(sessionId);
+      const existing = activeSessionTurns.get(sessionId);
+      // 双 agent_start 不要无限重置：如果已有权威 taskTiming，保留不重置
+      if (!existing?.authoritativeTaskTiming) {
+        clearActiveTurn(sessionId);
+        if (sessionId === getCurrentSessionId()) {
+          activeTurnStartTime = null;
+          activeTurnEntryId = null;
+          recordActiveTurnStart(sessionId, now, null, false);
+        }
+      }
       if (sessionId === getCurrentSessionId()) {
-        activeTurnStartTime = null;
-        activeTurnEntryId = null;
-        recordActiveTurnStart(sessionId, now, null, false);
-        // The provisional `now` start is replaced by the new user timestamp
-        // when session metrics arrive; start calibration immediately.
         scheduleCurrentSessionMetrics(0);
       }
       scheduleModelSpeedSync();
@@ -1538,6 +1604,7 @@
 
   activeCleanups.push(clearMinimapNavigationScrollGuard);
   activeCleanups.push(clearNativeMinimapRevealScrollBlock);
+  activeCleanups.push(() => { activeSessionTurns.clear(); });
 
   function releaseHistoryTailForMinimapNavigation(nativeOwner = false) {
     blurComposerForMinimapNavigation();
@@ -3877,11 +3944,13 @@
     piAgentCheckInFlight = (async () => {
       try {
         let latestVer = null;
-        // 策略 0: 优先读取同源静态清单 /pi-agent-update-manifest.json (离线/内网高可用保护)
+        let releaseUrl = null;
+        // 统一同源 API：非 force 只读服务端 cache 不访问公网，force 显式检查触发上游检查
         try {
           const ctrl = new AbortController();
-          const tid = setTimeout(() => ctrl.abort(), 2000);
-          const resp = await fetch("/pi-agent-update-manifest.json?t=" + Date.now(), {
+          const tid = setTimeout(() => ctrl.abort(), force ? 8000 : 3000);
+          const apiUrl = force ? "/api/pi-update?force=1" : "/api/pi-update?cachedOnly=1";
+          const resp = await fetch(apiUrl, {
             signal: ctrl.signal,
             cache: "no-store",
           });
@@ -3890,56 +3959,17 @@
             const json = await resp.json();
             if (json && typeof json.latestVersion === "string" && json.latestVersion.trim()) {
               latestVer = json.latestVersion.trim();
+              if (typeof json.releaseUrl === "string" && json.releaseUrl.trim()) {
+                releaseUrl = json.releaseUrl.trim();
+              }
             }
           }
         } catch (e) {}
 
-        if (force) {
-          // 只有用户显式点“立即检查更新”时才访问上游公网服务。
-          // 页面初始化和后台静默刷新只读取同源静态清单，避免阻塞首屏网络。
-          try {
-            const ctrl = new AbortController();
-            const tid = setTimeout(() => ctrl.abort(), 4000);
-            const resp = await fetch("https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest", {
-              signal: ctrl.signal,
-              cache: "no-store",
-            });
-            clearTimeout(tid);
-            if (resp && resp.ok) {
-              const json = await resp.json();
-              if (json && typeof json.version === "string" && json.version.trim()) {
-                const npmVer = json.version.trim();
-                if (!latestVer || isNewerSemVer(npmVer, latestVer)) {
-                  latestVer = npmVer;
-                }
-              }
-            }
-          } catch (e) {}
-
-          // 策略 2: 备用访问 GitHub releases/latest API
-          try {
-            const ctrl = new AbortController();
-            const tid = setTimeout(() => ctrl.abort(), 4000);
-            const resp = await fetch("https://api.github.com/repos/earendil-works/pi/releases/latest", {
-              signal: ctrl.signal,
-              cache: "no-store",
-              headers: { Accept: "application/vnd.github.v3+json" },
-            });
-            clearTimeout(tid);
-            if (resp && resp.ok) {
-              const json = await resp.json();
-              const tag = (json && typeof json.tag_name === "string" ? json.tag_name : "").replace(/^v/i, "").trim();
-              if (tag && (!latestVer || isNewerSemVer(tag, latestVer))) {
-                latestVer = tag;
-              }
-            }
-          } catch (e) {}
-        }
-
         if (latestVer) {
           state.latestVersion = latestVer;
           state.updateAvailable = isNewerSemVer(latestVer, state.currentVersion);
-          state.releaseUrl = `${PI_AGENT_OFFICIAL_REPO}/releases/tag/v${latestVer}`;
+          state.releaseUrl = releaseUrl || `${PI_AGENT_OFFICIAL_REPO}/releases/tag/v${latestVer}`;
           state.checkedAt = Date.now();
           try {
             localStorage.setItem(PI_AGENT_UPDATE_STORAGE_KEY, JSON.stringify({
@@ -4084,10 +4114,8 @@
     { fn: highlightSearchResultsKeywords, scope: "full" },
     { fn: syncSearchResultsArchivedDecoration, scope: "full" },
     { fn: syncSearchResultsFoldingBars, scope: "full" },
-    { fn: syncComposerFilePaste, scope: "full" },
     { fn: syncComposerImageZoom, scope: "full" },
     { fn: syncRunningModelSwitch, scope: "full" },
-    { fn: syncComposerQueuePanel, scope: "full" },
     { fn: syncComposerToolButtons, scope: "full" },
     { fn: syncComposerMarkdownFormat, scope: "full" },
     { fn: syncComposerModes, scope: "full" },
@@ -4221,7 +4249,6 @@
       }
       syncComposerMarkdownFormat();
       syncComposerModes();
-      syncComposerQueuePanel();
       scheduleCurrentSessionMetrics(300);
       if (sessionId && typeof scheduleTerminalSyncCheck === "function") {
         scheduleTerminalSyncCheck(sessionId, { reason: "session_switch" });
@@ -4261,7 +4288,6 @@
     const newSessionId = getCurrentSessionId();
     syncComposerMarkdownFormat();
     syncComposerModes();
-    syncComposerQueuePanel();
     if (typeof syncComposerDraftSessionContext === "function") {
       syncComposerDraftSessionContext();
     }
@@ -4342,9 +4368,6 @@
       }
       if (typeof syncComposerModes === "function") {
         syncComposerModes();
-      }
-      if (typeof syncComposerQueuePanel === "function") {
-        syncComposerQueuePanel();
       }
       scheduleCurrentSessionMetrics(0);
       try {

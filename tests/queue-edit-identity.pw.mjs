@@ -94,7 +94,7 @@ try{
  child.stdout.on('data',x=>log+=x);child.stderr.on('data',x=>log+=x);
  fs.writeFileSync(output+'/QUEUE_BROWSER_PROCESS.json',JSON.stringify({pid:child.pid,startTicks:fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(' ')[21],port:31364}));
  for(let i=0;i<80;i++){if(child.exitCode!==null)throw Error(log);try{if((await fetch(origin+'/login')).ok)break}catch{}await new Promise(r=>setTimeout(r,250))}
- const chrome=chromium.executablePath();assert(fs.existsSync(chrome),'registered Playwright Chromium must be present');browser=await chromium.launch({headless:true,executablePath:chrome,args:['--no-sandbox']});
+ const executablePath=process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE||undefined;browser=await chromium.launch({headless:true,executablePath,args:['--no-sandbox']});
  for(const engine of ['pi','codex'])for(const width of [1280,390]){
   const context=await browser.newContext({viewport:{width,height:900},hasTouch:width===390,locale:'zh-CN',serviceWorkers:'block'});
   const token='v1.'+(Math.floor(Date.now()/1000)+3600)+'.'+crypto.randomBytes(16).toString('hex');const sig=crypto.createHmac('sha256',password).update('pi-web-session:'+token).digest('hex');

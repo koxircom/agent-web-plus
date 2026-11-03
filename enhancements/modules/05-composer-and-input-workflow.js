@@ -1141,7 +1141,6 @@
   function composerHasAnySendPayload(textarea) {
     if (!textarea) return false;
     if (String(textarea.value || "").trim()) return true;
-    if (typeof pendingComposerAttachments !== "undefined" && Array.isArray(pendingComposerAttachments) && pendingComposerAttachments.length > 0) return true;
     if (typeof listAnnotations === "function" && listAnnotations().length > 0) return true;
     const root = textarea.closest?.("[data-pi-native-composer-host]") || textarea.closest?.("form") || textarea.parentElement?.parentElement || textarea.parentElement;
     if (root?.querySelector?.(".pi-enh-attachment-card")) return true;
@@ -1478,7 +1477,6 @@
 
   const SESSION_UPLOADS_KEY = "pi-enh-session-uploads";
 
-  let pendingComposerAttachments = [];
   let lastComposerSubmissionState = null;
 
   function getComposerSubmissionState() {
@@ -1497,7 +1495,7 @@
       && getActiveQuickReply());
     return {
       hasAnnotations,
-      hasAttachments: isPluginEnabled("composer-file-paste") && pendingComposerAttachments.length > 0,
+      hasAttachments: false,
       hasQuickReply,
       emptyContinueEnabled: isPluginEnabled("empty-send-continue"),
     };
@@ -2530,852 +2528,29 @@
     } catch (e) {}
   }
 
-  function syncUserMessageAttachmentCards() {
-    if (typeof document === "undefined") return;
-
-    const userMessages = document.querySelectorAll(".markdown-user-message");
-    if (!userMessages || userMessages.length === 0) return;
-
-    const cwd = window.__PI_CURRENT_SESSION_DATA__?.info?.cwd || "";
-
-    for (const msgEl of userMessages) {
-      hideAttachmentSyntaxInMessage(msgEl);
-      hideDimensionNotesInMessage(msgEl);
-
-      const bubble = msgEl.parentElement;
-      if (!bubble) continue;
-
-      if (!isPluginEnabled("composer-file-paste")) {
-        continue;
-      }
-
-      const attachments = extractAttachmentsFromUserMessage(msgEl);
-      let bar = bubble.querySelector(".pi-enh-message-attachments");
-
-      if (attachments.length === 0) {
-        if (bar) bar.remove();
-        continue;
-      }
-
-      const renderKey = attachments.map((a) => `${a.name}|${a.serverRelativePath || ""}|${a.sizeStr || ""}`).join(";;;");
-      if (bar && bar.getAttribute("data-attachments-key") === renderKey) {
-        continue;
-      }
-
-      if (!bar) {
-        bar = document.createElement("div");
-        bar.className = "pi-enh-message-attachments";
-        bubble.insertBefore(bar, msgEl);
-      } else {
-        if (typeof bar.replaceChildren === "function") {
-          bar.replaceChildren();
-        } else {
-          bar.innerHTML = "";
-        }
-      }
-      bar.setAttribute("data-attachments-key", renderKey);
-
-      for (const att of attachments) {
-        const card = createUserMessageAttachmentPillCard(att, cwd);
-        bar.appendChild(card);
-      }
-    }
-  }
-
-  function removeUserMessageAttachmentCards() {
-    if (typeof document === "undefined") return;
-    const bars = document.querySelectorAll(".pi-enh-message-attachments");
-    for (const bar of bars) bar.remove();
-    const hiddenMarks = document.querySelectorAll(".pi-enh-msg-attachment-hidden-mark");
-    for (const mark of hiddenMarks) {
-      mark.style.display = "";
-      mark.classList.remove("pi-enh-msg-attachment-hidden-mark");
-    }
-    const hiddenDimMarks = document.querySelectorAll(".pi-enh-msg-dimension-hidden-mark");
-    for (const mark of hiddenDimMarks) {
-      mark.style.display = "";
-      mark.classList.remove("pi-enh-msg-dimension-hidden-mark");
-    }
-    const emptyContainers = document.querySelectorAll('[data-pi-enh-empty-container-hidden="true"]');
-    for (const c of emptyContainers) {
-      c.style.display = "";
-      c.removeAttribute("data-pi-enh-empty-container-hidden");
-    }
-  }
-
-  function revokeAttachmentPreviewUrl(att) {
-    if (att && att.previewUrl && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
-      try { URL.revokeObjectURL(att.previewUrl); } catch (e) {}
-      att.previewUrl = "";
-    }
-  }
-
-  // --- ChatGPT 风格胶囊卡片渲染与管理 ---
-  function createAttachmentPillCard(att, onRemove) {
-    const card = document.createElement("div");
-    card.className = "pi-enh-attachment-card";
-    card.setAttribute("data-attachment-id", att.id);
-    card.style.flexShrink = "0";
-
-    const meta = getFileCategoryMeta(att.name, att.type);
-    const sizeStr = formatFileSize(att.size);
-    const descText = sizeStr ? `${meta.typeLabel} · ${sizeStr}` : meta.typeLabel;
-
-    // 确保真实文件名未经 URL 编码/转义，保留中文、空格与原始字符
-    const rawName = String(att.name || "未命名文件");
-
-    const iconWrap = document.createElement("div");
-    iconWrap.className = "pi-enh-attachment-icon-wrap";
-    iconWrap.style.background = meta.bgColor;
-    iconWrap.innerHTML = meta.iconSvg;
-
-    if (meta.isVideo) {
-      card.classList.add("pi-enh-attachment-card-video");
-      card.title = "点击预览播放视频";
-      const cwd = getEffectiveComposerCwdSyncOrEmpty();
-      const videoSrc = att.previewUrl || (
-        isInlineVideoAttachment(att) && (att.serverRelativePath || att.name)
-          ? resolveAttachmentApiUrl(att, cwd, "read")
-          : ""
-      );
-      if (videoSrc) {
-        attachVideoThumbnailToIconWrap(iconWrap, videoSrc, meta.iconSvg);
-      }
-      card.addEventListener("click", (e) => {
-        if (e.target?.closest?.(".pi-enh-attachment-remove")) return;
-        e.stopPropagation();
-        openAttachmentPreview(att, getEffectiveComposerCwdSyncOrEmpty());
-      });
-    }
-
-    const metaWrap = document.createElement("div");
-    metaWrap.className = "pi-enh-attachment-meta";
-
-    const nameEl = document.createElement("div");
-    nameEl.className = "pi-enh-attachment-name";
-    nameEl.textContent = rawName;
-    nameEl.title = rawName;
-
-    const descEl = document.createElement("div");
-    descEl.className = "pi-enh-attachment-desc";
-    descEl.textContent = descText;
-
-    metaWrap.appendChild(nameEl);
-    metaWrap.appendChild(descEl);
-
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "pi-enh-attachment-remove";
-    removeBtn.setAttribute("aria-label", "移除附件");
-    removeBtn.title = "移除该附件";
-    removeBtn.textContent = "×";
-    removeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      onRemove(att);
-    });
-
-    card.appendChild(iconWrap);
-    card.appendChild(metaWrap);
-    card.appendChild(removeBtn);
-
-    return card;
-  }
-
-  function findComposerAttachmentBar(textarea) {
-    if (!textarea) return null;
-    const host = textarea.parentElement || textarea;
-    const grandParent = host.parentElement;
-    const composerCard = textarea.closest?.('.pi-enh-cursor-composer, [data-pi-native-composer-host] > div[style*="max-width"]') || grandParent;
-    return composerCard?.querySelector?.(".pi-enh-attachments-bar") || grandParent?.querySelector?.(".pi-enh-attachments-bar") || host?.querySelector?.(".pi-enh-attachments-bar") || null;
-  }
-
-  function syncComposerAttachmentBar(textarea) {
-    if (!textarea) return;
-    const host = textarea.parentElement || textarea;
-    const grandParent = host.parentElement;
-    const composerCard = textarea.closest?.('.pi-enh-cursor-composer, [data-pi-native-composer-host] > div[style*="max-width"]') || grandParent;
-    let bar = findComposerAttachmentBar(textarea);
-
-    if (pendingComposerAttachments.length === 0) {
-      if (bar) bar.remove();
-      if (typeof syncEmptySendContinue === "function") syncEmptySendContinue();
-      return;
-    }
-
-    // 查找原生图片预览容器（绝不移动或重排原生图片节点，增强自有 bar 挂入其中复用同一 flex 行）
-    const nativeImgContainer = composerCard?.querySelector?.(
-      'div[style*="flex-wrap"]:has(img), .pi-enh-cursor-attachments'
-    );
-
-    if (nativeImgContainer) {
-      if (!bar) {
-        bar = document.createElement("div");
-        bar.className = "pi-enh-attachments-bar";
-        nativeImgContainer.appendChild(bar);
-      } else if (bar.parentElement !== nativeImgContainer) {
-        nativeImgContainer.appendChild(bar);
-      }
-    } else {
-      // 只有文件或原生图片容器卸载时：bar 挂到 composerCard 下的 host 之前，占据 grid-row: 1 顶行
-      if (!bar) {
-        bar = document.createElement("div");
-        bar.className = "pi-enh-attachments-bar";
-        if (grandParent) {
-          grandParent.insertBefore(bar, host);
-        } else {
-          host.appendChild(bar);
-        }
-      } else if (bar.parentElement !== grandParent && grandParent) {
-        grandParent.insertBefore(bar, host);
-      }
-    }
-
-    // 主同步循环每 800ms 执行一次；队列未变化时绝不能重建卡片，否则入场动画会造成闪动。
-    const renderKey = pendingComposerAttachments.map((att) => [att.id, att.name, att.size, att.type, att.serverRelativePath || "", att.isText ? "text" : "file"].join("\u001f")).join("\u001e");
-    if (bar.getAttribute("data-pi-enh-attachments-key") === renderKey) {
-      if (typeof syncEmptySendContinue === "function") syncEmptySendContinue();
-      return;
-    }
-
-    // 显式移除旧卡片：兼容原生 DOM 与轻量测试 DOM，避免重复渲染附件。
-    if (typeof bar.replaceChildren === "function") {
-      bar.replaceChildren();
-    } else {
-      for (const child of Array.from(bar.children || [])) child.remove?.();
-      bar.innerHTML = "";
-    }
-    for (const att of pendingComposerAttachments) {
-      const card = createAttachmentPillCard(att, async (targetAtt) => {
-        revokeAttachmentPreviewUrl(targetAtt);
-        pendingComposerAttachments = pendingComposerAttachments.filter(x => x.id !== targetAtt.id);
-        notifyComposerSubmissionStateChange();
-        syncComposerAttachmentBar(textarea);
-        if (targetAtt.serverAbsPath) {
-          const cleanup = await deleteLocalTempFiles([targetAtt.serverAbsPath]);
-          if (cleanup.ok) {
-            unrecordSessionUploadedFile(targetAtt.sessionId, targetAtt.serverAbsPath);
-          } else {
-            showToast("附件已从输入框移除，临时文件将在删除会话时自动重试清理", null, 4500);
-          }
-        }
-      });
-      bar.appendChild(card);
-    }
-    bar.setAttribute("data-pi-enh-attachments-key", renderKey);
-    if (typeof syncEmptySendContinue === "function") syncEmptySendContinue();
-  }
-
-  let composerFileProcessingGeneration = 0;
-
-  async function processComposerFiles(files, textarea) {
-    if (!files || files.length === 0 || !textarea) return;
-    const generation = composerFileProcessingGeneration;
-    const isCurrent = () => generation === composerFileProcessingGeneration
-      && (!activeComposerPasteTextarea || activeComposerPasteTextarea === textarea)
-      && isPluginEnabled("composer-file-paste");
-
-    for (const file of files) {
-      if (!isCurrent()) return;
-      // 所有上传文件（含 TXT、日志和代码）使用同一文件通道。预览与发送均不将全文展开进正文。
-      showToast(`正在上传附件: ${file.name}...`, null, 2400);
-      try {
-        const cwd = await getEffectiveComposerCwd();
-        if (!isCurrent()) return;
-        const activeSessionId = getCurrentSessionId();
-        const sessionId = activeSessionId || ("draft-" + Math.random().toString(36).slice(2, 10));
-        const prepared = await prepareComposerUploadDirectory(cwd, sessionId, getComposerExecutionEngineHint(activeSessionId));
-        if (!isCurrent()) return;
-        const originalName = String(file.name || "upload.bin").replace(/[\\/\0]/g, "_");
-        const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-        const safeUploadName = `.pi-upload-${uniqueId}-${originalName}`;
-
-        let uploadTargetDir = prepared.uploadDir;
-        const sep = String(cwd).includes("\\") ? "\\" : "/";
-        let serverRelativePath = prepared.relativeDir ? `${prepared.relativeDir}/${safeUploadName}` : safeUploadName;
-        let serverAbsPath = String(prepared.uploadDir).replace(/[\\/]+$/, "") + sep + safeUploadName;
-
-        try {
-          await uploadComposerFile(file, uploadTargetDir, safeUploadName, activeSessionId);
-        } catch (uploadErr) {
-          if (String(uploadErr.message || "").includes("Upload directory not found") || String(uploadErr.message || "").includes("404")) {
-            uploadTargetDir = cwd;
-            serverRelativePath = safeUploadName;
-            serverAbsPath = String(cwd).replace(/[\\/]+$/, "") + sep + safeUploadName;
-            await uploadComposerFile(file, uploadTargetDir, safeUploadName, activeSessionId);
-          } else {
-            throw uploadErr;
-          }
-        }
-
-        if (!isCurrent()) {
-          await deleteLocalTempFiles([serverAbsPath]);
-          return;
-        }
-        recordSessionUploadedFile(sessionId, serverAbsPath);
-
-        let previewUrl = "";
-        if (isVideoFile(file.name, file.type) && typeof URL !== "undefined" && typeof URL.createObjectURL === "function" && typeof Blob !== "undefined" && file instanceof Blob) {
-          try { previewUrl = URL.createObjectURL(file); } catch (e) {}
-        }
-
-        const attId = "att-" + Math.random().toString(36).slice(2, 9);
-        pendingComposerAttachments.push({
-          id: attId,
-          name: file.name, // 原始真实未转义文件名
-          size: file.size,
-          type: file.type || getMimeTypeFromExt(file.name),
-          isText: false,
-          isVideo: isVideoFile(file.name, file.type),
-          previewUrl,
-          sessionId,
-          serverRelativePath,
-          serverAbsPath,
-          uploaded: true,
-        });
-
-        notifyComposerSubmissionStateChange();
-        syncComposerAttachmentBar(textarea);
-        showToast(`已添加附件: ${file.name}`, null, 3000);
-      } catch (err) {
-        if (!isCurrent()) return;
-        console.error("[Composer File Paste] 上传失败:", err);
-        showToast(`上传失败: ${err.message || file.name}`, null, 4500);
-      }
-    }
-  }
-
-  activeComposerPasteTextarea = null;
-  let activeComposerPasteHost = null;
-  let activeComposerFileInput = null;
-  let composerPasteHandler = null;
-  let composerDragOverHandler = null;
-  let composerDragLeaveHandler = null;
-  let composerDropHandler = null;
-  let composerHostDragOverHandler = null;
-  let composerHostDragLeaveHandler = null;
-  let composerHostDropHandler = null;
-  let composerFileInputChangeHandler = null;
-  let composerDocumentPickerInput = null;
-  let composerDocumentPickerGeneration = 0;
-
-  function removeComposerDocumentPicker() {
-    composerDocumentPickerGeneration += 1;
-    composerDocumentPickerInput?.remove();
-    composerDocumentPickerInput = null;
-  }
-
-  function openComposerDocumentPicker(card) {
-    if (!isPluginEnabled("composer-file-paste")) {
-      showToast("请先启用文件附件功能", null, 2400);
-      return;
-    }
-    const textarea = findComposerTextarea();
-    if (!textarea || !card?.isConnected) return;
-    removeComposerDocumentPicker();
-    const generation = composerDocumentPickerGeneration;
-    const root = textarea.closest("[data-pi-native-composer-host]") || textarea.closest("form");
-    const imageInput = root?.querySelector('input[type="file"]');
-    const isCurrent = () => generation === composerDocumentPickerGeneration
-      && card.isConnected && textarea.isConnected && findComposerTextarea() === textarea
-      && isPluginEnabled("composer-file-paste");
-    const consumeFiles = (files) => {
-      if (!isCurrent()) return;
-      const images = files.filter((file) => file.type.startsWith("image/") && !isVideoFile(file.name, file.type));
-      const attachments = files.filter((file) => !images.includes(file));
-      if (images.length) {
-        // Images still enter the existing native ChatInput handler, never a second image owner.
-        if (imageInput && typeof DataTransfer !== "undefined") {
-          const transfer = new DataTransfer();
-          images.forEach((file) => transfer.items.add(file));
-          imageInput.files = transfer.files;
-          imageInput.dispatchEvent(new Event("change", { bubbles: true }));
-        } else {
-          showToast("此浏览器请使用输入框图片按钮添加图片", null, 3000);
-        }
-      }
-      if (attachments.length) void processComposerFiles(attachments, textarea);
-    };
-    const openInputFallback = () => {
-      if (!isCurrent()) return;
-      // Independent enhancement-owned host: do not retarget React's media input.
-      const input = document.createElement("input");
-      input.type = "file";
-      input.multiple = true;
-      input.hidden = true;
-      input.setAttribute("data-pi-document-picker", "true");
-      const ua = navigator.userAgent;
-      // Chromium Android treats octet-stream as unrestricted GET_CONTENT and avoids media-only
-      // routing. Other browsers retain the standard accept-less arbitrary-file input.
-      if (/Android/i.test(ua) && /(?:Chrome|Chromium)\//i.test(ua)) {
-        input.accept = "application/octet-stream";
-      }
-      const cleanup = () => {
-        input.remove();
-        if (composerDocumentPickerInput === input) composerDocumentPickerInput = null;
-      };
-      input.addEventListener("cancel", cleanup, { once: true });
-      input.addEventListener("change", () => {
-        const files = Array.from(input.files || []);
-        cleanup();
-        consumeFiles(files);
-      }, { once: true });
-      document.body.appendChild(input);
-      composerDocumentPickerInput = input;
-      input.click();
-    };
-    // ACTION_OPEN_DOCUMENT on supporting Android browsers opens the actual document picker.
-    // Never rely on it on HTTP or unsupported Safari/Firefox, and never reopen after Cancel.
-    if (window.isSecureContext && typeof window.showOpenFilePicker === "function") {
-      let selection;
-      try {
-        selection = window.showOpenFilePicker({
-          id: "pi-web-attachments", multiple: true, excludeAcceptAllOption: false, startIn: "downloads",
-        });
-      } catch (_) {
-        openInputFallback();
-        return;
-      }
-      Promise.resolve(selection).then(async (handles) => {
-        if (!isCurrent()) return;
-        const files = await Promise.all(handles.map((handle) => handle.getFile()));
-        consumeFiles(files);
-      }).catch((error) => {
-        if (!isCurrent() || error?.name === "AbortError") return;
-        // User activation may have expired: request an explicit next click, not a hidden second picker.
-        showToast("文件选择未完成，请重试或使用浏览器的文件上传入口", null, 4000);
-      });
-    } else {
-      openInputFallback();
-    }
-  }
-
-  const COMPOSER_EXTENDED_FILE_ACCEPT = "image/*,video/*";
-
-  function syncComposerFileInputAndToolbar(textarea) {
-    if (typeof document === "undefined") return;
-    const root = textarea?.closest?.("[data-pi-native-composer-host]") || textarea?.closest?.("form") || document;
-    const fileInput = root.querySelector?.('input[type="file"]') ||
-      document.querySelector?.('[data-pi-native-composer-host] input[type="file"], form input[type="file"]');
-    if (fileInput) {
-      if (!fileInput.hasAttribute("data-pi-orig-accept")) {
-        fileInput.setAttribute("data-pi-orig-accept", fileInput.getAttribute("accept") || "image/*");
-      }
-      if (activeComposerFileInput !== fileInput || !fileInput.__piEnhFileInputBound) {
-        if (activeComposerFileInput && composerFileInputChangeHandler) {
-          activeComposerFileInput.removeEventListener("change", composerFileInputChangeHandler, true);
-          activeComposerFileInput.__piEnhFileInputBound = false;
-        }
-        composerFileInputChangeHandler = (event) => {
-          if (!isPluginEnabled("composer-file-paste")) return;
-          const input = event.currentTarget || fileInput;
-          const selectedFiles = Array.from(input?.files || []);
-          if (selectedFiles.length === 0) return;
-
-          const imageFiles = [];
-          const nonImageFiles = [];
-          for (const f of selectedFiles) {
-            const isImg = Boolean(f.type && f.type.startsWith("image/")) && !isVideoFile(f.name, f.type);
-            if (isImg) {
-              imageFiles.push(f);
-            } else {
-              nonImageFiles.push(f);
-            }
-          }
-
-          if (nonImageFiles.length === 0) return;
-
-          const targetTextarea = findComposerTextarea() || textarea;
-          if (imageFiles.length === 0) {
-            event.stopPropagation();
-            if (typeof event.stopImmediatePropagation === "function") {
-              event.stopImmediatePropagation();
-            }
-            try { input.value = ""; } catch (e) {}
-            void processComposerFiles(nonImageFiles, targetTextarea);
-          } else {
-            try {
-              if (typeof DataTransfer !== "undefined") {
-                const dt = new DataTransfer();
-                for (const img of imageFiles) dt.items.add(img);
-                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement?.prototype || {}, "files")?.set;
-                if (setter) setter.call(input, dt.files);
-                else input.files = dt.files;
-              }
-            } catch (e) {}
-            void processComposerFiles(nonImageFiles, targetTextarea);
-          }
-        };
-        fileInput.addEventListener("change", composerFileInputChangeHandler, true);
-        fileInput.__piEnhFileInputBound = true;
-        activeComposerFileInput = fileInput;
-      }
-    }
-
-    const attachBtns = document.querySelectorAll?.('button[data-pi-attach-image]') || [];
-    for (const btn of attachBtns) {
-      if (!btn.__piEnhAttachClickHandler) {
-        btn.__piEnhAttachClickHandler = () => {
-          const r = btn.closest("[data-pi-native-composer-host]") || btn.closest("form") || document;
-          const fi = r.querySelector?.('input[type="file"]') ||
-            document.querySelector?.('[data-pi-native-composer-host] input[type="file"], form input[type="file"]');
-          if (fi) fi.setAttribute("accept", "image/*,video/*");
-        };
-        btn.addEventListener("click", btn.__piEnhAttachClickHandler, true);
-      }
-      if (!btn.hasAttribute("data-pi-orig-title")) {
-        btn.setAttribute("data-pi-orig-title", btn.getAttribute("title") || "");
-      }
-      if (!btn.hasAttribute("data-pi-orig-aria")) {
-        btn.setAttribute("data-pi-orig-aria", btn.getAttribute("aria-label") || "");
-      }
-      if (btn.getAttribute("title") !== "添加图片或视频") {
-        btn.setAttribute("title", "添加图片或视频");
-      }
-      if (btn.getAttribute("aria-label") !== "添加图片或视频") {
-        btn.setAttribute("aria-label", "添加图片或视频");
-      }
-    }
-  }
-
-  function restoreComposerFileInputAndToolbar() {
-    removeComposerDocumentPicker();
-    if (activeComposerFileInput) {
-      if (composerFileInputChangeHandler) {
-        activeComposerFileInput.removeEventListener("change", composerFileInputChangeHandler, true);
-      }
-      activeComposerFileInput.__piEnhFileInputBound = false;
-      activeComposerFileInput = null;
-    }
-    composerFileInputChangeHandler = null;
-    if (typeof document === "undefined") return;
-    const inputs = document.querySelectorAll?.('input[type="file"][data-pi-orig-accept]') || [];
-    for (const input of inputs) {
-      const origAccept = input.getAttribute("data-pi-orig-accept");
-      if (origAccept !== null) input.setAttribute("accept", origAccept);
-      input.removeAttribute("data-pi-orig-accept");
-      input.__piEnhFileInputBound = false;
-    }
-    const attachBtns = document.querySelectorAll?.('button[data-pi-attach-image]') || [];
-    for (const btn of attachBtns) {
-      if (btn.__piEnhAttachClickHandler) {
-        btn.removeEventListener("click", btn.__piEnhAttachClickHandler, true);
-        delete btn.__piEnhAttachClickHandler;
-      }
-      if (btn.hasAttribute("data-pi-orig-title")) {
-        const origTitle = btn.getAttribute("data-pi-orig-title");
-        if (origTitle) btn.setAttribute("title", origTitle);
-        else btn.removeAttribute("title");
-        btn.removeAttribute("data-pi-orig-title");
-      }
-      if (btn.hasAttribute("data-pi-orig-aria")) {
-        const origAria = btn.getAttribute("data-pi-orig-aria");
-        if (origAria) btn.setAttribute("aria-label", origAria);
-        else btn.removeAttribute("aria-label");
-        btn.removeAttribute("data-pi-orig-aria");
-      }
-    }
-  }
-
-  function removeComposerFilePaste() {
-    composerFileProcessingGeneration++;
-    closeVideoPreviewModal();
-    for (const att of pendingComposerAttachments) {
-      revokeAttachmentPreviewUrl(att);
-    }
-    restoreComposerFileInputAndToolbar();
-    if (activeComposerPasteTextarea) {
-      if (composerPasteHandler) {
-        activeComposerPasteTextarea.removeEventListener("paste", composerPasteHandler, true);
-      }
-      if (composerDragOverHandler) {
-        activeComposerPasteTextarea.removeEventListener("dragover", composerDragOverHandler);
-      }
-      if (composerDragLeaveHandler) {
-        activeComposerPasteTextarea.removeEventListener("dragleave", composerDragLeaveHandler);
-      }
-      if (composerDropHandler) {
-        activeComposerPasteTextarea.removeEventListener("drop", composerDropHandler);
-      }
-      try {
-        activeComposerPasteTextarea.classList.remove("pi-enh-composer-drop-active");
-      } catch (e) {}
-      activeComposerPasteTextarea.__piEnhFilePasteBound = false;
-
-      const bar = findComposerAttachmentBar(activeComposerPasteTextarea);
-      if (bar) bar.remove();
-
-      activeComposerPasteTextarea = null;
-    }
-    if (activeComposerPasteHost) {
-      if (composerHostDragOverHandler) {
-        activeComposerPasteHost.removeEventListener("dragover", composerHostDragOverHandler, true);
-      }
-      if (composerHostDragLeaveHandler) {
-        activeComposerPasteHost.removeEventListener("dragleave", composerHostDragLeaveHandler, true);
-      }
-      if (composerHostDropHandler) {
-        activeComposerPasteHost.removeEventListener("drop", composerHostDropHandler, true);
-      }
-      try {
-        activeComposerPasteHost.classList.remove("pi-enh-composer-drop-active");
-      } catch (e) {}
-      activeComposerPasteHost.__piEnhHostDropBound = false;
-      activeComposerPasteHost = null;
-    }
-    if (typeof document !== "undefined") {
-      for (const el of document.querySelectorAll?.(".pi-enh-composer-drop-active") || []) {
-        try { el.classList.remove("pi-enh-composer-drop-active"); } catch (e) {}
-      }
-    }
-    composerPasteHandler = null;
-    composerDragOverHandler = null;
-    composerDragLeaveHandler = null;
-    composerDropHandler = null;
-    composerHostDragOverHandler = null;
-    composerHostDragLeaveHandler = null;
-    composerHostDropHandler = null;
-    pendingComposerAttachments = [];
-    notifyComposerSubmissionStateChange();
-    removeUserMessageAttachmentCards();
-  }
-
-  function syncComposerFilePaste() {
-    if (!isPluginEnabled("composer-file-paste")) {
-      removeComposerFilePaste();
-      return;
-    }
-    syncUserMessageAttachmentCards();
-    const textarea = findComposerTextarea();
-    if (!textarea) {
-      if (activeComposerPasteTextarea) {
-        removeComposerFilePaste();
-      }
-      return;
-    }
-
-    syncComposerFileInputAndToolbar(textarea);
-
-    if (activeComposerPasteTextarea === textarea && textarea.__piEnhFilePasteBound) {
-      syncComposerAttachmentBar(textarea);
-      return;
-    }
-
-    removeComposerFilePaste();
-    syncComposerFileInputAndToolbar(textarea);
-
-    activeComposerPasteTextarea = textarea;
-    textarea.__piEnhFilePasteBound = true;
-
-    composerPasteHandler = (event) => {
-      if (!isPluginEnabled("composer-file-paste")) return;
-      const files = Array.from(event.clipboardData?.files || []);
-      const items = Array.from(event.clipboardData?.items || []);
-      const itemFiles = items
-        .filter((it) => it && it.kind === "file" && typeof it.getAsFile === "function")
-        .map((it) => it.getAsFile())
-        .filter(Boolean);
-      const allFiles = files.length > 0 ? files : itemFiles;
-      if (!allFiles || allFiles.length === 0) return;
-
-      // 如果全部为纯图片文件（且非视频），放行给原生图片处理
-      const nonImageFiles = allFiles.filter((f) => !(f.type && f.type.startsWith("image/")) || isVideoFile(f.name, f.type));
-      if (nonImageFiles.length === 0) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      processComposerFiles(nonImageFiles, textarea);
-    };
-
-    const getDropHighlightTarget = () =>
-      textarea.closest?.('.pi-enh-cursor-composer, [data-pi-native-composer-host] > div[style*="max-width"]') ||
-      activeComposerPasteHost ||
-      textarea;
-
-    composerDragOverHandler = (event) => {
-      if (!isPluginEnabled("composer-file-paste")) return;
-      const types = Array.from(event.dataTransfer?.types || []);
-      if (types.includes("Files")) {
-        event.preventDefault();
-        try { event.dataTransfer.dropEffect = "copy"; } catch (e) {}
-        textarea.classList.add("pi-enh-composer-drop-active");
-        getDropHighlightTarget()?.classList?.add?.("pi-enh-composer-drop-active");
-      }
-    };
-
-    composerDragLeaveHandler = () => {
-      try {
-        textarea.classList.remove("pi-enh-composer-drop-active");
-      } catch (e) {}
-    };
-
-    composerDropHandler = (event) => {
-      try {
-        textarea.classList.remove("pi-enh-composer-drop-active");
-        getDropHighlightTarget()?.classList?.remove?.("pi-enh-composer-drop-active");
-      } catch (e) {}
-      if (!isPluginEnabled("composer-file-paste") || event.__piEnhDropHandled) return;
-      const files = Array.from(event.dataTransfer?.files || []);
-      if (!files || files.length === 0) return;
-
-      const nonImageFiles = files.filter((f) => !(f.type && f.type.startsWith("image/")) || isVideoFile(f.name, f.type));
-      if (nonImageFiles.length === 0) return;
-
-      event.__piEnhDropHandled = true;
-      event.preventDefault();
-      event.stopPropagation();
-      processComposerFiles(nonImageFiles, textarea);
-    };
-
-    textarea.addEventListener("paste", composerPasteHandler, true);
-    textarea.addEventListener("dragover", composerDragOverHandler);
-    textarea.addEventListener("dragleave", composerDragLeaveHandler);
-    textarea.addEventListener("drop", composerDropHandler);
-
-    const composerHost = textarea.closest?.("[data-pi-native-composer-host]") || textarea.closest?.("form") || textarea.parentElement;
-    if (composerHost && composerHost !== textarea) {
-      activeComposerPasteHost = composerHost;
-      composerHost.__piEnhHostDropBound = true;
-
-      composerHostDragOverHandler = (event) => {
-        if (!isPluginEnabled("composer-file-paste")) return;
-        const types = Array.from(event.dataTransfer?.types || []);
-        if (types.includes("Files")) {
-          event.preventDefault();
-          try { event.dataTransfer.dropEffect = "copy"; } catch (e) {}
-          textarea.classList.add("pi-enh-composer-drop-active");
-          getDropHighlightTarget()?.classList?.add?.("pi-enh-composer-drop-active");
-        }
-      };
-
-      composerHostDragLeaveHandler = (event) => {
-        if (event.relatedTarget && composerHost.contains?.(event.relatedTarget)) return;
-        try {
-          textarea.classList.remove("pi-enh-composer-drop-active");
-          getDropHighlightTarget()?.classList?.remove?.("pi-enh-composer-drop-active");
-          composerHost.classList.remove("pi-enh-composer-drop-active");
-        } catch (e) {}
-      };
-
-      composerHostDropHandler = (event) => {
-        try {
-          textarea.classList.remove("pi-enh-composer-drop-active");
-          getDropHighlightTarget()?.classList?.remove?.("pi-enh-composer-drop-active");
-          composerHost.classList.remove("pi-enh-composer-drop-active");
-        } catch (e) {}
-        if (!isPluginEnabled("composer-file-paste") || event.__piEnhDropHandled) return;
-        const files = Array.from(event.dataTransfer?.files || []);
-        if (!files || files.length === 0) return;
-
-        const nonImageFiles = files.filter((f) => !(f.type && f.type.startsWith("image/")) || isVideoFile(f.name, f.type));
-        if (nonImageFiles.length === 0) return;
-
-        event.__piEnhDropHandled = true;
-        event.preventDefault();
-        event.stopPropagation();
-        processComposerFiles(nonImageFiles, textarea);
-      };
-
-      composerHost.addEventListener("dragover", composerHostDragOverHandler, true);
-      composerHost.addEventListener("dragleave", composerHostDragLeaveHandler, true);
-      composerHost.addEventListener("drop", composerHostDropHandler, true);
-    }
-
-    syncComposerAttachmentBar(textarea);
-    syncUserMessageAttachmentCards();
-  }
-
-  activeCleanups.push(removeComposerFilePaste);
   window.__PI_ENH_IS_TEXT_FILE__ = isTextFile;
   window.__PI_ENH_IS_VIDEO_FILE__ = isVideoFile;
   window.__PI_ENH_OPEN_VIDEO_PREVIEW__ = openVideoPreviewModal;
   window.__PI_ENH_CLOSE_VIDEO_PREVIEW__ = closeVideoPreviewModal;
   window.__PI_ENH_GET_LANG_FOR_FILENAME__ = getLanguageForFilename;
   window.__PI_ENH_FORMAT_TEXT_SNIPPET__ = formatTextFileSnippet;
-  window.__PI_ENH_PROCESS_COMPOSER_FILES__ = processComposerFiles;
   window.__PI_ENH_GET_EFFECTIVE_CWD__ = getEffectiveComposerCwd;
-  window.__PI_ENH_SYNC_COMPOSER_FILE_PASTE__ = syncComposerFilePaste;
-  window.__PI_ENH_REMOVE_COMPOSER_FILE_PASTE__ = removeComposerFilePaste;
-  window.__PI_ENH_SYNC_USER_MESSAGE_ATTACHMENTS__ = syncUserMessageAttachmentCards;
-  window.__PI_ENH_REMOVE_USER_MESSAGE_ATTACHMENTS__ = removeUserMessageAttachmentCards;
   window.__PI_ENH_HIDE_DIMENSION_NOTES__ = hideDimensionNotesInMessage;
-  function appendComposerAttachmentsToSubmission(body, attachments) {
-    let extraText = "";
-    for (const att of attachments) {
-      if (att.isText && att.textContent) {
-        const lang = getLanguageForFilename(att.name);
-        const safeText = att.textContent.endsWith("\n") ? att.textContent : `${att.textContent}\n`;
-        extraText += `\n\n### \`${att.name}\`\n\`\`\`${lang}\n${safeText}\`\`\`\n`;
-      } else if (att.serverRelativePath) {
-        extraText += `\n\n[附件: @${att.serverRelativePath}]`;
-      }
-    }
-    const text = String(body || "");
-    return text.trim() ? `${text}${extraText}` : extraText.trim();
-  }
-
-  // Decode the existing submission format, only for a contiguous attachment
-  // suffix. Ordinary fenced code elsewhere in the message remains plain text.
-  function parseSubmittedComposerAttachments(body) {
-    const text = String(body || "");
-    const pattern = /(?:\n\n|^)(?:### `([^`\n]+)`\n```[^`\n]*\n([\s\S]*?)```\n?|\[附件: @([^\]\n]+)\])/g;
-    const matches = Array.from(text.matchAll(pattern));
-    if (!matches.length || text.slice(matches.at(-1).index + matches.at(-1)[0].length).trim()) return { text, attachments: [] };
-    let first = matches.length - 1;
-    while (first > 0) {
-      const preceding = matches[first - 1];
-      if (text.slice(preceding.index + preceding[0].length, matches[first].index).trim()) break;
-      first -= 1;
-    }
-    const attachments = matches.slice(first).map((match) => match[3] ? {
-      name: extractOriginalFilename(match[3]), serverRelativePath: match[3],
-      type: getMimeTypeFromExt(extractOriginalFilename(match[3])), isText: false,
-    } : {
-      name: match[1], textContent: match[2], isText: true,
-      size: new TextEncoder().encode(match[2]).length, type: getMimeTypeFromExt(match[1]),
-    });
-    return { text: text.slice(0, matches[first].index), attachments };
-  }
-
-  function restoreSubmittedComposerAttachments(body) {
-    if (!isPluginEnabled("composer-file-paste")) return String(body || "");
-    // Never replace a draft's own files with historical attachments.
-    if (pendingComposerAttachments.length) return null;
-    const restored = parseSubmittedComposerAttachments(body);
-    pendingComposerAttachments = restored.attachments.map((attachment) => ({
-      ...attachment, id: "restored-" + crypto.randomUUID(),
-    }));
-    notifyComposerSubmissionStateChange();
-    syncComposerAttachmentBar(findComposerTextarea());
-    return restored.text;
-  }
-
-  window.__PI_ENH_RESTORE_COMPOSER_ATTACHMENTS__ = restoreSubmittedComposerAttachments;
 
   function prepareComposerSubmission(kind, body) {
-    const attachmentSnapshot = isPluginEnabled("composer-file-paste")
-      ? pendingComposerAttachments.slice()
-      : [];
-    const bodyWithAttachments = appendComposerAttachmentsToSubmission(body, attachmentSnapshot);
     const prepareAnnotations = window.__PI_ENH_PREPARE_ANNOTATION_SUBMISSION__;
     const annotationSubmission = typeof prepareAnnotations === "function"
-      ? prepareAnnotations(kind, bodyWithAttachments)
+      ? prepareAnnotations(kind, body)
       : null;
-    if (!attachmentSnapshot.length && !annotationSubmission) return null;
+    if (!annotationSubmission) return null;
 
     let committed = false;
     return {
-      text: annotationSubmission?.text ?? bodyWithAttachments,
+      text: annotationSubmission?.text ?? body,
       commit() {
         if (committed) return;
         committed = true;
         annotationSubmission?.commit?.();
-        if (!attachmentSnapshot.length) return;
-        const submittedIds = new Set(attachmentSnapshot.map((attachment) => attachment.id));
-        pendingComposerAttachments = pendingComposerAttachments.filter((attachment) => !submittedIds.has(attachment.id));
-        attachmentSnapshot.forEach(revokeAttachmentPreviewUrl);
-        notifyComposerSubmissionStateChange();
-        syncComposerAttachmentBar(findComposerTextarea());
       },
       kind,
     };
@@ -3383,13 +2558,6 @@
 
   window.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__ = prepareComposerSubmission;
   window.__PI_ENH_GET_COMPOSER_SUBMISSION_STATE__ = getComposerSubmissionState;
-  window.__PI_ENH_GET_PENDING_ATTACHMENTS__ = () => pendingComposerAttachments;
-  window.__PI_ENH_CLEAR_PENDING_ATTACHMENTS__ = () => {
-    for (const attachment of pendingComposerAttachments) revokeAttachmentPreviewUrl(attachment);
-    pendingComposerAttachments = [];
-    notifyComposerSubmissionStateChange();
-    syncComposerAttachmentBar(findComposerTextarea());
-  };
   window.__PI_ENH_CLEANUP_SESSION_FILES__ = cleanupSessionUploadedFiles;
   notifyComposerSubmissionStateChange();
 
@@ -3689,8 +2857,14 @@
     const rawTarget = event.target;
     if (!rawTarget) return;
     const enclosingButton = rawTarget.closest ? rawTarget.closest("button") : null;
+    if (enclosingButton?.getAttribute("data-pi-native-image-owner") === "true" || rawTarget.closest?.("[data-pi-native-image-owner='true']")) {
+      return;
+    }
     if (enclosingButton && !isNativeImagePreviewTrigger(enclosingButton)) return;
     const target = unwrapNativeImagePreviewTarget(rawTarget);
+    if (target?.getAttribute?.("data-pi-native-image-owner") === "true" || target?.closest?.("[data-pi-native-image-owner='true']")) {
+      return;
+    }
     if (isComposerAttachmentImage(target)) {
       if (typeof event.preventDefault === "function") event.preventDefault();
       if (typeof event.stopPropagation === "function") event.stopPropagation();
@@ -3837,878 +3011,7 @@
   window.__PI_ENH_SYNC_RUNNING_MODEL_SWITCH__ = syncRunningModelSwitch;
   window.__PI_ENH_RESTORE_RUNNING_MODEL_SWITCH__ = restoreRunningModelSwitch;
 
-  // Dedicated IndexedDB & In-Memory Attachment Store for Queue Submissions
-  const QUEUE_IDB_NAME = "pi-enh-queue-attachments-db";
-  const QUEUE_IDB_STORE = "submissions";
-
-  function openQueueIDB() {
-    return new Promise((resolve, reject) => {
-      if (typeof indexedDB === "undefined") return reject(new Error("IndexedDB unavailable"));
-      let settled = false;
-      const timeoutId = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          reject(new Error("IndexedDB open timeout"));
-        }
-      }, 3000);
-
-      const request = indexedDB.open(QUEUE_IDB_NAME, 1);
-      request.onblocked = () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timeoutId);
-          reject(new Error("IndexedDB open blocked"));
-        }
-      };
-      request.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains(QUEUE_IDB_STORE)) {
-          const store = db.createObjectStore(QUEUE_IDB_STORE, { keyPath: "id" });
-          store.createIndex("sessionId", "sessionId", { unique: false });
-        }
-      };
-      request.onsuccess = () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timeoutId);
-          resolve(request.result);
-        } else {
-          request.result.close();
-        }
-      };
-      request.onerror = () => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timeoutId);
-          reject(request.error || new Error("IndexedDB open error"));
-        }
-      };
-    });
-  }
-
-  async function idbSaveSubmission(item) {
-    let db = null;
-    try {
-      db = await openQueueIDB();
-      return await new Promise((resolve, reject) => {
-        const tx = db.transaction(QUEUE_IDB_STORE, "readwrite");
-        tx.objectStore(QUEUE_IDB_STORE).put(item);
-        tx.oncomplete = () => resolve(true);
-        tx.onerror = () => reject(tx.error);
-      });
-    } catch (_) {
-      return false;
-    } finally {
-      try { db?.close(); } catch (_) {}
-    }
-  }
-
-  async function idbLoadSubmissions(sessionId) {
-    let db = null;
-    try {
-      db = await openQueueIDB();
-      return await new Promise((resolve, reject) => {
-        const tx = db.transaction(QUEUE_IDB_STORE, "readonly");
-        const index = tx.objectStore(QUEUE_IDB_STORE).index("sessionId");
-        const req = index.getAll(sessionId);
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => reject(req.error);
-      });
-    } catch (_) {
-      return [];
-    } finally {
-      try { db?.close(); } catch (_) {}
-    }
-  }
-
-  const MAX_QUEUE_DETAIL_CACHE_ITEMS = 30;
-  const MAX_QUEUE_DETAIL_CACHE_BYTES = 24 * 1024 * 1024; // 24MiB
-  let currentQueueDetailCacheBytes = 0;
-  let queueDetailCacheGeneration = 0;
-
-  function estimateQueueDetailSize(detail) {
-    if (!detail || typeof detail !== "object") return 0;
-    let bytes = 128;
-    if (typeof detail.text === "string") {
-      bytes += detail.text.length * 2;
-    }
-    if (Array.isArray(detail.images)) {
-      for (const img of detail.images) {
-        if (img && typeof img.data === "string") {
-          bytes += img.data.length * 2 + 64;
-        }
-      }
-    }
-    return bytes;
-  }
-
-  const queueSubmissionMemoryStore = new Map(); // sessionId -> Array<Submission>
-  const queuedMessageDetailCache = new Map(); // `${sessionId}:${token}` -> { detail, size }
-  const queuedMessageDetailInFlight = new Map(); // `${sessionId}:${token}` -> Promise
-  const queuedMessageDetailAbortControllers = new Map(); // `${sessionId}:${token}` -> AbortController
-  const hydratedSessions = new Set();
-  let queueAttachmentRevision = 0;
-
-  function evictQueueDetailCacheLRU() {
-    while (queuedMessageDetailCache.size > MAX_QUEUE_DETAIL_CACHE_ITEMS || currentQueueDetailCacheBytes > MAX_QUEUE_DETAIL_CACHE_BYTES) {
-      const oldestKey = queuedMessageDetailCache.keys().next().value;
-      if (oldestKey === undefined) break;
-      const entry = queuedMessageDetailCache.get(oldestKey);
-      queuedMessageDetailCache.delete(oldestKey);
-      if (entry && typeof entry.size === "number") {
-        currentQueueDetailCacheBytes = Math.max(0, currentQueueDetailCacheBytes - entry.size);
-      }
-    }
-  }
-
-  function getFromQueueDetailCache(cacheKey) {
-    if (isDisposed) return null;
-    if (!queuedMessageDetailCache.has(cacheKey)) return null;
-    const entry = queuedMessageDetailCache.get(cacheKey);
-    queuedMessageDetailCache.delete(cacheKey);
-    queuedMessageDetailCache.set(cacheKey, entry);
-    return entry?.detail || null;
-  }
-
-  function putIntoQueueDetailCache(cacheKey, detail) {
-    if (isDisposed || !detail) return;
-    const size = estimateQueueDetailSize(detail);
-    if (size > MAX_QUEUE_DETAIL_CACHE_BYTES) {
-      return;
-    }
-    if (queuedMessageDetailCache.has(cacheKey)) {
-      const old = queuedMessageDetailCache.get(cacheKey);
-      currentQueueDetailCacheBytes = Math.max(0, currentQueueDetailCacheBytes - (old?.size || 0));
-      queuedMessageDetailCache.delete(cacheKey);
-    }
-    queuedMessageDetailCache.set(cacheKey, { detail, size });
-    currentQueueDetailCacheBytes += size;
-    evictQueueDetailCacheLRU();
-  }
-
-  function clearQueueDetailCache() {
-    queueDetailCacheGeneration++;
-    queuedMessageDetailCache.clear();
-    currentQueueDetailCacheBytes = 0;
-    for (const controller of queuedMessageDetailAbortControllers.values()) {
-      try { controller.abort(); } catch (e) {}
-    }
-    queuedMessageDetailAbortControllers.clear();
-    queuedMessageDetailInFlight.clear();
-  }
-
-  function notifyQueueAttachmentUpdated() {
-    queueAttachmentRevision++;
-    if (isPluginEnabled("composer-queue-panel") && composerQueuePanel?.isConnected) {
-      syncComposerQueuePanel(true);
-    }
-  }
-
-  function downloadQueueRecovery(ownerKey, text, images) {
-    const blob = new Blob([JSON.stringify({ version: 1, ownerKey, text, images }, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `pi-queue-recovery-${Date.now()}.json`;
-    link.click();
-    addManagedTimeout(() => URL.revokeObjectURL(url), 1000);
-    showToast("输入框状态已变化，完整召回图文已导出恢复文件；未覆盖当前输入", null, 6000);
-  }
-
-  function getEffectiveQueueSessionId(explicitSid) {
-    if (explicitSid && typeof explicitSid === "string" && !explicitSid.startsWith("new:")) {
-      return explicitSid;
-    }
-    const fromUrl = typeof getCurrentSessionId === "function" ? getCurrentSessionId() : null;
-    if (fromUrl) return fromUrl;
-    if (typeof getEffectiveComposerSessionId === "function") {
-      const fromComposer = getEffectiveComposerSessionId();
-      if (fromComposer && !fromComposer.startsWith("new:")) return fromComposer;
-    }
-    const fromScroll = document.querySelector?.("[data-pi-native-scroll-owner]")?.getAttribute?.("data-pi-native-scroll-owner");
-    if (fromScroll && !fromScroll.startsWith("new:")) return fromScroll;
-    return explicitSid || null;
-  }
-
-  async function hydrateSessionQueueAttachments(sessionId) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!activeSid) return;
-    try {
-      const persisted = await idbLoadSubmissions(activeSid);
-      if (Array.isArray(persisted) && persisted.length > 0) {
-        const existing = queueSubmissionMemoryStore.get(activeSid) || [];
-        const existingIds = new Set(existing.map((x) => x.id));
-        for (const item of persisted) {
-          if (!existingIds.has(item.id)) {
-            existing.push(item);
-          }
-        }
-        existing.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        queueSubmissionMemoryStore.set(activeSid, existing);
-        notifyQueueAttachmentUpdated();
-      }
-    } catch (_) {}
-  }
-
-  function triggerSessionHydration(sessionId) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!activeSid || hydratedSessions.has(activeSid)) return;
-    hydratedSessions.add(activeSid);
-    void hydrateSessionQueueAttachments(activeSid);
-  }
-
-  function recordCapturedSubmissionAttachment(sessionId, kind, text, rawImages) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!activeSid) return;
-    const cleanText = typeof text === "string" ? text.trim() : "";
-    const images = (Array.isArray(rawImages) ? rawImages : []).map((img, idx) => {
-      const raw = img.data || img.src || "";
-      const cleanB64 = raw.replace(/^data:[^;]+;base64,/, "");
-      const mime = img.mimeType || (raw.startsWith("data:") ? raw.slice(5, raw.indexOf(";")) : "image/png");
-      return {
-        data: cleanB64,
-        mimeType: mime,
-        alt: img.alt || `图片附件 ${idx + 1}`,
-      };
-    });
-
-    const submission = {
-      id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : String(Date.now()) + Math.random(),
-      sessionId: activeSid,
-      kind,
-      text: cleanText,
-      images,
-      timestamp: Date.now(),
-    };
-
-    let list = queueSubmissionMemoryStore.get(activeSid);
-    if (!list) {
-      list = [];
-      queueSubmissionMemoryStore.set(activeSid, list);
-    }
-    list.push(submission); // Never evict a possibly still-pending attachment by count.
-
-    void idbSaveSubmission(submission);
-    notifyQueueAttachmentUpdated();
-  }
-
-  // Native React owns queue rendering, delivery receipts and draft restoration.
-  // This service only supplies token/attachment actions through that boundary.
-  let composerQueueNativeHost = null;
-  composerQueuePanel = null;
-  let composerQueueLastEntriesSignature = "";
-  let composerQueueCurrentEntries = [];
-  let composerQueueRequest = null;
-  let composerQueueBusy = false;
-  let composerQueueActionsEnabled = true;
-  const composerQueueUnsupported = new Set();
-  let composerQueueActionsState = null;
-  const composerQueueErrors = new Map();
-
-  function showQueueUnavailable(sessionId, signature, entries) {
-    const targetSid = getEffectiveQueueSessionId(sessionId);
-    if (composerQueueUnsupported.has(targetSid)) {
-      showQueueSecurityWarningToast("队列未改动：当前服务不支持安全队列操作");
-      return;
-    }
-    const error = composerQueueErrors.get(targetSid) || "队列状态尚未获取";
-    if (/Queue desynchronized/i.test(error)) {
-      showToast("队列显示与执行状态不同步，原图文已保留；正在重新读取状态", null, 3500);
-    } else {
-      showToast("队列状态暂不可用，原图文已保留；正在重新读取状态", null, 3500);
-    }
-    loadComposerQueueTokens(targetSid, signature, entries);
-  }
-
-  function handleQueueOperationError(sessionId, errorMsg, defaultPrefix = "操作") {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    const raw = String(errorMsg || "");
-    if (/unknown command|unsupported command|未安装|不支持.*(?:命令|接口)/i.test(raw)) {
-      if (activeSid) composerQueueUnsupported.add(activeSid);
-      composerQueueActionsState = null;
-      showQueueSecurityWarningToast("队列未改动：当前服务不支持安全队列操作");
-    } else {
-      showToast(`${defaultPrefix}失败: ${raw || "请求异常"}`, null, 3000);
-    }
-  }
-
-  function removeComposerQueuePanel() {
-    clearQueueDetailCache();
-    composerQueuePanel = null;
-    composerQueueLastEntriesSignature = "";
-    composerQueueCurrentEntries = [];
-    composerQueueActionsState = null;
-    window.dispatchEvent(new CustomEvent("pi:native-queue-details", { detail: { signature: "", enabled: false, busy: false, images: [] } }));
-  }
-
-  async function fetchQueuedMessageDetail(sessionId, token) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (isDisposed || !activeSid || !token) return null;
-    const cacheKey = `${activeSid}:${token}`;
-    const cached = getFromQueueDetailCache(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    if (queuedMessageDetailInFlight.has(cacheKey)) {
-      return await queuedMessageDetailInFlight.get(cacheKey);
-    }
-    const capturedGeneration = queueDetailCacheGeneration;
-    const controller = new AbortController();
-    queuedMessageDetailAbortControllers.set(cacheKey, controller);
-
-    const p = (async () => {
-      try {
-        const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "get_queued_message", token }),
-          signal: controller.signal,
-        });
-        const json = await res.json();
-        if (res.ok && json.success && json.data) {
-          if (capturedGeneration === queueDetailCacheGeneration && !isDisposed) {
-            putIntoQueueDetailCache(cacheKey, json.data);
-            notifyQueueAttachmentUpdated();
-          }
-          return json.data;
-        }
-      } catch (_) {}
-      return null;
-    })();
-    queuedMessageDetailInFlight.set(cacheKey, p);
-    try {
-      return await p;
-    } finally {
-      if (queuedMessageDetailAbortControllers.get(cacheKey) === controller) {
-        queuedMessageDetailAbortControllers.delete(cacheKey);
-      }
-      if (queuedMessageDetailInFlight.get(cacheKey) === p) {
-        queuedMessageDetailInFlight.delete(cacheKey);
-      }
-    }
-  }
-
-  async function loadComposerQueueTokens(sessionId, entriesSignature, entries) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!composerQueueActionsEnabled
-      || !activeSid || composerQueueRequest || composerQueueUnsupported.has(activeSid)) return;
-    composerQueueRequest = entriesSignature;
-    try {
-      const response = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "get_queue_actions" }),
-      });
-      const result = await response.json();
-      if (!composerQueueActionsEnabled) return;
-      const data = result?.data;
-      if (!response.ok || result.success === false) {
-        composerQueueActionsState = null;
-        composerQueueErrors.set(activeSid, String(result?.error || "队列状态请求失败"));
-        if (/unknown command|unsupported command|不支持.*(?:命令|接口)/i.test(String(result?.error || ""))) {
-          composerQueueUnsupported.add(activeSid);
-        }
-        return;
-      }
-      if (!isPluginEnabled("composer-queue-panel") || !composerQueuePanel?.isConnected
-        || entriesSignature !== composerQueueLastEntriesSignature) return;
-
-      composerQueueErrors.delete(activeSid);
-      if (data?.version === 2) {
-        const steering = Array.isArray(data.steering) ? data.steering : [];
-        const followUp = Array.isArray(data.followUp) ? data.followUp : [];
-        const totalServerCount = steering.length + followUp.length;
-
-        if (totalServerCount !== entries.length) {
-          composerQueueActionsState = null;
-          return;
-        }
-        let isMatch = true;
-        for (let i = 0; i < entries.length; i++) {
-          const domEntry = entries[i];
-          const serverItem = i < steering.length ? steering[i] : followUp[i - steering.length];
-          const expectedKind = i < steering.length ? "steer" : "follow-up";
-          if (domEntry.kind !== expectedKind || (domEntry.text || "").trim() !== (serverItem?.text || "").trim()) {
-            isMatch = false;
-            break;
-          }
-        }
-        if (!isMatch) {
-          composerQueueActionsState = null;
-          return;
-        }
-
-        composerQueueActionsState = {
-          sessionId: activeSid,
-          signature: entriesSignature,
-          version: 2,
-          reorder: data.reorder === true,
-          steering,
-          followUp,
-        };
-
-        const allItems = [...steering, ...followUp];
-        for (const item of allItems) {
-          const cacheKey = `${activeSid}:${item.token}`;
-          if (item.imageCount > 0 && !queuedMessageDetailCache.has(cacheKey)) {
-            void fetchQueuedMessageDetail(activeSid, item.token);
-          }
-        }
-        if (entriesSignature === composerQueueLastEntriesSignature) {
-          notifyQueueAttachmentUpdated();
-        }
-      } else if (data?.version === 1) {
-        const expectedFollowUp = entries.filter(e => e.kind === "follow-up");
-        if (!Array.isArray(data.followUp) || data.followUp.length !== expectedFollowUp.length
-          || expectedFollowUp.some((e, i) => e.text !== data.followUp[i].text)) return;
-        composerQueueActionsState = {
-          sessionId: activeSid,
-          signature: entriesSignature,
-          version: 1,
-          steering: [],
-          followUp: Array.isArray(data.followUp) ? data.followUp : [],
-        };
-      }
-    } catch (error) {
-      composerQueueActionsState = null;
-      composerQueueErrors.set(activeSid, String(error?.message || "网络异常"));
-    } finally {
-      composerQueueRequest = null;
-      if (composerQueueLastEntriesSignature && composerQueueLastEntriesSignature !== entriesSignature) {
-        syncComposerQueuePanel(false, activeSid);
-      }
-    }
-  }
-
-  async function promoteComposerQueuedMessage(entryIndex, sessionId, signature) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && (composerQueueActionsState.version === 1 || composerQueueActionsState.version === 2) && !composerQueueUnsupported.has(activeSid);
-    if (!hasSecure) {
-      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-      return;
-    }
-    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
-      showToast("队列状态已更新，请重试", null, 3000);
-      return;
-    }
-    composerQueueBusy = true;
-    publishNativeQueueDetails(activeSid);
-
-    try {
-      const hasSecure = composerQueueActionsState.version === 1 || composerQueueActionsState.version === 2;
-      if (!hasSecure) {
-        showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-        return;
-      }
-
-      let token = null;
-      if (composerQueueActionsState.version === 2) {
-        const steerCount = composerQueueActionsState.steering?.length || 0;
-        const followUpIdx = entryIndex >= steerCount ? entryIndex - steerCount : -1;
-        if (followUpIdx >= 0 && followUpIdx < composerQueueActionsState.followUp.length) {
-          token = composerQueueActionsState.followUp[followUpIdx]?.token;
-        }
-      } else if (composerQueueActionsState.version === 1) {
-        const steerCount = composerQueueCurrentEntries.filter((entry) => entry.kind === "steer").length;
-        const followUpIdx = entryIndex >= steerCount ? entryIndex - steerCount : -1;
-        if (followUpIdx >= 0 && followUpIdx < composerQueueActionsState.followUp.length) {
-          token = composerQueueActionsState.followUp[followUpIdx]?.token;
-        }
-      }
-
-      if (!token) {
-        showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-        return;
-      }
-
-      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "promote_queued_message", token }),
-      });
-      const r = await res.json();
-      if (res.ok && r?.success) {
-        showToast("已转为立即引导，将在下一个执行点优先处理", null, 2000);
-      } else {
-        showToast(`转引导失败: ${r?.error || "请求异常"}`, null, 3000);
-      }
-    } catch (error) {
-      handleQueueOperationError(activeSid, error.message, "转引导");
-    } finally {
-      composerQueueBusy = false;
-      syncComposerQueuePanel(false, activeSid);
-    }
-  }
-
-  async function reorderComposerQueuedMessage(index, targetIndex, sessionId, signature) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    const state = composerQueueActionsState;
-    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature
-      || state?.signature !== signature || state?.sessionId !== activeSid || !state.reorder) return;
-    const items = [...state.steering, ...state.followUp];
-    const entries = composerQueueCurrentEntries;
-    if (!Number.isInteger(index) || !Number.isInteger(targetIndex) || !items[index] || !items[targetIndex]
-      || entries[index]?.kind !== entries[targetIndex]?.kind || index === targetIndex) return;
-    composerQueueBusy = true;
-    publishNativeQueueDetails(activeSid);
-    try {
-      const res = await window.fetch(`/api/agent/${encodeURIComponent(activeSid)}`, {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({type: "reorder_queued_message", tokens: items.map(item => item.token), token: items[index].token, targetToken: items[targetIndex].token}),
-      });
-      const result = await res.json();
-      if (!res.ok || result?.success !== true || result.data?.version !== 2) throw new Error(result?.error || "排序失败");
-    } catch (error) { handleQueueOperationError(activeSid, error.message, "排序"); }
-    finally {
-      composerQueueBusy = false;
-      composerQueueActionsState = null;
-      syncComposerQueuePanel(false, activeSid);
-    }
-  }
-
-  async function recallSingleQueuedMessage(entryIndex, sessionId, signature) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    const nativeHost = composerQueueNativeHost;
-    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature
-      || typeof nativeHost.sendCommand !== "function" || typeof nativeHost.restoreRecall !== "function") return;
-    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
-    if (!hasSecure) {
-      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-      return;
-    }
-    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
-      showToast("队列状态已更新，请重试", null, 3000);
-      return;
-    }
-
-    const native = readNativeComposerDraft();
-    if (!native || native.keyRef?.current !== native.key || (native.pendingRef?.current || 0) > 0) {
-      showToast("输入框正在处理中或不可用，无法安全移回", null, 3000);
-      return;
-    }
-
-    const capturedOwner = native.key;
-    const capturedKeyRef = native.keyRef;
-    const capturedRoute = activeSid;
-    const capturedSignature = signature;
-
-    const steerList = composerQueueActionsState.steering || [];
-    const followUpList = composerQueueActionsState.followUp || [];
-    let token = null;
-    if (entryIndex < steerList.length) {
-      token = steerList[entryIndex]?.token;
-    } else {
-      const fIdx = entryIndex - steerList.length;
-      token = followUpList[fIdx]?.token;
-    }
-
-    if (!token) {
-      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-      return;
-    }
-
-    composerQueueBusy = true;
-    publishNativeQueueDetails(activeSid);
-
-    try {
-      const payload = await fetchQueuedMessageDetail(activeSid, token);
-      if (!payload) {
-        showToast("获取排队消息详情失败，队列未改动", null, 3000);
-        return;
-      }
-      const currentImages = Array.isArray(native.imagesRef?.current) ? native.imagesRef.current : [];
-      const recallImages = Array.isArray(payload.images) ? payload.images : [];
-      if (currentImages.length + recallImages.length > 10) {
-        showToast("移回编辑失败：合并后图片数量超过 10 张上限", null, 3000);
-        return;
-      }
-
-      const beforeMutation = readNativeComposerDraft();
-      if (getEffectiveQueueSessionId() !== capturedRoute || composerQueueLastEntriesSignature !== capturedSignature
-        || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
-        || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + recallImages.length > 10) return;
-
-      let result;
-      try {
-        result = await nativeHost.sendCommand(activeSid, { type: "recall_queued_message", token });
-      } catch (networkErr) {
-        downloadQueueRecovery(capturedOwner, payload.text, recallImages);
-        showToast("召回结果未确认，原图文已导出备份；不会自动重发，请核对队列状态", null, 6000);
-        return;
-      }
-
-      if (result?.version !== 2 || result.token !== token || typeof result.text !== "string" || !Array.isArray(result.images)) {
-        throw new Error("召回响应无效，原消息仍已保留");
-      }
-      const requestId = result.requestId || (result.recalledPromptRequestIds?.length === 1 ? result.recalledPromptRequestIds[0] : undefined);
-      await nativeHost.restoreRecall({ sessionId: activeSid, targetDraftKey: capturedOwner,
-        entries: [{ requestId, text: result.text, images: result.images }] });
-      showToast(getEffectiveQueueSessionId() === capturedRoute ? "已移回输入框编辑" : "已保存至原会话草稿", null, 1800);
-    } catch (error) {
-      handleQueueOperationError(activeSid, error.message, "移回编辑");
-    } finally {
-      composerQueueBusy = false;
-      syncComposerQueuePanel(false, activeSid);
-    }
-  }
-
-  async function recallAllQueuedMessages(sessionId, signature, entries) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    const nativeHost = composerQueueNativeHost;
-    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature
-      || typeof nativeHost.sendCommand !== "function" || typeof nativeHost.restoreRecall !== "function") return;
-    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
-    if (!hasSecure) {
-      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-      return;
-    }
-    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
-      showToast("队列状态已更新，请重试", null, 3000);
-      return;
-    }
-
-    const native = readNativeComposerDraft();
-    if (!native || native.keyRef?.current !== native.key || (native.pendingRef?.current || 0) > 0) {
-      showToast("输入框正在处理中或不可用，无法安全移回", null, 3000);
-      return;
-    }
-
-    const capturedOwner = native.key;
-    const capturedKeyRef = native.keyRef;
-    const capturedRoute = activeSid;
-    const capturedSignature = signature;
-
-    const steerList = composerQueueActionsState.steering || [];
-    const followUpList = composerQueueActionsState.followUp || [];
-    const allItems = [...steerList, ...followUpList];
-    const expectedTokens = allItems.map((x) => x.token);
-
-    if (expectedTokens.length !== entries.length || expectedTokens.some((tok) => !tok)) {
-      showToast("队列信息不完整，无法全部移回", null, 3000);
-      return;
-    }
-
-    const totalImagesInQueue = allItems.reduce((acc, x) => acc + (x.imageCount || 0), 0);
-    const currentImages = Array.isArray(native.imagesRef?.current) ? native.imagesRef.current : [];
-    if (totalImagesInQueue + currentImages.length > 10) {
-      showToast("超过 10 张上限，已阻止全部移回以防丢图", null, 3000);
-      return;
-    }
-
-    composerQueueBusy = true;
-    publishNativeQueueDetails(activeSid);
-
-    try {
-      const backup = [];
-      for (const token of expectedTokens) {
-        const detail = await fetchQueuedMessageDetail(activeSid, token);
-        if (!detail) { showToast("详情尚未完整读取，队列未改动", null, 3000); return; }
-        backup.push(detail);
-      }
-      const backupText = backup.map(e => e.text).filter(Boolean).join("\n\n");
-      const backupImages = backup.flatMap(e => e.images || []);
-      const beforeMutation = readNativeComposerDraft();
-      if (getEffectiveQueueSessionId() !== capturedRoute || composerQueueLastEntriesSignature !== capturedSignature
-        || !beforeMutation || beforeMutation.key !== capturedOwner || beforeMutation.keyRef !== capturedKeyRef
-        || beforeMutation.pendingRef.current > 0 || beforeMutation.imagesRef.current.length + backupImages.length > 10) return;
-
-      let result;
-      try {
-        result = await nativeHost.sendCommand(activeSid, { type: "recall_all_queued_messages", tokens: expectedTokens });
-      } catch (netErr) {
-        downloadQueueRecovery(capturedOwner, backupText, backupImages);
-        showToast("召回结果未确认，原图文已导出备份；不会自动重发，请核对队列状态", null, 6000);
-        return;
-      }
-
-      if (result?.version !== 2 || !Array.isArray(result.entries) || result.entries.length !== expectedTokens.length
-        || result.entries.some((entry, index) => entry.token !== expectedTokens[index])) {
-        throw new Error("全部召回响应无效，原消息仍已保留");
-      }
-      await nativeHost.restoreRecall({ sessionId: activeSid, targetDraftKey: capturedOwner, entries: result.entries });
-      showToast(getEffectiveQueueSessionId() === capturedRoute ? "已全部移回输入框编辑" : "已保存至原会话草稿", null, 1800);
-    } catch (error) {
-      handleQueueOperationError(activeSid, error.message, "全部移回");
-    } finally {
-      composerQueueBusy = false;
-      syncComposerQueuePanel(false, activeSid);
-    }
-  }
-
-  async function deleteSingleQueuedMessage(entryIndex, sessionId, signature) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    const nativeHost = composerQueueNativeHost;
-    if (nativeHost?.sessionId !== activeSid || nativeHost?.signature !== signature || typeof nativeHost.sendCommand !== "function") return;
-    if (composerQueueBusy || !activeSid || signature !== composerQueueLastEntriesSignature) return;
-    const hasSecure = composerQueueActionsState && composerQueueActionsState.version === 2 && !composerQueueUnsupported.has(activeSid);
-    if (!hasSecure) {
-      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-      return;
-    }
-    if (composerQueueActionsState.sessionId !== activeSid || composerQueueActionsState.signature !== signature) {
-      showToast("队列状态已更新，请重试", null, 3000);
-      return;
-    }
-
-    const steerList = composerQueueActionsState.steering || [];
-    const followUpList = composerQueueActionsState.followUp || [];
-    const token = entryIndex < steerList.length ? steerList[entryIndex]?.token : followUpList[entryIndex - steerList.length]?.token;
-
-    if (!token) {
-      showQueueUnavailable(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-      return;
-    }
-
-    composerQueueBusy = true;
-    publishNativeQueueDetails(activeSid);
-
-    try {
-      const result = await nativeHost.sendCommand(activeSid, { type: "delete_queued_message", token });
-      if (result?.version !== 2) {
-        throw new Error(result?.error || "删除失败");
-      }
-
-      showToast("已删除该条排队消息", null, 1800);
-    } catch (error) {
-      handleQueueOperationError(activeSid, error.message, "删除");
-    } finally {
-      composerQueueBusy = false;
-      syncComposerQueuePanel(false, activeSid);
-    }
-  }
-
-  function getQueueEntryAttachments(sessionId, entryText, entryIndex, entryKind, entryToken) {
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!activeSid) return [];
-    const cleanText = (entryText || "").trim();
-
-    // 1. 若后端 v2 权威接口返回了该 token 的详情（包含 empty []），优先终结！绝不向下 fallback！
-    if (entryToken) {
-      const cacheKey = `${activeSid}:${entryToken}`;
-      const detail = getFromQueueDetailCache(cacheKey);
-      if (detail) {
-        if (Array.isArray(detail?.images)) {
-          return detail.images.map((img, i) => ({
-            data: img.data,
-            mimeType: img.mimeType || "image/png",
-            alt: img.alt || `图片附件 ${i + 1}`,
-          }));
-        }
-      }
-    }
-
-    // 2. unsupported 场景或未拿到 v2 详情时：按 kind + 提交记录严格唯一匹配
-    const list = queueSubmissionMemoryStore.get(activeSid);
-    if (Array.isArray(list) && list.length > 0) {
-      const matching = list.filter((s) => s.kind === entryKind && (s.text || "").trim() === cleanText);
-      if (matching.length === 1 && Array.isArray(matching[0].images) && matching[0].images.length > 0) {
-        return matching[0].images;
-      }
-    }
-
-    return [];
-  }
-
-  function publishNativeQueueDetails(explicitSid = null) {
-    const sessionId = getEffectiveQueueSessionId(explicitSid);
-    const actionsEnabled = composerQueueActionsEnabled;
-    const items = actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature
-      ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
-    const hasDeliveryStatuses = items.some((item) => typeof item?.status === "string");
-    const statuses = hasDeliveryStatuses ? items.map((item) => ({
-      status: typeof item?.status === "string" ? item.status : "",
-      ...(typeof item?.error === "string" && item.error ? { error: item.error } : {}),
-    })) : undefined;
-    window.dispatchEvent(new CustomEvent("pi:native-queue-details", { detail: {
-      signature: composerQueueLastEntriesSignature,
-      enabled: actionsEnabled && isPluginEnabled("composer-queue-panel")
-        && composerQueueActionsState?.sessionId === sessionId
-        && composerQueueActionsState?.signature === composerQueueLastEntriesSignature,
-      actionsEnabled,
-      busy: composerQueueBusy,
-      reorder: actionsEnabled && composerQueueActionsState?.signature === composerQueueLastEntriesSignature && composerQueueActionsState?.reorder === true,
-      ...(statuses ? { statuses } : {}),
-      images: composerQueueCurrentEntries.map((entry, i) => getQueueEntryAttachments(sessionId, entry.text, i, entry.kind, items[i]?.token)),
-    } }));
-  }
-
-  function syncComposerQueuePanel(isAttachmentUpdateOnly = false, explicitSid = null) {
-    const activeSid = getEffectiveQueueSessionId(explicitSid);
-    if (!composerQueueActionsEnabled) {
-      composerQueueActionsState = null;
-      publishNativeQueueDetails(activeSid);
-      return;
-    }
-    if (!isPluginEnabled("composer-queue-panel")) {
-      publishNativeQueueDetails(explicitSid);
-      return;
-    }
-    if (!composerQueuePanel?.isConnected || !composerQueueCurrentEntries.length) return;
-    publishNativeQueueDetails(activeSid);
-    // Only React explicit snapshot event refreshes tokens; never DOM scans/timers.
-    if (!isAttachmentUpdateOnly && activeSid && !composerQueueBusy) {
-      void loadComposerQueueTokens(activeSid, composerQueueLastEntriesSignature, composerQueueCurrentEntries);
-    }
-  }
-
-  const handleNativeQueueSnapshot = (event) => {
-    const detail = event.detail;
-    if (!detail || !Array.isArray(detail.entries) || typeof detail.signature !== "string") return;
-    composerQueueNativeHost = detail;
-    const activeSid = getEffectiveQueueSessionId(detail.sessionId);
-    if (!activeSid) return;
-    composerQueueActionsEnabled = detail.actionsEnabled !== false;
-    composerQueuePanel = detail.host;
-    const signature = detail.signature;
-    const changed = signature !== composerQueueLastEntriesSignature;
-    composerQueueCurrentEntries = detail.entries;
-    syncComposerQueueBadge(detail.entries.length);
-    composerQueueLastEntriesSignature = signature;
-    if (changed) composerQueueActionsState = null;
-    if (!detail.entries.length) {
-      clearQueueDetailCache();
-      publishNativeQueueDetails(activeSid);
-      return;
-    }
-    // Entries can arrive before connection/inbox hydration marks actions ready.
-    // Read tokens when readiness returns even if the text signature is unchanged.
-    const needsTokens = composerQueueActionsEnabled && !composerQueueActionsState;
-    syncComposerQueuePanel(!changed && !needsTokens, activeSid);
-    if (composerQueueActionsEnabled) triggerSessionHydration(activeSid);
-  };
-  const handleNativeQueueAction = (event) => {
-    const { action, index, targetIndex, sessionId, signature } = event.detail || {};
-    const activeSid = getEffectiveQueueSessionId(sessionId);
-    if (!composerQueueActionsEnabled || !isPluginEnabled("composer-queue-panel") || !activeSid
-      || signature !== composerQueueLastEntriesSignature) return;
-    if (action === "recall") void recallSingleQueuedMessage(index, activeSid, signature);
-    else if (action === "recallAll") void recallAllQueuedMessages(activeSid, signature, composerQueueCurrentEntries);
-    else if (action === "delete") void deleteSingleQueuedMessage(index, activeSid, signature);
-    else if (action === "promote") void promoteComposerQueuedMessage(index, activeSid, signature);
-    else if (action === "reorder") void reorderComposerQueuedMessage(index, targetIndex, activeSid, signature);
-    else if (action === "gallery") {
-      const items = composerQueueActionsState?.signature === signature
-        ? [...(composerQueueActionsState.steering || []), ...(composerQueueActionsState.followUp || [])] : [];
-      const entry = composerQueueCurrentEntries[index];
-      if (!entry) return;
-      const images = getQueueEntryAttachments(activeSid, entry.text, index, entry.kind, items[index]?.token);
-      const gallery = images.map((img, i) => ({src: `data:${img.mimeType};base64,${img.data}`, alt: img.alt || `图片附件 ${i + 1}`}));
-      if (gallery.length) openComposerImageZoomModal(gallery[0].src, gallery[0].alt, null, {items: gallery, initialIndex: 0}, {autoEdit: false, source: "queue"});
-    }
-  };
-  window.addEventListener("pi:native-queue-snapshot", handleNativeQueueSnapshot);
-  window.addEventListener("pi:native-queue-action", handleNativeQueueAction);
-  activeCleanups.push(() => {
-    window.removeEventListener("pi:native-queue-snapshot", handleNativeQueueSnapshot);
-    window.removeEventListener("pi:native-queue-action", handleNativeQueueAction);
-    composerQueueNativeHost = null;
-    removeComposerQueuePanel();
-  });
-  window.dispatchEvent(new Event("pi:native-queue-ready"));
-  window.__PI_ENH_SYNC_COMPOSER_QUEUE__ = () => publishNativeQueueDetails();
+  // Retired: queue cache/actions/events/idb migrated to native hook & client (hooks/useComposerQueueBridge.ts)
 
   // Foundation composer layout, pill and resize belong to native React/static CSS.
 
@@ -5094,9 +3397,8 @@
     const nonImageFiles = allClipboardFiles.filter((file) =>
       !(file.type && file.type.startsWith("image/")) || isVideoFile(file.name, file.type));
 
-    // The attachment listener owns file paste. Both capture listeners can run on
-    // this textarea even after stopPropagation, so never upload from formatting.
-    if (nonImageFiles.length > 0 && isPluginEnabled("composer-file-paste")) return;
+    // 普通文件粘贴由原生 ChatInput 的 onPaste 接管，markdown paste 直接返回，由原生处理 (绝不能吞文件)
+    if (nonImageFiles.length > 0) return;
 
     const imageFiles = allClipboardFiles.filter((file) =>
       file.type?.startsWith("image/") && !isVideoFile(file.name, file.type));
@@ -5354,7 +3656,7 @@
           }
           if (Object.keys(identity).length) normalized.goalIdentity = identity;
         }
-        if (["paused", "pending", "active"].includes(state.goalStatus)) {
+        if (["paused", "pending", "active", "idle"].includes(state.goalStatus)) {
           normalized.paused = state.goalStatus === "paused";
           normalized.pausePending = state.goalStatus === "pending";
         } else {
@@ -5575,7 +3877,7 @@
     const pausePending = state.goalStatus === "pending" || Boolean(state.pausePending);
     const paused = !pausePending && (state.goalStatus === "paused" || Boolean(state.paused));
     const statusKey = state.goalStatus || (pausePending ? "pending" : paused ? "paused" : "active");
-    const canControl = ["active", "pending", "paused"].includes(statusKey);
+    const canControl = ["active", "pending", "paused", "idle"].includes(statusKey);
     return {
       sessionId,
       mode: "goal",
@@ -5695,7 +3997,12 @@
     fileItem.addEventListener("click", (e) => {
       e.stopPropagation();
       closeComposerAddMenu();
-      openComposerDocumentPicker(card);
+      const textarea = findComposerTextarea();
+      const host = textarea?.closest?.("[data-pi-native-composer-host]") || textarea?.closest?.("form") || document;
+      const fileInput = host?.querySelector?.('input[data-pi-document-picker]');
+      if (fileInput) {
+        fileInput.click();
+      }
     });
     menu.appendChild(fileItem);
 
@@ -6056,116 +4363,43 @@
     isGoalActionRunning = true;
 
     try {
+      const current = composerModesStateMap.get(sid);
+      const goalState = getComposerGoalState(sid);
+      const identity = current?.goalIdentity;
+      const objective = typeof identity?.objective === "string" ? identity.objective : String(current?.goal || "").trim();
       const engine = getComposerExecutionEngineHint(sid);
-      if (engine === "codex") {
-        const current = composerModesStateMap.get(sid);
-        const goalState = getComposerGoalState(sid);
-        const identity = current?.goalIdentity;
-        const objective = typeof identity?.objective === "string" ? identity.objective : String(current?.goal || "").trim();
-        if (current?.capabilities?.goal !== true || !goalState || !objective || !goalState.action) {
-          showToast("当前目标状态不可操作", null, 2500);
-          return false;
-        }
-        const expected = { objective };
-        if (typeof identity?.createdAt === "string" || typeof identity?.createdAt === "number") {
-          expected.createdAt = identity.createdAt;
-        }
-        const actionRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "composer_goal_action", action, expected }),
-        });
-        const actionData = await actionRes.json().catch(() => null);
-        const authoritative = parseExtensionStatus(actionData, "composer-modes");
-        if (!actionRes.ok || actionData?.success === false || authoritative?.version !== 1 || authoritative.mode !== "goal") {
-          showToast(actionData?.error || "目标控制未获服务端确认", null, 3000);
-          return false;
-        }
-        const returnedObjective = authoritative.goalIdentity?.objective || authoritative.goal;
-        if (returnedObjective !== objective || !commitComposerModeState(sid, authoritative)) {
-          showToast("目标状态已变化，未应用控制结果", null, 3000);
-          return false;
-        }
-        return true;
+
+      if (engine === "codex" && current?.capabilities?.goal !== true) {
+        showToast("当前目标状态不可操作", null, 2500);
+        return false;
+      }
+      if (!goalState || !objective || !goalState.action) {
+        showToast("当前目标状态不可操作", null, 2500);
+        return false;
       }
 
-      // 0. 检查后端扩展命令是否已注册，防止旧会话尚未加载扩展时将 /composer-goal 当作普通用户消息发给模型
-      const cmdRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
+      // Codex 保持 expected 身份，Pi 也发送同 controltype 与 expected 身份；old missing extension 直接 fail-closed 不走 slash fallback
+      const expected = { objective };
+      if (typeof identity?.createdAt === "string" || typeof identity?.createdAt === "number") {
+        expected.createdAt = identity.createdAt;
+      }
+
+      const actionRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "get_commands" }),
+        body: JSON.stringify({ type: "composer_goal_action", action, expected }),
       });
-      if (!cmdRes.ok) {
-        showToast("无法获取会话命令列表，已拒绝发送目标控制指令", null, 2500);
+      const actionData = await actionRes.json().catch(() => null);
+      const authoritative = parseExtensionStatus(actionData, "composer-modes");
+      if (!actionRes.ok || actionData?.success === false || authoritative?.version !== 1 || authoritative.mode !== "goal") {
+        showToast(actionData?.error || "目标控制未获服务端确认", null, 3000);
         return false;
       }
-      const cmdData = await cmdRes.json().catch(() => null);
-      if (cmdData && cmdData.success === false) {
-        showToast("获取会话命令列表失败，已拒绝发送目标控制指令", null, 2500);
+      const returnedObjective = authoritative.goalIdentity?.objective || authoritative.goal;
+      if (returnedObjective !== objective || !commitComposerModeState(sid, authoritative)) {
+        showToast("目标状态已变化，未应用控制结果", null, 3000);
         return false;
       }
-      const commands = cmdData?.data?.commands || cmdData?.commands || [];
-      const hasComposerGoal = Array.isArray(commands) && commands.some(
-        (c) => c?.name === "composer-goal" || c?.name === "/composer-goal"
-      );
-      if (!hasComposerGoal) {
-        showToast("该会话未加载 composer-goal 命令，需等待空闲后输入 /reload 重新加载", null, 4000);
-        return false;
-      }
-
-      // 1. 发送真实 POST 扩展命令（/composer-goal pause|resume 在忙碌中亦被允许）
-      const promptRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "prompt", message: `/composer-goal ${action}` }),
-      });
-
-      if (!promptRes.ok) {
-        showToast("目标控制请求失败，请稍后重试", null, 2500);
-        return false;
-      }
-      const promptData = await promptRes.json().catch(() => null);
-      if (promptData && promptData.success === false) {
-        showToast(`目标控制被拒绝: ${promptData.error || "未知原因"}`, null, 3000);
-        return false;
-      }
-
-      // 2. 回读对应会话状态确认（必须读取真实扩展状态，绝不伪造成功）
-      const postStateRes = await window.fetch(`/api/agent/${encodeURIComponent(sid)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "get_state" }),
-      });
-
-      if (!postStateRes.ok) {
-        showToast("回读会话状态失败，未更新目标状态", null, 2500);
-        return false;
-      }
-
-      const postStateData = await postStateRes.json().catch(() => null);
-      const parsed = parseExtensionStatus(postStateData, "composer-modes");
-
-      if (!parsed || parsed.version !== 1 || parsed.mode !== "goal" || postStateData?.success === false) {
-        showToast("回读状态异常或目标模式已改变，操作未确认", null, 3000);
-        return false;
-      }
-
-      const newPending = Boolean(parsed.pausePending);
-      const newPaused = Boolean(parsed.paused);
-
-      if (action === "pause" && !newPending && !newPaused) {
-        showToast("暂停未生效，请检查会话状态", null, 3000);
-        return false;
-      }
-      if (action === "resume" && (newPending || newPaused)) {
-        showToast("恢复未生效，请重试", null, 3000);
-        return false;
-      }
-
-      // 3. 真实确认后更新本地会话模式映射
-      if (!commitComposerModeState(sid, parsed)) return false;
-
-      // The shared commit already publishes controls and the legacy footer once.
       return true;
     } catch (e) {
       showToast("操作发生异常，请检查网络", null, 3000);
@@ -8205,20 +6439,15 @@
   window.__PI_ENH_IS_MOBILE_ENV__ = isMobileEnvironment;
 
   // ==========================================
-  // Mobile Swipe Drawer (手机手势右滑打开会话、右边缘左滑打开会话导航与关闭文件面板)
+  // Mobile Swipe (手机端文件面板滑动关闭；侧边栏手势由 AppShell useMobileHorizontalSwipe 原生拥有)
   // ==========================================
   let mobileSwipeTracking = false;
   let mobileSwipeStartX = 0;
   let mobileSwipeStartY = 0;
   let mobileSwipeStartTime = 0;
   let mobileSwipeEligible = false;
-  let mobileSwipeDirection = null; // "open" | "close"
-  let mobileSwipeTargetType = null; // "session-sidebar" | "file-panel"
-  let mobileSwipeInitialOpen = false;
-  let mobileSwipeInitialFilePanelOpen = false;
   let mobileSwipeIntent = null; // null | "horizontal" | "vertical"
   let mobileSwipeResetTimer = null;
-  let mobileSwipeCachedWidth = 280;
 
   function getSessionSidebarElement() {
     return (typeof document !== "undefined" && (document.getElementById("session-sidebar") || document.querySelector(".sidebar-container, .sessions-sidebar"))) || null;
@@ -8231,8 +6460,6 @@
   function getFilePanelElement() {
     return (typeof document !== "undefined" && (document.getElementById("file-panel") || document.querySelector(".right-panel-container"))) || null;
   }
-
-
 
   function isMobileDrawerMode() {
     if (typeof window === "undefined") return true;
@@ -8325,42 +6552,14 @@
       clearTimeout(mobileSwipeResetTimer);
       mobileSwipeResetTimer = null;
     }
-    const sidebar = getSessionSidebarElement();
-    const backdrop = getSidebarBackdropElement();
     const filePanel = getFilePanelElement();
-    if (sidebar && sidebar.style) {
-      sidebar.style.transition = "";
-      sidebar.style.transform = "";
-      sidebar.style.willChange = "";
-    }
-    if (backdrop) {
-      const isOpen = isSessionSidebarOpen();
-      if (backdrop.style) {
-        backdrop.style.transition = "";
-        // 关键防护：关闭状态下必须强制透明且隐藏，严禁留空导致黑蒙层覆盖聊天区造成白字变暗/变黑
-        if (!isOpen) {
-          backdrop.style.opacity = "0";
-          backdrop.style.pointerEvents = "none";
-          backdrop.style.visibility = "hidden";
-        } else {
-          backdrop.style.opacity = "1";
-          backdrop.style.pointerEvents = "auto";
-          backdrop.style.visibility = "visible";
-        }
-      }
-      backdrop.setAttribute("data-drawer-active", isOpen ? "true" : "false");
-      if (typeof document !== "undefined" && document.documentElement) {
-        document.documentElement.classList.toggle("pi-sidebar-drawer-active", isOpen);
-      }
-    }
     if (filePanel && filePanel.style) {
       filePanel.style.transition = "";
       filePanel.style.transform = "";
     }
-
   }
 
-  // 关键防护：精准识别拖动调整宽度（Resize Handle / isResizing），坚决避让绝不误关闭侧边栏
+  // 关键防护：精准识别拖动调整宽度（Resize Handle / isResizing），坚决避让
   function isResizeHandleElement(target) {
     if (!target) return false;
     let cur = target;
@@ -8484,18 +6683,18 @@
     if (!isPluginEnabled("mobile-swipe-drawer")) {
       return;
     }
-    // The native AppShell owns session-sidebar touch state for both engines.
-    // This legacy handler retains only the file-panel gesture on native pages.
-    if (getSessionSidebarElement()?.getAttribute("data-pi-native-sidebar-gestures") === "true" && !isFilePanelOpen()) {
-      mobileSwipeTracking = false;
-      mobileSwipeEligible = false;
-      return;
-    }
     if (mobileSwipeResetTimer) {
       resetMobileSwipeStyles();
     }
     if (!e || !e.touches || e.touches.length !== 1) {
       mobileSwipeTracking = false;
+      return;
+    }
+
+    // 05 移动手势仅负责关闭已打开的文件面板；侧边栏手势由 AppShell useMobileHorizontalSwipe 原生拥有
+    if (!isFilePanelOpen()) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
       return;
     }
 
@@ -8506,7 +6705,24 @@
       try { pointEl = document.elementFromPoint(touch.clientX, touch.clientY); } catch (err) {}
     }
 
-    // 0. 核心防护：如果触摸点落在输入框、任何按钮、排队面板或输入卡片内部，绝对退出手势追踪，绝不拦截！
+    // 核心契约：file 手势仅从实际 file-panel 内部开始
+    const filePanel = getFilePanelElement();
+    if (!filePanel) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+    const isInFilePanel = Boolean(
+      (targetEl && (targetEl === filePanel || (typeof filePanel.contains === "function" && filePanel.contains(targetEl)))) ||
+      (pointEl && (pointEl === filePanel || (typeof filePanel.contains === "function" && filePanel.contains(pointEl))))
+    );
+    if (!isInFilePanel) {
+      mobileSwipeTracking = false;
+      mobileSwipeEligible = false;
+      return;
+    }
+
+    // 避让 1：输入框、按钮、排队面板或输入卡片内部
     if (
       (targetEl && targetEl.closest && targetEl.closest("button, [data-pi-native-composer-host], .pi-enh-cursor-composer, .pi-enh-queue-panel, input, textarea")) ||
       (pointEl && pointEl.closest && pointEl.closest("button, [data-pi-native-composer-host], .pi-enh-cursor-composer, .pi-enh-queue-panel, input, textarea"))
@@ -8516,62 +6732,25 @@
       return;
     }
 
-    // 1. 弹窗模式下完全避让
+    // 避让 2：弹窗模式
     if (isTopLayerModalActive(targetEl) || isTopLayerModalActive(pointEl)) {
       mobileSwipeTracking = false;
       mobileSwipeEligible = false;
       return;
     }
 
-    // 2. 关键防护：触摸点在调整侧边栏宽度的分隔手柄上，坚决避让，杜绝误触关闭侧边栏！
+    // 避让 3：调整面板大小的分隔手柄
     if (isResizeHandleElement(targetEl) || isResizeHandleElement(pointEl)) {
       mobileSwipeTracking = false;
       mobileSwipeEligible = false;
       return;
     }
 
-    // 3. 触摸点位于代码块、可水平滚动区域或输入控件内，避让其内部滚动与输入
+    // 避让 4：代码块与水平可滚动区域（readonly 代码横滑避让）
     if (isCodeBlockOrScrollableElement(targetEl) || isCodeBlockOrScrollableElement(pointEl)) {
       mobileSwipeTracking = false;
       mobileSwipeEligible = false;
       return;
-    }
-
-    // 4. 关键原则：触摸起点在 native 导航层一律早退，聊天左滑由原生 own
-    if (
-      (targetEl && targetEl.closest && targetEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']")) ||
-      (pointEl && pointEl.closest && pointEl.closest(".chat-mobile-navigation-layer, [data-mobile-navigation-layer='true']"))
-    ) {
-      mobileSwipeTracking = false;
-      mobileSwipeEligible = false;
-      return;
-    }
-
-    const winWidth = typeof window !== "undefined" && typeof window.innerWidth === "number" ? window.innerWidth : 390;
-    const isDrawer = isMobileDrawerMode();
-    const isSidebarCurrentlyOpen = isSessionSidebarOpen();
-    const isFilePanelCurrentlyOpen = isFilePanelOpen();
-
-    // 5. 起始手势目标分类 (Target Type) 与范围检测：仅保留 session-sidebar 与 file-panel
-    if (isFilePanelCurrentlyOpen) {
-      mobileSwipeTargetType = "file-panel";
-      mobileSwipeInitialFilePanelOpen = true;
-      mobileSwipeInitialOpen = false;
-    } else if (isSidebarCurrentlyOpen) {
-      mobileSwipeTargetType = "session-sidebar";
-      mobileSwipeInitialOpen = true;
-      mobileSwipeInitialFilePanelOpen = false;
-    } else {
-      // 侧边栏未打开：只有在允许滑出的屏幕区域才锁定为 session-sidebar
-      const maxStartX = isDrawer ? Math.max(280, winWidth * 0.85) : Math.min(580, winWidth * 0.75);
-      if (touch.clientX > maxStartX) {
-        mobileSwipeTracking = false;
-        mobileSwipeEligible = false;
-        return;
-      }
-      mobileSwipeTargetType = "session-sidebar";
-      mobileSwipeInitialOpen = false;
-      mobileSwipeInitialFilePanelOpen = false;
     }
 
     mobileSwipeStartX = touch.clientX;
@@ -8580,16 +6759,6 @@
     mobileSwipeTracking = true;
     mobileSwipeEligible = true;
     mobileSwipeIntent = null;
-
-    if (mobileSwipeTargetType === "session-sidebar") {
-      const currentSidebar = getSessionSidebarElement();
-      if (currentSidebar) {
-        mobileSwipeCachedWidth = currentSidebar.offsetWidth || (currentSidebar.getBoundingClientRect && currentSidebar.getBoundingClientRect().width) || 280;
-        if (currentSidebar.style) currentSidebar.style.willChange = "transform";
-      } else {
-        mobileSwipeCachedWidth = 280;
-      }
-    }
   }
 
   function handleMobileSwipeTouchMove(e) {
@@ -8611,12 +6780,11 @@
     const absX = Math.abs(deltaX);
     const absY = Math.abs(deltaY);
 
-    // 1. 意图探测死区与极速锁定（降至 4px，手势极为敏锐跟手）
+    // 1. 意图探测死区与极速锁定（4px）
     if (mobileSwipeIntent === null) {
-      // 在 4px 死区内微小移动暂不动作
       if (absX < 4 && absY < 4) return;
 
-      // 用户非常明确在纵向浏览聊天记录时，安全让位给原生纵向滚动
+      // 纵向让位：用户明确在纵向滚动时，安全让位原生纵向滚动
       if (absY >= 12 && absY > absX * 1.35) {
         mobileSwipeIntent = "vertical";
         mobileSwipeTracking = false;
@@ -8631,94 +6799,29 @@
       }
     }
 
-    // 关键防抢占：当侧边栏与文件面板均未打开时，负向滑动（deltaX <= 0 向左划）
-    // 属于聊天原生左滑打开导航手势，05 模块绝不 preventDefault，直接早退放弃
-    if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
-      mobileSwipeTracking = false;
-      mobileSwipeEligible = false;
+    // 文件面板位于右侧，向右滑（deltaX > 0）拖拽关闭，向左滑（deltaX <= 0）不处理
+    if (deltaX <= 0) {
       return;
     }
 
-    // 2. 意图已锁定为水平滑动：
     if (mobileSwipeIntent === "horizontal") {
-      // 再次确认：如果未打开侧边栏且 deltaX <= 0，绝不 preventDefault
-      if (!mobileSwipeInitialOpen && !mobileSwipeInitialFilePanelOpen && deltaX <= 0) {
-        mobileSwipeTracking = false;
-        mobileSwipeEligible = false;
-        return;
-      }
-
       if (e.cancelable && typeof e.preventDefault === "function") {
         e.preventDefault();
       }
 
-      // 判定 1：右侧文件面板打开且向右滑，驱动文件面板关闭
-      if (mobileSwipeInitialFilePanelOpen && deltaX > 0) {
-        const filePanel = getFilePanelElement();
-        if (filePanel) {
-          filePanel.style.transition = "none";
-          filePanel.style.transform = `translateX(${deltaX}px)`;
-        }
-        return;
-      }
-
-      // 判定 3：会话列表滑动逻辑
-      const isDrawer = isMobileDrawerMode();
-      const sidebar = getSessionSidebarElement();
-      const backdrop = getSidebarBackdropElement();
-      if (!sidebar) return;
-
-      const sidebarWidth = mobileSwipeCachedWidth || 280;
-
-      if (deltaX > 0 && !mobileSwipeInitialOpen) {
-        // 向右划：拉出会话列表抽屉
-        const offset = Math.min(deltaX, sidebarWidth);
-        sidebar.style.transition = "none";
-        sidebar.style.transform = isDrawer ? `translateX(calc(-100% + ${offset}px))` : `translateX(${offset - sidebarWidth}px)`;
-        if (backdrop && backdrop.style) {
-          backdrop.style.transition = "none";
-          backdrop.style.visibility = "visible";
-          backdrop.style.opacity = String(Math.min(1, Math.max(0, offset / sidebarWidth)));
-          backdrop.style.pointerEvents = "auto";
-          backdrop.setAttribute("data-drawer-active", "true");
-          if (typeof document !== "undefined" && document.documentElement) {
-            document.documentElement.classList.add("pi-sidebar-drawer-active");
-          }
-        }
-      } else if (deltaX < 0 && mobileSwipeInitialOpen) {
-        // 向左划：推回收起会话列表抽屉
-        const offset = Math.max(deltaX, -sidebarWidth);
-        sidebar.style.transition = "none";
-        sidebar.style.transform = `translateX(${offset}px)`;
-        if (backdrop && backdrop.style) {
-          backdrop.style.transition = "none";
-          backdrop.style.opacity = String(Math.min(1, Math.max(0, 1 + offset / sidebarWidth)));
-        }
+      const filePanel = getFilePanelElement();
+      if (filePanel && filePanel.style) {
+        filePanel.style.transition = "none";
+        filePanel.style.transform = `translateX(${deltaX}px)`;
       }
     }
   }
 
   function snapBackMobileSwipe() {
-    const isDrawer = isMobileDrawerMode();
-    const sidebar = getSessionSidebarElement();
-    const backdrop = getSidebarBackdropElement();
     const filePanel = getFilePanelElement();
-    if (sidebar && sidebar.style) {
-      sidebar.style.transition = "transform 0.18s ease";
-      sidebar.style.transform = mobileSwipeInitialOpen ? "translateX(0)" : (isDrawer ? "translateX(-100%)" : "");
-    }
-    if (backdrop && backdrop.style) {
-      backdrop.style.transition = "opacity 0.18s ease";
-      backdrop.style.opacity = mobileSwipeInitialOpen ? "1" : "0";
-      if (!mobileSwipeInitialOpen) {
-        backdrop.style.pointerEvents = "none";
-        backdrop.style.visibility = "hidden";
-        backdrop.setAttribute("data-drawer-active", "false");
-      }
-    }
     if (filePanel && filePanel.style) {
       filePanel.style.transition = "transform 0.18s ease";
-      filePanel.style.transform = mobileSwipeInitialFilePanelOpen ? "translateX(0)" : "translateX(100%)";
+      filePanel.style.transform = "translateX(0)";
     }
     mobileSwipeResetTimer = setTimeout(() => {
       resetMobileSwipeStyles();
@@ -8751,115 +6854,39 @@
     const absY = Math.abs(deltaY);
     const elapsed = Date.now() - mobileSwipeStartTime;
 
-    // 动态根据用户配置的阈值进行判定：
-    // triggerDist：拖拽阈值（默认 30px，可在设置中自由调节 10~120px）
-    // flickDist：快速轻拂扫动阈值（triggerDist * 0.55，最低 14px）
     const triggerDist = getMobileSwipeTriggerDistance();
     const flickDist = Math.max(14, Math.round(triggerDist * 0.55));
     const isHorizontal = mobileSwipeIntent === "horizontal" || absX >= absY * 0.65;
     const isFlick = elapsed < 380 && absX >= flickDist;
     const isDrag = absX >= triggerDist;
 
-    if (isHorizontal && (isFlick || isDrag)) {
-      // 场景 1：右侧文件面板打开且向右划 -> 关闭文件面板
-      if (mobileSwipeInitialFilePanelOpen && deltaX > 0) {
-        const filePanel = getFilePanelElement();
-        if (filePanel && filePanel.style) {
-          filePanel.style.transition = "transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)";
-          filePanel.style.transform = "translateX(100%)";
-        }
-        closeFilePanel();
-        mobileSwipeResetTimer = setTimeout(() => {
-          resetMobileSwipeStyles();
-          mobileSwipeResetTimer = null;
-        }, 240);
-        return;
+    // 单指右滑（deltaX > 0）且达到阈值 -> 关闭文件面板
+    if (isHorizontal && deltaX > 0 && (isFlick || isDrag)) {
+      const filePanel = getFilePanelElement();
+      if (filePanel && filePanel.style) {
+        filePanel.style.transition = "transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)";
+        filePanel.style.transform = "translateX(100%)";
       }
-
-      const isDrawer = isMobileDrawerMode();
-
-      // 场景 2：向右划（deltaX > 0）且当前未开 -> 打开会话列表面板！
-      if (deltaX > 0 && !mobileSwipeInitialOpen) {
-        const sidebar = getSessionSidebarElement();
-        const backdrop = getSidebarBackdropElement();
-        if (sidebar && sidebar.style) {
-          sidebar.style.transition = "transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)";
-          sidebar.style.transform = "translateX(0)";
-        }
-        if (backdrop && backdrop.style) {
-          backdrop.style.transition = "opacity 0.22s ease";
-          backdrop.style.opacity = "1";
-          backdrop.style.pointerEvents = "auto";
-          backdrop.style.visibility = "visible";
-          backdrop.setAttribute("data-drawer-active", "true");
-        }
-        openSessionSidebar();
-        mobileSwipeResetTimer = setTimeout(() => {
-          resetMobileSwipeStyles();
-          mobileSwipeResetTimer = null;
-        }, 240);
-        return;
-      }
-
-      // 场景 3：向左划（deltaX < 0）且当前已开 -> 收起会话列表面板
-      if (deltaX < 0 && (mobileSwipeInitialOpen || isSessionSidebarOpen())) {
-        const sidebar = getSessionSidebarElement();
-        const backdrop = getSidebarBackdropElement();
-        if (sidebar && sidebar.style) {
-          sidebar.style.transition = "transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)";
-          sidebar.style.transform = isDrawer ? "translateX(-100%)" : "translateX(-20px)";
-        }
-        if (backdrop && backdrop.style) {
-          backdrop.style.transition = "opacity 0.22s ease";
-          backdrop.style.opacity = "0";
-          backdrop.setAttribute("data-drawer-active", "false");
-        }
-        closeSessionSidebar();
-        mobileSwipeResetTimer = setTimeout(() => {
-          resetMobileSwipeStyles();
-          mobileSwipeResetTimer = null;
-        }, 240);
-        return;
-      }
-
-      snapBackMobileSwipe();
-    } else {
-      snapBackMobileSwipe();
+      closeFilePanel();
+      mobileSwipeResetTimer = setTimeout(() => {
+        resetMobileSwipeStyles();
+        mobileSwipeResetTimer = null;
+      }, 240);
+      return;
     }
+
+    // 未达阈值 -> 回弹复位
+    snapBackMobileSwipe();
   }
 
   function handleMobileSwipeTouchCancel(e) {
-    if (mobileSwipeTracking && mobileSwipeEligible) {
-      const touch = (e && e.changedTouches && e.changedTouches[0]) || null;
-      if (touch) {
-        const deltaX = touch.clientX - mobileSwipeStartX;
-        const deltaY = touch.clientY - mobileSwipeStartY;
-        const absX = Math.abs(deltaX);
-        const absY = Math.abs(deltaY);
-        const elapsed = Date.now() - mobileSwipeStartTime;
-        const triggerDist = getMobileSwipeTriggerDistance();
-        const flickDist = Math.max(14, Math.round(triggerDist * 0.55));
-        const isHorizontal = mobileSwipeIntent === "horizontal" || absX >= absY * 0.65;
-        if (isHorizontal && (absX >= triggerDist || (elapsed < 380 && absX >= flickDist))) {
-          if (deltaX > 0 && !mobileSwipeInitialOpen) {
-            openSessionSidebar();
-            mobileSwipeTracking = false;
-            mobileSwipeResetTimer = setTimeout(() => {
-              resetMobileSwipeStyles();
-              mobileSwipeResetTimer = null;
-            }, 240);
-            return;
-          } else if (deltaX < 0 && (mobileSwipeInitialOpen || isSessionSidebarOpen())) {
-            closeSessionSidebar();
-            mobileSwipeTracking = false;
-            resetMobileSwipeStyles();
-            return;
-          }
-        }
-      }
-    }
+    // A system gesture can cancel touches anywhere on the page. Only a
+    // gesture owned by the open file panel may animate that panel back.
+    if (!mobileSwipeTracking || !mobileSwipeEligible) return;
     mobileSwipeTracking = false;
-    snapBackMobileSwipe();
+    mobileSwipeEligible = false;
+    if (isFilePanelOpen()) snapBackMobileSwipe();
+    else resetMobileSwipeStyles();
   }
 
   function syncMobileSwipeDrawer(enabled) {
@@ -9474,6 +7501,7 @@
       selectedSessionBatchIds.clear();
       lastBatchClickedSessionId = null;
       isBatchDragging = false;
+      cleanBatchTouchState(true);
       closeBatchDeleteModal();
     }
 
@@ -9550,23 +7578,46 @@
       entry.id = "pi-enh-batch-delete-job-entry";
       entry.type = "button";
       entry.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:10020;padding:8px 12px;border:1px solid var(--border);border-radius:999px;background:var(--bg-panel);color:var(--text);box-shadow:0 4px 16px rgba(0,0,0,.22);font-size:12px;cursor:pointer";
+      entry.style.touchAction = "pan-y";
+      let swipe = null;
+      entry.addEventListener("pointerdown", (event) => {
+        swipe = null;
+        if (!isBatchDeleteJobTerminal() || event.isPrimary === false || event.button !== 0) return;
+        swipe = { id: event.pointerId, x: event.clientX, y: event.clientY, job: batchDeleteJob };
+        try { entry.setPointerCapture(event.pointerId); } catch (e) {}
+      });
+      entry.addEventListener("pointerup", (event) => {
+        const start = swipe;
+        swipe = null;
+        if (!start || start.id !== event.pointerId || start.job !== batchDeleteJob || !isBatchDeleteJobTerminal()) return;
+        const dx = Math.abs(event.clientX - start.x);
+        const dy = Math.abs(event.clientY - start.y);
+        if (dx < 64 || dx <= dy * 1.5) return;
+        event.preventDefault();
+        dismissBatchDeleteJob();
+      });
+      entry.addEventListener("pointercancel", () => { swipe = null; });
+      entry.addEventListener("lostpointercapture", () => { swipe = null; });
       entry.addEventListener("click", () => openBatchDeleteJobModal());
       document.body.appendChild(entry);
     }
     batchDeleteJobEntry = entry;
     const job = batchDeleteJob;
+    const unresolvedCount = (job.failedIds?.length || 0) + (job.unknownIds?.length || 0) + (job.notStartedIds?.length || 0);
     const label = job.connectionState === "not_found"
       ? "任务待核对"
       : job.connectionState === "reconnecting"
         ? "连接待恢复"
         : job.done
-          ? (job.status === "completed" ? "已完成" : "结果待核对")
+          ? (job.status === "completed" ? (unresolvedCount > 0 ? "部分未删除" : "已完成") : "结果待核对")
           : job.status === "interrupted"
             ? "中断待核对"
             : "删除进行中";
     const processed = Number.isSafeInteger(job.processed) ? job.processed : 0;
     entry.textContent = `批量删除 ${processed}/${job.ids.length} · ${label} · 查看`;
-    entry.title = "查看或重新同步此删除任务；隐藏不会取消服务器任务";
+    entry.title = job.done
+      ? "点击查看结果；向左或向右滑动清除此提示"
+      : "查看或重新同步此删除任务；隐藏不会取消服务器任务";
     entry.setAttribute("aria-label", entry.textContent);
   }
 
@@ -9593,6 +7644,113 @@
     batchDeleteJob = null; // The durable browser pointer is restored by the next runtime.
     removeBatchDeleteJobEntry();
   });
+
+  function formatBatchDeleteResultItem(id, job) {
+    const unknown = Array.isArray(job?.unknownIds) ? job.unknownIds : [];
+    const notStarted = Array.isArray(job?.notStartedIds) ? job.notStartedIds : [];
+
+    let state = "failed";
+    let stateLabel = "失败";
+    if (unknown.includes(id)) {
+      state = "unknown";
+      stateLabel = "未知";
+    } else if (notStarted.includes(id)) {
+      state = "not_started";
+      stateLabel = "未执行";
+    }
+
+    const rawTitle = typeof getSessionTitleForBatch === "function" ? getSessionTitleForBatch(id) : "";
+    const hasDistinctTitle = Boolean(rawTitle && rawTitle !== id);
+    const idDisplay = hasDistinctTitle ? `${rawTitle} (${id})` : id;
+
+    const rawError = (job?.itemErrors && typeof job.itemErrors === "object") ? job.itemErrors[id] : null;
+    let reason = "";
+    if (typeof rawError === "string" && rawError.trim()) {
+      reason = rawError.trim();
+    } else {
+      // 保守 fallback，保留区别，绝不臆造 busy 原因
+      if (state === "unknown") {
+        reason = "状态未知，未确认是否已删除";
+      } else if (state === "not_started") {
+        reason = "任务提前停止，未开始删除";
+      } else {
+        reason = "删除未成功";
+      }
+    }
+    return `[${stateLabel}] ${idDisplay}: ${reason}`;
+  }
+
+  function renderBatchDeleteResultDetails(containerEl, job) {
+    if (!containerEl) return;
+    if (typeof document === "undefined") {
+      containerEl.textContent = "";
+      return;
+    }
+
+    const failed = Array.isArray(job?.failedIds) ? job.failedIds : [];
+    const unknown = Array.isArray(job?.unknownIds) ? job.unknownIds : [];
+    const notStarted = Array.isArray(job?.notStartedIds) ? job.notStartedIds : [];
+
+    // 成功项不列为错误：过滤掉已确认成功的项
+    const confirmedSet = job?.appliedDeletedIds instanceof Set
+      ? job.appliedDeletedIds
+      : new Set(Array.isArray(job?.appliedDeletedIds) ? job.appliedDeletedIds : []);
+
+    const unresolved = [];
+    const seen = new Set();
+    for (const id of [...failed, ...unknown, ...notStarted]) {
+      if (typeof id === "string" && id && !seen.has(id) && !confirmedSet.has(id)) {
+        seen.add(id);
+        unresolved.push(id);
+      }
+    }
+
+    if (unresolved.length === 0) {
+      if (typeof containerEl.replaceChildren === "function") {
+        containerEl.replaceChildren();
+      } else {
+        containerEl.textContent = "";
+      }
+      containerEl.style.display = "none";
+      return;
+    }
+
+    containerEl.style.display = "block";
+    containerEl.style.marginTop = "8px";
+    containerEl.style.fontSize = "11px";
+    containerEl.style.color = "var(--text-muted, #71717a)";
+    containerEl.style.maxHeight = "180px";
+    containerEl.style.overflowY = "auto";
+    containerEl.style.overflowX = "hidden";
+    containerEl.style.wordBreak = "break-word";
+    containerEl.style.overflowWrap = "anywhere";
+
+    const MAX_DISPLAY = 20;
+    const displayItems = unresolved.slice(0, MAX_DISPLAY);
+
+    // 清空现有子节点，只用 textContent，严禁 innerHTML
+    if (typeof containerEl.replaceChildren === "function") {
+      containerEl.replaceChildren();
+    } else {
+      containerEl.textContent = "";
+    }
+
+    for (const id of displayItems) {
+      const itemEl = document.createElement("div");
+      itemEl.className = "pi-enh-batch-result-detail-item";
+      itemEl.style.cssText = "margin-top: 4px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;";
+      itemEl.textContent = formatBatchDeleteResultItem(id, job);
+      containerEl.appendChild(itemEl);
+    }
+
+    if (unresolved.length > MAX_DISPLAY) {
+      const moreEl = document.createElement("div");
+      moreEl.className = "pi-enh-batch-result-detail-more";
+      moreEl.style.cssText = "margin-top: 4px; font-style: italic; color: var(--text-muted, #71717a);";
+      moreEl.textContent = `... 等共 ${unresolved.length} 项未删除/待核对`;
+      containerEl.appendChild(moreEl);
+    }
+  }
 
   function createBatchDeleteModal(targetIds, view = "confirm") {
     const count = targetIds.length;
@@ -9630,7 +7788,7 @@
               <span id="pi-enh-batch-stat-failed" style="display: none; color: #ef4444;">失败: 0</span>
               <span id="pi-enh-batch-stat-unknown" style="display: none; color: #f59e0b;">未知/待确认: 0</span>
             </div>
-            <div id="pi-enh-batch-progress-result-ids" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere;"></div>
+            <div id="pi-enh-batch-progress-result-ids" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); max-height: 180px; overflow-y: auto; overflow-x: hidden; word-break: break-word; overflow-wrap: anywhere;"></div>
           </div>
         </div>
         <div class="pi-enh-batch-modal-footer">
@@ -9716,8 +7874,9 @@
           unknown.textContent = `未知/待确认: ${progress.unknown}`;
           unknown.style.display = progress.unknown > 0 ? "inline" : "none";
         }
-        const unresolved = [...(batchDeleteJob.unknownIds || []), ...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
-        if (resultIds && unresolved.length) resultIds.textContent = `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`;
+        if (resultIds && typeof renderBatchDeleteResultDetails === "function") {
+          renderBatchDeleteResultDetails(resultIds, batchDeleteJob);
+        }
         if (retry) {
           const retryCount = (batchDeleteJob.failedIds?.length || 0) + (batchDeleteJob.notStartedIds?.length || 0);
           retry.disabled = !batchDeleteJob.done || retryCount === 0;
@@ -9763,12 +7922,14 @@
     let job = isResume ? batchDeleteJob : null;
     if (isResume) {
       if (!job || job.id !== options.jobId || job.ids.length !== targetIds.length || job.ids.some((id, i) => id !== targetIds[i])) return;
+      job.itemErrors = job.itemErrors || {};
     } else {
       if (batchDeleteJob) return;
       job = {
         id: createBatchDeleteJobId(), ids: targetIds.slice(), status: "running", serverStatus: "running",
         processed: 0, lastSequence: 0, connectionState: "connecting", appliedDeletedIds: new Set(),
         failedIds: [], unknownIds: [], notStartedIds: [], done: false,
+        itemErrors: {},
       };
       try {
         saveBatchDeleteJobPointer(job);
@@ -9824,10 +7985,9 @@
         statUnknownEl.textContent = `未知/待确认: ${unknown}`;
         statUnknownEl.style.display = unknown > 0 ? "inline" : "none";
       }
-      const unresolved = [...(job.unknownIds || []), ...(job.failedIds || []), ...(job.notStartedIds || [])];
-      if (resultIdsEl) resultIdsEl.textContent = unresolved.length
-        ? `结果项：${unresolved.slice(0, 12).join("、")}${unresolved.length > 12 ? ` 等 ${unresolved.length} 项` : ""}`
-        : "";
+      if (resultIdsEl && typeof renderBatchDeleteResultDetails === "function") {
+        renderBatchDeleteResultDetails(resultIdsEl, job);
+      }
       const cancelBtn = modal?.querySelector?.('[data-action="cancel"]');
       const modalConfirmBtn = modal?.querySelector?.('[data-action="confirm"]');
       if (cancelBtn && batchDeleteJob === job) {
@@ -10250,6 +8410,14 @@
                 if (inFlightId === r.id) inFlightId = null;
                 resetIdleDeadline();
 
+                if (!r.ok) {
+                  const errorMsg = typeof r.error === "string" && r.error.trim() ? r.error.trim() : (typeof r.reason === "string" && r.reason.trim() ? r.reason.trim() : "");
+                  if (errorMsg) {
+                    if (!job.itemErrors) job.itemErrors = {};
+                    job.itemErrors[r.id] = errorMsg;
+                  }
+                }
+
                 if (r.state === "deleted" || r.state === "missing") {
                   confirmedInBatch.add(r.id);
                   successCount++;
@@ -10367,6 +8535,15 @@
                 }
 
                 for (const item of frame.results) {
+                  if (!item.ok) {
+                    const errorMsg = typeof item.error === "string" && item.error.trim() ? item.error.trim() : (typeof item.reason === "string" && item.reason.trim() ? item.reason.trim() : "");
+                    if (errorMsg) {
+                      if (!job.itemErrors) job.itemErrors = {};
+                      if (!job.itemErrors[item.id]) {
+                        job.itemErrors[item.id] = errorMsg;
+                      }
+                    }
+                  }
                   if (item.state === "not_started") {
                     notStartedIds.add(item.id);
                     restoreSessionDeleteState(item.id, false);
@@ -10461,8 +8638,12 @@
       job.unknownIds = [...unknownIds];
       job.notStartedIds = [...notStartedIds];
       job.connectionState = "connected";
+      const unresolvedCount = failedIds.size + unknownIds.size + notStartedIds.size;
+      const completedStatus = job.status === "completed"
+        ? (unresolvedCount > 0 ? `处理完成，部分未删除 (${totalRequested}/${totalRequested})` : `删除任务完成 (${totalRequested}/${totalRequested})`)
+        : `任务已停止，部分结果需要核对 (${totalRequested}/${totalRequested})`;
       renderProgress({
-        status: job.status === "completed" ? `删除任务完成 (${totalRequested}/${totalRequested})` : `任务已停止，部分结果需要核对 (${totalRequested}/${totalRequested})`,
+        status: completedStatus,
         processed: totalRequested,
         confirmed: successCount,
         failed: failedIds.size,
@@ -10502,6 +8683,12 @@
     const target = event.target;
     const row = target?.closest?.(".pi-enh-session-row-host[data-pi-enh-session-id]");
     if (!row) return;
+    if (Date.now() < batchTouchClickSuppressionUntil) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+      return;
+    }
 
     const sessionId = row.getAttribute("data-pi-enh-session-id");
     if (!sessionId) return;
@@ -10594,10 +8781,108 @@
   addManagedListener(window, "mouseup", () => {
     isBatchDragging = false;
   }, true);
+  // 移动端触摸滑选连续范围计算纯函数 (Pure Range Selection)
+  function computeBatchRangeSelection(snapshot, orderedIds, anchorId, currentId, targetChecked) {
+    const result = new Set(snapshot);
+    if (!anchorId || !currentId || !Array.isArray(orderedIds) || orderedIds.length === 0) {
+      return result;
+    }
+    const anchorIndex = orderedIds.indexOf(anchorId);
+    const currentIndex = orderedIds.indexOf(currentId);
+    if (anchorIndex === -1 || currentIndex === -1) {
+      return result;
+    }
+
+    const minIndex = Math.min(anchorIndex, currentIndex);
+    const maxIndex = Math.max(anchorIndex, currentIndex);
+
+    // 纯算法简化：仅 apply [minIndex, maxIndex] 区间，区间外 new Set(snapshot) 已恢复无需 loop 全列表
+    for (let i = minIndex; i <= maxIndex; i++) {
+      const id = orderedIds[i];
+      if (targetChecked) {
+        result.add(id);
+      } else {
+        result.delete(id);
+      }
+    }
+
+    return result;
+  }
+
+  // 获取当前工作区真实有序会话可选行集合 (按原生 sessionFamilies 真实加工渲染顺序，核对 family 与 children)
+  function getOrderedSessionBatchIds() {
+    let groups = null;
+    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_SESSION_GROUPS__ === "function") {
+      try {
+        const rawGroups = window.__PI_ENH_GET_SESSION_GROUPS__();
+        if (Array.isArray(rawGroups)) {
+          groups = rawGroups;
+        }
+      } catch (_) {}
+    }
+    if (!groups && Array.isArray(latestKnownSessionGroups) && latestKnownSessionGroups.length > 0) {
+      groups = latestKnownSessionGroups;
+    }
+
+    const domRows = (typeof document !== "undefined" && typeof document.querySelectorAll === "function")
+      ? document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]")
+      : [];
+    const domIds = new Set();
+    for (let i = 0; i < domRows.length; i++) {
+      const sid = domRows[i].getAttribute("data-pi-enh-session-id");
+      if (sid) domIds.add(sid);
+    }
+
+    const ids = [];
+    const seen = new Set();
+
+    if (Array.isArray(groups) && groups.length > 0) {
+      for (let i = 0; i < groups.length; i++) {
+        const family = groups[i];
+        const rootId = family?.root?.id;
+        if (rootId && !seen.has(rootId)) {
+          seen.add(rootId);
+          ids.push(rootId);
+        }
+
+        // 核对原生 session-list family 及 children (subagents)
+        const children = Array.isArray(family?.subagents)
+          ? family.subagents
+          : (Array.isArray(family?.children) ? family.children : []);
+        for (let j = 0; j < children.length; j++) {
+          const childId = children[j]?.id;
+          // 仅当子会话在 DOM 中实际存在（展开未折叠）时，才作为可选行紧跟 root 插入
+          if (childId && !seen.has(childId) && domIds.has(childId)) {
+            seen.add(childId);
+            ids.push(childId);
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < domRows.length; i++) {
+        const sid = domRows[i].getAttribute("data-pi-enh-session-id");
+        if (sid && !seen.has(sid)) {
+          seen.add(sid);
+          ids.push(sid);
+        }
+      }
+    }
+
+    return ids;
+  }
+
   // 移动端触摸滑选支持 (Mobile Touch Drag / Swipe Select)
   let isBatchTouchDragging = false;
   let batchTouchTargetState = true;
+  let batchTouchAnchorId = null;
+  let batchTouchCurrentId = null;
+  let batchTouchSnapshot = null;
+  let batchTouchOrderedIds = null;
   let batchTouchAutoScrollRaf = null;
+  let batchTouchClickSuppressionUntil = 0;
+  let batchTouchLastX = 0;
+  let batchTouchLastY = 0;
+  let lastBatchActiveWorkspace = null;
 
   function stopBatchTouchAutoScroll() {
     if (batchTouchAutoScrollRaf) {
@@ -10606,9 +8891,117 @@
     }
   }
 
-  function handleBatchTouchAutoScroll(clientY, scrollContainer) {
-    if (!scrollContainer) return;
+  function cleanBatchTouchState(suppressClick = false) {
+    isBatchTouchDragging = false;
+    batchTouchAnchorId = null;
+    batchTouchCurrentId = null;
+    batchTouchSnapshot = null;
+    batchTouchOrderedIds = null;
+    stopBatchTouchAutoScroll();
+    if (suppressClick) {
+      batchTouchClickSuppressionUntil = Date.now() + 450;
+    }
+  }
+
+  function getBatchCurrentWorkspaceKey() {
+    if (typeof getCurrentProjectStatusKey === "function") {
+      try { return getCurrentProjectStatusKey(); } catch (_) {}
+    }
+    if (typeof window !== "undefined" && typeof window.__PI_ENH_GET_CURRENT_PROJECT_STATUS_KEY__ === "function") {
+      try { return window.__PI_ENH_GET_CURRENT_PROJECT_STATUS_KEY__(); } catch (_) {}
+    }
+    if (typeof document !== "undefined") {
+      const el = document.querySelector("[data-pi-enh-current-project]");
+      if (el) return el.getAttribute("data-pi-enh-current-project") || "";
+      const cwdEl = document.querySelector("[data-current-cwd]");
+      if (cwdEl) return cwdEl.getAttribute("data-current-cwd") || "";
+    }
+    return "";
+  }
+
+  function checkBatchWorkspaceChange() {
+    const currentKey = getBatchCurrentWorkspaceKey();
+    if (lastBatchActiveWorkspace !== null && lastBatchActiveWorkspace !== currentKey) {
+      cleanBatchTouchState(true);
+      selectedSessionBatchIds.clear();
+      lastBatchClickedSessionId = null;
+      isBatchDragging = false;
+    }
+    lastBatchActiveWorkspace = currentKey;
+  }
+
+  // 获取实际 overflow 滚动祖先（非盲猜 row.parent）
+  function getBatchScrollContainer(row) {
+    let el = row?.parentElement;
+    while (el && el !== document.body && el !== document.documentElement) {
+      try {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY || style.overflow;
+        if ((overflowY === "auto" || overflowY === "scroll") && el.scrollHeight > el.clientHeight) {
+          return el;
+        }
+      } catch (_) {}
+      el = el.parentElement;
+    }
+    return document.querySelector(".scrollbar-subtle")
+      || document.querySelector(".sidebar-container div.overflow-y-auto")
+      || document.querySelector(".sessions-sidebar div.overflow-y-auto")
+      || null;
+  }
+
+  function updateBatchSelectionFromPoint(clientX, clientY) {
+    if (!isSessionBatchMode || !isBatchTouchDragging || !batchTouchOrderedIds || !batchTouchAnchorId) {
+      return;
+    }
+    const el = document.elementFromPoint(clientX, clientY);
+    const row = el?.closest?.(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    if (!row) return;
+
+    const sessionId = row.getAttribute("data-pi-enh-session-id");
+    if (!sessionId || sessionId === batchTouchCurrentId) return;
+
+    // anchor/current 必须属于当前项目过滤可见可选集合，不选入隐藏 archive/别项目/child 折叠
+    if (batchTouchOrderedIds.indexOf(sessionId) === -1) return;
+
+    batchTouchCurrentId = sessionId;
+    const nextSelected = computeBatchRangeSelection(
+      batchTouchSnapshot,
+      batchTouchOrderedIds,
+      batchTouchAnchorId,
+      sessionId,
+      batchTouchTargetState
+    );
+
+    const affectedIds = [];
+    for (let i = 0; i < batchTouchOrderedIds.length; i++) {
+      const id = batchTouchOrderedIds[i];
+      if (selectedSessionBatchIds.has(id) !== nextSelected.has(id)) {
+        affectedIds.push(id);
+      }
+    }
+
+    if (affectedIds.length > 0) {
+      selectedSessionBatchIds = nextSelected;
+      lastBatchClickedSessionId = sessionId;
+
+      withMutationGuard(() => {
+        for (let i = 0; i < affectedIds.length; i++) {
+          const id = affectedIds[i];
+          updateSingleBatchRow(id, selectedSessionBatchIds.has(id));
+        }
+        syncSessionBatchBar();
+      });
+
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        try { navigator.vibrate(8); } catch (_) {}
+      }
+    }
+  }
+
+  function handleBatchTouchAutoScroll(scrollContainer) {
+    if (!scrollContainer || !isBatchTouchDragging) return;
     const rect = scrollContainer.getBoundingClientRect();
+    const clientY = batchTouchLastY;
     const threshold = 48;
     const maxSpeed = 12;
     let delta = 0;
@@ -10623,11 +9016,14 @@
 
     if (delta !== 0) {
       scrollContainer.scrollTop += delta;
+      // 重新命中当前坐标并更新 range，手指不动也能持续补齐选区！
+      updateBatchSelectionFromPoint(batchTouchLastX, batchTouchLastY);
+
       if (!batchTouchAutoScrollRaf) {
         batchTouchAutoScrollRaf = requestAnimationFrame(() => {
           batchTouchAutoScrollRaf = null;
           if (isBatchTouchDragging) {
-            handleBatchTouchAutoScroll(clientY, scrollContainer);
+            handleBatchTouchAutoScroll(scrollContainer);
           }
         });
       }
@@ -10637,7 +9033,15 @@
   }
 
   addManagedListener(document, "touchstart", (event) => {
-    if (!isSessionBatchMode || event.touches.length !== 1) return;
+    if (!isSessionBatchMode) return;
+    checkBatchWorkspaceChange();
+    // 多指安全检测：非单指手势不触发划选，若正在拖拽则安全清理并抑制 click
+    if (event.touches.length !== 1) {
+      if (isBatchTouchDragging) {
+        cleanBatchTouchState(true);
+      }
+      return;
+    }
     const touch = event.touches[0];
     const target = event.target;
     if (!target) return;
@@ -10650,15 +9054,32 @@
     if (!sessionId) return;
 
     if (checkboxWrap) {
-      isBatchTouchDragging = true;
-      const currentlyChecked = selectedSessionBatchIds.has(sessionId);
-      batchTouchTargetState = !currentlyChecked;
+      const orderedIds = getOrderedSessionBatchIds();
+      // anchor 必须属于当前项目过滤可见可选集合
+      if (orderedIds.indexOf(sessionId) === -1) return;
 
-      if (batchTouchTargetState) {
-        selectedSessionBatchIds.add(sessionId);
-      } else {
-        selectedSessionBatchIds.delete(sessionId);
-      }
+      // 此手势由滑选处理器拥有；在改 checked 前取消浏览器的兼容鼠标/checkbox 激活。
+      // 仅拦截复选框起点，行内容仍可原生纵向滚动与点击。
+      if (event.cancelable) event.preventDefault();
+
+      isBatchTouchDragging = true;
+      batchTouchAnchorId = sessionId;
+      batchTouchCurrentId = sessionId;
+      batchTouchSnapshot = new Set(selectedSessionBatchIds);
+      batchTouchOrderedIds = orderedIds;
+      // 起始项反选逻辑：若原本已选中，则手势目标为反选 (false)；若原本未选中，则手势目标为选中 (true)
+      batchTouchTargetState = !batchTouchSnapshot.has(sessionId);
+      batchTouchLastX = touch.clientX;
+      batchTouchLastY = touch.clientY;
+
+      const nextSelected = computeBatchRangeSelection(
+        batchTouchSnapshot,
+        batchTouchOrderedIds,
+        sessionId,
+        sessionId,
+        batchTouchTargetState
+      );
+      selectedSessionBatchIds = nextSelected;
       lastBatchClickedSessionId = sessionId;
 
       withMutationGuard(() => {
@@ -10670,52 +9091,34 @@
         try { navigator.vibrate(10); } catch (_) {}
       }
     }
-  }, { passive: true, capture: true });
+  }, { passive: false, capture: true });
 
   addManagedListener(document, "touchmove", (event) => {
-    if (!isSessionBatchMode || !isBatchTouchDragging || event.touches.length !== 1) return;
+    if (!isSessionBatchMode || !isBatchTouchDragging) return;
+    // 多指安全中止：多指操作时取消划选并完整清理，抑制后续 click 杜绝误操作
+    if (event.touches.length !== 1) {
+      cleanBatchTouchState(true);
+      return;
+    }
     const touch = event.touches[0];
+    batchTouchLastX = touch.clientX;
+    batchTouchLastY = touch.clientY;
 
     if (event.cancelable) {
       event.preventDefault();
     }
 
+    updateBatchSelectionFromPoint(touch.clientX, touch.clientY);
+
     const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    if (!el) return;
-
-    const row = el.closest(".pi-enh-session-row-host[data-pi-enh-session-id]");
-    if (row) {
-      const sessionId = row.getAttribute("data-pi-enh-session-id");
-      if (sessionId) {
-        const currentlySelected = selectedSessionBatchIds.has(sessionId);
-        if (currentlySelected !== batchTouchTargetState) {
-          if (batchTouchTargetState) {
-            selectedSessionBatchIds.add(sessionId);
-          } else {
-            selectedSessionBatchIds.delete(sessionId);
-          }
-          lastBatchClickedSessionId = sessionId;
-
-          withMutationGuard(() => {
-            updateSingleBatchRow(sessionId, batchTouchTargetState, row);
-            syncSessionBatchBar();
-          });
-
-          if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-            try { navigator.vibrate(8); } catch (_) {}
-          }
-        }
-      }
-    }
-
-    const scrollContainer = row?.parentElement || document.querySelector(".sidebar-container div.overflow-y-auto") || document.querySelector(".sessions-sidebar div.overflow-y-auto") || document.querySelector(".pi-enh-session-row-host")?.parentElement;
-    handleBatchTouchAutoScroll(touch.clientY, scrollContainer);
+    const row = el?.closest?.(".pi-enh-session-row-host[data-pi-enh-session-id]");
+    const scrollContainer = getBatchScrollContainer(row);
+    handleBatchTouchAutoScroll(scrollContainer);
   }, { passive: false, capture: true });
 
   const endBatchTouch = () => {
     if (isBatchTouchDragging) {
-      isBatchTouchDragging = false;
-      stopBatchTouchAutoScroll();
+      cleanBatchTouchState(true);
       withMutationGuard(() => {
         syncSessionBatchBar();
       });
@@ -10743,6 +9146,7 @@
       unknownIds: [],
       notStartedIds: [],
       done: false,
+      itemErrors: {},
     };
     syncBatchDeleteJobEntry();
   }
@@ -10753,6 +9157,7 @@
   });
 
   function syncSessionBatchActions() {
+    checkBatchWorkspaceChange();
     if (!isPluginEnabled("session-batch-actions")) {
       stopBatchDeleteObserver();
       if (batchDeleteModal) {
@@ -10784,6 +9189,8 @@
   window.__PI_ENH_TOGGLE_SELECT_ALL_BATCH__ = toggleSelectAllBatch;
   window.__PI_ENH_EXECUTE_BATCH_DELETE_SESSIONS__ = executeBatchDeleteSessions;
   window.__PI_ENH_SYNC_SESSION_BATCH_ACTIONS__ = syncSessionBatchActions;
+  window.__PI_ENH_COMPUTE_BATCH_RANGE_SELECTION__ = computeBatchRangeSelection;
+  window.__PI_ENH_GET_ORDERED_SESSION_BATCH_IDS__ = getOrderedSessionBatchIds;
 
   function latestAssistantAwaitsUserReply() {
     const assistants = Array.from(document.querySelectorAll('div[data-message-role="assistant"]'));
@@ -11254,43 +9661,6 @@
       }
     }
 
-    // 2. 右下角排队/后续消息按钮内的微型数字徽标
-    const followupBtn = document.querySelector(".chat-composer-followup, button.pi-enh-cursor-followup, button[title*='排队'], button[title*='后续消息']");
-    if (followupBtn) {
-      let badge = followupBtn.querySelector(".pi-enh-queue-count-badge");
-      if (qCount > 0) {
-        if (!badge) {
-          badge = document.createElement("span");
-          badge.className = "pi-enh-queue-count-badge";
-          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
-          followupBtn.appendChild(badge);
-        }
-        badge.textContent = String(qCount);
-        badge.title = `当前队列中有 ${qCount} 个任务在排队等待执行`;
-        badge.style.display = "inline-flex";
-      } else if (badge) {
-        badge.remove();
-      }
-    }
-
-    // 3. 引导按钮（如果存在）
-    const steerBtn = document.querySelector(".chat-composer-steer, button.pi-enh-cursor-steer");
-    if (steerBtn && !followupBtn) {
-      let badge = steerBtn.querySelector(".pi-enh-queue-count-badge");
-      if (qCount > 0) {
-        if (!badge) {
-          badge = document.createElement("span");
-          badge.className = "pi-enh-queue-count-badge";
-          badge.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--accent,#6366f1);color:#fff;font-size:10px;font-weight:700;line-height:1;margin-left:4px;";
-          steerBtn.appendChild(badge);
-        }
-        badge.textContent = String(qCount);
-        badge.title = `当前队列中有 ${qCount} 个任务在排队`;
-      } else if (badge) {
-        badge.remove();
-      }
-    }
-
     // 4. 输入框 textarea placeholder 动态提示
     const textarea = document.querySelector("textarea.chat-input-textarea, .chat-input textarea, textarea");
     if (textarea && textarea.placeholder && (textarea.placeholder.includes("引导") || textarea.placeholder.includes("排队"))) {
@@ -11333,7 +9703,6 @@
       const sig = JSON.stringify([steering, followUp]);
       if (sig !== lastKnownQueuedSignature || forceTrigger) {
         lastKnownQueuedSignature = sig;
-        window.dispatchEvent(new CustomEvent("pi:native-queue-ready"));
       }
 
       if (data?.running && !queueSyncWatchdogTimer) {

@@ -2069,7 +2069,8 @@
   }
 
   function enabledAnnotations() {
-    return listAnnotations().filter(item => isPluginEnabled(item.kind === "dom" ? "dom-feedback" : "quick-quote"));
+    if (!isPluginEnabled("quick-quote")) return [];
+    return listAnnotations();
   }
 
   function notifyAnnotationSubmissionState() {
@@ -2237,7 +2238,7 @@
 
   function syncAnnotationComposer() {
     notifyAnnotationSubmissionState();
-    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) {
+    if (!isPluginEnabled("quick-quote")) {
       removeAnnotationUi();
       return;
     }
@@ -2262,14 +2263,23 @@
       annotationBatchSelectChecked = false;
       return;
     }
-    const composerCard = textarea.closest?.('[data-pi-native-composer-host] > div[style*="max-width"]') ||
-                         textarea.closest?.('.pi-enh-cursor-composer') ||
-                         textarea.closest?.('[data-pi-native-composer-host]') ||
-                         textarea.closest?.('form');
-    const composerHost = composerCard?.parentElement || textarea.parentElement?.parentElement || textarea.parentElement;
+    const nativeHost = textarea.closest?.('[data-pi-native-composer-host]');
+    const nativeSlot = nativeHost?.querySelector?.('[data-pi-native-annotation-host]') || null;
+    const composerCard = nativeHost?.querySelector?.('.chat-composer-card') ||
+                         (nativeHost ? textarea.closest?.('.chat-composer-card') : null) ||
+                         textarea.closest?.('.pi-enh-cursor-composer');
+    const composerHost = composerCard?.parentElement || nativeHost;
+    const targetHost = nativeHost ? nativeSlot : composerHost;
 
-    if (!annotationRail || !annotationRail.isConnected || annotationRail.parentElement !== composerHost) {
-      if (annotationRail && annotationRail.parentElement && annotationRail.parentElement !== composerHost) {
+    if (!targetHost) {
+      if (annotationRail && annotationRail.parentElement) {
+        try { annotationRail.remove(); } catch {}
+      }
+      return;
+    }
+
+    if (!annotationRail || !annotationRail.isConnected || annotationRail.parentElement !== targetHost) {
+      if (annotationRail && annotationRail.parentElement && annotationRail.parentElement !== targetHost) {
         try { annotationRail.remove(); } catch {}
       }
       if (!annotationRail || !annotationRail.isConnected) {
@@ -2278,7 +2288,9 @@
         annotationRail.setAttribute("role", "region");
         annotationRail.setAttribute("aria-label", "引用注释栏");
       }
-      if (composerCard && composerCard.parentElement) {
+      if (nativeSlot) {
+        nativeSlot.appendChild(annotationRail);
+      } else if (composerCard && composerCard.parentElement) {
         // 不要每次强制rail紧挨card，优先在queuePanel前插入或card前插入，避免与queuePanel互相移动DOM死循环
         const queuePanel = composerCard.parentElement.querySelector?.(".pi-enh-queue-panel");
         const insertTarget = (queuePanel && queuePanel.parentElement === composerCard.parentElement) ? queuePanel : composerCard;
@@ -2287,7 +2299,9 @@
         composerHost.insertBefore(annotationRail, textarea.parentElement || textarea);
       }
     }
-    if (composerCard?.style?.maxWidth && annotationRail) {
+    if (nativeSlot && annotationRail) {
+      annotationRail.style.maxWidth = "";
+    } else if (composerCard?.style?.maxWidth && annotationRail) {
       annotationRail.style.maxWidth = composerCard.style.maxWidth;
     }
 
@@ -2852,7 +2866,7 @@
   }
 
   function openAnnotationEditor(quote, itemId, rect, sourceRange) {
-    if (!isPluginEnabled("quick-quote") && !isPluginEnabled("dom-feedback")) return;
+    if (!isPluginEnabled("quick-quote")) return;
     const existing = itemId ? listAnnotations().find((item) => item.id === itemId) : null;
     const selectedQuote = normalizeAnnotationText(existing?.quote || quote);
     if (!selectedQuote) return;
@@ -3913,8 +3927,8 @@
       const entry = session ? getEffectiveProjectStatusEntry(session.id) : null;
       const status = entry?.status || null;
       if (!status || status === "idle") { restoreStatusRow(row); continue; }
-      // 已读的“本轮结束”立刻从侧边栏清除消失，不在侧边栏残留灰色徽标
-      if (status === "completed" && !entry.unread) { restoreStatusRow(row); continue; }
+      // 完成态保留内部未读/业务状态，不再插入挤占标题的文字标签，无论未读已读均恢复普通行
+      if (status === "completed") { restoreStatusRow(row); continue; }
       if (row.getAttribute("data-pi-enh-project-status") !== status) {
         restoreStatusRow(row);
         row.setAttribute("data-pi-enh-project-status", status);
@@ -5151,56 +5165,5 @@
   }
 
 
-  // ==========================================
-  // 常驻版本号标识 (Persistent Version Badge)
-  // 解决升级后界面无常驻版本号、无法直观确认当前版本的问题
-  // ==========================================
-  const CURRENT_APP_VERSION = "1.4.41";
 
-  function syncPersistentVersionBadges() {
-    if (typeof document === "undefined") return;
-
-    // 1. 侧边栏顶部：在“已连接”状态旁边常驻显示版本号
-    const connEl = Array.from(document.querySelectorAll('div[role="status"] span')).find(el => el.textContent?.trim() === "已连接");
-    if (connEl && connEl.parentElement) {
-      const parent = connEl.parentElement;
-      let verSpan = parent.querySelector(".pi-enh-header-version");
-      if (!verSpan) {
-        verSpan = document.createElement("span");
-        verSpan.className = "pi-enh-header-version";
-        verSpan.style.cssText = "opacity:0.75;margin-left:3px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;";
-        verSpan.title = `Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
-        verSpan.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
-        });
-        parent.appendChild(verSpan);
-      }
-      verSpan.textContent = `· v${CURRENT_APP_VERSION}`;
-    }
-
-    // 2. 侧边栏底部：在快捷按钮栏右侧增加微型胶囊徽章
-    const bottomBtn = document.querySelector(".pi-enh-shortcut-btn, button[data-shortcut-id]");
-    if (bottomBtn && bottomBtn.parentElement) {
-      const bottomBar = bottomBtn.parentElement;
-      let badge = bottomBar.querySelector(".pi-enh-sidebar-bottom-version");
-      if (!badge) {
-        badge = document.createElement("span");
-        badge.className = "pi-enh-sidebar-bottom-version";
-        badge.style.cssText = "display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;background:var(--bg-hover,rgba(255,255,255,0.06));border:1px solid var(--border,rgba(255,255,255,0.12));color:var(--text-dim,#71717a);font-size:10px;font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.4;margin-left:auto;cursor:pointer;user-select:none;";
-        badge.title = `当前版本：Agent Web Plus v${CURRENT_APP_VERSION} (点击复制)`;
-        badge.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (typeof copyText === "function") copyText(`Agent Web Plus v${CURRENT_APP_VERSION}`, `已复制版本号: v${CURRENT_APP_VERSION}`);
-        });
-        bottomBar.appendChild(badge);
-      }
-      badge.textContent = `v${CURRENT_APP_VERSION}`;
-    }
-  }
-
-  if (typeof window !== "undefined") {
-    setInterval(syncPersistentVersionBadges, 1000);
-    setTimeout(syncPersistentVersionBadges, 300);
-  }
 

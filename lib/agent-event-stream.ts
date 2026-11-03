@@ -5,11 +5,14 @@ import {
   type AgentEventLike,
 } from "./agent-event-wire";
 import { acquireSessionLivenessLease } from "./session-liveness";
+import type { TaskTiming } from "./task-timing";
 
 export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
   readonly streamingMessage: unknown;
   isAlive?(): boolean;
+  isRunning?(): boolean;
+  getCurrentTaskTiming?(): TaskTiming | null;
   onEvent(listener: (event: AgentEventLike) => void): () => void;
 }
 
@@ -113,6 +116,61 @@ export function closeAllAgentEventStreams(): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Extracts the canonical fresh snapshot events for a session, including connected,
+ * queue update, pending UI IDs, buffered replay events, and in-flight streaming message start.
+ */
+export function extractSessionSnapshotEvents(
+  session: AgentEventStreamSession,
+  sessionId: string,
+  bufferedEvents: AgentEventLike[] = [],
+): {
+  snapshotEvents: AgentEventLike[];
+  streamingSnapshot: unknown;
+} {
+  const snapshot = session.streamingMessage;
+  const isRunning = session.isStreaming || (typeof session.isRunning === "function" && Boolean(session.isRunning()));
+  const taskTiming = isRunning && typeof session.getCurrentTaskTiming === "function"
+    ? session.getCurrentTaskTiming()
+    : null;
+
+  const events: AgentEventLike[] = [];
+  events.push({
+    type: "connected",
+    sessionId,
+    isStreaming: session.isStreaming,
+    taskTiming,
+    taskTimingObservedAt: Date.now(),
+    pendingExtensionUiIds: bufferedEvents
+      .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
+      .map((event) => event.id as string),
+  });
+
+  try {
+    const queueSnapshot = typeof (session as any).clientQueuedMessages === "function"
+      ? (session as any).clientQueuedMessages()
+      : (session as any).queuedMessages;
+    if (queueSnapshot && ((queueSnapshot.steering?.length ?? 0) > 0 || (queueSnapshot.followUp?.length ?? 0) > 0)) {
+      events.push({ type: "queue_update", ...queueSnapshot });
+    }
+  } catch (e) {
+    console.error("[pi-web] failed to push initial queue snapshot:", e);
+  }
+
+  for (const event of bufferedEvents) {
+    if (!isEventIncludedInSnapshot(event, snapshot)) {
+      const clientEvent = toClientAgentEvent(event);
+      if (clientEvent) events.push(clientEvent);
+    }
+  }
+
+  if (snapshot !== undefined && snapshot !== null) {
+    events.push({ type: "message_start", message: snapshot });
+  }
+
+  return { snapshotEvents: events, streamingSnapshot: snapshot };
 }
 
 /**
@@ -246,6 +304,7 @@ export function createAgentEventStream(
 
           const bufferedEvents: AgentEventLike[] = [];
           let snapshotPublished = false;
+          let currentSnapshot: unknown = session.streamingMessage;
           const handleEvent = (event: AgentEventLike) => {
             if (event.type === "session_shutdown") {
               cleanup(true);
@@ -255,7 +314,7 @@ export function createAgentEventStream(
               bufferedEvents.push(event);
               return;
             }
-            forwardEvent(event, snapshot);
+            forwardEvent(event, currentSnapshot);
           };
 
           const stopListening = session.onEvent(handleEvent);
@@ -270,31 +329,15 @@ export function createAgentEventStream(
           }
           unsubscribe = stopListening;
 
-          const snapshot = session.streamingMessage;
-          encode({
-            type: "connected",
+          const { snapshotEvents, streamingSnapshot } = extractSessionSnapshotEvents(
+            session,
             sessionId,
-            isStreaming: session.isStreaming,
-            // onEvent() has just replayed every request the session still holds,
-            // so a reconnecting client can drop the ones closed while it was away.
-            pendingExtensionUiIds: bufferedEvents
-              .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
-              .map((event) => event.id as string),
-          });
-          // 立即向刚连入或重连的客户端（如手机移动端）推送当前排队队列快照，彻底解决跨设备排队同步不及时
-          try {
-            const queueSnapshot = typeof (session as any).clientQueuedMessages === "function"
-              ? (session as any).clientQueuedMessages()
-              : (session as any).queuedMessages;
-            if (queueSnapshot && ((queueSnapshot.steering?.length ?? 0) > 0 || (queueSnapshot.followUp?.length ?? 0) > 0)) {
-              encode({ type: "queue_update", ...queueSnapshot });
-            }
-          } catch (e) {
-            console.error("[pi-web] failed to push initial queue snapshot:", e);
-          }
-          for (const event of bufferedEvents) forwardEvent(event, snapshot);
-          if (snapshot !== undefined && snapshot !== null) {
-            encode({ type: "message_start", message: snapshot });
+            bufferedEvents,
+          );
+          currentSnapshot = streamingSnapshot;
+
+          for (const event of snapshotEvents) {
+            encode(event);
           }
           snapshotPublished = true;
         } catch (error) {

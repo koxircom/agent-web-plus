@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
@@ -26,8 +27,22 @@ test("the active viewer restores tab state and saves it with a revision", () => 
   assert.match(block, /handleFileViewerStateChange\(\s*activeFileTab\.id,\s*activeFileTab\.viewerRevision \?\? 0,/);
 });
 
-test("closing the file panel pauses the active viewer watcher", () => {
-  assert.match(fileContentBlock(), /watchEnabled=\{piExecutionReady && rightPanelOpen\}/);
+function viewerWatchEnabled({ rightPanelOpen, piExecutionReady }) {
+  const expression = fileContentBlock().match(/watchEnabled=\{([^}]+)\}/)?.[1];
+  assert.ok(expression, "native FileViewer watch binding is required");
+  return runInNewContext(expression, { rightPanelOpen, piExecutionReady });
+}
+
+test("closing the file panel pauses its watcher for either chat engine", () => {
+  for (const piExecutionReady of [false, true]) {
+    assert.equal(viewerWatchEnabled({ rightPanelOpen: false, piExecutionReady }), false);
+  }
+});
+
+test("an open file viewer watches its captured backend independently of the chat engine", () => {
+  for (const piExecutionReady of [false, true]) {
+    assert.equal(viewerWatchEnabled({ rightPanelOpen: true, piExecutionReady }), true);
+  }
 });
 
 test("markdown preview links forward a PDF page fragment to the viewer", () => {

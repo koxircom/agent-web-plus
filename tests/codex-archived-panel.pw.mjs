@@ -166,6 +166,15 @@ test("Codex native archived panel end-to-end acceptance", async (t) => {
         return;
       }
 
+      if (url.pathname === "/api/ui-settings/browser-title/events") {
+        await route.fulfill({ status: 200, contentType: "text/event-stream", body: 'data: {"version":1,"revision":0,"title":"","customTitle":""}\n\n' });
+        return;
+      }
+      if (url.pathname === "/api/ui-settings/browser-title") {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, revision: 0, title: "", customTitle: "" }) });
+        return;
+      }
+
       if (url.pathname.includes("/api/models-config")) {
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ providers: {}, archivedManifest: [] }) });
         return;
@@ -416,7 +425,7 @@ test("Codex native archived panel end-to-end acceptance", async (t) => {
 
     // Click load more
     await page.locator('[data-action="load-more-codex"]').click();
-    await page.waitForTimeout(150);
+    await page.waitForFunction(() => document.querySelectorAll('.pi-enh-archived-item').length === 101);
 
     items = await page.locator(".pi-enh-archived-item").count();
     assert.equal(items, 101, "Second page should append the 101st item");

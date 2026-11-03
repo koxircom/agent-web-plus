@@ -7,9 +7,21 @@ export interface ChatDraftImage {
   mimeType: string;
 }
 
+export interface ChatDraftFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  serverRelativePath?: string;
+  serverAbsPath?: string;
+  status: "uploading" | "uploaded" | "error";
+  error?: string;
+}
+
 export interface ChatDraft {
   value: string;
   images: ChatDraftImage[];
+  files?: ChatDraftFile[];
 }
 
 const drafts = new Map<string, ChatDraft>();
@@ -30,14 +42,18 @@ interface PersistedChatDraft extends ChatDraft {
 }
 
 function cloneDraft(draft: ChatDraft): ChatDraft {
-  return {
+  const result: ChatDraft = {
     value: draft.value,
     images: draft.images.map((image) => ({ ...image })),
   };
+  if (draft.files) {
+    result.files = draft.files.map((file) => ({ ...file }));
+  }
+  return result;
 }
 
 function isEmptyDraft(draft: ChatDraft): boolean {
-  return !draft.value && draft.images.length === 0;
+  return !draft.value && draft.images.length === 0 && (!draft.files || draft.files.length === 0);
 }
 
 function isNewSessionDraftOwnerKey(key: string): boolean {
@@ -88,6 +104,11 @@ function scopedDraftStorageKey(cwd: string): string {
 function validPersistedDraft(value: unknown): value is PersistedChatDraft {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Partial<PersistedChatDraft>;
+  const filesValid = candidate.files === undefined || (
+    Array.isArray(candidate.files) && candidate.files.every((file) => (
+      file && typeof file.id === "string" && typeof file.name === "string" && typeof file.size === "number"
+    ))
+  );
   return candidate.version === 3
     && typeof candidate.ownerKey === "string"
     && typeof candidate.value === "string"
@@ -96,7 +117,8 @@ function validPersistedDraft(value: unknown): value is PersistedChatDraft {
     && candidate.images.every((image) => (
       image && typeof image.data === "string" && image.data.length > 0
       && typeof image.mimeType === "string" && image.mimeType.startsWith("image/")
-    ));
+    ))
+    && filesValid;
 }
 
 function getLocalStorage(): Storage | null {
@@ -245,6 +267,9 @@ function savePersistedDraft(key: string, draft: ChatDraft): boolean {
       images: draft.images.map(({ data, mimeType }) => ({ data, mimeType })),
       updatedAt: Date.now(),
     };
+    if (draft.files) {
+      persisted.files = draft.files.map((file) => ({ ...file }));
+    }
     const storageKey = draftStorageKey(key);
     const serialized = JSON.stringify(persisted);
     storage.setItem(storageKey, serialized);
@@ -335,15 +360,22 @@ export function mergeRestoredSubmissionDraft(
   submittedImages: ChatDraftImage[] | undefined,
   currentText: string,
   currentImages: ChatDraftImage[],
+  submittedFiles?: ChatDraftFile[],
+  currentFiles?: ChatDraftFile[],
 ): ChatDraft {
   const images = [...(submittedImages ?? []), ...currentImages]
     .filter(isBase64ImageWithinLimits)
     .map(({ data, mimeType }) => ({ data, mimeType }));
+  const files = [...(submittedFiles ?? []), ...(currentFiles ?? [])];
 
-  return {
+  const result: ChatDraft = {
     value: mergeRestoredSubmissionText(submittedText, currentText),
     images,
   };
+  if (files.length > 0) {
+    result.files = files;
+  }
+  return result;
 }
 
 export function restoreDraftSubmission(
@@ -379,7 +411,7 @@ export function rekeyDraft(
   if (!previous) return next;
 
   const merged = next && !nextIsPreviousScopedAlias
-    ? mergeRestoredSubmissionDraft(next.value, next.images, previous.value, previous.images)
+    ? mergeRestoredSubmissionDraft(next.value, next.images, previous.value, previous.images, next.files, previous.files)
     : previous;
   setDraft(nextKey, merged);
   return cloneDraft(merged);

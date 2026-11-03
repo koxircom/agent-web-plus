@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useI18n } from "@/hooks/useI18n";
 import { createTerminalWriter, terminalRequest } from "@/lib/terminal-client";
+import { createTerminalPollOwner } from "@/lib/terminal-poll-owner";
 import type { TerminalEvent } from "@/lib/terminal-manager";
 import type { TerminalTab } from "./terminal-tab-state";
 
@@ -34,11 +35,13 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const container = containerRef.current;
     if (!container) return;
     let disposed = false;
-    let events: EventSource | null = null;
     let offset: number | undefined;
     let connected = false;
     let exited = false;
     let inputFailed = false;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    const pollOwner = createTerminalPollOwner();
+
     setStatus("connecting");
     setError(null);
     setExitCode(null);
@@ -94,41 +97,104 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const resizeObserver = new ResizeObserver(fitAndResize);
     resizeObserver.observe(container);
 
-    const connect = () => {
+    const stopPolling = () => {
+      pollOwner.stop();
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    const schedulePoll = (delayMs: number) => {
+      if (disposed || exited) return;
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(() => {
+        pollTimer = null;
+        void poll();
+      }, delayMs);
+    };
+
+    const poll = async () => {
       if (disposed || exited || !navigator.onLine) return;
-      events?.close();
-      events = new EventSource(`/api/terminal/${encodeURIComponent(id)}/events${offset === undefined ? "" : `?after=${offset}`}`);
-      events.onmessage = (message) => {
-        const event = JSON.parse(message.data) as TerminalEvent;
-        if (event.type === "output") {
-          if (event.reset) terminal.reset();
-          else if (offset !== undefined && event.offset <= offset) return;
-          terminal.write(event.data);
-          offset = event.offset;
-        } else {
+      const poll = pollOwner.begin();
+      if (!poll) return;
+      const controller = poll.controller;
+      const isCurrentPoll = () => pollOwner.isCurrent(poll);
+
+      const afterParam = offset === undefined ? "" : `&after=${offset}`;
+      const url = `/api/terminal/${encodeURIComponent(id)}/events?format=batch${afterParam}`;
+
+      try {
+        const res = await fetch(url, {
+          method: "GET",
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+
+        if (!isCurrentPoll() || disposed || exited) return;
+
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = (await res.json()) as {
+          output: Extract<TerminalEvent, { type: "output" }>;
+          exited: boolean;
+          exitCode: number | null;
+        };
+
+        if (!isCurrentPoll() || disposed || exited) return;
+
+        if (!connected) {
+          connected = true;
+          if (!inputFailed) {
+            terminal.options.disableStdin = false;
+            setStatus("ready");
+            fitAndResize();
+            writer.resize(terminal.cols, terminal.rows);
+            if (container.offsetWidth && container.offsetHeight) terminal.focus();
+          }
+        }
+
+        const output = data.output;
+        if (output && output.type === "output") {
+          if (output.reset) {
+            terminal.reset();
+            terminal.write(output.data);
+            offset = output.offset;
+          } else if (offset === undefined || output.offset > offset) {
+            if (output.data) terminal.write(output.data);
+            offset = output.offset;
+          }
+        }
+
+        if (data.exited) {
           exited = true;
           connected = false;
           terminal.options.disableStdin = true;
-          events?.close();
-          setExitCode(event.type === "exit" ? event.exitCode : null);
+          stopPolling();
+          setExitCode(data.exitCode);
           setStatus("exited");
+          return;
         }
-      };
-      events.onopen = () => {
-        connected = true;
-        if (inputFailed) return;
-        terminal.options.disableStdin = false;
-        setStatus("ready");
-        fitAndResize();
-        writer.resize(terminal.cols, terminal.rows);
-        if (container.offsetWidth && container.offsetHeight) terminal.focus();
-      };
-      events.onerror = () => {
-        if (disposed || exited) return;
+
+        const delay = output && output.data.length > 0 ? 150 : 500;
+        schedulePoll(delay);
+      } catch {
+        if (!isCurrentPoll() || disposed || exited || controller.signal.aborted) return;
         connected = false;
         terminal.options.disableStdin = true;
-        setStatus(events?.readyState === EventSource.CLOSED ? "error" : "connecting");
-      };
+        setStatus("connecting");
+        schedulePoll(1000);
+      } finally {
+        pollOwner.finish(poll);
+      }
+    };
+
+    const connect = () => {
+      if (disposed || exited || !navigator.onLine) return;
+      stopPolling();
+      void poll();
     };
 
     startRef.current = (async () => {
@@ -153,17 +219,20 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const pageHide = () => {
       connected = false;
       terminal.options.disableStdin = true;
-      events?.close();
+      stopPolling();
       if (!exited && !inputFailed) setStatus("connecting");
     };
-    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) connect(); };
+    const pageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) connect();
+    };
     window.addEventListener("pagehide", pageHide);
     window.addEventListener("pageshow", pageShow);
     window.addEventListener("offline", pageHide);
     window.addEventListener("online", connect);
+
     return () => {
       disposed = true;
-      events?.close();
+      stopPolling();
       void writer.stop();
       resizeObserver.disconnect();
       onData.dispose();

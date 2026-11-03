@@ -204,15 +204,54 @@ export function useMobileHorizontalSwipe({
     let startY = 0;
     let startTime = 0;
     let tracking = false;
+    let activeTouchId: number | null = null;
+    let contactContaminated = false;
     let state: SwipeEvalState = { horizontalLocked: false, abandoned: false };
+
+    // Track multi-touch contact contamination throughout contact lifecycle.
+    // Invariant: If >1 touches exist anywhere on the surface, mark contact contaminated
+    // and abort swipe recognition until all contacts release (e.touches.length === 0).
+    const handleGlobalTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        contactContaminated = true;
+        if (tracking) {
+          tracking = false;
+          activeTouchId = null;
+          state = { horizontalLocked: false, abandoned: true };
+        }
+      }
+    };
+
+    const handleGlobalTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        if (contactContaminated) {
+          contactContaminated = false;
+        }
+      }
+    };
+
+    const handleGlobalTouchCancel = (e: TouchEvent) => {
+      if (tracking) {
+        tracking = false;
+        activeTouchId = null;
+        state = { horizontalLocked: false, abandoned: true };
+      }
+      if (e.touches.length === 0) {
+        contactContaminated = false;
+      } else {
+        contactContaminated = true;
+      }
+    };
 
     const handleTouchStart = (e: TouchEvent) => {
       // 正常随后 touchstart 立即恢复标志
       suppressClickUntilRef.current = 0;
 
-      // Single-finger invariant: ignore multi-touch
-      if (e.touches.length !== 1) {
+      // Single-finger invariant: ignore multi-touch and contaminated contacts
+      if (contactContaminated || e.touches.length !== 1) {
+        contactContaminated = true;
         tracking = false;
+        activeTouchId = null;
         state = { horizontalLocked: false, abandoned: true };
         return;
       }
@@ -220,6 +259,7 @@ export function useMobileHorizontalSwipe({
       // Desktop / Wide screen invariant: do not interfere
       if ((!allowWideTouch && !isMobileViewport()) || shouldStartRef.current?.(e) === false) {
         tracking = false;
+        activeTouchId = null;
         return;
       }
 
@@ -229,6 +269,7 @@ export function useMobileHorizontalSwipe({
       // Check element eligibility
       if (!isEligibleSwipeTarget(target, container, { allowOnButtons })) {
         tracking = false;
+        activeTouchId = null;
         state = { horizontalLocked: false, abandoned: true };
         return;
       }
@@ -237,18 +278,36 @@ export function useMobileHorizontalSwipe({
       startY = touch.clientY;
       startTime = Date.now();
       tracking = true;
+      activeTouchId = touch.identifier;
       state = { horizontalLocked: false, abandoned: false };
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (!tracking || state.abandoned) return;
+      if (!tracking || state.abandoned || contactContaminated) return;
 
       if (e.touches.length !== 1) {
+        contactContaminated = true;
+        tracking = false;
+        activeTouchId = null;
         state = { horizontalLocked: false, abandoned: true };
         return;
       }
 
-      const touch = e.touches[0];
+      // Single-pointer identity: verify tracked touch
+      let touch: Touch | null = null;
+      for (let i = 0; i < e.touches.length; i++) {
+        if (e.touches[i].identifier === activeTouchId) {
+          touch = e.touches[i];
+          break;
+        }
+      }
+      if (!touch) {
+        tracking = false;
+        activeTouchId = null;
+        state = { horizontalLocked: false, abandoned: true };
+        return;
+      }
+
       const deltaX = touch.clientX - startX;
       const deltaY = touch.clientY - startY;
 
@@ -265,9 +324,26 @@ export function useMobileHorizontalSwipe({
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (!tracking) return;
+      const currentTouchId = activeTouchId;
       tracking = false;
+      activeTouchId = null;
 
-      const touch = e.changedTouches[0];
+      if (state.abandoned || contactContaminated) return;
+
+      // Invariant: Completed single-finger swipe must finish with zero remaining touches
+      if (e.touches.length !== 0) {
+        contactContaminated = true;
+        return;
+      }
+
+      // Single-pointer identity: verify lifted touch matches original tracked touch
+      let touch: Touch | null = null;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        if (e.changedTouches[i].identifier === currentTouchId) {
+          touch = e.changedTouches[i];
+          break;
+        }
+      }
       if (!touch) return;
 
       const deltaX = touch.clientX - startX;
@@ -297,9 +373,13 @@ export function useMobileHorizontalSwipe({
       }
     };
 
-    const handleTouchCancel = () => {
+    const handleTouchCancel = (e: TouchEvent) => {
       tracking = false;
+      activeTouchId = null;
       state = { horizontalLocked: false, abandoned: true };
+      if (e.touches.length > 0) {
+        contactContaminated = true;
+      }
     };
 
     const handleClickCapture = (e: MouseEvent) => {
@@ -315,12 +395,20 @@ export function useMobileHorizontalSwipe({
     container.addEventListener("touchcancel", handleTouchCancel, { passive: true });
     container.addEventListener("click", handleClickCapture, { capture: true });
 
+    window.addEventListener("touchstart", handleGlobalTouchStart, { capture: true, passive: true });
+    window.addEventListener("touchend", handleGlobalTouchEnd, { capture: true, passive: true });
+    window.addEventListener("touchcancel", handleGlobalTouchCancel, { capture: true, passive: true });
+
     return () => {
       container.removeEventListener("touchstart", handleTouchStart);
       container.removeEventListener("touchmove", handleTouchMove);
       container.removeEventListener("touchend", handleTouchEnd);
       container.removeEventListener("touchcancel", handleTouchCancel);
       container.removeEventListener("click", handleClickCapture, { capture: true });
+
+      window.removeEventListener("touchstart", handleGlobalTouchStart, { capture: true });
+      window.removeEventListener("touchend", handleGlobalTouchEnd, { capture: true });
+      window.removeEventListener("touchcancel", handleGlobalTouchCancel, { capture: true });
     };
   }, [containerRef, direction, enabled, threshold, dominantRatio, allowOnButtons, allowWideTouch]);
 }

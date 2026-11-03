@@ -613,8 +613,8 @@ try {
       els.map((el) => el.textContent?.trim())
     );
     assert.deepEqual(aReturnBadges, ["#1", "#2", "#3", "#4"], "Session A must be completely isolated");
-    await page.reload({waitUntil:'networkidle'});
-    await page.waitForSelector('.pi-enh-turn-number-badge[data-turn-number="4"]');
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('.pi-enh-turn-number-badge[data-turn-number="4"]', { state: "visible", timeout: 10000 });
     assert.deepEqual(await page.locator('.pi-enh-turn-number-badge').allTextContents(), ['#1','#2','#3','#4']);
     receipt.checks.push({ name: "session-switch-and-refresh-isolation", passed: true });
     console.log("✓ Scenario 5: Session switch A -> B -> A passed");

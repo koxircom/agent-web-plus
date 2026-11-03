@@ -21,7 +21,17 @@ function fixture() {
     chatInput: `
       window.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__;
       window.addEventListener("pi-enh-composer-submission-state-change", refresh);
-      <input type="file" />
+      <input
+        ref={imageFileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        data-pi-media-picker="true"
+      />
+      <input
+        ref={documentFileInputRef}
+        type="file"
+        data-pi-document-picker="true"
+      />
       <div data-pi-native-composer-layout="true">
         <textarea ref={textareaRef} className="chat-input-textarea" value={value} />
       </div>
@@ -105,6 +115,44 @@ test("发现新增的第二个 React 可编辑表面", () => {
     "</div>",
     '</div><div contentEditable={true} role="textbox" />',
   );
+  failingCheck(checkReleaseOwnership(sources), "composer-native-single");
+});
+
+test("发现文件入口缺少所有权标记 (missingmarker)", () => {
+  const sourcesMedia = fixture();
+  sourcesMedia.chatInput = sourcesMedia.chatInput.replace('data-pi-media-picker="true"', "");
+  failingCheck(checkReleaseOwnership(sourcesMedia), "composer-native-single");
+
+  const sourcesDoc = fixture();
+  sourcesDoc.chatInput = sourcesDoc.chatInput.replace('data-pi-document-picker="true"', "");
+  failingCheck(checkReleaseOwnership(sourcesDoc), "composer-native-single");
+});
+
+test("发现文件入口使用错误引用 (wrongref)", () => {
+  const sourcesMedia = fixture();
+  sourcesMedia.chatInput = sourcesMedia.chatInput.replace("ref={imageFileInputRef}", "ref={wrongFileInputRef}");
+  failingCheck(checkReleaseOwnership(sourcesMedia), "composer-native-single");
+
+  const sourcesDoc = fixture();
+  sourcesDoc.chatInput = sourcesDoc.chatInput.replace("ref={documentFileInputRef}", "ref={wrongDocFileInputRef}");
+  failingCheck(checkReleaseOwnership(sourcesDoc), "composer-native-single");
+});
+
+test("发现超过两独立入口的第三个 input (第三input)", () => {
+  const sources = fixture();
+  sources.chatInput += '\n<input type="file" ref={extraFileInputRef} data-pi-extra="true" />';
+  failingCheck(checkReleaseOwnership(sources), "composer-native-single");
+});
+
+test("发现文件入口共享同一引用或配置 (sharedinput)", () => {
+  const sources = fixture();
+  sources.chatInput = sources.chatInput.replace("ref={documentFileInputRef}", "ref={imageFileInputRef}");
+  failingCheck(checkReleaseOwnership(sources), "composer-native-single");
+});
+
+test("发现不受控的原生 textarea (uncontrolledtextarea)", () => {
+  const sources = fixture();
+  sources.chatInput = sources.chatInput.replace('value={value}', "");
   failingCheck(checkReleaseOwnership(sources), "composer-native-single");
 });
 

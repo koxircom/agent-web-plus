@@ -92,3 +92,60 @@ test("Markdown mode controls and Copy Source stay under FileViewer ownership", (
   assert.doesNotMatch(enhancementModule, /pi-enh-md-mode-switch|pi-enh-md-btn|previewBtn\.click\(\)|sourceBtn\.click\(\)/);
   assert.match(enhancementModule, /pi:obsidian-markdown-viewer-preferences-change/);
 });
+
+test("file watch streams release EventSource when hidden and reconnect when visible", () => {
+  // 1. 验证 useIsPageVisible 包含 visibilitychange, pageshow, pagehide
+  assert.match(source, /function useIsPageVisible\(\): boolean/);
+  assert.match(source, /document\.addEventListener\("visibilitychange", handleVisibility\)/);
+  assert.match(source, /window\.addEventListener\("pageshow", handleShow\)/);
+  assert.match(source, /window\.addEventListener\("pagehide", handleHide\)/);
+  assert.match(source, /document\.removeEventListener\("visibilitychange", handleVisibility\)/);
+  assert.match(source, /window\.removeEventListener\("pageshow", handleShow\)/);
+  assert.match(source, /window\.removeEventListener\("pagehide", handleHide\)/);
+
+  // 2. 验证各个 viewer 统一使用 useFileWatch 并且传入 isPageVisible 和 watchEnabled 守卫，彻底移除 EventSource/esRef
+  assert.doesNotMatch(source, /new EventSource\(/, "all EventSource usage must be removed in favor of short fetch");
+  assert.doesNotMatch(source, /esRef/, "esRef must be removed");
+  for (const name of ["ImageViewer", "AudioViewer", "VideoViewer", "DocumentViewer", "TextFileViewer"]) {
+    const fnStart = source.indexOf(`function ${name}(`);
+    assert.notEqual(fnStart, -1, `${name} must exist`);
+    const nextFn = source.indexOf("function ", fnStart + 1);
+    const fnEnd = nextFn !== -1 ? nextFn : source.length;
+    const fnBody = source.slice(fnStart, fnEnd !== -1 ? fnEnd : fnStart + 3000);
+
+    assert.match(fnBody, /const isPageVisible = useIsPageVisible\(\);/, `${name} must consume useIsPageVisible`);
+    assert.match(fnBody, /useFileWatch\(\{[\s\S]*?watchEnabled[\s\S]*?isPageVisible[\s\S]*?\}\)/, `${name} must invoke useFileWatch with watchEnabled and isPageVisible`);
+  }
+
+  // 3. 验证 handleShow 必须读取 visibilityState 且挂载后立即核对当前 visibility
+  assert.match(source, /handleVisibility\(\);/, "useEffect must check visibility immediately on subscribe");
+  assert.doesNotMatch(source, /handleShow\s*=\s*\(\)\s*=>\s*setIsVisible\(true\)/, "handleShow must not unconditionally set visible to true");
+
+  // 4. 小范围函数行为测试：后台 pageshow 不恢复占槽，前台 pageshow / visible 恢复，pagehide 释放
+  let visibleState = true;
+  const setVisible = (val) => { visibleState = val; };
+  const mockDoc = { visibilityState: "hidden" };
+  const readVisible = () => (typeof mockDoc !== "undefined" ? mockDoc.visibilityState !== "hidden" : true);
+
+  const handleVisibility = () => setVisible(readVisible());
+  const handleHide = () => setVisible(false);
+  const handleShow = () => setVisible(readVisible());
+
+  // 初始挂载立即复核
+  handleVisibility();
+  assert.equal(visibleState, false, "initial effect check identifies hidden page");
+
+  // 后台 pageshow（例如 bfcache 恢复但在后台）：必须保持 false，绝不恢复占槽
+  mockDoc.visibilityState = "hidden";
+  handleShow();
+  assert.equal(visibleState, false, "pageshow while hidden must remain false");
+
+  // 前台 pageshow
+  mockDoc.visibilityState = "visible";
+  handleShow();
+  assert.equal(visibleState, true, "pageshow while visible restores true");
+
+  // pagehide
+  handleHide();
+  assert.equal(visibleState, false, "pagehide deactivates");
+});

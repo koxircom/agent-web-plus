@@ -116,13 +116,6 @@
       defaultEnabled: true,
     },
     {
-      id: "dom-feedback",
-      name: "界面与预览标注",
-      desc: "点击元素后添加备注，按需附局部截图；电脑默认启用，手机可手动开启。",
-      category: "交互增强",
-      defaultEnabled: true,
-    },
-    {
       id: "quick-quote",
       name: "划选引用与注释",
       desc: "划选对话文本后可一键引用，或保存多条带可选评论的引用注释；输入框上方实时显示 x 条注释，并在发送时作为结构化上下文附带给 Agent。",
@@ -403,6 +396,13 @@
       defaultEnabled: true,
     },
     {
+      id: "collapsed-sidebar-session-title",
+      name: "折叠侧边栏显示会话标题",
+      desc: "当侧边栏折叠时，在输入框底栏状态架显示当前会话标题，点击可快速展开会话列表。",
+      category: "显示增强",
+      defaultEnabled: true,
+    },
+    {
       id: "composer-image-zoom",
       name: "输入框图片放大与标注",
       desc: "点击输入框图片进入默认矩形标注；支持 Ctrl/Cmd+Z 30+ 次撤销，桌面滚轮与手机双指上下滑实时调节屏幕可见边框/画笔粗细。",
@@ -593,8 +593,8 @@
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
     { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
-    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote", "dom-feedback"] },
-    { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer"] },
+    { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
+    { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer", "collapsed-sidebar-session-title"] },
     { id: "composer-workflow", name: "输入与附件增强", desc: "管理编辑器快捷操作、草稿、附件和移动端输入保护。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["stop-fast-response", "quick-action-buttons", "empty-send-continue", "composer-draft-cache", "composer-file-paste", "composer-image-zoom", "mobile-enter-newline", "composer-clean-placeholder", "codex-composer-layout", "composer-model-reasoning-pill", "composer-queue-panel", "running-model-switch", "composer-markdown-format", "composer-format-toggle", "composer-compact-button", "composer-tool-preset", "composer-modes", "at-mention-plugins"] },
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
     { id: "background-attention", name: "后台会话提醒", desc: "管理跨项目状态、提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
@@ -921,7 +921,6 @@
   }
 
   function defaultFeatureEnabled(plugin) {
-    if (plugin.id === "dom-feedback" && window.matchMedia?.("(pointer: coarse), (hover: none)").matches) return false;
     return plugin.defaultEnabled;
   }
 
@@ -1070,15 +1069,11 @@
     } else if (id === "turn-usage-total") {
       if (!enabled) hideUsageTooltip();
       syncAllUsageBadges();
-    } else if (id === "dom-feedback") {
-      syncAnnotationComposer();
-      window.dispatchEvent(new Event("pi-dom-feedback-preferences-change"));
     } else if (id === "quick-quote") {
       if (!enabled && typeof hideQuoteBar === "function") {
         if (composerSubmissionInFlight?.snapshot) cancelComposerNativeSubmission();
         hideQuoteBar();
         removeAnnotationUi();
-        if (isPluginEnabled("dom-feedback")) syncAnnotationComposer();
       } else if (enabled && typeof syncAnnotationComposer === "function") {
         syncAnnotationComposer();
       }
@@ -1210,11 +1205,7 @@
         restoreComposerDraftIfNeeded();
       }
     } else if (id === "composer-file-paste") {
-      if (!enabled) {
-        removeComposerFilePaste();
-      } else {
-        syncComposerFilePaste();
-      }
+      // 普通文件上传与粘贴已完全由原生 ChatInput 接管，无需旧增强 DOM 劫持
     } else if (id === "composer-image-zoom") {
       if (!enabled) {
         removeComposerImageZoom();
@@ -1229,9 +1220,7 @@
       } else {
         syncComposerCleanPlaceholder();
       }
-    } else if (id === "composer-queue-panel") {
-      if (enabled) syncComposerQueuePanel();
-      else removeComposerQueuePanel();
+
     } else if (id === "composer-format-toggle") {
       syncComposerMarkdownFormat();
     } else if (id === "composer-compact-button" || id === "composer-tool-preset") {
@@ -1296,6 +1285,14 @@
       }
     } else if (id === "mobile-swipe-drawer") {
       syncMobileSwipeDrawer(enabled);
+    } else if (id === "collapsed-sidebar-session-title") {
+      if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+        try {
+          window.dispatchEvent(new CustomEvent("pi-collapsed-title-toggle", { detail: { enabled } }));
+        } catch (_) {
+          window.dispatchEvent(new Event("pi-collapsed-title-toggle"));
+        }
+      }
     } else if (id === "pi-web-plus-branding") {
       if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
         try {
@@ -1709,8 +1706,8 @@
 
   function renderSessionModelLabel(row, metadata) {
     const existing = row.querySelector(".pi-enh-session-model-badge");
-    // 关键守卫：若当前行处于编辑状态（包含 input 或标记为 editing），严禁强行显示模型名字
-    if (row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+    // 关键守卫：若当前行处于编辑状态（包含重命名输入框或标记为 editing），严禁强行显示模型名字
+    if (row.querySelector('input:not([type="checkbox"])') || row.getAttribute("data-pi-enh-editing") === "true") {
       existing?.remove();
       return;
     }
@@ -2377,6 +2374,36 @@
     return activeDurableStateSyncPromise;
   }
 
+  async function trySwitchToCanonicalDurableState(configData) {
+    if (!configData || typeof configData !== "object") return false;
+    const rev = Number(configData.enhancementStateRevision);
+    if (!Number.isFinite(rev) || rev <= 0) return false;
+
+    if (typeof window !== "undefined" && window) {
+      window.__PI_ENH_DURABLE_STATE_ENABLED__ = true;
+      if (window.__PI_ENH_NATIVE_STATE_API__ !== true) {
+        window.__PI_ENH_NATIVE_STATE_API__ = true;
+      }
+    }
+
+    if (typeof localStorage !== "undefined" && localStorage && typeof localStorage.setItem === "function") {
+      for (const op of pendingDecorationOperations) {
+        if (op && op.opId) {
+          try {
+            const key = DECORATION_OP_PREFIX + op.opId;
+            if (!localStorage.getItem(key)) {
+              localStorage.setItem(key, JSON.stringify(op));
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    restorePendingDecorationOperationsFromStorage();
+    await syncDurableState(true);
+    return true;
+  }
+
   let decorationOpSequence = 0;
   pendingDecorationOperations = [];
   let pendingPersistDecorationsTimer = null;
@@ -2777,6 +2804,16 @@
               return false;
             }
 
+            // 发现 positive enhancementStateRevision，平滑切换至 canonical durable state，避免继续 legacy PUT
+            if (Number(currentConfig.enhancementStateRevision) > 0) {
+              const switched = await trySwitchToCanonicalDurableState(currentConfig);
+              if (switched) {
+                const commitSuccess = await persistDecorationsToServer();
+                currentResolvers.forEach((r) => r(commitSuccess));
+                return commitSuccess;
+              }
+            }
+
             // 应用待提交操作批次至远端最新 config 的克隆
             const { updatedConfig, hasColorChanges, hasTagChanges, tagIdRemap } = applyDecorationOperations(currentConfig, batchToCommit);
 
@@ -2810,6 +2847,24 @@
             const ok = Boolean(putResp?.ok) && !isDisposed;
             if (!ok) {
               console.error("[pi-enh] persistDecorationsToServer PUT failed:", putResp?.status, putResp?.statusText);
+
+              // 409 时重新 probe/GET 同机制只一次，不重复 blind PUT，也不重发已 ack ops
+              if (putResp?.status === 409) {
+                try {
+                  const { resp: probeResp, json: probeData } = await fetchModelsConfigBounded("/api/models-config", { cache: "no-store", readJson: true });
+                  if (probeResp?.ok && Number(probeData?.enhancementStateRevision) > 0) {
+                    const switched = await trySwitchToCanonicalDurableState(probeData);
+                    if (switched) {
+                      const commitSuccess = await persistDecorationsToServer();
+                      currentResolvers.forEach((r) => r(commitSuccess));
+                      return commitSuccess;
+                    }
+                  }
+                } catch (probeErr) {
+                  console.error("[pi-enh] 409 后 probe models-config 失败:", probeErr?.message);
+                }
+              }
+
               // 失败保留，不制造重试循环
               currentResolvers.forEach((r) => r(false));
               return false;
@@ -2880,6 +2935,12 @@
         const resp = await activeFetch("/api/models-config", { cache: "no-store" });
         if (!resp?.ok) return;
         const data = await resp.json();
+
+        if (Number(data?.enhancementStateRevision) > 0) {
+          const switched = await trySwitchToCanonicalDurableState(data);
+          if (switched) return;
+        }
+
         const remoteColors = data?.sessionColors;
         const remoteRevision = Number(data?.sessionColorsRevision) || 0;
 
@@ -3161,6 +3222,11 @@
         try {
           const { resp, json: data } = await fetchModelsConfigBounded("/api/models-config", { cache: "no-store", readJson: true });
           if (resp?.ok) {
+            if (Number(data?.enhancementStateRevision) > 0) {
+              const switched = await trySwitchToCanonicalDurableState(data);
+              if (switched) return;
+            }
+
             // 契约：服务端字段缺失/类型错误不能被当成合法空数据清本地
             if (
               data &&
@@ -3190,18 +3256,6 @@
           if (!isLocalEmpty) {
             return;
           }
-          // 即使 force 也不能用静态清单替换非空本地缓存；空端仅只读兜底。
-          try {
-            const res = await activeFetch("/pi-tags-manifest.json?v=" + Date.now(), { cache: "no-store" });
-            if (res?.ok) {
-              const json = await res.json();
-              if (Array.isArray(json?.definitions)) {
-                remoteDefs = json.definitions;
-                remoteMappings = (json?.mappings && typeof json.mappings === "object" && !Array.isArray(json.mappings)) ? json.mappings : {};
-                remoteRevision = Number(json?.revision) || 0;
-              }
-            }
-          } catch (e) {}
 
           // 兜底内置 Manifest（如启动时 patch-pi-web.js 注入的静态备份，绝对不触发写入）
           if (!Array.isArray(remoteDefs) && typeof window !== "undefined" && window.__PI_ENH_TAGS_MANIFEST__) {
@@ -3613,7 +3667,7 @@
     if (!row || !sessionId) return;
 
     // 行内重命名守卫：处于编辑状态时隐藏标签
-    if (!isPluginEnabled("session-tags") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+    if (!isPluginEnabled("session-tags") || row.querySelector('input:not([type="checkbox"])') || row.getAttribute("data-pi-enh-editing") === "true") {
       row.querySelector(".pi-enh-session-tags-row")?.remove();
       row.removeAttribute("data-pi-enh-has-tags");
       return;
@@ -4348,6 +4402,7 @@
   window.__PI_ENH_SYNC_MANIFEST_SESSION_TAGS__ = syncManifestSessionTags;
   window.__PI_ENH_PERSIST_SESSION_TAGS_TO_SERVER__ = persistSessionTagsToServer;
   window.__PI_ENH_PERSIST_DECORATIONS_TO_SERVER__ = persistDecorationsToServer;
+  window.__PI_ENH_TRY_SWITCH_TO_CANONICAL_DURABLE_STATE__ = trySwitchToCanonicalDurableState;
   window.__PI_ENH_OPEN_SESSION_TAGS_POPOVER__ = openSessionTagsPopover;
   window.__PI_ENH_CLOSE_SESSION_TAGS_POPOVER__ = closeSessionTagsPopover;
   window.__PI_ENH_DEFAULT_TAG_PALETTE__ = DEFAULT_TAG_PALETTE;
@@ -4411,7 +4466,7 @@
   } catch (e) {}
   const SESSION_ODOO_ADDON_BASE_MARGIN = 4;
   const SESSION_ODOO_ADDON_ROW_HEIGHT = 24;
-  const SESSION_ODOO_ADDONS_MANIFEST_URL = "/pi-odoo-addons-manifest.json";
+  const SESSION_ODOO_ADDONS_MANIFEST_URL = "/api/session-addon-updates";
   const SESSION_ODOO_ADDONS_POLL_INTERVAL_MS = 15000;
   const SESSION_ODOO_ADDONS_MIN_REFRESH_GAP_MS = 3000;
 
@@ -4566,7 +4621,7 @@
   function syncSessionOdooAddonsRow(row, sessionId) {
     if (!row || !sessionId || row.getAttribute("data-pi-native-session-odoo-addons") === "true") return;
 
-    if (!isPluginEnabled("session-odoo-addons") || row.querySelector("input") || row.getAttribute("data-pi-enh-editing") === "true") {
+    if (!isPluginEnabled("session-odoo-addons") || row.querySelector('input:not([type="checkbox"])') || row.getAttribute("data-pi-enh-editing") === "true") {
       row.querySelector(".pi-enh-session-odoo-addons")?.remove();
       row.removeAttribute("data-pi-enh-has-odoo-addons");
       syncSessionOdooAddonsHeight(row, sessionId);

@@ -1,14 +1,18 @@
 // Real native components; all writes are confined to this in-process HTTP fixture.
 import http from 'node:http';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
 const root = fileURLToPath(new URL('..', import.meta.url));
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const evidence = process.env.FILE_CONTEXT_EVIDENCE_DIR || fileURLToPath(new URL('../../acceptance', import.meta.url));
 mkdirSync(evidence, { recursive: true });
-const bundle = await build({stdin:{resolveDir:root,loader:'tsx',contents:`
+const shellSource=readFileSync(new URL('../components/AppShell.tsx', import.meta.url),'utf8');
+const watchEnabledExpression=shellSource.match(/<FileViewer\b[\s\S]*?watchEnabled=\{([^}]+)\}/)?.[1];
+assert(watchEnabledExpression,'Native AppShell FileViewer watch binding must exist');
+const bundle = await build({stdin:{resolveDir:root,loader:'tsx',sourcefile:'input.tsx',contents:`
 import React, {useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {FileExplorer} from './components/FileExplorer';
@@ -18,23 +22,28 @@ import {openFileTab} from './components/file-tab-state';
 function App(){
  const [engine,setEngine]=useState('pi'),[tabs,setTabs]=useState([]),[active,setActive]=useState(null);
  const cwd='/workspace/shared-repo', tab=tabs.find(t=>t.id===active);
+ const piExecutionReady=engine==='pi', rightPanelOpen=true;
  const open=(p,n,o={})=>{const e=o.executionEngine??engine,id='file:'+e+':'+p;
   setTabs(prev=>openFileTab(prev,{tabId:id,filePath:p,fileName:n,executionEngine:e,cwd:o.cwd??cwd,sourceSessionId:o.sourceSessionId}));setActive(id);};
  return <main><section><nav><button id='pi' onClick={()=>setEngine('pi')}>Pi</button><button id='codex' onClick={()=>setEngine('codex')}>Codex</button><b>{engine}</b></nav>
  <div id='explorer'><FileExplorer cwd={cwd} executionEngine={engine} onOpenFile={open} changesCollapsed={false}/></div></section>
  <section id='viewer'><nav>{tabs.map(t=><button key={t.id} data-tab-engine={t.executionEngine} onClick={()=>setActive(t.id)}>{t.label} ({t.executionEngine})</button>)}</nav>
- <div id='file-body'>{tab&&<FileViewer key={tab.id+':'+(tab.viewerRevision??0)} filePath={tab.filePath} cwd={tab.cwd} sourceSessionId={tab.sourceSessionId} executionEngine={tab.executionEngine} watchEnabled={false}
+ <div id='file-body'>{tab&&<FileViewer key={tab.id+':'+(tab.viewerRevision??0)} filePath={tab.filePath} cwd={tab.cwd} sourceSessionId={tab.sourceSessionId} executionEngine={tab.executionEngine} watchEnabled={${watchEnabledExpression}}
  onOpenFile={(p,page)=>open(p,p.split('/').pop(),{executionEngine:tab.executionEngine,cwd:tab.cwd,sourceSessionId:tab.sourceSessionId,page})}/>}</div></section></main>;}
 createRoot(document.getElementById('root')).render(<I18nProvider><App/></I18nProvider>);
-`},bundle:true,write:false,format:'iife',loader:{'.css':'empty'},alias:{'@':root},define:{'process.env.NODE_ENV':'"production"'}});
+`},bundle:true,write:false,format:'iife',outdir:'/virtual',alias:{'@':root},loader:{'.woff2':'dataurl','.woff':'dataurl','.ttf':'dataurl'},define:{'process.env.NODE_ENV':'"production"','process.env.NEXT_PUBLIC_APP_VERSION':JSON.stringify(pkg.version)}});
+const jsBundle = bundle.outputFiles.find(f=>f.path.endsWith('.js')).text;
+const cssBundle = bundle.outputFiles.filter(f=>f.path.endsWith('.css')).map(f=>f.text).join('\n');
 const requests=[], heldLists=[], heldChecks=[];
+let codexWatchRevision=1;
 let holdPiList=false,holdPiCheck=false;
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
 const entries=names=>names.map(name=>({name,isDir:name==='shared-dir',size:100,modified:'2026-10-20T00:00:00Z'}));
 const server=http.createServer((req,res)=>{
  const u=new URL(req.url,'http://127.0.0.1'),q=Object.fromEntries(u.searchParams),engine=q.engine;
  requests.push({method:req.method,endpoint:u.pathname,...q});
- if(u.pathname==='/bundle.js'){res.writeHead(200,{'Content-Type':'application/javascript'});return res.end(bundle.outputFiles[0].text);}
+ if(u.pathname==='/bundle.js'){res.writeHead(200,{'Content-Type':'application/javascript'});return res.end(jsBundle);}
+ if(u.pathname==='/bundle.css'){res.writeHead(200,{'Content-Type':'text/css'});return res.end(cssBundle);}
  if(u.pathname.startsWith('/api/')){
   if(!['pi','codex'].includes(engine))return json(res,{error:'Explicit engine required'},400);
   if(u.pathname.startsWith('/api/files/')){
@@ -52,8 +61,9 @@ const server=http.createServer((req,res)=>{
    }
    if(type==='upload'){req.resume();return req.on('end',()=>json(res,{uploaded:['fixture.txt'],skipped:[],errors:[]}));}
    if(type==='download'){res.writeHead(200,{'Content-Type':'text/plain','Content-Disposition':'attachment; filename="shared.md"'});return res.end(engine+' fixture');}
+   if(type==='watch-meta')return json(res,{exists:true,size:100,mtimeMs:1000+codexWatchRevision,ctimeMs:1000,ino:1,version:engine+':'+p+':'+codexWatchRevision});
    if(type==='read'||type==='preview'){
-    const content='# '+engine.toUpperCase()+' fixture\n\nSame path, different backend.\n\n[Notes](./notes.txt)';
+    const content='# '+engine.toUpperCase()+' fixture\n\nSame path, different backend.\n\nCODEX WATCH '+codexWatchRevision+'\n\n[Notes](./notes.txt)';
     return json(res,{content,language:'markdown',size:content.length,truncated:false});
    }
    if(type==='meta')return json(res,{size:100});
@@ -63,9 +73,9 @@ const server=http.createServer((req,res)=>{
   if(u.pathname==='/api/file-index')return json(res,{matches:[{path:'shared.md',isDir:false}]});
   return json(res,{error:'Unknown fixture endpoint'},404);
  }
- res.writeHead(200,{'Content-Type':'text/html'});res.end(`<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+ res.writeHead(200,{'Content-Type':'text/html'});res.end(`<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/bundle.css"><style>
  :root{--bg:#16191d;--bg-panel:#1d2228;--bg-hover:#282e36;--bg-selected:#303944;--text:#e8edf2;--text-muted:#a9b5c1;--text-dim:#8493a1;--border:#38434f;--accent:#69b4ff;--font-mono:monospace;color:var(--text);background:var(--bg);font:14px sans-serif}*{box-sizing:border-box}body{margin:0}main{height:100dvh;display:grid;grid-template-columns:300px minmax(0,1fr)}section{min-height:0;min-width:0;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border)}nav{padding:8px;display:flex;gap:8px;flex-wrap:wrap}button{color:var(--text);background:var(--bg-selected);border:1px solid var(--border);padding:5px 9px;cursor:pointer}#explorer,#file-body{flex:1;min-height:0;overflow:auto}@media(max-width:600px){main{grid-template-columns:1fr;grid-template-rows:45% 55%}}.file-viewer-toolbar,.file-viewer-controls,.file-viewer-actions,.file-viewer-mode-switch{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.file-viewer-path{overflow:hidden;text-overflow:ellipsis}.file-viewer-controls{margin-left:auto}.file-viewer-shell{min-width:0}.file-viewer-toolbar{max-width:100%}a{color:var(--accent)}
- </style><div id="root"></div><script src="/bundle.js"></script></html>`);
+ </style><script>window.process=window.process||{env:{NODE_ENV:'production',NEXT_PUBLIC_APP_VERSION:${JSON.stringify(pkg.version)}}};</script><div id="root"></div><script src="/bundle.js"></script></html>`);
 });
 let browser;
 const checks=[],pageErrors=[];
@@ -88,7 +98,9 @@ try{
   await explorer.getByText('shared-dir',{exact:true}).click();await explorer.getByText('codex-child.txt',{exact:true}).waitFor();
   const late=page.waitForResponse(r=>r.url().includes('shared-dir')&&new URL(r.url()).searchParams.get('engine')==='pi');heldLists.shift()();await(await late).finished();
   await page.waitForLoadState('networkidle');assert.equal(await explorer.getByText('pi-child.txt',{exact:true}).count(),0);
+  const watchStarted=page.waitForRequest(r=>new URL(r.url()).searchParams.get('type')==='watch-meta'&&new URL(r.url()).searchParams.get('engine')==='codex');
   await explorer.getByText('shared.md',{exact:true}).click();await body.getByText('CODEX fixture',{exact:false}).waitFor();
+  await watchStarted;codexWatchRevision++;await body.getByText('CODEX WATCH '+codexWatchRevision,{exact:false}).waitFor();
   await page.locator('#pi').click();await explorer.getByText('shared.md',{exact:true}).waitFor();
   // The open Codex viewer keeps its source despite the explorer now being Pi.
   await body.getByText('CODEX fixture',{exact:false}).waitFor();
@@ -115,7 +127,7 @@ try{
   await Promise.all([page.waitForResponse(r=>r.url().includes('type=upload')&&!r.url().includes('upload-check')),explorer.locator('input[type=file]').setInputFiles({name:'fixture.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')})]);
   assert.equal(requests.filter(r=>r.type==='upload').at(-1).engine,'pi');
   const screenshot=evidence+'/file-context-'+width+'.png';await page.screenshot({path:screenshot,fullPage:true});
-  checks.push({width,screenshot,samePathTabsIsolated:true,lateSubtreeRejected:true,uploadABARejected:true,currentUploadPassed:true,boxes});await page.close();
+  checks.push({width,screenshot,samePathTabsIsolated:true,codexWatchMetaObserved:true,codexExternalUpdateObserved:true,lateSubtreeRejected:true,uploadABARejected:true,currentUploadPassed:true,boxes});await page.close();
  }
  assert.deepEqual(pageErrors,[]);
  for(const r of requests.filter(r=>r.endpoint.startsWith('/api/')))assert(['pi','codex'].includes(r.engine),'All fixture file API calls carry an engine');

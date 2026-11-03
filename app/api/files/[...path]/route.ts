@@ -37,7 +37,7 @@ const IGNORED_NAMES = new Set([
 
 const IGNORED_SUFFIXES = [".pyc"];
 
-const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
+const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch", "watch-meta"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
 const FILE_REQUEST_TYPE_SET = new Set<string>(FILE_REQUEST_TYPES);
 const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
@@ -457,7 +457,9 @@ export async function GET(
       stat = fs.statSync(filePath);
     } catch {
       if (type !== "watch") {
+        if (type !== "watch-meta") {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
+        }
       }
     }
 
@@ -513,6 +515,28 @@ export async function GET(
       return streamFile(filePath, stat, mime, request.headers.get("range"), true);
     }
 
+    if (type === "watch-meta") {
+      if (!stat) {
+        return NextResponse.json({
+          exists: false,
+          size: 0,
+          mtimeMs: 0,
+          ctimeMs: 0,
+          ino: 0,
+        }, { status: 404 });
+      }
+      if (!stat.isFile()) {
+        return NextResponse.json({ error: "Not a file" }, { status: 400 });
+      }
+      return NextResponse.json({
+        exists: true,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+        ino: stat.ino,
+      });
+    }
+
     if (type === "meta") {
       if (!stat?.isFile()) {
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
@@ -526,6 +550,10 @@ export async function GET(
         language: getLanguage(filePath),
         mime: imageMime || audioMime || videoMime || documentMime || "text/plain",
         previewKind: documentPreviewKind(filePath),
+        version: `${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}:${stat.size}`,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+        ino: stat.ino,
       });
     }
 
@@ -565,21 +593,108 @@ export async function GET(
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
       let watcher: fs.FSWatcher | null = null;
+      let pollTimer: NodeJS.Timeout | null = null;
+      let closed = false;
+      let inFlight = false;
       let lastMtimeMs = stat?.mtimeMs ?? 0;
       let lastCtimeMs = stat?.ctimeMs ?? 0;
       let lastIno = stat?.ino ?? 0;
       let lastSize = stat?.size ?? 0;
       let lastExists = stat !== undefined;
+      let abortHandler: (() => void) | null = null;
+      let cleanupStream: (() => void) | null = null;
+
+      const isResourceFallbackError = (err: unknown): boolean => {
+        const code = (err as NodeJS.ErrnoException | null)?.code;
+        return code === "ENOSPC" || code === "EMFILE" || code === "ENOSYS" || code === "ENOTSUP";
+      };
+
       const stream = new ReadableStream({
         start(controller) {
+          const cleanup = () => {
+            if (closed) return;
+            closed = true;
+            if (pollTimer) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+            }
+            if (watcher) {
+              try { watcher.removeAllListeners(); } catch { /* ignore */ }
+              try { watcher.close(); } catch { /* ignore */ }
+              watcher = null;
+            }
+            if (abortHandler && request.signal) {
+              try {
+                request.signal.removeEventListener("abort", abortHandler);
+              } catch { /* ignore */ }
+              abortHandler = null;
+            }
+            try {
+              controller.close();
+            } catch {
+              // client disconnected or already closed
+            }
+          };
+          cleanupStream = cleanup;
+
           const send = (eventName: string, data: Record<string, unknown>) => {
+            if (closed) return;
             const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
             try {
               controller.enqueue(new TextEncoder().encode(payload));
             } catch {
-              // client disconnected
+              cleanup();
             }
           };
+
+          const checkChange = async () => {
+            if (closed || inFlight) return;
+            inFlight = true;
+            try {
+              const s = await fs.promises.stat(filePath);
+              if (closed) return;
+              // Some platforms emit watch events for file reads/attribute
+              // access. Ignore those or the client's refresh read loops.
+              if (
+                lastExists
+                && s.mtimeMs === lastMtimeMs
+                && s.ctimeMs === lastCtimeMs
+                && s.ino === lastIno
+                && s.size === lastSize
+              ) return;
+              lastExists = true;
+              lastMtimeMs = s.mtimeMs;
+              lastCtimeMs = s.ctimeMs;
+              lastIno = s.ino;
+              lastSize = s.size;
+              send("change", { mtime: s.mtime.toISOString(), size: s.size });
+            } catch (err: unknown) {
+              if (closed) return;
+              const code = (err as NodeJS.ErrnoException | null)?.code;
+              if (code === "ENOENT" || code === "ENOTDIR") {
+                if (!lastExists) return;
+                lastExists = false;
+                send("change", { mtime: new Date().toISOString(), size: 0 });
+                return;
+              }
+              send("error", { message: "Failed to watch file" });
+              cleanup();
+            } finally {
+              inFlight = false;
+            }
+          };
+
+          if (request.signal) {
+            if (request.signal.aborted) {
+              cleanup();
+              return;
+            }
+            abortHandler = () => {
+              cleanup();
+            };
+            request.signal.addEventListener("abort", abortHandler, { once: true });
+          }
+
           try {
             const watchedDirectory = path.dirname(filePath);
             watcher = fs.watch(watchedDirectory, (_eventType, changedName) => {
@@ -587,44 +702,47 @@ export async function GET(
                 changedName != null
                 && !samePath(path.join(watchedDirectory, changedName.toString()), filePath)
               ) return;
-              try {
-                const s = fs.statSync(filePath);
-                // Some platforms emit watch events for file reads/attribute
-                // access. Ignore those or the client's refresh read loops.
-                if (
-                  lastExists
-                  && s.mtimeMs === lastMtimeMs
-                  && s.ctimeMs === lastCtimeMs
-                  && s.ino === lastIno
-                  && s.size === lastSize
-                ) return;
-                lastExists = true;
-                lastMtimeMs = s.mtimeMs;
-                lastCtimeMs = s.ctimeMs;
-                lastIno = s.ino;
-                lastSize = s.size;
-                send("change", { mtime: s.mtime.toISOString(), size: s.size });
-              } catch {
-                if (!lastExists) return;
-                lastExists = false;
-                send("change", { mtime: new Date().toISOString(), size: 0 });
-              }
+              void checkChange();
             });
-            watcher.on("error", () => {
+            watcher.on("error", (err) => {
+              try { watcher?.removeAllListeners(); } catch { /* ignore */ }
               try { watcher?.close(); } catch { /* ignore */ }
               watcher = null;
-              try { controller.close(); } catch { /* ignore */ }
+              if (isResourceFallbackError(err)) {
+                startPolling(false);
+              } else {
+                cleanup();
+              }
             });
             // The client snapshots only after this event, so emit it after the
             // watcher exists to avoid dropping changes between those steps.
-            send("connected", { filePath });
-          } catch {
-            send("error", { message: "Failed to watch file" });
-            controller.close();
+            send("connected", { filePath, mode: "watch" });
+          } catch (err) {
+            if (isResourceFallbackError(err)) {
+              startPolling(true);
+            } else {
+              send("error", { message: "Failed to watch file" });
+              cleanup();
+            }
+          }
+
+          function startPolling(isInitial: boolean) {
+            if (closed || pollTimer) return;
+            pollTimer = setInterval(() => {
+              void checkChange();
+            }, 1000);
+            if (typeof pollTimer.unref === "function") {
+              pollTimer.unref();
+            }
+            if (isInitial) {
+              send("connected", { filePath, mode: "poll" });
+            }
           }
         },
         cancel() {
-          try { watcher?.close(); } catch { /* ignore */ }
+          try {
+            cleanupStream?.();
+          } catch { /* ignore */ }
         },
       });
       return new Response(stream, {

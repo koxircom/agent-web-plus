@@ -21,9 +21,7 @@ test("pending steering uses the same final row with its image preserved",()=>{
 });
 test("enhancement adapter cannot hide, scan or rebuild React queue nodes",()=>{
  const source=readFileSync(new URL("../enhancements/modules/05-composer-and-input-workflow.js",import.meta.url),"utf8");
- const s=source.slice(source.indexOf("// Native React owns queue rendering"), source.indexOf("// Foundation composer layout"));
- assert.doesNotMatch(s,/pi-enh-native-queue-hidden|panel.innerHTML|row.firstElementChild/);
- assert.match(s,/pi:native-queue-snapshot/);assert.match(s,/pi:native-queue-action/);
+ assert.doesNotMatch(source,/pi-enh-native-queue-hidden|pi:native-queue-snapshot|pi:native-queue-action|loadComposerQueueTokens/);
 });
 
 test("reference row uses sort handles, quiet thumbnails and more actions", () => {
@@ -50,9 +48,8 @@ test("composer adapters follow the semantic native host after refresh", () => {
 test("Codex reuses the native queue action structure and service",()=>{
  const html=renderToStaticMarkup(React.createElement(ComposerQueue,{sessionId:"codex:fixture",executionEngine:"codex",queuedMessages:{steering:[],followUp:["one","two"]}}));
  for(const name of ["pi-enh-queue-sort","pi-enh-queue-promote","pi-enh-queue-more","pi-enh-queue-delete"])assert.ok(html.includes(name),name);
- const source=readFileSync(new URL("../enhancements/modules/05-composer-and-input-workflow.js",import.meta.url),"utf8");
- const s=source.slice(source.indexOf("async function loadComposerQueueTokens"),source.indexOf("// Foundation composer layout"));
- assert.doesNotMatch(s,/startsWith\("codex:"\)/);
+ const source=readFileSync(new URL("../hooks/useComposerQueueBridge.ts",import.meta.url),"utf8");
+ assert.doesNotMatch(source,/startsWith\("codex:"\)/);
 });
 
 

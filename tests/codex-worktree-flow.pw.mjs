@@ -8,6 +8,7 @@ const load = createRequire(import.meta.url);
 const esbuild = load('esbuild');
 const { chromium } = load(process.env.COMPOSER_PLAYWRIGHT_MODULE || 'playwright');
 const root = fileURLToPath(new URL('..', import.meta.url));
+const pkg = load('../package.json');
 
 const mainRepo = '/home/remote/repo';
 const linkedWt = '/home/remote/repo-worktrees/feature-wt';
@@ -98,7 +99,10 @@ const bundle = await esbuild.build({
   write: false,
   format: 'iife',
   alias: { '@': root },
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: {
+    'process.env.NODE_ENV': '"production"',
+    'process.env.NEXT_PUBLIC_APP_VERSION': JSON.stringify(pkg.version),
+  },
 });
 
 const server = http.createServer((req, res) => {

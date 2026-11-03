@@ -69,10 +69,54 @@ body:has(.settings-dialog-backdrop, .settings-dialog-surface, [role="dialog"][ar
   display: block;
 }
 
-/* 编辑区 (Textarea) - 位于 Row 2 跨全列 */
+/* 注释栏插槽 (Native Annotation Host Slot) - 位于 Row 2 跨全列 */
+.chat-composer-card [data-pi-native-annotation-host] {
+  grid-area: 2 / 1 / 3 / -1;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+[data-pi-native-annotation-host] {
+  grid-area: 2 / 1 / 3 / -1;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.chat-composer-card [data-pi-native-annotation-host]:empty {
+  display: none;
+}
+
+[data-pi-native-annotation-host]:empty {
+  display: none;
+}
+
+.chat-composer-card [data-pi-native-annotation-host] .pi-enh-annotation-rail,
+[data-pi-native-annotation-host] .pi-enh-annotation-rail {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.chat-composer-card [data-pi-native-annotation-host] .pi-enh-annotation-badge,
+[data-pi-native-annotation-host] .pi-enh-annotation-badge {
+  margin: 0 0 4px;
+  padding: 0 3px;
+}
+
+/* 编辑区 (Textarea) - 位于 Row 3 跨全列 */
 .chat-composer-card textarea.chat-input-textarea,
 .chat-composer-card .pi-enh-formatted-composer {
-  grid-area: 2 / 1 / 3 / -1;
+  grid-area: 3 / 1 / 4 / -1;
   width: 100%;
   padding: 0 2px 4px;
   min-height: 28px;
@@ -118,11 +162,11 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
   display: contents;
 }
 
-/* 工具栏控件网格槽位 (Row 3) */
+/* 工具栏控件网格槽位 (Row 4) */
 /* 1. Native React add button (Col 1) */
 .chat-composer-card .chat-composer-add-btn {
   grid-column: 1;
-  grid-row: 3;
+  grid-row: 4;
   justify-self: start;
   align-self: center;
   display: inline-flex;
@@ -160,12 +204,12 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
 }
 .chat-composer-card .chat-composer-attachment-controls {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 4;
 }
 .chat-composer-card .chat-composer-attach-btn,
 .chat-composer-card [data-pi-attach-image] {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 4;
   justify-self: start;
   align-self: center;
   width: 28px;
@@ -190,7 +234,7 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
 /* 3. Native input mode control (Col 3) */
 .chat-composer-card .chat-composer-mode-status {
   grid-column: 3;
-  grid-row: 3;
+  grid-row: 4;
   justify-self: stretch;
   align-self: center;
   display: inline-flex;
@@ -297,7 +341,7 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
 /* One shared control owns stable geometry; show its capsule only during interaction. */
 .chat-composer-card .chat-composer-model-controls {
   grid-column: -3;
-  grid-row: 3;
+  grid-row: 4;
   justify-self: end;
   align-self: center;
   gap: 0;
@@ -371,7 +415,7 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
 .chat-composer-card .chat-composer-actions,
 .chat-composer-card button.chat-composer-send {
   grid-column: -2;
-  grid-row: 3;
+  grid-row: 4;
   justify-self: end;
   align-self: center;
   display: inline-flex;
@@ -506,19 +550,32 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
   color: #262626;
   cursor: pointer;
 }
-[data-theme="light"] .chat-composer-card button.chat-composer-followup {
-  background: #0e0e11;
-  color: #fff;
-}
 .chat-composer-card button.chat-composer-followup:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
+}
+.chat-composer-card button.chat-composer-followup:disabled {
+  background: rgba(128, 128, 128, 0.14);
+  color: var(--text-dim, #71717a);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.chat-composer-card button.chat-composer-followup:not(:disabled):hover {
+  filter: brightness(1.1);
+}
+[data-theme="light"] .chat-composer-card button.chat-composer-followup:not(:disabled) {
+  background: #0e0e11;
+  color: #fff;
+}
+[data-theme="light"] .chat-composer-card button.chat-composer-followup:disabled {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-dim, #a1a1aa);
 }
 
 /* 运行态：停止 (Stop) 按钮 (圆形 24px 图标按钮，无多余文字) */
 .chat-composer-card button.chat-composer-stop {
   grid-column: -2;
-  grid-row: 3;
+  grid-row: 4;
   justify-self: end;
   align-self: center;
   position: static;

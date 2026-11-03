@@ -9,9 +9,29 @@ export async function GET(
 ) {
   const { id } = await params;
   if (!hasTerminal(id)) return new Response("Terminal not found", { status: 404 });
-  const cursor = req.headers.get("last-event-id") ?? new URL(req.url).searchParams.get("after");
+  const url = new URL(req.url);
+  const cursor = req.headers.get("last-event-id") ?? url.searchParams.get("after");
   const after = cursor !== null && /^\d+$/.test(cursor) && Number.isSafeInteger(Number(cursor))
     ? Number(cursor) : undefined;
+
+  const isBatch = url.searchParams.get("format") === "batch"
+    || req.headers.get("accept")?.includes("application/json");
+
+  if (isBatch) {
+    const subscription = subscribeTerminal(id, () => {}, after);
+    if (!subscription) return new Response("Terminal not found", { status: 404 });
+    const payload = {
+      output: subscription.output,
+      exited: subscription.exited,
+      exitCode: subscription.exitCode,
+    };
+    subscription.unsubscribe();
+    return Response.json(payload, {
+      headers: {
+        "Cache-Control": "no-cache, no-store, no-transform",
+      },
+    });
+  }
 
   let closeStream: (closeController: boolean) => void = () => {};
   const stream = new ReadableStream<Uint8Array>({

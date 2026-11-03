@@ -701,7 +701,12 @@
             "enhancements/tests/session-delete-cleanup.test.cjs",
             "app/api/sessions/batch-delete/jobs/route.ts",
             "app/api/sessions/batch-delete/jobs/[id]/route.ts",
-            "app/api/sessions/batch-delete/jobs/[id]/events/route.ts"
+            "app/api/sessions/batch-delete/jobs/[id]/events/route.ts",
+            "enhancements/tests/batch-delete-result-details.test.cjs",
+            "enhancements/tests/batch-range-selection.test.cjs",
+            "enhancements/tests/batch-delete-dismiss.test.cjs",
+            "enhancements/tests/batch-row-decorations.test.cjs",
+            "enhancements/tests/batch-touch-activation.test.cjs"
           ],
           "timeoutSeconds": 180
         },
@@ -807,35 +812,6 @@
           "timeoutSeconds": 180
         },
         {
-          "name": "release-dom-feedback",
-          "command": [
-            "node",
-            "scripts/qa/dom-feedback.cjs"
-          ],
-          "files": [
-            "components/DomFeedbackControl.tsx",
-            "components/DomFeedbackPreview.tsx",
-            "components/dom-feedback/DomFeedbackPicker.tsx",
-            "components/dom-feedback/DomFeedbackPicker.module.css",
-            "components/dom-feedback/frame-protocol.ts",
-            "components/dom-feedback/DomFeedbackPicker.test.mjs",
-            "lib/dom-feedback/target.ts",
-            "lib/dom-feedback/target.test.mjs",
-            "lib/dom-feedback/capture.ts",
-            "lib/dom-feedback/preview.ts",
-            "tests/dom-feedback.pw.mjs",
-            "scripts/qa/dom-feedback.cjs",
-            "scripts/prepare-dom-feedback-assets.cjs",
-            "lib/dom-feedback/capture.test.mjs",
-            "tests/dom-feedback-page.pw.mjs",
-            "lib/dom-feedback/source.ts",
-            "lib/dom-feedback/source.test.mjs",
-            "tests/dom-feedback-sourcemap.pw.mjs",
-            "lib/dom-feedback/source-assets.test.mjs"
-          ],
-          "timeoutSeconds": 360
-        },
-        {
           "name": "release-sidebar-tags",
           "command": [
             "node",
@@ -851,6 +827,111 @@
             "tests/sidebar-many-tags.pw.mjs"
           ],
           "timeoutSeconds": 120
+        },
+        {
+          "name": "release-file-panel-touch-cancel",
+          "command": [
+            "node",
+            "--test",
+            "enhancements/tests/file-panel-touch-cancel.test.cjs",
+            "hooks/useTouchContactGuard.test.mjs",
+            "lib/execution-engines/codex-thinking-catalog.test.mjs"
+          ],
+          "files": [
+            "enhancements/tests/file-panel-touch-cancel.test.cjs",
+            "hooks/useTouchContactGuard.test.mjs",
+            "lib/execution-engines/codex-thinking-catalog.test.mjs"
+          ],
+          "timeoutSeconds": 60
+        },
+        {
+          "name": "release-windows-touch-contract",
+          "command": [
+            "node",
+            "scripts/qa/pi30141-touch-gate.contract.test.mjs"
+          ],
+          "files": [
+            "scripts/qa/pi30141-touch-gate.contract.test.mjs",
+            "scripts/qa/pi30141-touch-verifier.mjs",
+            "scripts/qa/pi30141-touch-gate.mjs",
+            "scripts/qa/windows-touch-deployment-gate.mjs"
+          ],
+          "timeoutSeconds": 30
+        },
+        {
+          "name": "release-native-batch-transport",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/native-event-batch.test.mjs",
+            "lib/agent-event-connection.test.mjs",
+            "components/TerminalPanel.test.mjs",
+            "lib/file-watch-client.test.mjs"
+          ],
+          "files": [
+            "lib/native-event-batch.test.mjs",
+            "lib/agent-event-connection.test.mjs",
+            "components/TerminalPanel.test.mjs",
+            "lib/file-watch-client.test.mjs",
+            "lib/native-event-batch.ts",
+            "lib/native-event-batch-client.ts",
+            "lib/terminal-poll-owner.ts",
+            "lib/file-watch-client.ts"
+          ],
+          "timeoutSeconds": 120
+        },
+        {
+          "name": "release-subagent-background",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/subagent-extension.test.mjs",
+            "lib/subagent-background-lifecycle.test.mjs",
+            "lib/subagent-background-faux.integration.test.mjs",
+            "lib/subagent-extension.integration.test.mjs"
+          ],
+          "files": [
+            "lib/subagent-extension.test.mjs",
+            "lib/subagent-background-lifecycle.test.mjs",
+            "lib/subagent-background-faux.integration.test.mjs",
+            "lib/subagent-extension.integration.test.mjs",
+            "lib/subagent-extension.ts",
+            "lib/subagent-runtime.ts",
+            "lib/subagent-queue.ts"
+          ],
+          "timeoutSeconds": 120
+        },
+        {
+          "name": "release-browser-tab-appearance",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/browser-tab-appearance.test.mjs",
+            "lib/tab-favicon.test.mjs",
+            "lib/browser-tab-title.test.mjs",
+            "lib/browser-title-subscription.test.mjs",
+            "hooks/useBrowserTabTitle.test.mjs",
+            "components/AppShell.window-title.test.mjs",
+            "app/api/ui-settings/browser-title/route.test.mjs",
+            "components/SettingsPanel.test.mjs"
+          ],
+          "files": [
+            "lib/browser-tab-appearance.test.mjs",
+            "lib/tab-favicon.test.mjs",
+            "lib/browser-tab-title.test.mjs",
+            "lib/browser-title-subscription.test.mjs",
+            "hooks/useBrowserTabTitle.test.mjs",
+            "components/AppShell.window-title.test.mjs",
+            "app/api/ui-settings/browser-title/route.test.mjs",
+            "components/SettingsPanel.test.mjs"
+          ],
+          "timeoutSeconds": 180
         }
       ]
     }

@@ -55,11 +55,29 @@ class BadRequestBodyError extends Error {
   }
 }
 
-function jsonResponseWithNoStore(payload: Record<string, unknown>, status: number): NextResponse {
+function jsonResponseWithNoStore(
+  payload: Record<string, unknown>,
+  status: number,
+  extraHeaders?: Record<string, string>,
+): NextResponse {
   return NextResponse.json(payload, {
     status,
-    headers: NO_STORE_HEADERS,
+    headers: {
+      ...NO_STORE_HEADERS,
+      ...extraHeaders,
+    },
   });
+}
+
+function sanitizeErrorMessage(message: string): string {
+  try {
+    const agentDir = getAgentDir();
+    if (agentDir) {
+      message = message.split(agentDir).join(".");
+    }
+  } catch {}
+  return message
+    .replace(/(?:[a-zA-Z]:\\|\/)(?:[^\s:,'"()]+\/|\\)*([^\s:,'"()]+)/g, "$1");
 }
 
 function isDangerousId(val: unknown): boolean {
@@ -315,7 +333,11 @@ export function readEnhancementState(): EnhancementStateReadResult {
 export async function commitEnhancementOperations(
   operations: unknown[],
 ): Promise<EnhancementStateCommitResult> {
-  return createEnhancementStateStore().commit(operations);
+  const store = createEnhancementStateStore();
+  return store.withLock(async () => {
+    store.ensureInitializedFromLegacyLocked();
+    return store.commitLocked(operations);
+  });
 }
 
 function isRequestTrusted(request: Request): boolean {
@@ -453,7 +475,8 @@ export async function handleEnhancementStateGet(request?: Request): Promise<Next
       200,
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(rawMessage);
     if (isNotInitializedError(error)) {
       return jsonResponseWithNoStore(
         {
@@ -462,6 +485,31 @@ export async function handleEnhancementStateGet(request?: Request): Promise<Next
           message,
         },
         409,
+      );
+    }
+    const errCode = extractErrorCode(error, "");
+    if (errCode === "LOCK_BUSY" || rawMessage.includes("LOCK_BUSY")) {
+      return jsonResponseWithNoStore(
+        {
+          ok: false,
+          error: "LOCK_BUSY",
+          message: "Service temporarily busy, please retry",
+        },
+        503,
+        { "Retry-After": "1" },
+      );
+    }
+    if (
+      errCode === "LOCK_STALE_REQUIRES_RECOVERY" ||
+      rawMessage.includes("LOCK_STALE_REQUIRES_RECOVERY")
+    ) {
+      return jsonResponseWithNoStore(
+        {
+          ok: false,
+          error: "LOCK_STALE_REQUIRES_RECOVERY",
+          message: "Agent state lock is stale and requires recovery",
+        },
+        503,
       );
     }
     return jsonResponseWithNoStore(
@@ -607,7 +655,36 @@ export async function handleEnhancementStateOperationsPost(request: Request): Pr
       200,
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const errCode = extractErrorCode(error, "");
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = sanitizeErrorMessage(rawMessage);
+
+    if (errCode === "LOCK_BUSY" || rawMessage.includes("LOCK_BUSY")) {
+      return jsonResponseWithNoStore(
+        {
+          ok: false,
+          error: "LOCK_BUSY",
+          message: "Service temporarily busy, please retry",
+        },
+        503,
+        { "Retry-After": "1" },
+      );
+    }
+
+    if (
+      errCode === "LOCK_STALE_REQUIRES_RECOVERY" ||
+      rawMessage.includes("LOCK_STALE_REQUIRES_RECOVERY")
+    ) {
+      return jsonResponseWithNoStore(
+        {
+          ok: false,
+          error: "LOCK_STALE_REQUIRES_RECOVERY",
+          message: "Agent state lock is stale and requires recovery",
+        },
+        503,
+      );
+    }
+
     if (isNotInitializedError(error)) {
       return jsonResponseWithNoStore(
         {
@@ -618,6 +695,21 @@ export async function handleEnhancementStateOperationsPost(request: Request): Pr
         409,
       );
     }
+
+    if (
+      errCode === "LEGACY_MODELS_INVALID" ||
+      rawMessage.includes("LEGACY_MODELS_INVALID")
+    ) {
+      return jsonResponseWithNoStore(
+        {
+          ok: false,
+          error: "LEGACY_MODELS_INVALID",
+          message,
+        },
+        422,
+      );
+    }
+
     if (isCorruptedStoreError(error)) {
       return jsonResponseWithNoStore(
         {
@@ -628,6 +720,7 @@ export async function handleEnhancementStateOperationsPost(request: Request): Pr
         503,
       );
     }
+
     return jsonResponseWithNoStore(
       {
         ok: false,

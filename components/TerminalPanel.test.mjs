@@ -1,7 +1,29 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
 import { createTerminalWriter, terminalRequest } from "../lib/terminal-client.ts";
+import { createTerminalPollOwner } from "../lib/terminal-poll-owner.ts";
+
+const panelSource = await readFile(new URL("./TerminalPanel.tsx", import.meta.url), "utf8");
+
+test("a stopped terminal poll cannot clear or overwrite its replacement", () => {
+  const owner = createTerminalPollOwner();
+  const oldPoll = owner.begin();
+  assert.ok(oldPoll);
+  assert.equal(owner.begin(), null, "only one poll owns the terminal at a time");
+
+  owner.stop();
+  const newPoll = owner.begin();
+  assert.ok(newPoll);
+  assert.equal(oldPoll.controller.signal.aborted, true);
+  assert.equal(owner.isCurrent(oldPoll), false);
+  assert.equal(owner.finish(oldPoll), false, "stale finally cannot release the current owner");
+  assert.equal(owner.isCurrent(newPoll), true);
+  assert.equal(owner.finish(newPoll), true);
+  assert.match(panelSource, /if \(!isCurrentPoll\(\) \|\| disposed \|\| exited\) return;/);
+  assert.match(panelSource, /finally \{\s*pollOwner\.finish\(poll\);/);
+});
 
 test("terminal errors preserve server diagnostics and explain non-JSON responses", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch");

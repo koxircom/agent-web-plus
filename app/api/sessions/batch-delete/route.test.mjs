@@ -46,9 +46,9 @@ test('six-session batch seals once, keeps unrelated long history, and missing/du
  const f=await fixture(t); for(let i=0;i<6;i++) await f.add('batch-'+i);
  const survivor=await f.add('survivor',undefined,false,'long history '.repeat(100000));
  const before=await readFile(survivor);
- const guard=loadUsageDeleteGuard(); const original=guard.sealAndDeleteSync; let calls=0;
- guard.sealAndDeleteSync=(targets,...args)=>{calls++;assert.equal(targets.size,6);return original(targets,...args)};
- t.after(()=>guard.sealAndDeleteSync=original);
+ const guard=loadUsageDeleteGuard(); const original=guard.sealAndDelete; let calls=0;
+ guard.sealAndDelete=(targets,...args)=>{calls++;assert.equal(targets.size,6);return original(targets,...args)};
+ t.after(()=>guard.sealAndDelete=original);
  const started=performance.now(); const response=await post([...f.paths.keys()].slice(0,6).concat('batch-0','missing'));
  assert.equal(response.status,200); const payload=await response.json();
  assert.equal(payload.results.length,7);assert(payload.results.every(r=>r.ok),JSON.stringify(payload));assert.equal(calls,1);assert.equal(payload.deletedSessionIds.length,6);
@@ -76,15 +76,15 @@ test('an active surviving child blocks reparent and preserves the parent file',a
  const previousRegistry=globalThis.__piSessions;const registry=new Map(previousRegistry??[]);
  registry.set('fork',{isAlive:()=>true,isRunning:()=>true});globalThis.__piSessions=registry;
  t.after(()=>globalThis.__piSessions=previousRegistry);
- const guard=loadUsageDeleteGuard(),original=guard.sealAndDeleteSync;let calls=0;
- guard.sealAndDeleteSync=(...args)=>{calls++;return original(...args)};t.after(()=>guard.sealAndDeleteSync=original);
+ const guard=loadUsageDeleteGuard(),original=guard.sealAndDelete;let calls=0;
+ guard.sealAndDelete=(...args)=>{calls++;return original(...args)};t.after(()=>guard.sealAndDelete=original);
  const payload=await(await post(['parent'])).json();assert.equal(payload.results.length,1);assert.equal(payload.results[0].ok,false);
  assert.equal(calls,0);assert((await readFile(f.paths.get('parent'))).length>0);
  const forkHeader=JSON.parse((await readFile(f.paths.get('fork'),'utf8')).split('\n')[0]);assert.equal(forkHeader.parentSession,f.paths.get('parent'));
 });
 test('sealing failure reports failure and preserves every target',async t=>{
  const f=await fixture(t);await f.add('keep-a');await f.add('keep-b');
- const guard=loadUsageDeleteGuard(),original=guard.sealAndDeleteSync;guard.sealAndDeleteSync=()=>{throw Error('isolated seal failure')};t.after(()=>guard.sealAndDeleteSync=original);
+ const guard=loadUsageDeleteGuard(),original=guard.sealAndDelete;guard.sealAndDelete=()=>{throw Error('isolated seal failure')};t.after(()=>guard.sealAndDelete=original);
  const payload=await(await post(['keep-a','keep-b'])).json();assert(payload.results.every(r=>!r.ok));assert.deepEqual(payload.deletedSessionIds,[]);
  for(const path of f.paths.values())assert((await readFile(path)).length>0);
 });

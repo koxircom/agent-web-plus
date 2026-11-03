@@ -484,7 +484,11 @@ class Catalog:
                         endpoint.username or endpoint.password or endpoint.query or endpoint.fragment):
                     raise ValueError('未找到当前 API 地址，请检查接入配置')
                 ids = model_ids(base, key)
-                result['models'] = [{'model': identifier, 'displayName': identifier} for identifier in ids]
+                native = self._native_reasoning_metadata(request, ids)
+                result['models'] = [
+                    {'model': identifier, 'displayName': identifier, **native.get(identifier, {})}
+                    for identifier in ids
+                ]
             except ValueError as exc:
                 result['modelError'] = str(exc)
             return result
@@ -496,6 +500,44 @@ class Catalog:
             if not cursor:
                 break
         return {'models': models, 'modelSource': 'codex', 'currentEffort': effective.get('model_reasoning_effort')}
+
+    @staticmethod
+    def _native_reasoning_metadata(request, identifiers):
+        wanted = set(identifiers)
+        metadata = {}
+        cursor, seen = None, set()
+        for _ in range(10):
+            try:
+                params = {'cursor': cursor, 'limit': 100, 'includeHidden': False}
+                page = request('model/list', params, timeout=12)
+            except Exception:
+                break
+            if not isinstance(page, dict) or not isinstance(page.get('data'), list):
+                break
+            for model in page['data']:
+                if not isinstance(model, dict) or model.get('hidden'):
+                    continue
+                identifier = model.get('model') or model.get('id')
+                if not isinstance(identifier, str) or identifier not in wanted:
+                    continue
+                row = metadata.setdefault(identifier, {})
+                efforts = model.get('supportedReasoningEfforts')
+                if isinstance(efforts, list) and not row.get('supportedReasoningEfforts'):
+                    supported = [effort for effort in efforts if isinstance(effort, dict)
+                                 and isinstance(effort.get('reasoningEffort'), str)
+                                 and effort['reasoningEffort']]
+                    if supported:
+                        row['supportedReasoningEfforts'] = supported
+                default_effort = model.get('defaultReasoningEffort')
+                if isinstance(default_effort, str) and default_effort:
+                    row.setdefault('defaultReasoningEffort', default_effort)
+                if not row:
+                    metadata.pop(identifier, None)
+            cursor = page.get('nextCursor')
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                break
+            seen.add(cursor)
+        return metadata
 
     @staticmethod
     def fast_mode(request, cwd):

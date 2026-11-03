@@ -195,7 +195,10 @@ class Workspace:
         parts = self.parts(path)
         if not parts: raise ValueError('请选择文件')
         with self.directory(parts[:-1]) as (directory, fd):
-            info = os.stat(parts[-1], dir_fd=fd, follow_symlinks=False) if fd is not None else (directory / parts[-1]).lstat()
+            try:
+                info = os.stat(parts[-1], dir_fd=fd, follow_symlinks=False) if fd is not None else (directory / parts[-1]).lstat()
+            except FileNotFoundError:
+                return {'name': parts[-1], 'path': path, 'size': 0, 'kind': 'missing'}
             if stat.S_ISDIR(info.st_mode):
                 # Re-walk the full directory using the same no-link boundary.
                 with self.directory(parts):
@@ -204,7 +207,10 @@ class Workspace:
             with os.fdopen(handle, 'rb') as stream:
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode): raise ValueError('仅支持普通文件')
-                return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file'}
+                return {'name': parts[-1], 'path': path, 'size': info.st_size, 'kind': 'file',
+                        'sizeExact': str(info.st_size),
+                        'dev': str(info.st_dev), 'ino': str(info.st_ino),
+                        'mtimeNs': str(info.st_mtime_ns), 'ctimeNs': str(info.st_ctime_ns)}
 
     @contextmanager
     def archive(self, path, range_header='', if_range='', limit=None):

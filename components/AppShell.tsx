@@ -1,6 +1,8 @@
 "use client";
 
 import { useTabFavicon } from "@/hooks/useTabFavicon";
+import { formatBrowserTabTitle } from "@/lib/browser-tab-appearance";
+import { useBrowserTabTitle } from "@/hooks/useBrowserTabTitle";
 import {SessionUsageSummary} from "./SessionUsageSummary";
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { getNativeSidebarSwipeStartLimit, useMobileHorizontalSwipe } from "@/hooks/useMobileHorizontalSwipe";
@@ -11,7 +13,6 @@ import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { CHAT_SCROLL_STORAGE_KEY, MAX_SAVED_CHAT_POSITIONS, readChatScrollPositions, serializeChatScrollPositions, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
-import { DomFeedbackControl } from "./DomFeedbackControl";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel } from "./SettingsPanel";
@@ -30,6 +31,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
+import { useTouchContactGuard } from "@/hooks/useTouchContactGuard";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -117,6 +119,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   // also fire for tasks finishing in a non-active workspace whose ChatWindow
   // is not mounted. ChatWindow receives the audio callbacks as props.
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio, soundEnabledRef } = useAudio();
+  useTouchContactGuard();
   const [quoteSelectionEnabled, setQuoteSelectionEnabled] = useState(false);
   useEffect(() => {
     try {
@@ -457,6 +460,10 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     }
     setSidebarOpen((open) => !open);
   }, [isMobile]);
+
+  const handleExpandSidebar = useCallback(() => {
+    setSidebarOpen(true);
+  }, []);
 
   const handleMobileToolbarMoreToggle = useCallback(() => {
     setSidebarOpen(false);
@@ -1643,6 +1650,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     if (cwd === projectTrustCwd) setProjectTrust(status);
   }, [projectTrustCwd]);
 
+  const { customTitle: customBrowserTabTitle, appearance: browserTabAppearance } = useBrowserTabTitle();
   const activeFileTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
   const windowTitle = activeCwdName ? `${activeCwdName} - ${BRAND_NAME}` : BRAND_NAME;
@@ -1659,6 +1667,15 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
       if (typeof requestedTitle === "string") {
         extensionWindowTitleRef.current = { projectCwd: activeCwd, title: requestedTitle };
       }
+      if (browserTabAppearance) {
+        const title = formatBrowserTabTitle(browserTabAppearance, { project: activeCwdName || "", agent: activeExecutionEngine === "codex" ? "Codex" : "Pi Agent", text: customBrowserTabTitle, app: BRAND_NAME });
+        if (document.title !== title) document.title = title;
+        return;
+      }
+      if (customBrowserTabTitle) {
+        if (document.title !== customBrowserTabTitle) document.title = customBrowserTabTitle;
+        return;
+      }
       const requestedBase = extensionWindowTitleRef.current?.projectCwd === activeCwd
         ? extensionWindowTitleRef.current.title
         : windowTitle;
@@ -1674,7 +1691,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         delete win.__PI_WEB_NATIVE_TITLE_BASE__;
       }
     };
-  }, [activeCwd, windowTitle]);
+  }, [activeCwd, windowTitle, customBrowserTabTitle, browserTabAppearance, activeCwdName, activeExecutionEngine]);
 
   useEffect(() => {
     return registerEnhancementOpenSettings((section) => {
@@ -2306,7 +2323,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               </svg>
             )}
           </button>
-          {!rightPanelOpen && <DomFeedbackControl key={`${activeFileTabId ?? "chat"}:${activeFileTab?.viewerRevision ?? 0}`} sessionId={selectedSession?.id} engine={executionEngine} onImages={files => chatInputRef.current?.addImages(files)} />}
+          
           {isMobile && (
             <div
               ref={mobileToolbarRef}
@@ -2686,6 +2703,8 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               key={sessionKey}
               sessionRefreshKey={sessionRefreshKey}
               session={selectedSession}
+              sidebarCollapsed={!sidebarOpen}
+              onExpandSidebar={handleExpandSidebar}
               executionEngine={executionEngineReady ? activeExecutionEngine : "codex"}
               mobileNavigationOpen={mobileNavigationOpen}
               onMobileNavigationOpenChange={handleMobileNavigationOpenChange}
@@ -2831,7 +2850,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               onCloseTab={handleCloseFileTab}
             />
           </div>
-          {rightPanelOpen && <DomFeedbackControl key={`${activeFileTabId ?? "chat"}:${activeFileTab?.viewerRevision ?? 0}`} sessionId={selectedSession?.id} engine={executionEngine} onImages={files => chatInputRef.current?.addImages(files)} />}
+          
           <button
             type="button"
             className="file-panel-expand-button"
@@ -2870,7 +2889,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         </div>
 
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
-        <div data-dom-feedback-file-path={activeFileTab?.filePath} style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
           {activeFileTab?.filePath ? (
             <FileViewer
               key={`${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
@@ -2882,7 +2901,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
               initialDisplayMode={activeFileTab.initialDisplayMode}
               initialPage={activeFileTab.page}
               initialState={activeFileTab.viewerState}
-              watchEnabled={piExecutionReady && rightPanelOpen}
+              watchEnabled={rightPanelOpen}
               onStateChange={(viewerState) => handleFileViewerStateChange(
                 activeFileTab.id,
                 activeFileTab.viewerRevision ?? 0,
@@ -2925,6 +2944,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         resolveReturnFocus={resolveSettingsReturnFocus}
         cwd={piExecutionReady ? projectTrustCwd : null}
         sessionId={piExecutionReady ? selectedSession?.id ?? null : null}
+        browserTabContext={{ cwd: activeCwd, engine: activeExecutionEngine }}
         initialSection={settingsSection}
         quoteSelectionEnabled={quoteSelectionEnabled}
         onQuoteSelectionChange={handleQuoteSelectionChange}

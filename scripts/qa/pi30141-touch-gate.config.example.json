@@ -1,0 +1,37 @@
+{
+  "engineUrls": {
+    "pi": "SET_TO_THE_READ_ONLY_PI_FIXTURE_URL",
+    "codex": "SET_TO_THE_READ_ONLY_CODEX_FIXTURE_URL"
+  },
+  "spaceId": "SET_TO_THE_NEW_EXISTING_EGO_TASKSPACE_ID",
+  "pageLabel": "p2",
+  "engines": [
+    "pi",
+    "codex"
+  ],
+  "viewports": [
+    {
+      "width": 390,
+      "height": 1000
+    },
+    {
+      "width": 800,
+      "height": 1000
+    },
+    {
+      "width": 1124,
+      "height": 1000
+    }
+  ],
+  "expectedBuildId": "SET_TO_CURRENT_BUILD_ID",
+  "expectedAssetFingerprint": {
+    "url": "/pi-web-assets/enhancements-SET_TO_CURRENT_HASH_PREFIX.js",
+    "sha256": "SET_TO_CURRENT_ASSET_SHA256"
+  },
+  "selectionTarget": {
+    "selector": "SET_TO_A_VISIBLE_PLAIN_TEXT_ELEMENT",
+    "text": "SET_TO_A_UNIQUE_VISIBLE_PLAIN_TEXT_SUBSTRING"
+  },
+  "holdMs": 1000,
+  "outputPath": "C:/ego/pi30141-touch-gate/acceptance.json"
+}

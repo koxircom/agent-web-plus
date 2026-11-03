@@ -22,6 +22,8 @@ import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
+import { parseUserMessageAttachments } from "@/lib/message-file-attachments";
+import { encodePathForApi } from "@/lib/file-upload-client";
 import type {
   AgentMessage,
   UserMessage,
@@ -356,7 +358,10 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           .filter((b): b is TextContent => b.type === "text")
           .map((b) => b.text)
           .join("\n");
-  const content = stripDimensionNotes(stripSerializedAnnotationBlocks(sourceContent));
+  const rawContent = stripDimensionNotes(stripSerializedAnnotationBlocks(sourceContent));
+  const { cleanText: content, attachments: fileAttachments } = useMemo(() => {
+    return parseUserMessageAttachments(rawContent);
+  }, [rawContent]);
 
   const imageBlocks: ImageContent[] =
     typeof message.content === "string"
@@ -374,11 +379,12 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
 
   const time = formatTime(message.timestamp);
   const canFork = !!entryId && !!onFork && (message.forkable ?? true);
-  const copyTarget = commandText ?? content;
+  // 保留原始完整文本内容 (包括附件 marker 等完整元信息)，绝不因剔除 marker 导致复制残缺
+  const copyTarget = commandText ?? sourceContent;
   const editTarget = commandText ? replaceUserMessageText(message, commandText) : message;
 
   const imageBlocksNode = imageBlocks.length > 0 && (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content || fileAttachments.length > 0 ? 8 : 0 }}>
       {imageBlocks.map((img, i) => {
         // lib/types.ts ImageContent uses {source:{type,data,media_type,url}}
         // pi-ai on-disk format uses flat {data, mimeType} — handle both
@@ -399,6 +405,99 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               style={{ maxWidth: 240, maxHeight: 240, borderRadius: 6, objectFit: "contain", display: "block", border: "1px solid rgba(59,130,246,0.15)" }}
             />
           </ImagePreview>
+        );
+      })}
+    </div>
+  );
+
+  const resolveControlledPath = (serverRelativePath: string): string => {
+    if (!serverRelativePath) return "";
+    const normalized = serverRelativePath.replace(/\\/g, "/");
+    if (/^[a-zA-Z]:[\\/]/.test(serverRelativePath) || normalized.startsWith("/")) {
+      return serverRelativePath;
+    }
+    if (!cwd) return serverRelativePath;
+    const sep = cwd.includes("\\") ? "\\" : "/";
+    return cwd.replace(/[\\/]+$/, "") + sep + serverRelativePath.replace(/^\/+/, "");
+  };
+
+  const fileAttachmentsNode = fileAttachments.length > 0 && (
+    <div
+      data-testid="user-message-attachments-container"
+      style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: content ? 8 : 0 }}
+    >
+      {fileAttachments.map((att) => {
+        const controlledPath = resolveControlledPath(att.serverRelativePath);
+        return (
+          <div
+            key={att.id}
+            data-testid="user-message-attachment-card"
+            onClick={() => {
+              if (onOpenFile && controlledPath) {
+                onOpenFile(controlledPath);
+              }
+            }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 10px",
+              background: "rgba(255, 255, 255, 0.05)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "var(--text)",
+              cursor: onOpenFile ? "pointer" : "default",
+              userSelect: "none",
+            }}
+          >
+            <span style={{ fontSize: 16 }}>📄</span>
+            <div style={{ display: "flex", flexDirection: "column", minWidth: 0, maxWidth: 220 }}>
+              <span
+                style={{
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={att.name}
+              >
+                {att.name}
+              </span>
+              {att.sizeStr && (
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                  {att.sizeStr}
+                </span>
+              )}
+            </div>
+            {onOpenFile && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenFile(controlledPath);
+                }}
+                title="查看附件"
+                aria-label="查看附件"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  borderRadius: 4,
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </button>
+            )}
+          </div>
         );
       })}
     </div>
@@ -439,6 +538,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           {commandText ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
               {imageBlocksNode}
+              {fileAttachmentsNode}
               <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
                 <button
                   onClick={() => setExpanded((prev) => !prev)}
@@ -498,6 +598,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           ) : (
           <>
           {imageBlocksNode}
+          {fileAttachmentsNode}
           {content && <SafeMarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>}
           </>
           )}

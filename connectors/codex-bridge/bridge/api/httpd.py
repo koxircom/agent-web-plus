@@ -488,6 +488,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.output(200, self.server.bridge.validate_cwd(cwd))
             if getattr(self.server.bridge, 'standalone', False):
                 if path == '/api/runtime' and not write:
+                    if getattr(self.server.bridge, 'windows_desktop', False):
+                        return self.output(200, self.server.bridge.runtime_status())
                     return self.output(200, {'mode': 'standalone', 'workspace': str(self.server.bridge.root),
                                             'connected': self.server.bridge.runtime.running})
                 if path == '/api/accounts/ignore-submission' and write:
@@ -496,6 +498,8 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError('忽略请求包含不支持的字段')
                     return self.output(200, self.server.bridge.for_host(body['host']).ignore_submission(body['threadId'], body['submissionId']))
                 if path.startswith(('/api/accounts', '/api/account', '/api/desktop-sessions/', '/api/notifications/', '/api/mobile/')):
+                    if getattr(self.server.bridge, 'windows_desktop', False):
+                        return self.output(400, {'error': '此入口只管理 Windows 原生桌面会话；账号和后台配置请在桌面应用管理'})
                     return self.output(400, {'error': '此入口只管理独立 WSL 会话；账号和后台配置请在 WSL 管理'})
             mobile_update = re.fullmatch(r'/api/mobile/update(?:/(prepare|status/([a-f0-9]{64})|packages/([a-f0-9]{64})))?', path)
             if mobile_update:
@@ -1023,10 +1027,29 @@ class Handler(BaseHTTPRequestHandler):
             self.output(404, {"error": "找不到这个会话"})
         except ValueError as exc:
             self.close_connection = True
-            self.output(400, {"error": str(exc)})
+            status = getattr(exc, 'status_code', 400)
+            payload = {'error': str(exc)}
+            if hasattr(exc, 'code'):
+                payload['code'] = exc.code
+            if hasattr(exc, 'dispatched'):
+                payload['dispatched'] = exc.dispatched
+            if hasattr(exc, 'retryable'):
+                payload['retryable'] = exc.retryable
+            elif hasattr(exc, 'dispatched'):
+                payload['retryable'] = False
+            self.output(status, payload)
         except (IPCError, GoalError, CatalogError, RemoteUnavailable, CreationError, StoreUnavailable, AccountError) as exc:
             self.close_connection = True
-            self.output(409, {"error": str(exc), "code": "desktop_unavailable"})
+            status = getattr(exc, 'status_code', 409)
+            code = getattr(exc, 'code', 'desktop_unavailable')
+            payload = {'error': str(exc), 'code': code}
+            if hasattr(exc, 'dispatched'):
+                payload['dispatched'] = exc.dispatched
+            if hasattr(exc, 'retryable'):
+                payload['retryable'] = exc.retryable
+            elif hasattr(exc, 'dispatched'):
+                payload['retryable'] = False
+            self.output(status, payload)
         except (BrokenPipeError, ConnectionResetError, socket.timeout):
             self.close_connection = True
         except Exception:

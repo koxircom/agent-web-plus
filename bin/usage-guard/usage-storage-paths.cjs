@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 
+const crypto = require("node:crypto");
+
 const MARKER_FILE_NAME = ".pi-usage-storage.json";
 const EXPECTED_MARKER_VERSION = 1;
 const EXPECTED_MARKER_INSTANCE = "nas";
@@ -246,115 +248,200 @@ function resolveUsagePathsForSync(options = {}, defaultDir = __dirname) {
   };
 }
 
-function isProcessAlive(pid) {
-  if (!pid || typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) return false;
+function getBootId() {
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
+    return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  } catch (_) {
+    return null;
   }
 }
 
+function getPidNamespace() {
+  try {
+    return fs.readlinkSync("/proc/self/ns/pid");
+  } catch (_) {
+    return null;
+  }
+}
+
+function getStartTicks() {
+  try {
+    const statStr = fs.readFileSync("/proc/self/stat", "utf8");
+    const closeParen = statStr.lastIndexOf(")");
+    if (closeParen !== -1) {
+      const rest = statStr.slice(closeParen + 1).trim().split(/\s+/);
+      if (rest[19]) {
+        return Number(rest[19]) || rest[19];
+      }
+    }
+  } catch (_) {}
+  try {
+    return Math.round(process.uptime() * 100);
+  } catch (_) {
+    return null;
+  }
+}
+
+function generateLockToken() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : crypto.randomBytes(16).toString("hex");
+}
+
+const activeLocksByFd = new Map();
+const activeLocksByPath = new Map();
+
 /**
- * 获取独占锁（带孤儿死锁自动识别与自愈）
+ * 获取独占锁（带身份凭据与单调等待，坚决禁止按 TTL / deadPID 抢锁）
  */
 function acquireUsageLock(lockFile, options = {}) {
-  const dir = path.dirname(lockFile);
+  const normalizedLockFile = path.resolve(lockFile);
+  const dir = path.dirname(normalizedLockFile);
   fs.mkdirSync(dir, { recursive: true });
 
   const timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : 5000;
   const retryIntervalMs = typeof options.retryIntervalMs === "number" ? options.retryIntervalMs : 150;
-  const staleAgeMs = typeof options.staleAgeMs === "number" ? options.staleAgeMs : 60000;
   const extraData = options.extraData || {};
+  const isWeb = Boolean(
+    options.isWeb ||
+    options.allowSyncAtomics === false
+  );
 
-  const startTime = Date.now();
+  const startMono = process.hrtime.bigint();
 
   while (true) {
     try {
-      const fd = fs.openSync(lockFile, "wx", 0o600);
+      const fd = fs.openSync(normalizedLockFile, "wx", 0o600);
       try {
+        const stat = fs.fstatSync(fd);
+        const token = generateLockToken();
         const payload = JSON.stringify({
+          ...extraData,
           pid: process.pid,
+          token,
+          hostname: os.hostname(),
+          host: os.hostname(),
+          bootid: getBootId(),
+          pidnamespace: getPidNamespace(),
+          startticks: getStartTicks(),
           time: Date.now(),
           startedAt: new Date().toISOString(),
-          host: os.hostname(),
-          ...extraData,
         });
         fs.writeFileSync(fd, payload, "utf8");
         fs.fsyncSync(fd);
+
+        const lockInfo = {
+          fd,
+          token,
+          ino: stat.ino,
+          dev: stat.dev,
+          lockFile: normalizedLockFile,
+          pid: process.pid,
+        };
+        activeLocksByFd.set(fd, lockInfo);
+        activeLocksByPath.set(normalizedLockFile, lockInfo);
+
+        return fd;
       } catch (writeErr) {
         try { fs.closeSync(fd); } catch (_) {}
-        try { fs.unlinkSync(lockFile); } catch (_) {}
+        try { fs.unlinkSync(normalizedLockFile); } catch (_) {}
         throw writeErr;
       }
-      return fd;
     } catch (err) {
       if (err.code !== "EEXIST") {
-        throw new Error(`[usage-lock] Failed to open lock ${lockFile}: ${err.message}`);
+        throw new Error(`[usage-lock] Failed to open lock ${normalizedLockFile}: ${err.message}`);
       }
     }
 
-    try {
-      let stat = null;
+    const elapsedMs = Number((process.hrtime.bigint() - startMono) / 1000000n);
+    if (elapsedMs >= timeoutMs) {
+      let holderDiagnosis = "";
       try {
-        stat = fs.statSync(lockFile);
-      } catch (e) {
-        if (e.code === "ENOENT") continue;
-        throw e;
-      }
-
-      let parsed = null;
-      try {
-        parsed = JSON.parse(fs.readFileSync(lockFile, "utf8"));
-      } catch (_) {}
-
-      const now = Date.now();
-      const lockTime = parsed?.time || (parsed?.startedAt ? Date.parse(parsed.startedAt) : null) || (stat ? stat.mtimeMs : now);
-      const lockAgeMs = Math.max(0, now - lockTime);
-      const lockPid = typeof parsed?.pid === "number" ? parsed.pid : null;
-
-      const isDeadPid = lockPid && !isProcessAlive(lockPid) && lockAgeMs > 1500;
-      const isOverdue = lockAgeMs > staleAgeMs;
-
-      if (isDeadPid || isOverdue) {
-        console.warn(`[usage-lock] Stale lock detected on ${lockFile} (pid: ${lockPid}, age: ${Math.round(lockAgeMs / 1000)}s, deadPid: ${Boolean(isDeadPid)}), recovering lock...`);
-        try {
-          fs.unlinkSync(lockFile);
-        } catch (unlinkErr) {
-          if (unlinkErr.code !== "ENOENT") throw unlinkErr;
+        const raw = fs.readFileSync(normalizedLockFile, "utf8");
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          holderDiagnosis = ` (stale blocker: pid=${parsed.pid}, host=${parsed.host || parsed.hostname}, pidns=${parsed.pidnamespace}, bootid=${parsed.bootid}, token=${parsed.token})`;
         }
-        continue;
-      }
-    } catch (_) {}
-
-    const elapsed = Date.now() - startTime;
-    if (elapsed >= timeoutMs) {
-      throw new Error(`[usage-lock] Lock acquisition timed out (${Math.round(elapsed / 1000)}s) on ${lockFile}`);
+      } catch (_) {}
+      throw new Error(`[usage-lock] Lock acquisition timed out (${Math.round(elapsedMs / 1000)}s) on ${normalizedLockFile}${holderDiagnosis}`);
     }
 
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(retryIntervalMs, timeoutMs - elapsed));
+    if (isWeb) {
+      throw new Error(`[usage-lock] Lock is busy on ${normalizedLockFile}; cannot block event loop with syncAtomics in web environment`);
+    }
+
+    const waitMs = Math.min(retryIntervalMs, Math.max(1, timeoutMs - elapsedMs));
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, waitMs);
   }
 }
 
 /**
- * 释放独占锁（安全校验只释放属于当前进程的锁）
+ * 释放独占锁（仅本 process-owned token + inode 验证，不乱 close / unlink）
  */
 function releaseUsageLock(lockFile, fd = null) {
-  if (fd !== null) {
-    try { fs.closeSync(fd); } catch (_) {}
+  const normalizedLockFile = path.resolve(lockFile);
+  let lockInfo = null;
+
+  if (typeof fd === "number" && activeLocksByFd.has(fd)) {
+    const candidate = activeLocksByFd.get(fd);
+    if (candidate.lockFile === normalizedLockFile) {
+      lockInfo = candidate;
+    }
   }
+
+  if (!lockInfo && activeLocksByPath.has(normalizedLockFile)) {
+    const candidate = activeLocksByPath.get(normalizedLockFile);
+    if (fd === null || candidate.fd === fd) {
+      lockInfo = candidate;
+    }
+  }
+
+  if (!lockInfo) {
+    return;
+  }
+
+  let matchesDisk = false;
+  let ownershipError = null;
   try {
-    if (!fs.existsSync(lockFile)) return;
-    try {
-      const raw = fs.readFileSync(lockFile, "utf8");
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.pid === "number" && parsed.pid !== process.pid) {
-        return;
+    if (fs.existsSync(normalizedLockFile)) {
+      const diskStat = fs.statSync(normalizedLockFile);
+      if (diskStat.ino === lockInfo.ino && diskStat.dev === lockInfo.dev) {
+        const raw = fs.readFileSync(normalizedLockFile, "utf8");
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (_) {}
+        if (parsed && parsed.token === lockInfo.token) {
+          matchesDisk = true;
+        } else {
+          ownershipError = new Error(`[usage-lock] Lock ownership lost on ${normalizedLockFile}: token mismatch (held: ${lockInfo.token}, disk: ${parsed?.token})`);
+        }
+      } else {
+        ownershipError = new Error(`[usage-lock] Lock ownership lost on ${normalizedLockFile}: inode mismatch (held ino: ${lockInfo.ino}, disk ino: ${diskStat.ino})`);
       }
-    } catch (_) {}
-    fs.unlinkSync(lockFile);
+    } else {
+      ownershipError = new Error(`[usage-lock] Lock ownership lost on ${normalizedLockFile}: lock file does not exist on disk`);
+    }
+  } catch (inspectErr) {
+    ownershipError = inspectErr;
+  }
+
+  try {
+    fs.closeSync(lockInfo.fd);
   } catch (_) {}
+
+  activeLocksByFd.delete(lockInfo.fd);
+  activeLocksByPath.delete(lockInfo.lockFile);
+
+  if (matchesDisk) {
+    try {
+      fs.unlinkSync(normalizedLockFile);
+    } catch (unlinkErr) {
+      if (unlinkErr.code !== "ENOENT") {
+        throw unlinkErr;
+      }
+    }
+  } else {
+    throw ownershipError || new Error(`[usage-lock] Lock ownership lost on ${normalizedLockFile}`);
+  }
 }
 
 module.exports = {
@@ -371,7 +458,6 @@ module.exports = {
   resolveUsageStorage,
   resolveUsagePathsForLedger,
   resolveUsagePathsForSync,
-  isProcessAlive,
   acquireUsageLock,
   releaseUsageLock,
 };

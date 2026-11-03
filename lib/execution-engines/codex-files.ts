@@ -282,7 +282,7 @@ async function readTextBytes(target: CodexWorkspaceTarget, workspacePath: string
 
 export async function handleCodexFileGET(
   request: NextRequest,
-  type: "list" | "read" | "download" | "meta" | "preview" | "watch",
+  type: "list" | "read" | "download" | "meta" | "preview" | "watch" | "watch-meta",
   absolutePath: string,
 ): Promise<Response> {
   try {
@@ -330,6 +330,38 @@ export async function handleCodexFileGET(
       }
       entries.sort((a, b) => a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : a.name.localeCompare(b.name));
       return NextResponse.json({ entries, path: target.fullPath, truncated });
+    }
+
+    if (type === "watch-meta") {
+      const info = await codexWorkspaceJson(target, "info", workspacePath) as {
+        kind?: unknown; size?: unknown; sizeExact?: unknown; dev?: unknown; ino?: unknown; mtimeNs?: unknown; ctimeNs?: unknown;
+      };
+      if (info.kind === "missing") {
+        return NextResponse.json({ exists: false, size: 0, mtimeMs: 0, ctimeMs: 0, ino: 0 }, { status: 404 });
+      }
+      if (info.kind !== "file") return NextResponse.json({ error: "Not a file" }, { status: 400 });
+      const unsignedFields = [info.dev, info.ino, info.sizeExact];
+      const timestampFields = [info.mtimeNs, info.ctimeNs];
+      if (!Number.isSafeInteger(info.size) || (info.size as number) < 0
+        || info.sizeExact !== String(info.size)
+        || unsignedFields.some((value) => typeof value !== "string" || !/^\d{1,40}$/.test(value))
+        || timestampFields.some((value) => typeof value !== "string" || !/^-?\d{1,32}$/.test(value))) {
+        throw new CodexBridgeError("Codex 服务未返回有效文件指纹", 502);
+      }
+      const mtimeMs = Number(info.mtimeNs) / 1_000_000;
+      const ctimeMs = Number(info.ctimeNs) / 1_000_000;
+      const ino = Number(info.ino);
+      if (![mtimeMs, ctimeMs, ino].every(Number.isFinite)) {
+        throw new CodexBridgeError("Codex 服务未返回有效文件指纹", 502);
+      }
+      return NextResponse.json({
+        exists: true,
+        size: info.size,
+        mtimeMs,
+        ctimeMs,
+        ino,
+        version: `${info.dev}:${info.ino}:${info.sizeExact}:${info.mtimeNs}:${info.ctimeNs}`,
+      });
     }
 
     if (type === "meta") {

@@ -15,6 +15,30 @@ ID = '01901234-5678-7000-8000-000000000001'
 
 
 class DeleteTests(unittest.TestCase):
+    def test_provider_changed_history_delete_reads_metadata_without_resuming(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            error = SideChatError('provider mismatch')
+            error.rpc_error = {'code': -32600, 'data': {'type': 'modelProviderMismatch'},
+                               'message': 'This chat uses openai, but your current provider is fixture.'}
+            def request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/resume':
+                    raise error
+                if method == 'thread/read':
+                    self.assertEqual(params, {'threadId': ID, 'includeTurns': False})
+                    return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'notLoaded'}}}
+                if method == 'thread/queue/list':
+                    return {'data': [], 'nextCursor': None}
+                if method == 'thread/delete':
+                    return {}
+                self.fail('unexpected RPC: ' + method)
+            backend.request = request
+            self.assertEqual(b.delete_thread(ID), {'ok': True})
+            self.assertEqual([m for m, _ in backend.calls],
+                             ['thread/read', 'thread/queue/list', 'thread/delete'])
+            self.assertNotIn(ID, b.records['threads'])
+
     def fixture(self, root):
         class Backend:
             def __init__(self):
@@ -25,7 +49,7 @@ class DeleteTests(unittest.TestCase):
 
             def request(self, method, params, timeout=30):
                 self.calls.append((method, params))
-                if method == 'thread/resume':
+                if method == 'thread/read':
                     return {'thread': {'id': ID, 'cwd':root, 'status': {'type': self.status}}}
                 if method == 'thread/queue/list':
                     return {'data': self.queue, 'nextCursor': None}
@@ -55,7 +79,7 @@ class DeleteTests(unittest.TestCase):
                                    queue_event=threading.Event(), closed=False, submissions={}, state={})
             b.live[ID] = chat
             self.assertEqual(b.message_action(ID, {'action': 'delete'}), {'ok': True})
-            self.assertEqual([m for m, _ in backend.calls], ['thread/resume', 'thread/queue/list', 'thread/delete'])
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read', 'thread/queue/list', 'thread/delete'])
             self.assertEqual(backend.calls[-1][1], {'threadId': ID})
             self.assertEqual(set(b.records['threads']), {'other'})
             self.assertNotIn(ID, b.records['titleOverrides'])
@@ -78,13 +102,155 @@ class DeleteTests(unittest.TestCase):
 
     def test_active_or_waiting_thread_never_reaches_delete(self):
         with tempfile.TemporaryDirectory() as root:
-            for status in ('active', 'notLoaded', 'unknown'):
+            for status in ('active', 'unknown'):
                 b, backend = self.fixture(root)
                 backend.status = status
                 with self.assertRaisesRegex(ValueError, '结束当前任务'):
                     b.delete_thread(ID)
                 self.assertEqual(len(backend.calls), 1)
                 self.assertIn(ID, b.records['threads'])
+
+    def test_system_error_with_terminal_turns_deletes_safely(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            backend.status = 'systemError'
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    include_turns = params.get('includeTurns', False)
+                    res = {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'}}}
+                    if include_turns:
+                        res['thread']['turns'] = [
+                            {'id': 't1', 'status': 'completed'},
+                            {'id': 't2', 'status': 'failed'}
+                        ]
+                    return res
+                if method == 'thread/queue/list':
+                    return {'data': [], 'nextCursor': None}
+                if method == 'thread/delete':
+                    return {}
+                self.fail('unexpected RPC: ' + method)
+            backend.request = custom_request
+            self.assertEqual(b.delete_thread(ID), {'ok': True})
+            self.assertEqual([m for m, _ in backend.calls],
+                             ['thread/read', 'thread/read', 'thread/queue/list', 'thread/delete'])
+            self.assertEqual(backend.calls[0][1], {'threadId': ID, 'includeTurns': False})
+            self.assertEqual(backend.calls[1][1], {'threadId': ID, 'includeTurns': True})
+            self.assertEqual(backend.calls[3][1], {'threadId': ID})
+            self.assertNotIn(ID, b.records['threads'])
+
+    def test_system_error_in_progress_turn_blocks_delete(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            backend.status = 'systemError'
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    include_turns = params.get('includeTurns', False)
+                    res = {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'}}}
+                    if include_turns:
+                        res['thread']['turns'] = [
+                            {'id': 't1', 'status': 'completed'},
+                            {'id': 't2', 'status': 'inProgress'}
+                        ]
+                    return res
+                return {}
+            backend.request = custom_request
+            with self.assertRaisesRegex(ValueError, '执行任务|结束当前任务'):
+                b.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
+
+    def test_system_error_unknown_or_malformed_turns_blocks_delete(self):
+        with tempfile.TemporaryDirectory() as root:
+            # 1. 包含未知 turn 状态
+            b, backend = self.fixture(root)
+            backend.status = 'systemError'
+            def request_unknown_turn(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'},
+                                      'turns': [{'id': 't1', 'status': 'unknown_status'}]}}
+                return {}
+            backend.request = request_unknown_turn
+            with self.assertRaisesRegex(ValueError, '尚未确认安全终止状态'):
+                b.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+
+            # 2. turns 为空
+            b2, backend2 = self.fixture(root)
+            backend2.status = 'systemError'
+            def request_empty_turns(method, params, timeout=30):
+                backend2.calls.append((method, params))
+                if method == 'thread/read':
+                    return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'}, 'turns': []}}
+                return {}
+            backend2.request = request_empty_turns
+            with self.assertRaisesRegex(ValueError, '轮次为空或异常|尚未确认安全终止状态'):
+                b2.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend2.calls])
+
+            # 3. turns 格式异常（非 list）
+            b3, backend3 = self.fixture(root)
+            backend3.status = 'systemError'
+            def request_malformed_turns(method, params, timeout=30):
+                backend3.calls.append((method, params))
+                if method == 'thread/read':
+                    return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'}, 'turns': 'invalid'}}
+                return {}
+            backend3.request = request_malformed_turns
+            with self.assertRaises(ValueError):
+                b3.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend3.calls])
+
+            # 4. 第二轮 read 发生异常
+            b4, backend4 = self.fixture(root)
+            backend4.status = 'systemError'
+            def request_read_failure(method, params, timeout=30):
+                backend4.calls.append((method, params))
+                if method == 'thread/read' and params.get('includeTurns'):
+                    raise SideChatError('read failed')
+                return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'}}}
+            backend4.request = request_read_failure
+            with self.assertRaisesRegex(ValueError, '会话预检失败'):
+                b4.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend4.calls])
+
+    def test_system_error_status_changed_to_active_blocks_delete(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            backend.status = 'systemError'
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    if params.get('includeTurns'):
+                        return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'active'},
+                                          'turns': [{'id': 't1', 'status': 'completed'}]}}
+                    return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'}}}
+                return {}
+            backend.request = custom_request
+            with self.assertRaisesRegex(ValueError, '结束当前任务'):
+                b.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
+
+    def test_system_error_pending_native_queue_blocks_delete(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            backend.status = 'systemError'
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    return {'thread': {'id': ID, 'cwd': root, 'status': {'type': 'systemError'},
+                                      'turns': [{'id': 't1', 'status': 'failed'}]}}
+                if method == 'thread/queue/list':
+                    return {'data': [{'id': 'pending-msg'}], 'nextCursor': None}
+                return {}
+            backend.request = custom_request
+            with self.assertRaisesRegex(ValueError, '待发送消息|处理队列'):
+                b.delete_thread(ID)
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
 
     def test_local_uncertain_or_queued_message_blocks_before_native_rpc(self):
         with tempfile.TemporaryDirectory() as root:
@@ -207,6 +373,148 @@ class DeleteTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, '未确认删除'):
                         b.delete_thread(ID)
                     self.assertIn(ID, b.records['threads'])
+
+    def test_empty_thread_no_rollout_preflight_checks_queue_and_deletes_via_native_owner(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            error = SideChatError('no rollout')
+            error.rpc_error = {'code': -32600, 'message': 'no rollout found for thread id ' + ID}
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    raise error
+                if method == 'thread/queue/list':
+                    return {'data': [], 'nextCursor': None}
+                if method == 'thread/delete':
+                    return {}
+                return {}
+            backend.request = custom_request
+            b.web_history.get = lambda _: (_ for _ in ()).throw(KeyError(ID))
+            self.assertEqual(b.delete_thread(ID), {'ok': True})
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read', 'thread/queue/list', 'thread/delete'])
+            self.assertEqual(backend.calls[-1], ('thread/delete', {'threadId': ID}))
+            self.assertEqual(len([m for m, _ in backend.calls if m == 'thread/delete']), 1)
+            self.assertNotIn(ID, b.records['threads'])
+
+    def test_empty_thread_preflight_fails_closed_if_queue_not_empty(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            error = SideChatError('no rollout')
+            error.rpc_error = {'code': -32600, 'message': 'no rollout found for thread id ' + ID}
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    raise error
+                if method == 'thread/queue/list':
+                    return {'data': [{'id': 'pending-msg'}], 'nextCursor': None}
+                if method == 'thread/delete':
+                    return {}
+                return {}
+            backend.request = custom_request
+            b.web_history.get = lambda _: (_ for _ in ()).throw(KeyError(ID))
+            with self.assertRaisesRegex(ValueError, '待发送消息|处理队列'):
+                b.delete_thread(ID)
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read', 'thread/queue/list'])
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
+
+    def test_empty_thread_preflight_fails_closed_if_native_store_present(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            error = SideChatError('no rollout')
+            error.rpc_error = {'code': -32600, 'message': 'no rollout found for thread id ' + ID}
+            def custom_request(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    raise error
+                return {}
+            backend.request = custom_request
+            b.web_history.get = lambda _: {'cwd': root, 'archived': False}
+            with self.assertRaisesRegex(ValueError, '预检失败|未确认删除'):
+                b.delete_thread(ID)
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read'])
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
+
+    def test_empty_thread_preflight_fails_closed_on_inexact_no_rollout_text_or_code(self):
+        with tempfile.TemporaryDirectory() as root:
+            # 1. 别的 no rollout 文本
+            b, backend = self.fixture(root)
+            error1 = SideChatError('inexact')
+            error1.rpc_error = {'code': -32600, 'message': 'active error: no rollout found for thread id ' + ID}
+            def custom_request1(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    raise error1
+                return {}
+            backend.request = custom_request1
+            b.web_history.get = lambda _: (_ for _ in ()).throw(KeyError(ID))
+            with self.assertRaises(ValueError):
+                b.delete_thread(ID)
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read'])
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
+
+            # 2. 错误的 RPC 错误码
+            b2, backend2 = self.fixture(root)
+            error2 = SideChatError('wrong code')
+            error2.rpc_error = {'code': -32000, 'message': 'no rollout found for thread id ' + ID}
+            def custom_request2(method, params, timeout=30):
+                backend2.calls.append((method, params))
+                if method == 'thread/read':
+                    raise error2
+                return {}
+            backend2.request = custom_request2
+            b2.web_history.get = lambda _: (_ for _ in ()).throw(KeyError(ID))
+            with self.assertRaises(ValueError):
+                b2.delete_thread(ID)
+            self.assertEqual([m for m, _ in backend2.calls], ['thread/read'])
+            self.assertNotIn('thread/delete', [m for m, _ in backend2.calls])
+            self.assertIn(ID, b2.records['threads'])
+
+    def test_preflight_cwd_mismatch_and_timeout_never_dispatches_delete(self):
+        with tempfile.TemporaryDirectory() as root:
+            # 权限/目录不一致
+            b, backend = self.fixture(root)
+            def custom_request_cwd(method, params, timeout=30):
+                backend.calls.append((method, params))
+                if method == 'thread/read':
+                    return {'thread': {'id': ID, 'cwd': str(Path(root) / 'sub'), 'status': {'type': 'idle'}}}
+                return {}
+            backend.request = custom_request_cwd
+            with self.assertRaises(PermissionError):
+                b.delete_thread(ID)
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read'])
+            self.assertNotIn('thread/delete', [m for m, _ in backend.calls])
+            self.assertIn(ID, b.records['threads'])
+
+            # preflight 阶段超时明确未发 delete
+            b2, backend2 = self.fixture(root)
+            def custom_request_timeout(method, params, timeout=30):
+                backend2.calls.append((method, params))
+                if method == 'thread/read':
+                    raise TimeoutError('read timeout')
+                return {}
+            backend2.request = custom_request_timeout
+            with self.assertRaises(ValueError):
+                b2.delete_thread(ID)
+            self.assertEqual([m for m, _ in backend2.calls], ['thread/read'])
+            self.assertNotIn('thread/delete', [m for m, _ in backend2.calls])
+            self.assertIn(ID, b2.records['threads'])
+
+    def test_dispatched_delete_receipt_uncertainty_on_timeout_never_retries(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            backend.failure = TimeoutError('delete write timed out')
+            before = copy.deepcopy(b.records)
+            with self.assertRaisesRegex(ValueError, '未确认删除结果'):
+                b.delete_thread(ID)
+            self.assertEqual(b.records, before)
+            # 写操作绝不重发，thread/delete 仅 1 次
+            self.assertEqual([m for m, _ in backend.calls], ['thread/read', 'thread/queue/list', 'thread/delete'])
+            self.assertEqual(len([m for m, _ in backend.calls if m == 'thread/delete']), 1)
+
+
 
 
 if __name__ == '__main__':

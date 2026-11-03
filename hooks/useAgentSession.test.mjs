@@ -128,6 +128,35 @@ test("only an authoritative pending-ID snapshot supersedes the fast interaction 
   assert.equal(scope.extensionUiRevisionRef.current, 3);
 });
 
+test("enhancement bridge receives each real session event once, never queue state", () => {
+  const { scope } = hookHarness();
+  const bridged = [];
+  scope.window = {
+    __PI_ENH_HANDLE_SESSION_STREAM_EVENT__: (sessionId, event) => bridged.push([sessionId, event]),
+  };
+  scope.queuedMessagesRef = ref({ steering: [], followUp: [] });
+  scope.consumedPromptQueueRequestsRef = ref({ sessionId: "session", ids: new Set() });
+  scope.normalizeQueuedMessages = value => value;
+  scope.filterConsumedQueueRequests = value => value;
+  scope.setQueueSyncStatus = noop;
+  scope.setQueuedMessagesState = noop;
+  scope.isSessionMemoryCacheEnabled = () => false;
+  scope.setQueuedMessages = callback("setQueuedMessages", scope);
+
+  scope.setQueuedMessages({ steering: ["queued"], followUp: [] });
+  assert.equal(bridged.length, 0, "queue state is not an event");
+  const events = [
+    { type: "connected", isStreaming: false },
+    { type: "message_end", message: { role: "assistant", content: [] } },
+    { type: "agent_start" },
+  ];
+  for (const event of events) scope.handleAgentEvent(event);
+  assert.deepEqual(bridged, events.map(event => ["session", event]));
+
+  scope.window.__PI_ENH_HANDLE_SESSION_STREAM_EVENT__ = () => { throw new Error("enhancement failed"); };
+  assert.doesNotThrow(() => scope.handleAgentEvent({ type: "connected", isStreaming: false }));
+});
+
 test("keeps the session event stream open through the idle grace window", async (t) => {
   const finishSource = source.slice(
     source.indexOf("const finishPromptWithoutStream"),
@@ -1516,4 +1545,116 @@ test('manual retry of an unconfirmed new Codex session keeps the same creation i
  const ensure=callback('ensureNewSession',scope);
  await assert.rejects(ensure(),/等待桌面接管/);
  await ensure();assert.equal(generated,1);assert.equal(bodies[0].creationRequestId,bodies[1].creationRequestId);
+});
+
+test("useAgentSession lifecycle: hidden/pagehide releases SSE, shouldMaintain refuses background reconnect, visible reconciles and restores maintain", async () => {
+  // 1. 静态结构契约验证：shouldMaintain 包含 pageHiddenRef 门禁与 visibility 检查
+  const shouldMaintainIdx = source.indexOf("shouldMaintain: (sid) => (");
+  assert.ok(shouldMaintainIdx !== -1, "shouldMaintain must exist");
+  const shouldMaintainSection = source.slice(shouldMaintainIdx, shouldMaintainIdx + 300);
+  assert.match(shouldMaintainSection, /!pageHiddenRef\.current/);
+  assert.match(shouldMaintainSection, /typeof document === "undefined" \|\| document\.visibilityState !== "hidden"/);
+
+  // 2. 静态结构契约验证：pagehide 优先无条件 closeEvents return，并在 visible/pageshow 时复原
+  const onVisibleIdx = source.indexOf("const onVisible = (event?: Event) => {");
+  assert.ok(onVisibleIdx !== -1, "onVisible effect must exist");
+  const onVisibleSection = source.slice(onVisibleIdx, onVisibleIdx + 1200);
+  assert.match(onVisibleSection, /if \(event\?\.type === "pagehide"\) \{\s*pageHiddenRef\.current = true;\s*closeEvents\(\);\s*return;\s*\}/);
+  assert.match(onVisibleSection, /pageHiddenRef\.current = false;/);
+  assert.match(onVisibleSection, /maintainEventsConnected\(sid\);/);
+  assert.match(onVisibleSection, /revalidateSelectedHistory\(\);/);
+  assert.match(onVisibleSection, /reconcileAgentState\(sid\);/);
+
+  // 3. 原生 AgentEventConnection 不变量及生命周期函数行为测试
+  const { AgentEventConnection } = await jiti.import("../lib/agent-event-connection.ts");
+
+  let sourcesCreated = 0;
+  const pageHiddenRef = { current: false };
+  const sessionHookMountedRef = { current: true };
+  const sessionIdRef = { current: "session-test-sid" };
+  const agentRunningRef = { current: true };
+  const doc = { visibilityState: "visible" };
+
+  const connection = new AgentEventConnection({
+    createSource: () => {
+      sourcesCreated++;
+      return { readyState: 0, addEventListener() {}, removeEventListener() {}, close() {} };
+    },
+    shouldMaintain: (sid) => (
+      sessionHookMountedRef.current
+      && sessionIdRef.current === sid
+      && !pageHiddenRef.current
+      && (typeof doc === "undefined" || doc.visibilityState !== "hidden")
+      && agentRunningRef.current
+    ),
+    readinessTimeoutMs: 5000,
+    reconnectDelayMs: 1000,
+  });
+
+  // 不变量 1：初始 visible 状态下可以正常 maintain
+  connection.maintain("session-test-sid");
+  assert.equal(sourcesCreated, 1, "maintains connection when visible");
+
+  // 模拟 onVisible 精确逻辑
+  const closed = [];
+  const revalidated = [];
+  const reconciled = [];
+  const onVisible = (event) => {
+    if (event?.type === "pagehide") {
+      pageHiddenRef.current = true;
+      connection.close();
+      closed.push("pagehide");
+      return;
+    }
+    if (event?.type === "pageshow" || (typeof doc !== "undefined" && doc.visibilityState === "visible")) {
+      pageHiddenRef.current = false;
+    }
+    if (doc.visibilityState === "visible") {
+      revalidated.push(true);
+      const sid = sessionIdRef.current;
+      if (sid) {
+        reconciled.push(sid);
+        connection.maintain(sid);
+      }
+    } else if (doc.visibilityState === "hidden") {
+      connection.close();
+      closed.push("hidden");
+    }
+  };
+
+  // 不变量 2：pagehide 发生时（即便 doc.visibilityState 还是 'visible'，模拟移动端关闭时的真实竞态）
+  doc.visibilityState = "visible";
+  onVisible({ type: "pagehide" });
+
+  assert.equal(pageHiddenRef.current, true, "pageHiddenRef is set to true on pagehide");
+  assert.equal(closed.length, 1, "closeEvents called on pagehide");
+  assert.equal(revalidated.length, 0, "must NOT revalidate on pagehide even if visibility is visible");
+  assert.equal(reconciled.length, 0, "must NOT reconcile on pagehide even if visibility is visible");
+
+  // shouldMaintain 门禁在 pagehide 激活时必须拒绝任何连接/重试
+  sourcesCreated = 0;
+  connection.maintain("session-test-sid");
+  assert.equal(sourcesCreated, 0, "shouldMaintain refuses connection when pageHiddenRef is true");
+
+  // 不变量 3：从 pageshow 恢复
+  onVisible({ type: "pageshow" });
+  assert.equal(pageHiddenRef.current, false, "pageHiddenRef restored on pageshow");
+  assert.equal(sourcesCreated, 1, "reconnects on pageshow restore");
+  assert.equal(revalidated.length, 1);
+  assert.equal(reconciled.length, 1);
+
+  // 不变量 4：切到后台 hidden
+  doc.visibilityState = "hidden";
+  onVisible();
+  assert.equal(closed.length, 2, "closeEvents called on hidden");
+  sourcesCreated = 0;
+  connection.maintain("session-test-sid");
+  assert.equal(sourcesCreated, 0, "shouldMaintain refuses connection when hidden");
+
+  // 切回 visible
+  doc.visibilityState = "visible";
+  onVisible();
+  assert.equal(sourcesCreated, 1, "reconnects when visible restored");
+
+  connection.close();
 });

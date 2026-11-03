@@ -340,7 +340,8 @@ test("renders the compact composer with the standard Send button and no session 
   );
 
   assert.match(html, /<textarea/);
-  assert.match(html, />发送<\/button>/);
+  assert.match(html, /aria-label="发送"/);
+  assert.match(html, /<path d="M8 13V3M3 8l5-5 5 5"/);
   assert.equal((html.match(/<button\b/g) ?? []).length, 1);
   assert.doesNotMatch(html, /type="file"|Attach image|Change tool preset/);
 });
@@ -1414,4 +1415,105 @@ test('direct submit claims one intent before await and ignores a stale click aft
  const first=send();await send();assert.equal(calls.length,0);release();await first;assert.deepEqual(calls,['建议内容']);
  await send();assert.deepEqual(calls,['建议内容'],'stale callbacks read the consumed ref, not the old render closure');
  values.current='建议内容';held=Promise.resolve();await send();assert.deepEqual(calls,['建议内容','建议内容'],'a separately entered same-text message is an independent intent');
+});
+
+test("actual ChatInput React fixture queues 0/1/3/99: empty/populated/running has queue arrow only without digit and topology >= 32 circle icons without clipping", async () => {
+  const queueScenarios = [
+    { count: 0, messages: { steering: [], followUp: [] } },
+    { count: 1, messages: { steering: [], followUp: ["item1"] } },
+    { count: 3, messages: { steering: ["s1"], followUp: ["f1", "f2"] } },
+    { count: 99, messages: { steering: Array(49).fill("s"), followUp: Array(50).fill("f") } },
+  ];
+
+  for (const { count, messages } of queueScenarios) {
+    for (const empty of [true, false]) {
+      // 1. Idle state (running: false)
+      const idleHtml = renderToStaticMarkup(
+        React.createElement(I18nProvider, null,
+          React.createElement(ChatInput, {
+            onSend() {},
+            onAbort() {},
+            onFollowUp() {},
+            onSteer() {},
+            isStreaming: false,
+            queuedMessages: messages,
+            initialValue: empty ? "" : "Hello world",
+          })
+        )
+      );
+      assert.match(idleHtml, /aria-label="发送"/);
+      assert.match(idleHtml, /<path d="M8 13V3M3 8l5-5 5 5"/);
+      assert.doesNotMatch(idleHtml, /pi-enh-queue-count-badge/);
+      if (count > 0) {
+        assert.doesNotMatch(idleHtml, new RegExp(`>${count}<`));
+      }
+
+      // 2. Running state (running: true)
+      const runningHtml = renderToStaticMarkup(
+        React.createElement(I18nProvider, null,
+          React.createElement(ChatInput, {
+            onSend() {},
+            onAbort() {},
+            onFollowUp() {},
+            onSteer() {},
+            isStreaming: true,
+            queuedMessages: messages,
+            initialValue: empty ? "" : "Hello world",
+          })
+        )
+      );
+      assert.match(runningHtml, /aria-label="后续消息"/);
+      assert.match(runningHtml, /<path d="M8 13V3M3 8l5-5 5 5"/);
+      assert.doesNotMatch(runningHtml, /pi-enh-queue-count-badge/);
+      if (count > 0) {
+        const followupMatch = runningHtml.match(/<button[^>]*aria-label="后续消息"[^>]*>([\s\S]*?)<\/button>/);
+        assert.ok(followupMatch);
+        assert.doesNotMatch(followupMatch[1], new RegExp(`\\b${count}\\b`));
+        assert.doesNotMatch(followupMatch[1], /pi-enh-queue-count-badge/);
+        assert.match(followupMatch[1], /<svg[^>]*>[\s\S]*?<path d="M8 13V3M3 8l5-5 5 5"[\s\S]*?<\/svg>/);
+      }
+    }
+  }
+
+  // 3. Topology check: styles ensure >= 32px touch/box geometry, circle border-radius, without icon clipping
+  const composerCss = readFileSync(new URL("../app/composer.css", import.meta.url), "utf8");
+  assert.match(composerCss, /\.chat-composer-card button\.chat-composer-send\s*\{[^}]*border-radius:\s*50%/);
+  assert.match(composerCss, /\.chat-composer-card button\.chat-composer-followup\s*\{[^}]*border-radius:\s*50%/);
+  assert.match(composerCss, /\.chat-composer-card button\.chat-composer-followup:disabled\s*\{[^}]*opacity:\s*0\.55/);
+  assert.doesNotMatch(composerCss, /pi-enh-queue-count-badge/);
+  const enhCss = readFileSync(new URL("../app/enhancements.css", import.meta.url), "utf8");
+  assert.doesNotMatch(enhCss, /\.pi-enh-queue-count-badge\b/);
+
+  // 4. Steer and followup behavior functions work as intended (positive tests)
+  const steerCalls = [];
+  const steerAction = chatInputCallback("sendQueued", {
+    value: "引导内容",
+    attachedImages: [],
+    queuedPreviewVisible: false,
+    onSteer: async (text) => { steerCalls.push(text); return true; },
+    onFollowUp: undefined,
+    onAudioUnlock() {},
+    onBuiltinCommand: null,
+    clearInput() {},
+    setQueuedSubmissionPreview() {},
+    setQueuedSubmissionPending() {},
+  });
+  await steerAction("steer");
+  assert.deepEqual(steerCalls, ["引导内容"], "steer callback receives prompt correctly");
+
+  const followupCalls = [];
+  const followupAction = chatInputCallback("sendQueued", {
+    value: "后续消息内容",
+    attachedImages: [],
+    queuedPreviewVisible: false,
+    onSteer: undefined,
+    onFollowUp: async (text) => { followupCalls.push(text); return true; },
+    onAudioUnlock() {},
+    onBuiltinCommand: null,
+    clearInput() {},
+    setQueuedSubmissionPreview() {},
+    setQueuedSubmissionPending() {},
+  });
+  await followupAction("followup");
+  assert.deepEqual(followupCalls, ["后续消息内容"], "followup callback receives prompt correctly");
 });

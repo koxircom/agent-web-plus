@@ -1,4 +1,5 @@
 "use client";
+import { createAgentEventBatchSource } from "@/lib/native-event-batch-client";
 import { noticeRecoveryFromError, readNoticeRecovery, type NoticeRecovery } from "@/lib/notice-recovery";
 import { resolveExecutionEngine } from "@/lib/execution-engine-context";
 
@@ -272,7 +273,7 @@ export interface UseAgentSessionOptions {
   deferInitialScroll?: boolean;
 }
 
-export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 type ConcreteThinkingLevel = Exclude<ThinkingLevelOption, "auto">;
 
 function asConcreteThinkingLevel(value?: string | null): ConcreteThinkingLevel | null {
@@ -639,6 +640,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const activeLeafIdRef = useRef<string | null>(null);
   const historyCursorRef = useRef<string | null>(null);
   const hasEarlierMessagesRef = useRef(false);
+  const pageHiddenRef = useRef(false);
 
   sessionPropIdRef.current = session?.id ?? null;
   dataRef.current = data;
@@ -650,11 +652,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   if (!eventConnectionRef.current) {
     eventConnectionRef.current = new AgentEventConnection({
-      createSource: (sid) => new EventSource(`/api/agent/${encodeURIComponent(sid)}/events`),
+      createSource: (sid) => createAgentEventBatchSource(sid),
       onEvent: (event) => handleAgentEventRef.current?.(event as AgentEvent),
       shouldMaintain: (sid) => (
         sessionHookMountedRef.current
         && sessionIdRef.current === sid
+        && !pageHiddenRef.current
+        && (typeof document === "undefined" || document.visibilityState !== "hidden")
         && (
           agentRunningRef.current
           || eventStreamGraceActiveRef.current
@@ -1960,6 +1964,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [catalogHistorySource, agentRunning, opts.sessionRunning, session?.id, loadSession]);
   useEffect(() => {
     const onVisible = (event?: Event) => {
+      if (event?.type === "pagehide") {
+        pageHiddenRef.current = true;
+        closeEvents();
+        return;
+      }
+      if (event?.type === "pageshow" || (typeof document !== "undefined" && document.visibilityState === "visible")) {
+        pageHiddenRef.current = false;
+      }
       // Normal navigation is already owned by mount hydration. A bfcache restore
       // needs a new read even though React never remounted the conversation.
       if (event?.type === "pageshow" && !(event as PageTransitionEvent).persisted) return;
@@ -1971,27 +1983,44 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           void refreshPromptInbox(sid);
           maintainEventsConnected(sid);
         }
+      } else if (document.visibilityState === "hidden") {
+        closeEvents();
       }
     };
     const interval = agentRunning ? setInterval(reconcileRunningAgent, AGENT_STATE_RECONCILE_MS) : null;
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     window.addEventListener("pageshow", onVisible);
+    window.addEventListener("pagehide", onVisible);
     window.addEventListener("online", onVisible);
     return () => {
       if (interval !== null) clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       window.removeEventListener("pageshow", onVisible);
+      window.removeEventListener("pagehide", onVisible);
       window.removeEventListener("online", onVisible);
     };
-  }, [agentRunning]);
+  }, [agentRunning, closeEvents, maintainEventsConnected]);
 
   useEffect(() => {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    const eventSessionId = sessionIdRef.current;
+    if (eventSessionId && typeof window !== "undefined") {
+      const bridge = (window as Window & {
+        __PI_ENH_HANDLE_SESSION_STREAM_EVENT__?: (sessionId: string, event: AgentEvent) => void;
+      }).__PI_ENH_HANDLE_SESSION_STREAM_EVENT__;
+      if (typeof bridge === "function") {
+        try {
+          bridge(eventSessionId, event);
+        } catch {
+          // Enhancement state must not interrupt native event handling.
+        }
+      }
+    }
     const promptReceipt = event.type === "prompt_delivery"
       ? event.receipt as { status?: string; entryId?: string } | undefined : undefined;
     const committedRequestId = promptReceipt?.status === "committed" && typeof promptReceipt.entryId === "string" && promptReceipt.entryId.length > 0

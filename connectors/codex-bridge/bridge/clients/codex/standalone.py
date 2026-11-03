@@ -51,6 +51,9 @@ from bridge.features.workspace.uploads import Uploads
 from bridge.features.workspace.workspace import operate as workspace_operation
 from bridge.features.terminals.manager import TerminalManager
 
+logger = logging.getLogger(__name__)
+
+
 
 def private_json(path, value):
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
@@ -1622,22 +1625,29 @@ class StandaloneBridge(Bridge):
         return rows[offset:offset + limit]
 
     def activity(self, identifiers):
-        if not isinstance(identifiers, list) or len(identifiers) > 500:
+        if not isinstance(identifiers, list) or len(identifiers) > 500 or any(not isinstance(v, str) for v in identifiers):
             raise ValueError('会话状态请求无效')
+        for identifier in identifiers:
+            uuid.UUID(identifier)
         # One scoped database snapshot, not one connection/query per thread.
-        wanted = [identifier for identifier in identifiers if identifier not in self.records['threads']]
+        with self.registry_lock:
+            wanted = [identifier for identifier in identifiers if identifier not in self.records['threads']]
+        wanted_ids = set(wanted)
         history_rows = self.history.get_many(wanted) if self.history and wanted else {}
         rows = []
         for identifier in identifiers:
-            if self.history and identifier not in self.records['threads']:
+            if self.history and identifier in wanted_ids:
                 entry = history_rows.get(identifier)
                 if entry is None:
-                    raise KeyError('找不到指定 WSL 工作区内的会话')
+                    continue
                 rows.append({'id': identifier, 'host': 'local', 'recency': entry['updated_at'] * 1000,
                              'connected': False, 'status': 'idle', 'historyOnly': False,
                              'resumableHistory': True})
                 continue
-            entry = self._record(identifier)
+            try:
+                entry = self._record(identifier)
+            except KeyError:
+                continue
             chat = self.live.get(identifier)
             view = chat.view(include_turns=False) if chat else {}
             rows.append({'id': identifier, 'host': 'local', 'recency': entry['updatedAt'] * 1000,
@@ -1969,46 +1979,218 @@ class StandaloneBridge(Bridge):
             backend = self._history_backend() if entry.get('runtime') == 'history' else self.runtime
             if entry.get('runtime') != 'history':
                 backend.start()
-            try:
-                # Resume metadata only: unloaded history has no reliable status
-                # from thread/read. This never starts a model turn.
-                native_store = self.history if entry.get('runtime') == 'history' else self.web_history
+
+            # Phase 1: Read status without resuming execution or selecting a provider.
+            # Unloaded histories remain deletable after a provider switch.
+            # Archived threads are already unloaded by the native owner.
+            native_store = self.history if entry.get('runtime') == 'history' else self.web_history
+            archived = False
+            if native_store:
                 try:
                     archived = bool(native_store.get(thread_id).get('archived'))
                 except KeyError:
                     archived = False  # Exact native no-rollout confirmation below remains mandatory.
-                if not archived:
-                    thread = backend.request('thread/resume', {'threadId': thread_id, 'excludeTurns': True})['thread']
+
+            if not archived:
+                exact_no_rollout = 'no rollout found for thread id ' + thread_id
+                no_rollout = False
+                try:
+                    thread = backend.request('thread/read', {'threadId': thread_id, 'includeTurns': False})['thread']
+                except Exception as read_error:
+                    rpc = getattr(read_error, 'rpc_error', {}) or {}
+                    rpc_code = rpc.get('code')
+                    rpc_msg = rpc.get('message')
+                    store_missing = False
+                    if native_store:
+                        try:
+                            native_store.get(thread_id)
+                        except KeyError:
+                            store_missing = True
+                    # Only exact code/message and fresh native store absence confirm an unwritten rollout.
+                    if rpc_code == -32600 and rpc_msg == exact_no_rollout and store_missing:
+                        no_rollout = True
+                        logger.info(
+                            'delete_thread preflight: unwritten rollout confirmed phase=preflight thread=%s rpc.code=%s',
+                            thread_id, rpc_code
+                        )
+                    else:
+                        logger.warning(
+                            'delete_thread preflight read failed: phase=preflight thread=%s type=%s rpc.code=%s',
+                            thread_id, type(read_error).__name__, rpc_code
+                        )
+                        if goal_rpc_unsupported(read_error):
+                            raise ValueError('当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留') from read_error
+                        if isinstance(read_error, PermissionError):
+                            raise
+                        raise ValueError(f'会话预检失败，尚未删除会话，请稍后重试: {read_error}') from read_error
+
+                if not no_rollout:
                     if Path(thread.get('cwd', '')).resolve() != Path(entry['cwd']).resolve():
+                        logger.warning(
+                            'delete_thread preflight cwd mismatch: phase=preflight thread=%s type=PermissionError rpc.code=None',
+                            thread_id
+                        )
                         raise PermissionError('原生会话目录与已授权目录不一致')
-                    if thread.get('status', {}).get('type') != 'idle':
-                        raise ValueError('会话正在执行任务或等待回复，请结束当前任务后再删除')
+                    status_type = (thread.get('status', {}).get('type')
+                                   if isinstance(thread.get('status'), dict)
+                                   else thread.get('status'))
+                    if status_type in ('idle', 'notLoaded'):
+                        pass
+                    elif status_type == 'systemError':
+                        try:
+                            extra_read = backend.request(
+                                'thread/read',
+                                {'threadId': thread_id, 'includeTurns': True}
+                            )
+                        except Exception as extra_error:
+                            rpc = getattr(extra_error, 'rpc_error', {}) or {}
+                            rpc_code = rpc.get('code')
+                            logger.warning(
+                                'delete_thread preflight extra read failed: phase=preflight thread=%s type=%s rpc.code=%s',
+                                thread_id, type(extra_error).__name__, rpc_code
+                            )
+                            if goal_rpc_unsupported(extra_error):
+                                raise ValueError('当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留') from extra_error
+                            if isinstance(extra_error, PermissionError):
+                                raise
+                            raise ValueError(f'会话预检失败，尚未删除会话，请稍后重试: {extra_error}') from extra_error
+
+                        if not isinstance(extra_read, dict) or not isinstance(extra_read.get('thread'), dict):
+                            logger.warning(
+                                'delete_thread preflight invalid extra payload: phase=preflight thread=%s type=ValueError rpc.code=None',
+                                thread_id
+                            )
+                            raise ValueError('会话预检数据格式异常，尚未删除会话，请稍后重试')
+
+                        extra_thread = extra_read['thread']
+                        if extra_thread.get('id') != thread_id:
+                            logger.warning(
+                                'delete_thread preflight extra thread id mismatch: phase=preflight thread=%s type=ValueError rpc.code=None',
+                                thread_id
+                            )
+                            raise ValueError('原生会话标识不一致，尚未删除会话，请稍后重试')
+
+                        if Path(extra_thread.get('cwd', '')).resolve() != Path(entry['cwd']).resolve():
+                            logger.warning(
+                                'delete_thread preflight extra cwd mismatch: phase=preflight thread=%s type=PermissionError rpc.code=None',
+                                thread_id
+                            )
+                            raise PermissionError('原生会话目录与已授权目录不一致')
+
+                        extra_status_type = (extra_thread.get('status', {}).get('type')
+                                             if isinstance(extra_thread.get('status'), dict)
+                                             else extra_thread.get('status'))
+                        if extra_status_type not in ('systemError', 'idle', 'notLoaded'):
+                            logger.warning(
+                                'delete_thread preflight extra status changed: phase=preflight thread=%s status=%s type=ValueError rpc.code=None',
+                                thread_id, extra_status_type
+                            )
+                            raise ValueError(f'会话状态为 {extra_status_type or "未知"}，请结束当前任务后再删除')
+
+                        turns = extra_thread.get('turns')
+                        if not isinstance(turns, list) or not turns:
+                            logger.warning(
+                                'delete_thread preflight invalid or empty turns: phase=preflight thread=%s type=ValueError rpc.code=None',
+                                thread_id
+                            )
+                            raise ValueError('会话轮次为空或异常，尚未确认安全终止状态，请稍后重试')
+
+                        terminal_statuses = {'completed', 'failed', 'interrupted'}
+                        terminal_count = 0
+                        for turn in turns:
+                            if not isinstance(turn, dict):
+                                logger.warning(
+                                    'delete_thread preflight malformed turn: phase=preflight thread=%s type=ValueError rpc.code=None',
+                                    thread_id
+                                )
+                                raise ValueError('会话轮次数据格式异常，尚未确认安全终止状态，请稍后重试')
+                            t_status = (turn.get('status', {}).get('type')
+                                        if isinstance(turn.get('status'), dict)
+                                        else turn.get('status'))
+                            if t_status == 'inProgress':
+                                logger.warning(
+                                    'delete_thread preflight turn inProgress: phase=preflight thread=%s type=ValueError rpc.code=None',
+                                    thread_id
+                                )
+                                raise ValueError('会话正在执行任务，请结束当前任务后再删除')
+                            if t_status not in terminal_statuses:
+                                logger.warning(
+                                    'delete_thread preflight non-terminal turn status: phase=preflight thread=%s status=%s type=ValueError rpc.code=None',
+                                    thread_id, t_status
+                                )
+                                raise ValueError(f'会话轮次状态为 {t_status or "未知"}，尚未确认安全终止状态，请稍后重试')
+                            terminal_count += 1
+
+                        if terminal_count < 1:
+                            logger.warning(
+                                'delete_thread preflight no terminal turn: phase=preflight thread=%s type=ValueError rpc.code=None',
+                                thread_id
+                            )
+                            raise ValueError('会话尚未确认安全终止状态，请稍后重试')
+                    else:
+                        logger.warning(
+                            'delete_thread preflight status busy: phase=preflight thread=%s status=%s type=ValueError rpc.code=None',
+                            thread_id, status_type
+                        )
+                        raise ValueError(f'会话状态为 {status_type or "未知"}，请结束当前任务后再删除')
+
+                try:
                     queued = backend.request('thread/queue/list', {'threadId': thread_id}, timeout=5)
-                    if not isinstance(queued.get('data'), list):
-                        raise ValueError('无法核对待发送消息，尚未删除会话，请稍后重试')
-                    if queued['data'] or queued.get('nextCursor') is not None:
-                        raise ValueError('会话还有待发送消息，请处理队列后再删除')
-                # Native archive unloads execution; resume/queue APIs reject it.
-                # Local uncertain submissions were rejected above. Let the same
-                # native owner perform its archived-thread deletion atomically,
-                # without unarchiving/waking it or touching rollout files.
+                except Exception as queue_error:
+                    rpc = getattr(queue_error, 'rpc_error', {}) or {}
+                    logger.warning(
+                        'delete_thread preflight queue check failed: phase=preflight thread=%s type=%s rpc.code=%s',
+                        thread_id, type(queue_error).__name__, rpc.get('code')
+                    )
+                    if goal_rpc_unsupported(queue_error):
+                        raise ValueError('当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留') from queue_error
+                    if isinstance(queue_error, PermissionError):
+                        raise
+                    raise ValueError(f'无法核对待发送消息，尚未删除会话，请稍后重试: {queue_error}') from queue_error
+
+                if not isinstance(queued.get('data'), list):
+                    logger.warning(
+                        'delete_thread preflight invalid queue payload: phase=preflight thread=%s type=ValueError rpc.code=None',
+                        thread_id
+                    )
+                    raise ValueError('无法核对待发送消息，尚未删除会话，请稍后重试')
+                if queued['data'] or queued.get('nextCursor') is not None:
+                    logger.warning(
+                        'delete_thread preflight pending messages: phase=preflight thread=%s type=ValueError rpc.code=None',
+                        thread_id
+                    )
+                    raise ValueError('会话还有待发送消息，请处理队列后再删除')
+
+            # Phase 2: Dispatch delete. Let the native owner delete atomically, without touching rollout files.
+            # Once dispatched, write operation is never retried.
+            try:
                 backend.request('thread/delete', {'threadId': thread_id}, timeout=15)
-            except Exception as error:
-                if goal_rpc_unsupported(error):
-                    raise ValueError('当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留') from error
+            except Exception as delete_error:
+                rpc = getattr(delete_error, 'rpc_error', {}) or {}
+                rpc_code = rpc.get('code')
+                rpc_msg = rpc.get('message')
+                logger.warning(
+                    'delete_thread dispatched delete receipt uncertain: phase=delete thread=%s type=%s rpc.code=%s',
+                    thread_id, type(delete_error).__name__, rpc_code
+                )
+                if goal_rpc_unsupported(delete_error):
+                    raise ValueError('当前 Codex CLI 不支持安全删除，请升级 CLI 后再试；会话已保留') from delete_error
                 # A lost delete receipt may leave only a registry row. Reconcile
                 # only an exact native "no rollout" plus fresh store absence.
-                rpc = getattr(error, 'rpc_error', {}) or {}
-                history = self.history if entry.get('runtime') == 'history' else self.web_history
+                exact_no_rollout = 'no rollout found for thread id ' + thread_id
                 absent = False
-                if rpc.get('code') == -32600 and str(rpc.get('message', '')).endswith('no rollout found for thread id ' + thread_id) and history:
+                if rpc_code == -32600 and rpc_msg == exact_no_rollout and native_store:
                     try:
-                        history.get(thread_id)
+                        native_store.get(thread_id)
                     except KeyError:
                         absent = True
+                        logger.info(
+                            'delete_thread reconciled lost receipt: phase=delete thread=%s rpc.code=%s',
+                            thread_id, rpc_code
+                        )
                 if not absent:
-                    if isinstance(error, SideChatError) or not isinstance(error, ValueError):
-                        raise ValueError('执行端未确认删除结果，请刷新会话列表后重试；不会自动重复删除') from error
+                    if isinstance(delete_error, SideChatError) or not isinstance(delete_error, ValueError):
+                        raise ValueError('执行端未确认删除结果，请刷新会话列表后重试；不会自动重复删除') from delete_error
                     raise
             with self.registry_lock:
                 before = copy.deepcopy(self.records)

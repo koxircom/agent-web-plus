@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const tabSettingsSource = await readFile(new URL("./BrowserTabSettings.tsx", import.meta.url), "utf8");
 const panelSource = await readFile(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
 const isolatedHostSource = await readFile(new URL("./IsolatedSettingsHost.tsx", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
@@ -324,3 +325,9 @@ test("collaboration relay settings tab is registered natively with lazy loading 
   assert.match(cssSource, /\.settings-collaboration-card/);
 });
 
+test("General settings mounts the shared tab editor with template, text, colors and reset", () => {
+  assert.match(panelSource, /<BrowserTabSettings cwd=\{browserTabContext\?\.cwd \?\? cwd\}/);
+  assert.match(tabSettingsSource, /id="settings-browser-tab-title"/);
+  assert.match(tabSettingsSource, /id="settings-browser-tab-template"/);
+  for(const label of ["Logo 颜色","标签页主题色","恢复默认","保存标签页设置"]) assert.ok(tabSettingsSource.includes(label));
+});

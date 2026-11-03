@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
-type Level = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type Level = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 interface Props {
   levels: readonly Level[];
   value: Level;

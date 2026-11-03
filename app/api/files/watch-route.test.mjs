@@ -29,3 +29,15 @@ test("connected is emitted only after the watcher exists", () => {
   assert.ok(watcher >= 0, "watcher creation missing");
   assert.ok(connected > watcher, "connected emitted before watcher creation");
 });
+
+test("resource exhaustion errors gracefully fall back to polling while permission errors fail closed", () => {
+  assert.match(watchBlock, /ENOSPC/);
+  assert.match(watchBlock, /EMFILE/);
+  assert.match(watchBlock, /ENOSYS/);
+  assert.match(watchBlock, /ENOTSUP/);
+  assert.match(watchBlock, /fs\.promises\.stat/);
+  assert.match(watchBlock, /1000/);
+  assert.match(watchBlock, /pollTimer\.unref/);
+  assert.match(watchBlock, /request\.signal\.addEventListener\("abort"/);
+  assert.match(watchBlock, /send\("error", \{ message: "Failed to watch file" \}\)/);
+});

@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from bridge.clients.codex.native_metadata import PINNED_SECTION_ID
+from bridge.clients.codex.title_naming import read_status, project_status
 from bridge.features.sessions.model import normalize_state
 from bridge.features.sessions.store import SessionStore
 from bridge.features.sessions.timeline import Timeline
@@ -114,6 +115,7 @@ class WslHistory(SessionStore):
 
     def list(self, query='', limit=100, offset=0, archived=False):
         result, projects = [], {}
+        naming_status = read_status(self.home)
         for r in self._rows(query, limit, offset, archived):
             if r['cwd'] not in projects:
                 projects[r['cwd']] = self.workspace(r['cwd'])
@@ -132,6 +134,7 @@ class WslHistory(SessionStore):
                      'desktopShared': True,
                      'pinningSupported': bool(has_section),
                  },
+                 'titleNaming': project_status(r, naming_status),
                  'connected': False, 'historyOnly': False, 'resumableHistory': True})
         return result
 

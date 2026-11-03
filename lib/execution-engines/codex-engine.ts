@@ -6,6 +6,7 @@ import { assistantText, codexComposerStatuses, projectCodexPage, projectCodexPen
 import type { AgentEventLike } from "../agent-event-wire";
 import type { AgentMessage, SessionInfo } from "../types";
 import { acceptPromptDelivery, markPromptDeliveryUnconfirmed, cancelPromptDelivery, commitPromptDelivery, recallPromptDelivery, validPromptRequestId } from "../prompt-delivery";
+import { effortToThinkingLevel, resolveCodexCatalogThinking, thinkingLevelToEffort, type CodexRawCatalogModel } from "./codex-thinking-catalog";
 
 export async function codexProjects(): Promise<{ key: string; name: string; cwd: string }[]> {
   const result = await codexBridgeJson("/api/projects");
@@ -323,12 +324,17 @@ async function codexWorkspace(cwd?: string) {
 export async function codexModels(cwd?: string) {
   const workspace = await codexWorkspace(cwd);
   const catalog = await codexBridgeJson(`/api/projects/catalog?${new URLSearchParams({ project: workspace.project.key, kind: "models", cwd: workspace.cwd })}`);
-  const models = catalog.models as { id: string; name: string; efforts?: string[]; isDefault?: boolean }[];
-  return { models: Object.fromEntries(models.map(m => ["codex:" + m.id, m.name])),
-    modelList: models.map(m => ({ id: m.id, name: m.name, provider: "codex", input: ["text", "image"] })),
-    defaultModel: models.length ? { provider: "codex", modelId: (models.find(m => m.isDefault) || models[0]).id } : null,
-    thinkingLevels: Object.fromEntries(models.map(m => ["codex:" + m.id, (m.efforts || ["low", "medium", "high"]).map(e => e === "none" ? "off" : e)])),
-    thinkingLevelMaps: {}, thinkingLevelPins: {}, defaultThinkingLevel: "high" };
+  const models = (catalog.models || []) as CodexRawCatalogModel[];
+  const thinkingSummary = resolveCodexCatalogThinking({ models, currentEffort: catalog.currentEffort });
+  return {
+    models: Object.fromEntries(models.map(m => ["codex:" + m.id, m.name || m.id])),
+    modelList: models.map(m => ({ id: m.id, name: m.name || m.id, provider: "codex", input: ["text", "image"] })),
+    defaultModel: models.length ? { provider: "codex", modelId: thinkingSummary.defaultModelId || models[0].id } : null,
+    thinkingLevels: thinkingSummary.thinkingLevels,
+    thinkingLevelMaps: {},
+    thinkingLevelPins: {},
+    defaultThinkingLevel: thinkingSummary.defaultThinkingLevel,
+  };
 }
 export async function createCodexSession(cwd: string, command: Record<string, unknown>) {
   if (command.type !== "ensure_session") throw new Error("请先创建 Codex 会话，再提交消息");
@@ -373,8 +379,8 @@ export async function createCodexSession(cwd: string, command: Record<string, un
 
   if (targetThinkingLevel) {
     const thinkingAck = await runtime.send({ type: "set_thinking_level", level: targetThinkingLevel }) as { thinkingLevel?: string } | undefined;
-    const expectedEffort = targetThinkingLevel === "off" ? "none" : targetThinkingLevel;
-    const expectedAckLevel = targetThinkingLevel === "off" ? "off" : targetThinkingLevel;
+    const expectedEffort = thinkingLevelToEffort(targetThinkingLevel);
+    const expectedAckLevel = effortToThinkingLevel(expectedEffort);
     if (!thinkingAck?.thinkingLevel || thinkingAck.thinkingLevel !== expectedAckLevel || runtime.meta.effort !== expectedEffort) {
       throw new Error(`Codex thinking level 设置未得到原生确认: 期望 ${targetThinkingLevel}，实际 ${thinkingAck?.thinkingLevel || "空"}`);
     }
@@ -386,7 +392,7 @@ export async function createCodexSession(cwd: string, command: Record<string, un
 
   return { success: true, sessionId: id, data: null,
     model: { provider: "codex", modelId: runtime.meta.model || targetModelId || "Codex" },
-    thinkingLevel: runtime.meta.effort === "none" ? "off" : (runtime.meta.effort || "high") };
+    thinkingLevel: effortToThinkingLevel(runtime.meta.effort || (targetThinkingLevel ? thinkingLevelToEffort(targetThinkingLevel) : "high")) };
 }
 export async function reconcileCodexDelivery(id: string, requestId: string) {
   const submissionId = submissionUuid(requestId);
@@ -943,7 +949,7 @@ export class CodexRuntime {
         const effectiveModel = this.meta.model;
         const effectiveEffort = this.meta.effort;
         // An unopened native thread may not have a live model yet. Shared UI treats a model object as a valid ID.
-        return { model: typeof effectiveModel === "string" && effectiveModel.trim() ? { provider: "codex", id: effectiveModel } : null, thinkingLevel: effectiveEffort === "none" ? "off" : (effectiveEffort || "high"),
+        return { model: typeof effectiveModel === "string" && effectiveModel.trim() ? { provider: "codex", id: effectiveModel } : null, thinkingLevel: effortToThinkingLevel(effectiveEffort || "high"),
           isStreaming: this.isStreaming, isPromptRunning: this.isStreaming, isBashRunning: false, isCompacting: false,
           autoCompactionEnabled: false, contextUsage: projectCodexUsage(this.meta).contextUsage,
           queuedMessages: queue(this.meta), extensionStatuses: codexComposerStatuses(this.meta), extensionWidgets: [] };
@@ -1050,7 +1056,7 @@ export class CodexRuntime {
         }
       }
       case "set_thinking_level": {
-        const effort = command.level === "off" ? "none" : command.level;
+        const effort = thinkingLevelToEffort(String(command.level || ""));
         const previousChain = this.settingsChain;
         let chainResolver: () => void;
         this.settingsChain = new Promise<void>((resolve) => { chainResolver = resolve; });
@@ -1066,7 +1072,7 @@ export class CodexRuntime {
           if (view.model !== currentModel || view.effort !== effort) throw new Error("Codex thinking level 设置未得到原生确认");
           this.lastConfirmedModelWrite = ++this.modelWriteSequence;
           this.adoptMeta(view, queueGeneration, this.lastConfirmedModelWrite);
-          return { thinkingLevel: view.effort === "none" ? "off" : view.effort };
+          return { thinkingLevel: effortToThinkingLevel(view.effort || "") };
         } finally {
           chainResolver!();
         }

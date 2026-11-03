@@ -100,10 +100,34 @@ function checkReleaseOwnership(sources) {
 
   const textareaStart = chatInput.indexOf("<textarea");
   const textareaHead = textareaStart < 0 ? "" : chatInput.slice(textareaStart, textareaStart + 1800);
+
+  const inputTags = Array.from(chatInput.matchAll(/<input\b[\s\S]*?(?:\/>|<\/input>)/g), (m) => m[0]);
+  const hasExactTwoInputs =
+    countMatches(chatInput, /<input\b/g) === 2 &&
+    inputTags.length === 2;
+
+  const isFileInput = (tag) => /\btype=["']file["']/.test(tag);
+  const isMediaFileInput = (tag) =>
+    isFileInput(tag) &&
+    /\bref=\{imageFileInputRef\}/.test(tag) &&
+    /\baccept=["']image\/\*,\s*video\/\*["']/.test(tag) &&
+    /\bdata-pi-media-picker=["']true["']/.test(tag);
+  const isDocFileInput = (tag) =>
+    isFileInput(tag) &&
+    /\bref=\{documentFileInputRef\}/.test(tag) &&
+    /\bdata-pi-document-picker=["']true["']/.test(tag);
+
+  const mediaInputMatches = inputTags.filter(isMediaFileInput);
+  const docInputMatches = inputTags.filter(isDocFileInput);
+  const dualFileInputsOk =
+    hasExactTwoInputs &&
+    mediaInputMatches.length === 1 &&
+    docInputMatches.length === 1 &&
+    mediaInputMatches[0] !== docInputMatches[0];
+
   const nativeComposerOk =
     countMatches(chatInput, /<textarea\b/g) === 1 &&
-    countMatches(chatInput, /<input\b/g) === 1 &&
-    /<input\b[\s\S]{0,160}?type="file"/.test(chatInput) &&
+    dualFileInputsOk &&
     textareaHead.includes('className="chat-input-textarea"') &&
     textareaHead.includes("ref={textareaRef}") &&
     textareaHead.includes("value={value}") &&
@@ -193,8 +217,8 @@ function checkReleaseOwnership(sources) {
       "composer-native-single",
       "输入框由单一原生 textarea 所有",
       nativeComposerOk,
-      "ChatInput 保留唯一受控原生 textarea；隐藏文件输入仍是唯一 input。",
-      "ChatInput 必须只有一个带 chat-input-textarea 标识的受控 textarea、一个文件 input 和原生布局所有权标记，且不能添加 contentEditable 或 textbox。",
+      "ChatInput 保留唯一受控原生 textarea；两独立native文件入口。",
+      "ChatInput 必须只有一个带 chat-input-textarea 标识的受控 textarea、两独立native文件入口和原生布局所有权标记，且不能添加 contentEditable 或 textbox。",
       [SOURCE_FILES.chatInput],
     ),
     createCheck(

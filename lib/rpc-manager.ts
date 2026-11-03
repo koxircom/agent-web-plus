@@ -1,3 +1,4 @@
+import { createTaskTiming, type TaskTiming } from "./task-timing";
 import { createLearningRecallExtension, reviewCompletedLearning } from "./learning-runtime";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -513,6 +514,12 @@ export class AgentSessionWrapper {
   private queuedDeliveries = new Map<object, "steering" | "followUp">();
   private queueUpdateScheduled = false;
   private mutatingPromptQueue = false;
+  private currentTaskTiming: TaskTiming | null = null;
+
+  getCurrentTaskTiming(): TaskTiming | null {
+    if (!this.isRunning()) return null;
+    return this.currentTaskTiming ? { ...this.currentTaskTiming } : null;
+  }
 
   private clientQueuedMessages(): { steering: string[]; followUp: string[]; requestIds?: { steering: (string | null)[]; followUp: (string | null)[] } } {
     const queues = this.inner.agent as unknown as { steeringQueue?: { messages: object[] }; followUpQueue?: { messages: object[] } };
@@ -632,9 +639,28 @@ export class AgentSessionWrapper {
       let deliveredRequestId: string | undefined;
       if (event.type === "message_start") {
         reconcileDeliveredImageOnlyMessage(this.inner, event.message);
-        if ((event.message as { role?: string } | undefined)?.role === "user" && this.startedPromptRequestId) {
-          this.promptReceiptMessages.set(event.message as object, this.startedPromptRequestId);
-          this.startedPromptRequestId = null;
+        const userMsg = event.message as object;
+        const isUser = (event.message as { role?: string } | undefined)?.role === "user";
+        if (isUser) {
+          const queueKind = this.queuedDeliveries.get(userMsg);
+          if (this.startedPromptRequestId) {
+            const reqId = this.startedPromptRequestId;
+            this.promptReceiptMessages.set(userMsg, reqId);
+            this.startedPromptRequestId = null;
+            if (!this.currentTaskTiming || this.currentTaskTiming.requestId !== reqId) {
+              this.currentTaskTiming = createTaskTiming(Date.now(), { taskId: reqId, requestId: reqId });
+            }
+          } else if (queueKind === "followUp") {
+            const reqId = this.promptReceiptMessages.get(userMsg);
+            const taskId = reqId || (userMsg as any).id || (typeof randomUUID === "function" ? randomUUID() : `task-${Date.now()}`);
+            this.currentTaskTiming = createTaskTiming(Date.now(), { taskId, requestId: reqId ?? undefined });
+          } else if (queueKind === "steering") {
+            // steering 属于当前任务，绝对不重置 timing
+          } else if (!this.currentTaskTiming) {
+            const reqId = this.promptReceiptMessages.get(userMsg);
+            const taskId = reqId || (userMsg as any).id || (typeof randomUUID === "function" ? randomUUID() : `task-${Date.now()}`);
+            this.currentTaskTiming = createTaskTiming(Date.now(), { taskId, requestId: reqId ?? undefined });
+          }
         }
       }
       if (event.type === "message_end" && event.message && typeof event.message === "object") {
@@ -672,7 +698,9 @@ export class AgentSessionWrapper {
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       // Deliver the user bubble and current queue as one wire event. A consumer
       // need not wait for a DOM mirror or another state request to remove it.
-      if (event.type === "message_end" && (event.message as { role?: string } | undefined)?.role === "user") {
+      if (event.type === "message_start" && (event.message as { role?: string } | undefined)?.role === "user") {
+        this.emit({ ...event, ...(this.currentTaskTiming ? { taskTiming: this.currentTaskTiming } : {}) } as AgentEvent);
+      } else if (event.type === "message_end" && (event.message as { role?: string } | undefined)?.role === "user") {
         this.emit({ ...event, ...(deliveredRequestId ? { requestId: deliveredRequestId } : {}), queuedMessages: this.clientQueuedMessages() } as AgentEvent);
       } else {
         this.emit(event);
@@ -706,6 +734,7 @@ export class AgentSessionWrapper {
   private notifyAgentRunCompleteIfIdle(): void {
     if (!this.agentRunNeedsCompletion || this.isRunning()) return;
     this.agentRunNeedsCompletion = false;
+    this.currentTaskTiming = null;
     if (this.suppressCompletionNotifications) return;
     if (!this.chatOnly) {
       try { reviewCompletedLearning(this.inner as unknown as AgentSession, this.cwd, this.latestUserEntryId() ?? "unknown"); }
@@ -803,6 +832,7 @@ export class AgentSessionWrapper {
 
   private shouldWaitForExtensions(type: string): boolean {
     return type === "set_composer_mode"
+      || type === "composer_goal_action"
       || type === "prompt"
       || type === "steer"
       || type === "follow_up"
@@ -1050,6 +1080,70 @@ export class AgentSessionWrapper {
         } finally { releaseAdmission(); }
       }
 
+      case "composer_goal_action": {
+        const action = command.action;
+        if (action !== "pause" && action !== "resume") {
+          throw new Error("目标操作参数无效，只支持 pause 与 resume。");
+        }
+        const runner = this.inner.extensionRunner;
+        const registered = runner?.getCommand?.("composer-goal");
+        if (!registered || !runner?.createCommandContext) {
+          throw new Error("该会话未加载目标控制扩展，请在空闲时重新加载扩展。");
+        }
+
+        const rawStatus = this.extensionStatuses.get("composer-modes");
+        let currentStatus: { version?: number; mode?: string; goal?: string; goalIdentity?: any } | null = null;
+        try {
+          currentStatus = typeof rawStatus === "string" ? JSON.parse(rawStatus) : (typeof rawStatus === "object" ? rawStatus : null);
+        } catch { /* fail closed below */ }
+
+        if (!currentStatus || currentStatus.version !== 1 || currentStatus.mode !== "goal" || !currentStatus.goal) {
+          throw new Error("当前会话未处于目标模式或目标未设定。");
+        }
+
+        if (
+          !command.expected ||
+          typeof command.expected !== "object" ||
+          typeof (command.expected as any).objective !== "string" ||
+          !(command.expected as any).objective.trim()
+        ) {
+          throw new Error("必须提供严格的目标预期参数 { objective: string }。");
+        }
+
+        const expectedObjective = (command.expected as any).objective.trim();
+        const currentObjective = String(currentStatus.goal).trim();
+        if (expectedObjective !== currentObjective) {
+          throw new Error("目标状态已改变，操作未确认。");
+        }
+
+        // 无 prompt/MCP/preflight/bashadmission 锁等待，直通调用扩展命令
+        await registered.handler(action, runner.createCommandContext());
+
+        const text = this.extensionStatuses.get("composer-modes");
+        let ackStatus: { version?: number; mode?: string; goal?: string; paused?: boolean; goalStatus?: string } | null = null;
+        try {
+          ackStatus = typeof text === "string" ? JSON.parse(text) : (typeof text === "object" ? text : null);
+        } catch { /* fail closed below */ }
+
+        if (ackStatus?.version !== 1 || ackStatus.mode !== "goal") {
+          throw new Error("目标控制扩展未确认操作，请稍后重试。");
+        }
+
+        const ackObjective = typeof ackStatus.goal === "string" ? ackStatus.goal.trim() : "";
+        if (!ackObjective || ackObjective !== expectedObjective) {
+          throw new Error("目标状态已改变，操作未确认。");
+        }
+
+        if (action === "pause" && ackStatus.paused !== true && ackStatus.goalStatus !== "paused") {
+          throw new Error("暂停未生效，请检查会话状态。");
+        }
+        if (action === "resume" && (ackStatus.paused === true || ackStatus.goalStatus === "paused")) {
+          throw new Error("恢复未生效，请稍后重试。");
+        }
+
+        return { extensionStatuses: [{ key: "composer-modes", text: typeof text === "string" ? text : JSON.stringify(text) }] };
+      }
+
       case "retain_stopped_prompt": {
         if (typeof command.requestId !== "string" || !/^[a-zA-Z0-9-]{16,80}$/.test(command.requestId)) {
           throw new Error("已停止消息的标识无效。");
@@ -1267,6 +1361,7 @@ export class AgentSessionWrapper {
           console.error("[pi-web] failed to cancel deferred lock work on Stop:", error instanceof Error ? error.message : error);
         }
         this.forceShutdownOnIdle = true;
+        this.currentTaskTiming = null;
         // Stop must unwind extension commands that have not started the agent yet.
         try {
           this.extensionUiAbortController.abort(new DOMException("Extension UI cancelled by Stop", "AbortError"));
@@ -1327,6 +1422,7 @@ export class AgentSessionWrapper {
           isPromptRunning: this.pendingPromptCount > 0,
           isBashRunning: this.inner.isBashRunning,
           isCompacting: this.inner.isCompacting,
+          taskTiming: this.getCurrentTaskTiming(),
           autoCompactionEnabled: this.inner.autoCompactionEnabled,
           autoRetryEnabled: this.inner.autoRetryEnabled,
           model: this.nextTurnSettings.model ?? (model ? { id: model.id, provider: model.provider } : undefined),
@@ -1846,6 +1942,7 @@ export class AgentSessionWrapper {
     if (!this._alive) return;
     this._alive = false;
     this.startedPromptRequestId = null;
+    this.currentTaskTiming = null;
     this.activePromptRequestIds.clear();
     this.promptReceiptMessages = new WeakMap();
     this.queuedDeliveries.clear();

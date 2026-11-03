@@ -32,6 +32,11 @@ export interface UsageDeleteGuardModule {
     onDeleted?: OnSessionDeletedCallback | null,
     options?: SealAndDeleteOptions,
   ) => SealAndDeleteResult;
+  sealAndDelete: (
+    targetsInput: Map<string, string> | Array<[string, string]> | Record<string, string>,
+    onDeleted?: OnSessionDeletedCallback | null,
+    options?: SealAndDeleteOptions,
+  ) => Promise<SealAndDeleteResult>;
 }
 
 declare global {
@@ -293,6 +298,28 @@ export function sealAndDeleteSync(
     mergedOptions.sessionsRoot = process.env.PI_SESSIONS_DIR || join(getAgentDir(), "sessions");
   }
   return guard.sealAndDeleteSync(targetsInput, onDeleted, mergedOptions);
+}
+
+export async function sealAndDelete(
+  targetsInput: Map<string, string> | Array<[string, string]> | Record<string, string>,
+  onDeleted?: OnSessionDeletedCallback | null,
+  options: SealAndDeleteOptions = {},
+): Promise<SealAndDeleteResult> {
+  ensureSessionWriteGuardInstalled();
+  const guard = loadUsageDeleteGuard();
+  const binDir = resolveUsageGuardBinDir();
+  const defaultOpts = globalThis.__piUsageDeleteGuardDefaultOptions ?? {};
+  const mergedOptions: SealAndDeleteOptions = {
+    ...defaultOpts,
+    ...options,
+  };
+  if (!mergedOptions.workerScript) {
+    mergedOptions.workerScript = join(binDir, "pi-usage-seal-worker.cjs");
+  }
+  if (!mergedOptions.sessionsRoot) {
+    mergedOptions.sessionsRoot = process.env.PI_SESSIONS_DIR || join(getAgentDir(), "sessions");
+  }
+  return await guard.sealAndDelete(targetsInput, onDeleted, mergedOptions);
 }
 
 ensureSessionWriteGuardInstalled();

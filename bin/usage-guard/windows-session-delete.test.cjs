@@ -444,8 +444,8 @@ test("generateUsageLedger properly releases and closes lock fd on both success a
         );
     }
 
-    // 1. 成功场景验证
-    const successOutcome = await runWithLockSpy(async () => {
+    // 1. 只读模式验证：scan 阶段不持写锁
+    const readonlyOutcome = await runWithLockSpy(async () => {
       return generateUsageLedger({
         sessionsRoot: sb.sessionsDir,
         colleagueSessionsRoot: null,
@@ -454,22 +454,35 @@ test("generateUsageLedger properly releases and closes lock fd on both success a
       });
     });
 
-    assert.equal(successOutcome.ok, true, "generateUsageLedger should succeed on empty sessions");
-    const successTrace = successOutcome.events;
-    const succOpen = successTrace.find(e => e.action === "open");
-    assert.ok(succOpen, "Lock fd must be opened on ledger success");
-    const succClose = successTrace.find(e => e.action === "close" && e.fd === succOpen.fd);
+    assert.equal(readonlyOutcome.ok, true, "generateUsageLedger should succeed on empty sessions in readonly mode");
+    const roOpen = readonlyOutcome.events.find(e => e.action === "open");
+    assert.equal(roOpen, undefined, "Scan in readonly mode must not acquire write lock");
+
+    // 2. 正常写模式验证：commit 阶段持写锁并在完成时物理关闭 fd 并 unlink
+    const writeOutcome = await runWithLockSpy(async () => {
+      return generateUsageLedger({
+        sessionsRoot: sb.sessionsDir,
+        colleagueSessionsRoot: null,
+        dataDir: sb.dataDir,
+      });
+    });
+
+    assert.equal(writeOutcome.ok, true, "generateUsageLedger should succeed in write mode");
+    const writeTrace = writeOutcome.events;
+    const succOpen = writeTrace.find(e => e.action === "open");
+    assert.ok(succOpen, "Lock fd must be opened during commit in write mode");
+    const succClose = writeTrace.find(e => e.action === "close" && e.fd === succOpen.fd);
     assert.ok(succClose, "Lock fd must be closed on ledger success");
     assert.equal(succClose.closedPhysically, true, "Lock fd must be physically closed on ledger success");
-    const succUnlink = successTrace.find(e => e.action === "unlink");
+    const succUnlink = writeTrace.find(e => e.action === "unlink");
     assert.ok(succUnlink, "Lock file must be unlinked on ledger success");
     assert.ok(
-      successTrace.indexOf(succClose) < successTrace.indexOf(succUnlink),
+      writeTrace.indexOf(succClose) < writeTrace.indexOf(succUnlink),
       "Close must precede unlink on ledger success"
     );
     assert.equal(fs.existsSync(lockFile), false, "Lock file must not remain after successful ledger run");
 
-    // 2. scan 抛错场景验证
+    // 3. scan 抛错场景验证：锁外扫描抛错，不曾持锁，也不会泄露锁
     const malformedFile = path.join(sb.sessionsDir, "malformed-session.jsonl");
     fs.writeFileSync(
       malformedFile,
@@ -484,7 +497,6 @@ test("generateUsageLedger properly releases and closes lock fd on both success a
         sessionsRoot: sb.sessionsDir,
         colleagueSessionsRoot: null,
         dataDir: sb.dataDir,
-        write: false,
       });
     });
 
@@ -492,17 +504,132 @@ test("generateUsageLedger properly releases and closes lock fd on both success a
     assert.match(errorOutcome.error.message, /malformed JSON/);
     const errorTrace = errorOutcome.events;
     const errOpen = errorTrace.find(e => e.action === "open");
-    assert.ok(errOpen, "Lock fd must be opened before scan error");
-    const errClose = errorTrace.find(e => e.action === "close" && e.fd === errOpen.fd);
-    assert.ok(errClose, "Lock fd must be closed in finally block when scan throws");
-    assert.equal(errClose.closedPhysically, true, "Lock fd must be physically closed when scan throws");
-    const errUnlink = errorTrace.find(e => e.action === "unlink");
-    assert.ok(errUnlink, "Lock file must be unlinked in finally block when scan throws");
-    assert.ok(
-      errorTrace.indexOf(errClose) < errorTrace.indexOf(errUnlink),
-      "Close must precede unlink when scan throws"
+    assert.equal(errOpen, undefined, "When scan throws outside lock, write lock must not have been acquired");
+    assert.equal(fs.existsSync(lockFile), false, "Lock file must not exist when scan throws");
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test("实际 timestamp_UUID.jsonl 命名下 seal+unlink before commit availability 不可复活，且同一 session 并发 complete 与另 source 不被覆写", async () => {
+  const sb = createSandbox();
+  try {
+    const sidA = "12345678-abcd-ef01-2345-6789abcdef01";
+    const sidB = "87654321-dcba-10fe-5432-10fedcba9876";
+
+    // 使用真实的 timestamp_UUID.jsonl 命名
+    const fileA = path.join(sb.sessionsDir, `2026-04-18T10-00-00-000Z_${sidA}.jsonl`);
+    const fileB = path.join(sb.sessionsDir, `2026-04-18T10-00-01-000Z_${sidB}.jsonl`);
+
+    fs.writeFileSync(
+      fileA,
+      JSON.stringify({ type: "session", id: sidA, name: "Session A To Be Unlinked" }) + "\n" +
+      JSON.stringify({
+        type: "message",
+        id: "msg-a-1",
+        message: {
+          role: "assistant",
+          provider: "cliproxyapi",
+          model: "gemini-3.8-flash-high",
+          timestamp: 1713434400000,
+          usage: { input: 100, output: 50, cost: 0.001 },
+        },
+      }) + "\n",
+      "utf8"
     );
-    assert.equal(fs.existsSync(lockFile), false, "Lock file must not remain after scan error");
+
+    fs.writeFileSync(
+      fileB,
+      JSON.stringify({ type: "session", id: sidB, name: "Session B Concurrent Complete" }) + "\n" +
+      JSON.stringify({
+        type: "message",
+        id: "msg-b-1",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-5.6-luna",
+          timestamp: 1713434401000,
+          usage: { input: 200, output: 80, cost: 0.002 },
+        },
+      }) + "\n",
+      "utf8"
+    );
+
+    const origEnv = process.env.PI_USAGE_DATA_DIR;
+    process.env.PI_USAGE_DATA_DIR = sb.dataDir;
+
+    try {
+      const stateFile = path.join(sb.dataDir, "pi-usage-events-nas.json");
+
+      const res = await generateUsageLedger({
+        source: "nas",
+        sessionsRoot: sb.sessionsDir,
+        colleagueSessionsRoot: null,
+        dataDir: sb.dataDir,
+        __onAfterScanOutsideLock: async () => {
+          // 1. 模拟在锁外扫描完成之后、commit 获取写锁之前：
+          // fileA 被 sealdelete + unlink 物理删除！
+          fs.unlinkSync(fileA);
+
+          // 2. 模拟并发写入磁盘 state：
+          // - 同一 session (sidB) 被 seal-worker 写入了 complete: true 以及更好的 metadata
+          // - 另一个 source (colleague) 写入了 sources.colleague
+          const latestState = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+          latestState.sources["colleague"] = {
+            scannedAt: "2026-04-18T10-05-00.000Z",
+            fileCount: 5,
+            audit: { assistant: 10 },
+          };
+          latestState.sessions[sidB] = {
+            id: sidB,
+            title: "Session B Concurrent Complete",
+            sources: ["nas"],
+            availableOn: ["nas"],
+            ingestion: {
+              source: "nas",
+              scannedAt: "2026-04-18T10-05-00.000Z",
+              complete: true,
+              sealForDelete: true,
+            },
+          };
+          fs.writeFileSync(stateFile, JSON.stringify(latestState), "utf8");
+        },
+      });
+
+      const finalState = res.state;
+
+      // 断言 1: fileA 虽在 scan 时被记录，但在 commit 时发现已被 unlink (lstat not same)，availableOn 不得复活！
+      assert.ok(finalState.sessions[sidA], "Session A record exists in history");
+      assert.deepEqual(
+        finalState.sessions[sidA].availableOn || [],
+        [],
+        "Session A must NOT be available on nas after seal+unlink before commit"
+      );
+
+      // 断言 2: session B 并发的 complete: true 完整保留，不得被 candidate 冲掉
+      assert.ok(finalState.sessions[sidB], "Session B record exists");
+      assert.equal(
+        finalState.sessions[sidB].ingestion?.complete,
+        true,
+        "Concurrent complete: true on session B must be preserved"
+      );
+      assert.equal(
+        finalState.sessions[sidB].ingestion?.sealForDelete,
+        true,
+        "Concurrent sealForDelete flag must be preserved"
+      );
+
+      // 断言 3: 另 source (colleague) 的 sources 必须完整保留，不得被 candidateState 冲掉
+      assert.ok(finalState.sources["colleague"], "Source colleague must exist");
+      assert.equal(
+        finalState.sources["colleague"].scannedAt,
+        "2026-04-18T10-05-00.000Z",
+        "Source colleague data must NOT be overwritten by candidateState"
+      );
+      assert.ok(finalState.sources["nas"], "Source nas must also be updated");
+    } finally {
+      process.env.PI_USAGE_DATA_DIR = origEnv;
+    }
   } finally {
     sb.cleanup();
   }

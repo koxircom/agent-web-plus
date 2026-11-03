@@ -1,6 +1,6 @@
 {
   "name": "@agegr/pi-web",
-  "version": "1.4.46",
+  "version": "1.4.61",
   "capabilities": {
     "nativeSettingsHost": true,
     "nativeSettingsLayout": true,
@@ -16,7 +16,7 @@
   },
   "piWebEdition": "koxir-standalone",
   "standalone": true,
-  "description": "Agent Web Plus \u2014 Pi Agent \u4e0e Codex \u5171\u7528\u7684\u6d4f\u89c8\u5668\u5de5\u4f5c\u53f0",
+  "description": "Agent Web Plus — Pi Agent 与 Codex 共用的浏览器工作台",
   "homepage": "https://github.com/koxircom/agent-web-plus#readme",
   "repository": {
     "type": "git",
@@ -58,8 +58,8 @@
     "skills/collaboration"
   ],
   "scripts": {
-    "prebuild": "node scripts/prepare-dom-feedback-assets.cjs && node scripts/prepare-pdf-assets.cjs && node scripts/check-sdk-baseline.cjs && node enhancements/build-pi-web-enhancements.cjs --build --verify && node scripts/build-session-history-worker.cjs",
-    "prepack": "node scripts/prepare-dom-feedback-assets.cjs --verify && node scripts/prepare-pdf-assets.cjs --verify && python3 scripts/check-publication.py --root . && node enhancements/build-pi-web-enhancements.cjs --verify && node scripts/check-client-budget.cjs && node scripts/build-session-history-worker.cjs && node scripts/qa/release-gate.cjs",
+    "prebuild": "node scripts/prepare-pdf-assets.cjs && node scripts/check-sdk-baseline.cjs && node enhancements/build-pi-web-enhancements.cjs --build --verify && node scripts/build-session-history-worker.cjs",
+    "prepack": "node scripts/prepare-pdf-assets.cjs --verify && python3 scripts/check-publication.py --root . && node enhancements/build-pi-web-enhancements.cjs --verify && node scripts/check-client-budget.cjs && node scripts/build-session-history-worker.cjs && node scripts/qa/release-gate.cjs",
     "postinstall": "node bin/prepare-terminal.js",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
@@ -75,13 +75,15 @@
     "qa:list": "node scripts/qa/release-gate.cjs --list",
     "qa:release": "node scripts/qa/release-gate.cjs",
     "check:publication": "python3 scripts/check-publication.py --root .",
-    "release:publish": "python3 scripts/publish-release.py"
+    "release:publish": "python3 scripts/publish-release.py",
+    "qa:windows:verify": "node scripts/qa/windows-touch-deployment-gate.mjs",
+    "qa:windows:contract": "node scripts/qa/pi30141-touch-gate.contract.test.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@earendil-works/pi-tui": "1.4.0",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@earendil-works/pi-tui": "1.5.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "js-yaml": "5.4.2",
@@ -93,8 +95,8 @@
     "semver": "7.8.5",
     "undici": "8.11.0",
     "web-push": "3.6.7",
-    "html-to-image": "1.11.13",
-    "@jridgewell/trace-mapping": "0.3.31"
+    "@jridgewell/trace-mapping": "0.3.31",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.2",

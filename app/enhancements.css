@@ -3860,13 +3860,7 @@
       -webkit-touch-callout: default;
     }
 
-    /* 严格保证：侧边栏关闭时遮罩层绝对隐藏，杜绝任何黑色半透明层残留遮盖聊天区导致白字发暗变黑 */
-    .sidebar-overlay-backdrop[data-drawer-active="false"],
-    html:not(.pi-sidebar-drawer-active) .sidebar-overlay-backdrop[style*="opacity: 0"] {
-      opacity: 0 !important;
-      pointer-events: none !important;
-      visibility: hidden !important;
-    }
+
 
     /* Mobile / Touch Responsive Enhancement */
     @media (max-width: 768px) {
@@ -6816,23 +6810,7 @@
 
 
 
-    .pi-enh-queue-count-badge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 17px;
-      height: 17px;
-      padding: 0 4.5px;
-      border-radius: 999px;
-      background: var(--accent, #6366f1);
-      color: #ffffff;
-      font-size: 10.5px;
-      font-weight: 700;
-      line-height: 1;
-      margin-left: 5px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-      pointer-events: none;
-    }
+
 
 
 
@@ -6872,4 +6850,30 @@
       from { opacity: 0; transform: translateY(6px) scale(0.96); }
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
+
+    /* ==========================================================================
+     * 侧边栏顶栏单行布局与常驻版本号 (Single-Row Header & Persistent Version Badge)
+     * 原生容器真实规则收敛，避免旧运行补丁与硬编码尺寸
+     * ========================================================================== */
+    .pi-native-sidebar-header-toolbar {
+      flex-wrap: nowrap;
+      justify-content: space-between;
+      gap: 4px;
+    }
+    .pi-native-sidebar-header-toolbar > [data-pi-native-engine-switcher] {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .pi-native-sidebar-header-actions {
+      flex-shrink: 0;
+    }
+    .pi-enh-header-version {
+      opacity: 0.75;
+      margin-left: 2px;
+      font-weight: 600;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+      user-select: none;
+    }
+
 

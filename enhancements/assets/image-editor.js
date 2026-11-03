@@ -2,7 +2,7 @@
 (function (root) {
   "use strict";
   root.PiImageEditor = { create(deps) {
-    const { HISTORY_IMAGE_FAST_PATH_MAX_BYTES, HISTORY_IMAGE_MAX_BYTES, appendComposerImageState, closeComposerImageZoomModal, isMobileEnvironment, parseHistoryImageDataUrl, readBlobAsDataUrl, readNativeComposerDraft, replaceComposerImageState, showToast } = deps;
+    const { HISTORY_IMAGE_FAST_PATH_MAX_BYTES, HISTORY_IMAGE_MAX_BYTES, appendComposerImageState, closeComposerImageZoomModal, isMobileEnvironment, parseHistoryImageDataUrl, readBlobAsDataUrl, readNativeComposerDraft, replaceComposerImageState, showToast } = deps || {};
     return function openComposerImageZoomModal(src, alt = "图片预览", editContext = null, galleryContext = null, options = null) {
     closeComposerImageZoomModal();
     if (!src) return;
@@ -1249,20 +1249,16 @@
           if (typeof editContext?.replace === "function") {
             replaced = await editContext.replace(replacement) !== false;
           } else if (editContext && Number.isInteger(editContext.index)) {
-            const native = readNativeComposerDraft();
-            replaced = replaceComposerImageState(native, editContext.index, editContext.expectedImage, replacement);
-            if (replaced) editContext.expectedImage = native.imagesRef.current[editContext.index];
-          } else {
-            const downloadLink = document.createElement("a");
-            downloadLink.href = dataUrl;
-            downloadLink.download = (alt || "annotated-image").replace(/[^\w.-]/g, "_") + "-annotated.png";
-            downloadLink.target = "_blank";
-            document.body.appendChild(downloadLink);
-            downloadLink.click();
-            downloadLink.remove();
-            replaced = true;
+            const native = typeof readNativeComposerDraft === "function" ? readNativeComposerDraft() : null;
+            replaced = typeof replaceComposerImageState === "function"
+              && replaceComposerImageState(native, editContext.index, editContext.expectedImage, replacement);
+            if (replaced && native?.imagesRef?.current) {
+              editContext.expectedImage = native.imagesRef.current[editContext.index];
+            }
           }
-          if (!replaced) throw new Error("无法安全定位原附件，已保留原图，请重新打开后再试");
+          if (!replaced) {
+            throw new Error("只读历史图片不支持直接保存替换，请通过下载导出");
+          }
           img.src = dataUrl;
           img.setAttribute?.("src", dataUrl);
           if (items[currentIndex]) {
@@ -1271,14 +1267,14 @@
               items[currentIndex].editContext.editSrc = dataUrl;
             }
             const targetDomImg = items[currentIndex].domElement;
-            if (editContext && targetDomImg) {
+            if (targetDomImg) {
               targetDomImg.src = dataUrl;
               targetDomImg.setAttribute?.("src", dataUrl);
             }
           }
           if (editContext) editContext.editSrc = dataUrl;
           cleanup();
-          showToast(editContext ? "标注已保存并替换原图" : "标注图片已下载到本地");
+          showToast("标注已保存并替换原图");
         } catch (error) {
           status.textContent = error instanceof Error ? error.message : String(error);
         } finally {
@@ -1328,11 +1324,11 @@
 
         if (isMobile) {
           hint.textContent = "未保存的标注修改将被丢弃";
-          saveConfirmBtn.textContent = editContext ? "保存并替换" : "保存下载";
+          saveConfirmBtn.textContent = "保存并替换";
           discardBtn.textContent = "不保存退出";
         } else {
           hint.innerHTML = '按 <kbd>空格</kbd> 确认保存并替换，按 <kbd>ESC</kbd> 放弃修改';
-          saveConfirmBtn.textContent = editContext ? "保存并替换 (空格)" : "保存下载 (空格)";
+          saveConfirmBtn.textContent = "保存并替换 (空格)";
           discardBtn.textContent = "不保存退出 (Esc)";
         }
 

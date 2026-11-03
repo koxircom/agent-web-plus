@@ -18,8 +18,11 @@ test('remote workspace selection cannot be replaced by NAS worktree identity',()
 test('Codex does not reserve an empty extension status row in loaded, loading or error states',()=>{
  const source=fs.readFileSync(new URL('./ChatWindow.tsx',import.meta.url),'utf8');
  assert.equal((source.match(/!isNew && !isCodexSession &&/g)||[]).length,2);
- assert.match(source,/!isEmptyNew && !isCodexSession && extensionStatuses.length === 0/);
- assert.match(source,/<ExtensionStatusBar statuses=\{extensionStatuses\} widgets=\{extensionWidgets\}/);
+ assert.match(source,/renderSlot=\{!isEmptyNew && !isCodexSession\}/);
+ assert.match(source,/<ExtensionStatusBar\s+statuses=\{extensionStatuses\}\s+widgets=\{extensionWidgets\}/);
+ const statusBar=fs.readFileSync(new URL('./ExtensionStatusBar.tsx',import.meta.url),'utf8');
+ assert.match(statusBar,/if \(!hasShelfContent\)/);
+ assert.match(statusBar,/if \(renderSlot\)/);
 });
 test('Agent uses the shared menu with branded labels, no model icon and a persistent chevron',()=>{
  const control=fs.readFileSync(new URL('./ExecutionEngineSwitcher.tsx',import.meta.url),'utf8');

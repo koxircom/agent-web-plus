@@ -2104,7 +2104,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
   return (
     <>
     <ConfigPanelShell embedded={embedded} title={t("common.models")} subtitle="~/.pi/agent/models.json" closeLabel={t("i18n.close")} onClose={onClose}>
-
+      <div className="models-config-layout">
         <EnabledModelsBanner controller={enabledModels} />
 
         {/* Body */}
@@ -2221,6 +2221,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
             </ConfigDetailStack>
           </ConfigDetail>
         </ConfigSplitView>
+      </div>
 
         {/* Footer */}
         <ConfigFooter status={(loadError || saveError) && (

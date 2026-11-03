@@ -2,7 +2,15 @@
 
 import { userMessageRenderKey, userMessageRequestId } from "@/lib/prompt-recovery";
 
-import { createToolProcessSummary, getToolProcessSummaryLabel, includeToolInProcessSummary, type ToolProcessSummary } from "@/lib/tool-public-status";
+import {
+  createToolProcessSummary,
+  formatProcessDurationZh,
+  getProcessSubagentTiming,
+  getToolProcessSummaryLabel,
+  includeToolInProcessSummary,
+  type ProcessSubagentTiming,
+  type ToolProcessSummary,
+} from "@/lib/tool-public-status";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
@@ -107,6 +115,9 @@ interface Props {
   onSoundToggle?: () => void;
   playDoneSound?: () => void;
   unlockAudio?: () => void;
+  sidebarCollapsed?: boolean;
+  collapsedTitle?: string | null;
+  onExpandSidebar?: () => void;
 }
 
 function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, string | number>) => string): string | null {
@@ -139,12 +150,66 @@ function getUserInputText(message: AgentMessage): string | null {
   return text.length > 0 ? text : null;
 }
 
-function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = false, children, t }: { toolStates: ToolProcessSummary; streamingThinking?: boolean; reveal?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
+export const PROCESS_SUBAGENT_DURATION_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 3,
+  fontSize: 11,
+  fontWeight: 500,
+  color: "#38bdf8",
+  fontVariantNumeric: "tabular-nums",
+  fontFamily: 'var(--font-mono), "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif',
+  whiteSpace: "nowrap",
+  userSelect: "none",
+  flexShrink: 0,
+};
+
+export const PROCESS_DETAILS_WRAPPER_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: "2px 6px",
+  minWidth: 0,
+  lineHeight: 1.4,
+};
+
+export function ProcessDurationBadge({ timing }: { timing: ProcessSubagentTiming }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!timing.running || timing.startTime === undefined) return;
+    setNow(Date.now());
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [timing.running, timing.startTime]);
+
+  const durationMs = timing.running
+    ? (timing.startTime !== undefined ? Math.max(0, now - timing.startTime) : undefined)
+    : timing.durationMs;
+
+  const text = formatProcessDurationZh(durationMs);
+  if (!text) return null;
+
+  return (
+    <span
+      data-pi-subagent-duration="true"
+      title="根据消息时间估算，非工具精确执行时间"
+      style={PROCESS_SUBAGENT_DURATION_STYLE}
+    >
+      ⏱️ ≈{text}
+    </span>
+  );
+}
+
+export function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = false, children, t }: { toolStates: ToolProcessSummary; streamingThinking?: boolean; reveal?: boolean; children: ReactNode; t: (key: string, params?: Record<string, string | number>) => string }) {
   const [expanded, setExpanded] = useState(false);
   useLayoutEffect(() => {
     if (reveal) setExpanded(true);
   }, [reveal]);
   const label = getToolProcessSummaryLabel(toolStates, t, streamingThinking);
+  const timing = getProcessSubagentTiming(toolStates);
 
   return (
     <div data-pi-native-tool-summary="true" data-pi-enh-native-process="true" style={{ marginBottom: 12 }}>
@@ -155,7 +220,7 @@ function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = f
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 6,
           width: "100%",
           minWidth: 0,
           minHeight: 24,
@@ -172,8 +237,11 @@ function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = f
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
           <polyline points="4 2.5 7.5 6 4 9.5" />
         </svg>
-        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {label}
+        <span style={PROCESS_DETAILS_WRAPPER_STYLE}>
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+            {label}
+          </span>
+          {timing?.hasSubagent && <ProcessDurationBadge timing={timing} />}
         </span>
       </button>
       {(expanded || reveal) && (
@@ -185,7 +253,7 @@ function ProcessDetailsGroup({ toolStates, streamingThinking = false, reveal = f
   );
 }
 
-export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, executionEngine = "pi", searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, sessionRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpenChange, session, executionEngine = "pi", searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionSubmissionChange, onSessionForked, modelsRefreshKey, sessionRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, sidebarCollapsed, collapsedTitle, onExpandSidebar }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCodexSession = executionEngine === "codex" || session?.id.startsWith("codex:") === true;
@@ -194,11 +262,50 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   const closeMobileNavigation = useCallback(() => onMobileNavigationOpenChange?.(false), [onMobileNavigationOpenChange]);
   const blankTapRef = useRef<{ pointerId: number; x: number; y: number; at: number } | null>(null);
   const previousBlankTapRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const multiTouchContaminatedRef = useRef(false);
   const resetBlankTap = useCallback(() => {
     blankTapRef.current = null;
     previousBlankTapRef.current = null;
   }, []);
   useEffect(resetBlankTap, [session?.id, newSessionDraftKey, isMobile, resetBlankTap]);
+
+  // Track multi-touch contact contamination throughout contact lifecycle.
+  // Invariant: If >1 touches are detected anywhere on the surface, mark contaminated
+  // and abort recognition until all contacts release (e.touches.length === 0).
+  useEffect(() => {
+    if (!isMobile) return;
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        multiTouchContaminatedRef.current = true;
+        resetBlankTap();
+      }
+    };
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        if (multiTouchContaminatedRef.current) {
+          multiTouchContaminatedRef.current = false;
+          resetBlankTap();
+        }
+      }
+    };
+    const handleTouchCancel = (e: TouchEvent) => {
+      resetBlankTap();
+      if (e.touches.length === 0) {
+        multiTouchContaminatedRef.current = false;
+      } else {
+        multiTouchContaminatedRef.current = true;
+      }
+    };
+    window.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
+    window.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
+    window.addEventListener("touchcancel", handleTouchCancel, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("touchstart", handleTouchStart, { capture: true });
+      window.removeEventListener("touchend", handleTouchEnd, { capture: true });
+      window.removeEventListener("touchcancel", handleTouchCancel, { capture: true });
+    };
+  }, [isMobile, resetBlankTap]);
+
   const isBlankNavigationTarget = (event: ReactPointerEvent<HTMLDivElement>) => {
     // Chromium may adjust touch targets toward nearby text/controls. Test the
     // physical point, so whitespace is distinguished from content itself.
@@ -207,7 +314,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     return target.matches("[data-pi-native-scroll-owner], [data-chat-navigation-blank], [data-pi-native-message-column], [data-scroll-anchor]");
   };
   const handleBlankPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isMobile || mobileNavigationOpen || event.pointerType !== "touch" || !event.isPrimary || !isBlankNavigationTarget(event)) {
+    if (!isMobile || mobileNavigationOpen || event.pointerType !== "touch" || !event.isPrimary || multiTouchContaminatedRef.current || !isBlankNavigationTarget(event)) {
       resetBlankTap();
       return;
     }
@@ -220,7 +327,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   const handleBlankPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     const start = blankTapRef.current;
     blankTapRef.current = null;
-    if (!start || start.pointerId !== event.pointerId || !event.isPrimary || event.timeStamp - start.at > 300 || !isBlankNavigationTarget(event)
+    if (!start || start.pointerId !== event.pointerId || !event.isPrimary || multiTouchContaminatedRef.current || event.timeStamp - start.at > 300 || !isBlankNavigationTarget(event)
       || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
       previousBlankTapRef.current = null;
       return;
@@ -1803,7 +1910,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
                   }
                   processPlan.reveal ||= Boolean(pendingSearchScroll && entryIds[idx] === pendingSearchScroll.entryId && (!searchBlock || run.message.content.includes(searchBlock)));
                   for (const block of run.message.content) {
-                    if (block.type === "toolCall") includeToolInProcessSummary(processPlan.toolStates, block, toolResultsMap.get(block.toolCallId));
+                    if (block.type === "toolCall") {
+                      includeToolInProcessSummary(
+                        processPlan.toolStates,
+                        block,
+                        toolResultsMap.get(block.toolCallId),
+                        run.message.timestamp,
+                      );
+                    }
                     if (block.type === "thinking" && idx === messages.length && streamState.isStreaming) processPlan.streamingThinking = true;
                   }
                   processPlan.parts.push({ idx, keyPrefix: `technical-${runIndex}`, messageOverride: run.message });
@@ -2123,10 +2237,15 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
           />
         )}
         {chatInputElement}
-        <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
-        {!isEmptyNew && !isCodexSession && extensionStatuses.length === 0 && extensionWidgets.length === 0 && (
-          <div className="chat-composer-status-slot" aria-hidden="true" />
-        )}
+        <ExtensionStatusBar
+          statuses={extensionStatuses}
+          widgets={extensionWidgets}
+          session={session}
+          sidebarCollapsed={sidebarCollapsed}
+          collapsedTitle={collapsedTitle}
+          onExpandSidebar={onExpandSidebar}
+          renderSlot={!isEmptyNew && !isCodexSession}
+        />
       </div>
       {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>

@@ -93,11 +93,6 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
-  "dom-feedback": {
-    "defaultEnabled": true,
-    "moduleId": "selection-context",
-    "moduleDefaultEnabled": true
-  },
   "quick-quote": {
     "defaultEnabled": true,
     "moduleId": "selection-context",
@@ -294,6 +289,11 @@ export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
     "moduleDefaultEnabled": true
   },
   "mobile-swipe-drawer": {
+    "defaultEnabled": true,
+    "moduleId": "session-sidebar",
+    "moduleDefaultEnabled": true
+  },
+  "collapsed-sidebar-session-title": {
     "defaultEnabled": true,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true

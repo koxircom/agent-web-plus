@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 
 import composerModeIcons from "../lib/composer-mode-icons.json";
 
-import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useMemo, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
@@ -17,7 +17,26 @@ import {
   rekeyDraft as rekeyStoredDraft,
   setDraft,
   type ChatDraftImage,
+  type ChatDraftFile,
 } from "@/lib/draft-store";
+import {
+  uploadSingleComposerFile,
+  MAX_UPLOAD_FILE_BYTES,
+  MAX_UPLOAD_BATCH_BYTES,
+} from "@/lib/file-upload-client";
+import {
+  routeMediaPickerFiles,
+  getDocumentPickerAccept,
+  routeDocumentPickerFiles,
+  canUseOpenFilePicker,
+  DOCUMENT_PICKER_OPTIONS,
+  DOCUMENT_PICKER_ERROR_NOTICE,
+} from "@/lib/composer-file-picker";
+import {
+  appendFileAttachmentsToText,
+  parseUserMessageAttachments,
+  formatAttachmentSize,
+} from "@/lib/message-file-attachments";
 import {
   MAX_ATTACHED_IMAGE_BYTES,
   MAX_ATTACHED_IMAGES,
@@ -86,10 +105,10 @@ interface Props {
   compactResult?: CompactResultInfo | null;
   toolPreset?: ToolPreset;
   onToolPresetChange?: (preset: ToolPreset) => void;
-  thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   /** New session has not committed a thinking level; the button still shows the resolved default. */
   isAutoThinkingSelection?: boolean;
-  onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => void;
+  onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra") => void;
   availableThinkingLevels?: string[] | null;
   thinkingLevelMap?: Record<string, string | null> | null;
   retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
@@ -138,7 +157,7 @@ interface ComposerGoalSnapshot {
   pausePending: boolean;
   goalElapsedMs: number | null;
   goalActiveSinceMs: number | null;
-  statusKey: "paused" | "pending" | "active" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
+  statusKey: "paused" | "pending" | "active" | "idle" | "blocked" | "usageLimited" | "budgetLimited" | "complete";
   action: "pause" | "resume" | null;
 }
 
@@ -287,7 +306,7 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
       ? "继续"
       : "暂停";
   const goalStatusLabels: Record<ComposerGoalSnapshot["statusKey"], string> = {
-    pending: "等待暂停", paused: "已暂停", active: "进行中", blocked: "已阻塞",
+    pending: "等待暂停", paused: "已暂停", active: "进行中", idle: "等待继续", blocked: "已阻塞",
     usageLimited: "额度受限", budgetLimited: "预算受限", complete: "已完成",
   };
   const goalStatusLabel = goal ? goalStatusLabels[goal.statusKey] || "状态待确认" : "";
@@ -470,10 +489,10 @@ function subscribeUpwardMenuMaxHeight(
   };
 }
 
-const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
   auto: "chat.thinkingUseDefault", off: "chat.thinkingOff", minimal: "chat.thinkingMinimal", low: "chat.thinkingLow",
-  medium: "chat.thinkingMedium", high: "chat.thinkingHigh", xhigh: "chat.thinkingXhigh", max: "chat.thinkingMax",
+  medium: "chat.thinkingMedium", high: "chat.thinkingHigh", xhigh: "chat.thinkingXhigh", max: "chat.thinkingMax", ultra: "chat.thinkingUltra",
 };
 
 function formatTokenCount(tokens: number): string {
@@ -841,6 +860,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>(() => (
     draftKey ? draftImagesToAttachedImages(getDraftInMemory(draftKey)?.images) : []
   ));
+  const [attachedFiles, setAttachedFiles] = useState<ChatDraftFile[]>(() => (
+    draftKey ? (getDraftInMemory(draftKey)?.files ?? []) : []
+  ));
+  const [documentPickerError, setDocumentPickerError] = useState<string | null>(null);
   const trimmedValue = value.trimStart();
   const bashMode = !isCodexEngine && attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
@@ -869,7 +892,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const documentFileInputRef = useRef<HTMLInputElement>(null);
+  const documentPickerGenerationRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const documentPickerAccept = useMemo(() => getDocumentPickerAccept(), []);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
   const slashCommandsRequestedRef = useRef(false);
@@ -882,6 +909,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const draftKeyRef = useRef(draftKey);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
+  const attachedFilesRef = useRef(attachedFiles);
+  attachedFilesRef.current = attachedFiles;
+  const rawComposerFilesMapRef = useRef<Map<string, File>>(new Map());
   const pendingImageCountRef = useRef(0);
   const draftHydratedKeyRef = useRef<string | null>(null);
   const queuedSubmissionPendingRef = useRef(false);
@@ -907,6 +937,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const queuedCount = (queuedMessages?.steering?.length ?? 0) + (queuedMessages?.followUp?.length ?? 0);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
+  attachedFilesRef.current = attachedFiles;
 
   const [suggestionComposing, setSuggestionComposing] = useState(false);
   const [consumedSuggestionKey, setConsumedSuggestionKey] = useState<string | null>(null);
@@ -986,12 +1017,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (!canRestoreUserMessage(current, attachedImagesRef.current.length, pendingImageCountRef.current)) return;
 
       const body = getUserMessageText(message);
-      const enhancementWindow = window as Window & {
-        __PI_ENH_RESTORE_COMPOSER_ATTACHMENTS__?: (body: string) => string | null;
-      };
-      const restoredBody = enhancementWindow.__PI_ENH_RESTORE_COMPOSER_ATTACHMENTS__?.(body);
-      if (restoredBody === null) return;
-      const restoredText = restoredBody ?? body;
+      if (attachedFilesRef.current.length) return;
+      const restored = parseUserMessageAttachments(body);
+      const restoredText = restored.cleanText;
+      const restoredFiles: ChatDraftFile[] = restored.attachments.map(file => ({
+        id: file.id, name: file.name, size: file.size ?? 0,
+        type: file.type ?? "application/octet-stream", status: "uploaded",
+        serverRelativePath: file.serverRelativePath,
+      }));
+      attachedFilesRef.current = restoredFiles;
+      setAttachedFiles(restoredFiles);
       const restoredImages = draftImagesToAttachedImages(getUserMessageDraftImages(message));
       valueRef.current = restoredText;
       attachedImagesRef.current = restoredImages;
@@ -1036,6 +1071,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const currentDraft = {
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
+        ...(attachedFilesRef.current && attachedFilesRef.current.length > 0 ? { files: attachedFilesRef.current } : {}),
       };
       const moved = rekeyStoredDraft(previousKey, nextKey, currentDraft) ?? { value: "", images: [] };
       const unchanged = moved.value === currentDraft.value
@@ -1043,18 +1079,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         && moved.images.every((image, index) => (
           image.data === currentDraft.images[index]?.data
           && image.mimeType === currentDraft.images[index]?.mimeType
-        ));
+        ))
+        && (moved.files?.length ?? 0) === (currentDraft.files?.length ?? 0);
       draftKeyRef.current = nextKey;
       if (unchanged) return;
 
       const movedImages = draftImagesToAttachedImages(moved.images);
+      const movedFiles = moved.files ?? [];
       valueRef.current = moved.value;
       attachedImagesRef.current = movedImages;
+      attachedFilesRef.current = movedFiles;
       setValue(moved.value);
       setAttachedImages((current) => {
         current.forEach(revokeImagePreview);
         return movedImages;
       });
+      setAttachedFiles(movedFiles);
       setAtQuery(null);
       setHistoryMenuOpen(false);
     },
@@ -1070,6 +1110,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const storedDraft = !targetsCurrentComposer && destinationDraftKey
         ? getDraft(destinationDraftKey)
         : null;
+      const storedFiles = (typeof attachedFilesRef !== "undefined" && targetsCurrentComposer)
+        ? (attachedFilesRef?.current ?? [])
+        : (storedDraft?.files ?? []);
       const restoredDraft = mergeRestoredSubmissionDraft(
         text,
         images,
@@ -1077,6 +1120,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         targetsCurrentComposer
           ? attachedImagesRef.current.map(imageToDraftImage)
           : (storedDraft?.images ?? []),
+        undefined,
+        storedFiles.length > 0 ? storedFiles : undefined,
       );
       // The first optimistic message switches ChatWindow out of its empty-state
       // layout and remounts this component. Persist synchronously so recovery is
@@ -1182,12 +1227,63 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, []);
 
+  const handleImageEditSave = useCallback(async (
+    index: number,
+    expectedImage: AttachedImage,
+    expectedDraftKey: string | null | undefined,
+    replacement: { data: string; mimeType: string; previewUrl?: string }
+  ): Promise<boolean> => {
+    if (draftKeyRef.current !== expectedDraftKey) return false;
+    const currentImages = attachedImagesRef.current;
+    if (!Number.isInteger(index) || index < 0 || index >= currentImages.length) {
+      return false;
+    }
+    const currentTarget = currentImages[index];
+    if (!currentTarget || currentTarget.data !== expectedImage.data || currentTarget.mimeType !== expectedImage.mimeType) {
+      return false;
+    }
+    const nextPreviewUrl = replacement.previewUrl || `data:${replacement.mimeType};base64,${replacement.data}`;
+    const editedImage: AttachedImage = {
+      data: replacement.data,
+      mimeType: replacement.mimeType,
+      previewUrl: nextPreviewUrl,
+    };
+    const nextImages = [...currentImages];
+    nextImages[index] = editedImage;
+    attachedImagesRef.current = nextImages;
+
+    if (draftKeyRef.current) {
+      setDraft(draftKeyRef.current, {
+        value: valueRef.current,
+        images: nextImages.map(imageToDraftImage),
+        ...(attachedFilesRef.current && attachedFilesRef.current.length > 0 ? { files: attachedFilesRef.current } : {}),
+      });
+    }
+
+    setAttachedImages((prev) => {
+      if (index >= prev.length || prev[index]?.data !== expectedImage.data) {
+        return prev;
+      }
+      const next = [...prev];
+      revokeImagePreview(prev[index]);
+      next[index] = editedImage;
+      return next;
+    });
+
+    return true;
+  }, []);
+
   const clearImages = useCallback(() => {
     attachedImagesRef.current = [];
     setAttachedImages((prev) => {
       prev.forEach(revokeImagePreview);
       return [];
     });
+  }, []);
+
+  const clearFiles = useCallback(() => {
+    attachedFilesRef.current = [];
+    setAttachedFiles([]);
   }, []);
 
   const clearInput = useCallback(() => {
@@ -1198,18 +1294,281 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (draftKey) clearDraft(draftKey);
     if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
     clearImages();
+    clearFiles();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [clearImages, draftKey]);
+  }, [clearImages, clearFiles, draftKey]);
+
+  const processNativeFiles = useCallback(async (files: File[]) => {
+    if (!files || files.length === 0) return;
+    const uniqueFiles: File[] = [];
+    const seen = new Set<File>();
+    for (const f of files) {
+      if (!seen.has(f)) {
+        seen.add(f);
+        uniqueFiles.push(f);
+      }
+    }
+
+    const targetDraftKey = draftKeyRef.current;
+    const currentFiles = attachedFilesRef.current;
+    const batchTotal = uniqueFiles.reduce((sum, f) => sum + f.size, 0);
+
+    const newItems: ChatDraftFile[] = uniqueFiles.map((file) => {
+      const isOversized = file.size > MAX_UPLOAD_FILE_BYTES || batchTotal > MAX_UPLOAD_BATCH_BYTES;
+      const fileId = "draft-file-" + Math.random().toString(36).slice(2, 10);
+      rawComposerFilesMapRef.current.set(fileId, file);
+      return {
+        id: fileId,
+        name: file.name,
+        size: file.size,
+        type: file.type || "application/octet-stream",
+        status: isOversized ? ("error" as const) : ("uploading" as const),
+        error: isOversized ? "文件超过单次上传上限 (25MB)" : undefined,
+      };
+    });
+
+    const nextFiles = [...currentFiles, ...newItems];
+    attachedFilesRef.current = nextFiles;
+    setAttachedFiles(nextFiles);
+
+    for (let i = 0; i < uniqueFiles.length; i++) {
+      const file = uniqueFiles[i];
+      const item = newItems[i];
+      if (item.status === "error") continue;
+
+      try {
+        const result = await uploadSingleComposerFile({
+          file,
+          name: file.name,
+          cwd: cwd || "",
+          sessionId: targetDraftKey,
+          executionEngine,
+        });
+
+        if (draftKeyRef.current === targetDraftKey) {
+          setAttachedFiles((prev) => {
+            const updated = prev.map((f) => (
+              f.id === item.id
+                ? {
+                    ...f,
+                    status: "uploaded" as const,
+                    serverRelativePath: result.serverRelativePath,
+                    serverAbsPath: result.serverAbsPath,
+                  }
+                : f
+            ));
+            attachedFilesRef.current = updated;
+            return updated;
+          });
+        } else if (targetDraftKey) {
+          // 会话已切换：A 上传结果必须安全归 A 草稿，严禁污染当前会话 B
+          const targetDraft = getDraft(targetDraftKey);
+          if (targetDraft && targetDraft.files) {
+            const updatedFiles = targetDraft.files.map((f) => (
+              f.id === item.id
+                ? {
+                    ...f,
+                    status: "uploaded" as const,
+                    serverRelativePath: result.serverRelativePath,
+                    serverAbsPath: result.serverAbsPath,
+                  }
+                : f
+            ));
+            setDraft(targetDraftKey, { ...targetDraft, files: updatedFiles });
+          }
+        }
+      } catch (err: any) {
+        if (draftKeyRef.current === targetDraftKey) {
+          setAttachedFiles((prev) => {
+            const updated = prev.map((f) => (
+              f.id === item.id
+                ? {
+                    ...f,
+                    status: "error" as const,
+                    error: err?.message || "上传失败",
+                  }
+                : f
+            ));
+            attachedFilesRef.current = updated;
+            return updated;
+          });
+        } else if (targetDraftKey) {
+          const targetDraft = getDraft(targetDraftKey);
+          if (targetDraft && targetDraft.files) {
+            const updatedFiles = targetDraft.files.map((f) => (
+              f.id === item.id
+                ? {
+                    ...f,
+                    status: "error" as const,
+                    error: err?.message || "上传失败",
+                  }
+                : f
+            ));
+            setDraft(targetDraftKey, { ...targetDraft, files: updatedFiles });
+          }
+        }
+      }
+    }
+  }, [cwd, executionEngine]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      documentPickerGenerationRef.current++;
+    };
+  }, []);
+
+  useEffect(() => {
+    documentPickerGenerationRef.current++;
+    setDocumentPickerError(null);
+  }, [draftKey]);
+
+  const consumeDocumentFiles = useCallback((files: File[]) => {
+    if (!files || files.length === 0) return;
+    const { imageFiles, attachmentFiles } = routeDocumentPickerFiles(files);
+    if (imageFiles.length > 0) processImageFiles(imageFiles);
+    if (attachmentFiles.length > 0) processNativeFiles(attachmentFiles);
+  }, [processImageFiles, processNativeFiles]);
+
+  const handleDocumentInputClick = useCallback((e: React.MouseEvent<HTMLInputElement>) => {
+    // 无论是使用 API 还是原生 fallback，新 picker 均先清旧 notice 并自增 generation 使旧 API pending 失效
+    const generation = ++documentPickerGenerationRef.current;
+    setDocumentPickerError(null);
+
+    if (typeof window === "undefined" || !canUseOpenFilePicker(window)) {
+      // 未处于安全上下文或无 showOpenFilePicker：沿现 native fallback
+      return;
+    }
+
+    // 必须在 transient activation 栈里立即 API 调用
+    const currentDraftKey = draftKeyRef.current;
+    let pickerPromise: Promise<any>;
+
+    try {
+      pickerPromise = (window as any).showOpenFilePicker(DOCUMENT_PICKER_OPTIONS);
+      e.preventDefault();
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        // AbortError sync: 彻底结束、不 fallback
+        e.preventDefault();
+        return;
+      }
+      // 同步 throw nonAbort 可允许同 click 默认 fallback 但不 reentrant input.click
+      // 不 preventDefault，让当前原生 click 正常打开系统文件对话框
+      return;
+    }
+
+    Promise.resolve(pickerPromise)
+      .then(async (handles: any[]) => {
+        if (!isMountedRef.current || documentPickerGenerationRef.current !== generation || draftKeyRef.current !== currentDraftKey) {
+          return;
+        }
+        let files: File[];
+        try {
+          files = await Promise.all(handles.map((h: any) => h.getFile()));
+        } catch (getFileErr: any) {
+          if (!isMountedRef.current || documentPickerGenerationRef.current !== generation || draftKeyRef.current !== currentDraftKey) {
+            return;
+          }
+          if (getFileErr?.name === "AbortError") return;
+          setDocumentPickerError(DOCUMENT_PICKER_ERROR_NOTICE);
+          return;
+        }
+        if (!isMountedRef.current || documentPickerGenerationRef.current !== generation || draftKeyRef.current !== currentDraftKey) {
+          return;
+        }
+        consumeDocumentFiles(files);
+      })
+      .catch((error: any) => {
+        if (!isMountedRef.current || documentPickerGenerationRef.current !== generation || draftKeyRef.current !== currentDraftKey) {
+          return;
+        }
+        if (error?.name === "AbortError") return;
+        // 异步 rejection 非 Abort 只现有 error notice，不自动第二 picker
+        setDocumentPickerError(DOCUMENT_PICKER_ERROR_NOTICE);
+      });
+  }, [consumeDocumentFiles]);
+
+  const handleRetryFile = useCallback(async (fileId: string) => {
+    const rawFile = rawComposerFilesMapRef.current.get(fileId);
+    if (!rawFile) {
+      documentFileInputRef.current?.click();
+      return;
+    }
+    const targetDraftKey = draftKeyRef.current;
+    setAttachedFiles((prev) => {
+      const updated = prev.map((f) => f.id === fileId ? { ...f, status: "uploading" as const, error: undefined } : f);
+      attachedFilesRef.current = updated;
+      return updated;
+    });
+
+    try {
+      const result = await uploadSingleComposerFile({
+        file: rawFile,
+        name: rawFile.name,
+        cwd: cwd || "",
+        sessionId: targetDraftKey,
+        executionEngine,
+      });
+
+      if (draftKeyRef.current === targetDraftKey) {
+        setAttachedFiles((prev) => {
+          const updated = prev.map((f) => f.id === fileId ? {
+            ...f,
+            status: "uploaded" as const,
+            serverRelativePath: result.serverRelativePath,
+            serverAbsPath: result.serverAbsPath,
+          } : f);
+          attachedFilesRef.current = updated;
+          return updated;
+        });
+      } else if (targetDraftKey) {
+        const targetDraft = getDraft(targetDraftKey);
+        if (targetDraft && targetDraft.files) {
+          const updatedFiles = targetDraft.files.map((f) => f.id === fileId ? {
+            ...f,
+            status: "uploaded" as const,
+            serverRelativePath: result.serverRelativePath,
+            serverAbsPath: result.serverAbsPath,
+          } : f);
+          setDraft(targetDraftKey, { ...targetDraft, files: updatedFiles });
+        }
+      }
+    } catch (err: any) {
+      if (draftKeyRef.current === targetDraftKey) {
+        setAttachedFiles((prev) => {
+          const updated = prev.map((f) => f.id === fileId ? {
+            ...f,
+            status: "error" as const,
+            error: err?.message || "上传失败",
+          } : f);
+          attachedFilesRef.current = updated;
+          return updated;
+        });
+      }
+    }
+  }, [cwd, executionEngine]);
+
+  const handleRemoveFile = useCallback((fileId: string) => {
+    rawComposerFilesMapRef.current.delete(fileId);
+    setAttachedFiles((prev) => {
+      const next = prev.filter((f) => f.id !== fileId);
+      attachedFilesRef.current = next;
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey || draftHydratedKeyRef.current !== draftKey) return;
     setDraft(draftKey, {
       value,
       images: attachedImages.map(imageToDraftImage),
+      ...(attachedFiles.length > 0 ? { files: attachedFiles } : {}),
     });
-  }, [attachedImages, draftKey, value]);
+  }, [attachedImages, attachedFiles, draftKey, value]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
@@ -1219,6 +1578,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setDraft(previousDraftKey, {
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
+        ...(attachedFilesRef.current && attachedFilesRef.current.length > 0 ? { files: attachedFilesRef.current } : {}),
       });
     }
 
@@ -1227,8 +1587,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     draftHydratedKeyRef.current = draftKey ?? null;
     const nextValue = draft?.value ?? "";
     const nextImages = draftImagesToAttachedImages(draft?.images);
+    const rawFiles = draft?.files ?? [];
+    // 恢复状态：上传中但无 path 的文件绝对不能转成 uploaded，转为明确的 error 状态
+    const nextFiles = rawFiles.map((f) => {
+      if (f.status === "uploading" && !f.serverRelativePath) {
+        return { ...f, status: "error" as const, error: f.error || "上传中断，请点击重试" };
+      }
+      return f;
+    });
     valueRef.current = nextValue;
     attachedImagesRef.current = nextImages;
+    attachedFilesRef.current = nextFiles;
     setValue(nextValue);
     setAtQuery(null);
     setHistoryMenuOpen(false);
@@ -1236,6 +1605,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       prev.forEach(revokeImagePreview);
       return nextImages;
     });
+    setAttachedFiles(nextFiles);
   }, [draftKey]);
 
   const resizeTextarea = useCallback(() => {
@@ -1290,7 +1660,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     onAbort();
   }, [onAbort]);
 
+  const hasUploadingFiles = attachedFiles.some((f) => f.status === "uploading");
+  const hasErrorFiles = attachedFiles.some((f) => f.status === "error");
+  const hasFilesBlockingSend = hasUploadingFiles || hasErrorFiles;
+
   const handleSend = useCallback(async (event?: React.MouseEvent<HTMLButtonElement>) => {
+    const filesBlocking = (typeof attachedFilesRef !== "undefined" && attachedFilesRef?.current)
+      ? attachedFilesRef.current.some((f) => f.status === "uploading" || f.status === "error")
+      : false;
+    if (filesBlocking) return;
     // Claim before the first await: one physical gesture can produce two
     // activations before React commits clearInput or the streaming state.
     if (directSubmissionPendingRef.current) return;
@@ -1307,7 +1685,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         __PI_ENH_PREPARE_COMPOSER_SUBMISSION__?: (kind: "send" | "steer" | "followup", body: string) => { text: string; commit: () => void } | null;
       } : null;
       const submission = enhancementWindow?.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__?.("send", msg) ?? null;
-      const submittedText = (submission?.text ?? msg) || (event?.type === "click" && allowEmptyContinue && currentImageCount === 0 ? "继续" : "");
+      const uploadedFiles = (typeof attachedFilesRef !== "undefined" && attachedFilesRef?.current)
+        ? attachedFilesRef.current.filter((f): f is ChatDraftFile & { serverRelativePath: string } => f.status === "uploaded" && typeof f.serverRelativePath === "string" && f.serverRelativePath.length > 0)
+        : [];
+      const appendFn = typeof appendFileAttachmentsToText === "function" ? appendFileAttachmentsToText : ((t: string) => t);
+      const baseSubmittedText = (submission?.text ?? msg) || (event?.type === "click" && allowEmptyContinue && currentImageCount === 0 && uploadedFiles.length === 0 ? "继续" : "");
+      const submittedText = appendFn(baseSubmittedText, uploadedFiles);
       if (!submittedText && !currentImageCount) return;
       if (currentImageCount > MAX_ATTACHED_IMAGES) return;
       onAudioUnlock?.();
@@ -1318,7 +1701,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     } finally {
       directSubmissionPendingRef.current = false;
     }
-  }, [isStreaming, allowEmptyContinue, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
+  }, [hasFilesBlockingSend, isStreaming, allowEmptyContinue, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
   const slashQuery = !compact && value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -1354,8 +1737,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
   const hasInputText = Boolean(value.trim());
   const tooManyImagesNotice = getTooManyImagesNotice(attachedImages.length, MAX_ATTACHED_IMAGES, locale);
-  const canSendMessage = (hasInputText || attachedImages.length > 0 || hasEnhancedSubmissionPayload || allowEmptyContinue) && !tooManyImagesNotice;
-  const canQueueStreamingMessage = (hasInputText || attachedImages.length > 0 || hasEnhancedSubmissionPayload) && !tooManyImagesNotice && !queuedSubmissionPending && !queuedPreviewVisible;
+  const canSendMessage = !hasFilesBlockingSend && (hasInputText || attachedImages.length > 0 || attachedFiles.length > 0 || hasEnhancedSubmissionPayload || allowEmptyContinue) && !tooManyImagesNotice;
+  const canQueueStreamingMessage = !hasFilesBlockingSend && (hasInputText || attachedImages.length > 0 || attachedFiles.length > 0 || hasEnhancedSubmissionPayload) && !tooManyImagesNotice && !queuedSubmissionPending && !queuedPreviewVisible;
   // Warn when images are attached but the selected model is known not to accept
   // image input (#584), including a resolved default. Unknown models stay silent.
   const showImageUnsupportedWarning = (
@@ -1558,6 +1941,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const sendQueued = useCallback(async (mode: "steer" | "followup") => {
+    const filesBlocking = (typeof attachedFilesRef !== "undefined" && attachedFilesRef?.current)
+      ? attachedFilesRef.current.some((f) => f.status === "uploading" || f.status === "error")
+      : false;
+    if (filesBlocking) return;
     if (queuedSubmissionPendingRef.current || queuedPreviewVisible) return;
     const msg = value.trim();
     const images = attachedImagesRef.current;
@@ -1570,7 +1957,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       __PI_ENH_PREPARE_COMPOSER_SUBMISSION__?: (kind: "send" | "steer" | "followup", body: string) => { text: string; commit: () => void } | null;
     } : null;
     const submission = enhancementWindow?.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__?.(mode, msg) ?? null;
-    const submittedText = submission?.text ?? msg;
+    const uploadedFiles = (typeof attachedFilesRef !== "undefined" && attachedFilesRef?.current)
+      ? attachedFilesRef.current.filter((f): f is ChatDraftFile & { serverRelativePath: string } => f.status === "uploaded" && typeof f.serverRelativePath === "string" && f.serverRelativePath.length > 0)
+      : [];
+    const appendFn = typeof appendFileAttachmentsToText === "function" ? appendFileAttachmentsToText : ((t: string) => t);
+    const baseSubmittedText = submission?.text ?? msg;
+    const submittedText = appendFn(baseSubmittedText, uploadedFiles);
     if (!submittedText && !currentImageCount) return;
     if (currentImageCount > MAX_ATTACHED_IMAGES) return;
     lastSubmissionAtRef.current = performance.now();
@@ -1610,7 +2002,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       queuedSubmissionPendingRef.current = false;
       setQueuedSubmissionPending(false);
     }
-  }, [value, attachedImages, queuedMessages, queuedPreviewVisible, onBuiltinCommand, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, runBuiltinCommand]);
+  }, [hasFilesBlockingSend, value, attachedImages, queuedMessages, queuedPreviewVisible, onBuiltinCommand, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, runBuiltinCommand]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;
@@ -1845,6 +2237,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
       if (sendShortcut) {
         e.preventDefault();
+        const filesBlocking = (typeof attachedFilesRef !== "undefined" && attachedFilesRef?.current)
+          ? attachedFilesRef.current.some((f) => f.status === "uploading" || f.status === "error")
+          : false;
+        if (filesBlocking) return;
         if (isStreaming && (onSteer || onFollowUp)) {
           sendQueued((e.ctrlKey || e.metaKey) && onSteer ? "steer" : "followup");
         } else {
@@ -1852,7 +2248,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, acceptInlineSuggestion, visibleSuggestion, suggestionKey, cancelSuggestionTouch]
+    [hasFilesBlockingSend, isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value, acceptInlineSuggestion, visibleSuggestion, suggestionKey, cancelSuggestionTouch]
   );
 
   useEffect(() => {
@@ -1912,6 +2308,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       e.preventDefault();
       const files = imageItems.map((item) => item.getAsFile()).filter((f): f is File => f !== null);
       processImageFiles(files);
+      return;
+    }
+
+    const nonImageFiles = items
+      .filter((item) => item.kind === "file" && !item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    if (!compact && nonImageFiles.length > 0) {
+      e.preventDefault();
+      processNativeFiles(nonImageFiles);
       return;
     }
 
@@ -2188,19 +2594,43 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         transition: "opacity 0.15s",
       }}
     >
-      {/* Hidden file input */}
-      {!compact && <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        style={{ display: "none" }}
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          processImageFiles(files);
-          e.target.value = "";
-        }}
-      />}
+      {/* Hidden file inputs */}
+      {!compact && (
+        <>
+          <input
+            ref={imageFileInputRef}
+            type="file"
+            multiple
+            accept="image/*,video/*"
+            data-pi-media-picker="true"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              const { imageFiles, videoFiles } = routeMediaPickerFiles(files);
+              if (imageFiles.length > 0) processImageFiles(imageFiles);
+              if (videoFiles.length > 0) processNativeFiles(videoFiles);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={documentFileInputRef}
+            type="file"
+            multiple
+            accept={documentPickerAccept}
+            data-pi-document-picker="true"
+            style={{ display: "none" }}
+            onClick={handleDocumentInputClick}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length > 0) {
+                setDocumentPickerError(null);
+                consumeDocumentFiles(files);
+              }
+              e.target.value = "";
+            }}
+          />
+        </>
+      )}
       <ComposerQueue sessionId={draftKey ?? ""} executionEngine={executionEngine} queuedMessages={queuedMessages} syncStatus={queueSyncStatus} onRecallQueue={onRecallQueue} onRestoreRecall={onRestoreRecall} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} retainedSubmissions={retainedSubmissions} deliveredRequestIds={deliveredRequestIds} />
       {extensionPanel}
       {isCodexActive && modesEnabled && <div ref={setGoalHost} className="chat-composer-goal-host" style={{maxWidth: rootStyle.maxWidth, marginLeft: "auto", marginRight: "auto"}} />}
@@ -2227,6 +2657,14 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         <ModelErrorBanner error={modelError} />
         {tooManyImagesNotice && (
           <ModelNoticeBanner tone="error" title={tooManyImagesNotice.title} body={tooManyImagesNotice.body} />
+        )}
+        {documentPickerError && (
+          <ModelNoticeBanner
+            tone="error"
+            title={documentPickerError}
+            body={null}
+            onClose={() => setDocumentPickerError(null)}
+          />
         )}
         {showImageUnsupportedWarning && (() => {
           const entry = modelList?.find((m) => m.provider === model?.provider && m.id === model?.modelId);
@@ -2305,7 +2743,32 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           >
             {attachedImages.map((img, i) => (
               <div key={i} style={{ position: "relative", flexShrink: 0 }}>
-                <ImagePreview key={img.previewUrl} src={img.previewUrl}>
+                <ImagePreview
+                  key={img.previewUrl}
+                  src={img.previewUrl}
+                  nativeOwner={true}
+                  editContext={{
+                    index: i,
+                    expectedImage: img,
+                    sessionKey: draftKey,
+                    replace: (replacement: { data: string; mimeType: string; previewUrl?: string }) =>
+                      handleImageEditSave(i, img, draftKey, replacement),
+                  }}
+                  galleryContext={{
+                    items: attachedImages.map((item, idx) => ({
+                      src: item.previewUrl,
+                      alt: `第 ${idx + 1} 张截图`,
+                      editContext: {
+                        index: idx,
+                        expectedImage: item,
+                        sessionKey: draftKey,
+                        replace: (rep: { data: string; mimeType: string; previewUrl?: string }) =>
+                          handleImageEditSave(idx, item, draftKey, rep),
+                      },
+                    })),
+                    initialIndex: i,
+                  }}
+                >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={img.previewUrl}
@@ -2327,6 +2790,81 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                     <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
                   </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* File previews */}
+        {attachedFiles.length > 0 && (
+          <div
+            data-testid="composer-attached-files-bar"
+            style={{
+              display: "flex",
+              gap: 6,
+              marginBottom: 6,
+              flexWrap: "wrap",
+            }}
+          >
+            {attachedFiles.map((file) => (
+              <div
+                key={file.id}
+                data-testid="composer-file-card"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "4px 8px",
+                  background: file.status === "error" ? "rgba(239, 68, 68, 0.15)" : "var(--bg-panel)",
+                  border: file.status === "error" ? "1px solid rgba(239, 68, 68, 0.5)" : "1px solid var(--border)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  color: "var(--text)",
+                  maxWidth: 240,
+                }}
+              >
+                <span>{file.status === "uploading" ? "⏳" : file.status === "error" ? "⚠️" : "📄"}</span>
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontWeight: 500,
+                    }}
+                    title={file.name}
+                  >
+                    {file.name}
+                  </span>
+                  <span style={{ fontSize: 10, color: file.status === "error" ? "var(--danger, #ef4444)" : "var(--text-muted)" }}>
+                    {file.status === "uploading" ? "上传中..." : file.status === "error" ? (file.error || "上传失败") : formatAttachmentSize(file.size)}
+                  </span>
+                </div>
+                {file.status === "error" && (
+                  <button
+                    type="button"
+                    title="重试上传"
+                    onClick={() => handleRetryFile(file.id)}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      padding: "2px 4px", color: "var(--accent)", fontSize: 11,
+                    }}
+                  >
+                    重试
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="移除文件"
+                  title="移除文件"
+                  onClick={() => handleRemoveFile(file.id)}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    padding: "2px 4px", color: "var(--text-muted)", fontSize: 12,
+                  }}
+                >
+                  ×
                 </button>
               </div>
             ))}
@@ -2701,6 +3239,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties)}
           >
+          {!compact && (
+            <div data-pi-native-annotation-host="true" className="chat-composer-annotation-host" />
+          )}
           <textarea
             ref={textareaRef}
             className="chat-input-textarea"
@@ -2786,10 +3327,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               )}
               {onFollowUp && (
                 <button
+                  type="button"
                   onClick={() => sendQueued("followup")}
                   disabled={!canQueueStreamingMessage}
                   title={`${t("chat.followUpHint")} (${isMobile ? "Ctrl/Cmd+" : ""}Alt/Option+Enter)`}
                   aria-keyshortcuts={isMobile ? "Control+Alt+Enter Meta+Alt+Enter" : "Alt+Enter"}
+                  aria-label={t("chat.followUp")}
                   className={isCodexActive ? "chat-composer-followup pi-enh-cursor-send pi-enh-cursor-followup" : ""}
                   style={isCodexActive ? undefined : {
                     display: "flex", alignItems: "center", gap: 5,
@@ -2803,25 +3346,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     transition: "background 0.12s",
                   }}
                 >
-                  {isCodexActive ? (
-                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M8 13V3M3 8l5-5 5 5" />
-                    </svg>
-                  ) : (
-                    <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" />
-                      <line x1="2" y1="9" x2="8" y2="9" />
-                    </svg>
-                  )}
-                  {t("chat.followUp")}
-                  {queuedCount > 0 && (
-                    <span
-                      className="pi-enh-queue-count-badge"
-                      title={`当前队列中有 ${queuedCount} 个任务在排队`}
-                    >
-                      {queuedCount}
-                    </span>
-                  )}
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 13V3M3 8l5-5 5 5" />
+                  </svg>
                 </button>
               )}
             </div>
@@ -2849,19 +3376,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 transition: "background 0.15s, box-shadow 0.15s",
               }}
             >
-              {isCodexActive ? (
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M8 13V3M3 8l5-5 5 5" />
-                </svg>
-              ) : (
-                <>
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="2" y1="7" x2="11" y2="7" />
-                    <polyline points="7.5 3 12 7 7.5 11" />
-                  </svg>
-                  {t("chat.send")}
-                </>
-              )}
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 13V3M3 8l5-5 5 5" />
+              </svg>
             </button>
           )}
           </div>
@@ -2897,7 +3414,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             )}
             <div className="chat-composer-attachment-controls">
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => imageFileInputRef.current?.click()}
               title={t("chat.attachImage")}
               data-pi-attach-image="true"
               className={isCodexActive ? "chat-composer-attach-btn" : ""}
@@ -2978,7 +3495,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {onThinkingLevelChange && (
               <ThinkingSelector
                 disabled={false}
-                levels={THINKING_LEVELS.filter((level) => !availableThinkingLevels || level === "auto" || availableThinkingLevels.includes(level))}
+                levels={THINKING_LEVELS.filter((level) => availableThinkingLevels ? level === "auto" || availableThinkingLevels.includes(level) : level !== "ultra")}
                 value={isAutoThinkingSelection ? "auto" : resolvedThinkingLevel ?? "auto"}
                 displayLabel={thinkingDisplayLabel}
                 levelMap={thinkingLevelMap}

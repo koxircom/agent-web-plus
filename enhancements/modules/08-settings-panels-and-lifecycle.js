@@ -250,9 +250,9 @@
       }),
       abi.registerRenderer("usage", (host, context) => {
         if (!host.classList.contains("pi-enh-usage-panel")) host.classList.add("pi-enh-usage-panel");
-        renderUsagePanel(host, context);
+        const disposeUsagePanel = renderUsagePanel(host, context);
         return () => {
-          window.PiUsagePanel?.dispose?.(host);
+          disposeUsagePanel?.();
           host.classList.remove("pi-enh-usage-panel");
           host.innerHTML = "";
         };
@@ -432,20 +432,7 @@
           }
         } catch (e) {}
 
-        // 2. 回退从静态资产清单 /pi-shortcuts-manifest.json 读取
-        if (!remoteList || remoteList.length === 0) {
-          try {
-            const res = await activeFetch("/pi-shortcuts-manifest.json?v=" + Date.now(), { cache: "no-store" });
-            if (res?.ok) {
-              const json = await res.json();
-              if (Array.isArray(json) && json.length > 0) {
-                remoteList = json;
-              }
-            }
-          } catch (e) {}
-        }
-
-        // 3. 兜底内置清单
+        // 2. 兜底内置清单
         if (!remoteList || remoteList.length === 0) {
           if (Array.isArray(window.__PI_ENH_SHORTCUTS_MANIFEST__) && window.__PI_ENH_SHORTCUTS_MANIFEST__.length > 0) {
             remoteList = window.__PI_ENH_SHORTCUTS_MANIFEST__;
@@ -1098,12 +1085,119 @@ function formatTokenNumber(num) {
 }
 
 function renderUsagePanel(panel, nav) {
-  if (!panel) return;
-  if (typeof window !== "undefined" && window.PiUsagePanel && typeof window.PiUsagePanel.render === "function") {
+  if (!panel) return () => {};
+
+  let active = true;
+  let disposed = false;
+  let currentAttempt = 0;
+  let running = false;
+  let mountedModule = null;
+
+  function cleanup() {
+    if (disposed) return;
+    disposed = true;
+    active = false;
+    currentAttempt++;
     try {
-      window.PiUsagePanel.render(panel, nav, {
-        enabled: () => isPluginEnabled("usage-cost-dashboard"),
-        openSession: (sid, meta) => {
+      if (mountedModule && typeof mountedModule.dispose === "function") {
+        mountedModule.dispose(panel);
+      }
+    } catch (err) {
+      console.error("[UsagePanel] 释放异常:", err);
+    }
+  }
+
+  function showLoading() {
+    panel.replaceChildren();
+    const wrap = document.createElement("div");
+    wrap.className = "pi-enh-usage-panel-content";
+    wrap.style.cssText = "padding:60px 0;text-align:center;color:var(--text-dim, #a1a1aa);";
+
+    const spinner = document.createElement("div");
+    spinner.className = "pi-enh-history-spinner";
+    spinner.style.cssText = "width:24px;height:24px;border-width:2px;margin:0 auto 12px;";
+
+    const text = document.createElement("div");
+    text.textContent = "正在载入用量统计组件...";
+
+    wrap.appendChild(spinner);
+    wrap.appendChild(text);
+    panel.appendChild(wrap);
+  }
+
+  function showError(errorMessage) {
+    panel.replaceChildren();
+    const alertBox = document.createElement("div");
+    alertBox.setAttribute("role", "alert");
+    alertBox.className = "pi-enh-usage-panel-content pi-enh-usage-error-container";
+    alertBox.style.cssText = "padding:24px 0;max-width:900px;margin:0 auto;color:#f4f4f5;";
+
+    const card = document.createElement("div");
+    card.style.cssText = "background:#27272a;border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:20px;";
+
+    const title = document.createElement("div");
+    title.style.cssText = "color:#f87171;font-weight:600;margin-bottom:8px;";
+    title.textContent = "⚠️ 用量统计组件加载或渲染失败";
+
+    const msg = document.createElement("div");
+    msg.style.cssText = "color:#a1a1aa;font-size:12px;font-family:monospace;margin-bottom:12px;white-space:pre-wrap;word-break:break-all;";
+    msg.textContent = errorMessage || "发生未知错误";
+
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "pi-enh-btn-sm";
+    retryBtn.style.cssText = "background:#3f3f46;color:#f4f4f5;border:1px solid #52525b;border-radius:4px;padding:6px 16px;cursor:pointer;";
+    retryBtn.textContent = "重试";
+    retryBtn.addEventListener("click", () => {
+      if (!active || disposed) return;
+      runAttempt();
+    }, { once: true });
+
+    card.appendChild(title);
+    card.appendChild(msg);
+    card.appendChild(retryBtn);
+    alertBox.appendChild(card);
+    panel.appendChild(alertBox);
+  }
+
+  function runAttempt() {
+    if (!active || disposed) return;
+    if (running) return;
+    running = true;
+
+    const attemptId = ++currentAttempt;
+    showLoading();
+
+    Promise.resolve()
+      .then(() => {
+        if (typeof window !== "undefined" && window.PiUsagePanel && typeof window.PiUsagePanel.render === "function") {
+          return window.PiUsagePanel;
+        }
+        if (typeof window !== "undefined" && typeof window.__PI_ENH_LOAD_OPTIONAL__ === "function") {
+          return window.__PI_ENH_LOAD_OPTIONAL__("usage-panel");
+        }
+        throw new Error("用量统计加载器不可用 (__PI_ENH_LOAD_OPTIONAL__ 未定义)");
+      })
+      .then((loadedModule) => {
+        if (!active || disposed || attemptId !== currentAttempt) return;
+
+        const usagePanel = (typeof window !== "undefined" && window.PiUsagePanel) ||
+                           (loadedModule && loadedModule.PiUsagePanel) ||
+                           loadedModule;
+
+        if (!usagePanel || typeof usagePanel.render !== "function") {
+          throw new Error("用量统计组件未导出有效的 render 方法");
+        }
+
+        panel.replaceChildren();
+
+        const options = {
+          enabled: () => {
+            if (typeof isPluginEnabled === "function") return isPluginEnabled("usage-cost-dashboard");
+            if (typeof window !== "undefined" && typeof window.isPluginEnabled === "function") return window.isPluginEnabled("usage-cost-dashboard");
+            return true;
+          },
+          openSession: (sid, meta) => {
           if (!knownSessionsMap.has(sid)) {
             showToast("该会话属于其他实例或已删除；用量仍保留", null, 3500);
             return;
@@ -1119,34 +1213,28 @@ function renderUsagePanel(panel, nav) {
             }
           }
         },
+        };
+
+        mountedModule = usagePanel;
+        usagePanel.render(panel, nav, options);
+      })
+      .catch((err) => {
+        if (!active || disposed || attemptId !== currentAttempt) return;
+        if (mountedModule) {
+          try { mountedModule.dispose?.(panel); } catch (_) {}
+          mountedModule = null;
+        }
+        const errMsg = err && err.message ? String(err.message) : String(err || "用量组件加载或渲染失败");
+        showError(errMsg);
+      })
+      .finally(() => {
+        running = false;
       });
-    } catch (err) {
-      console.error("[UsagePanel] 顶层调用 render 发生异常:", err);
-      panel.innerHTML = `<div class="pi-enh-usage-panel-content" style="padding:24px 0;max-width:900px;margin:0 auto;color:#f4f4f5;">
-        <div style="background:#27272a;border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:20px;">
-          <div style="color:#f87171;font-weight:600;margin-bottom:8px;">⚠️ 用量大盘渲染失败</div>
-          <div style="color:#a1a1aa;font-size:12px;font-family:monospace;">${String(err?.message || err)}</div>
-        </div>
-      </div>`;
-    }
-  } else {
-    panel.innerHTML = `<div class="pi-enh-usage-panel-content" style="padding:60px 0;text-align:center;color:var(--text-dim);">
-      <div class="pi-enh-history-spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 12px;"></div>
-      <div>正在载入用量统计组件...</div>
-    </div>`;
-    const loadingView = panel.firstElementChild;
-    window.__PI_ENH_LOAD_OPTIONAL__("usage-panel").then(() => {
-      // A visited native host stays mounted while hidden. Complete its load so
-      // returning to Usage cannot strand the host on the loading view.
-      if (panel.isConnected && panel.firstElementChild === loadingView && isPluginEnabled("usage-cost-dashboard")) {
-        renderUsagePanel(panel, nav);
-      }
-    }).catch(() => {
-      if (!panel.isConnected || panel.firstElementChild !== loadingView) return;
-      panel.innerHTML = '<div role="alert">用量统计组件加载失败，请重试。 <button type="button">重试</button></div>';
-      panel.querySelector("button")?.addEventListener("click", () => renderUsagePanel(panel, nav), { once: true });
-    });
   }
+
+  runAttempt();
+
+  return cleanup;
 }
 
 function openUsageDashboard() {
@@ -1166,7 +1254,6 @@ function toggleUsageDashboard() {
 
 window.__PI_ENH_OPEN_USAGE_DASHBOARD__ = openUsageDashboard;
 window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
-window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
 
 
   function renderNotificationPanel(panel, nav) {
@@ -3730,6 +3817,340 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
     });
   }
 
+  // Settings renderer maintenance revision; independent of the Web application version.
+  const ENHANCEMENT_SETTINGS_RENDERER_REVISION = "1.4.61.2";
+  function renderEnhancementModulesPanel(panel, nav) {
+    panel.dataset.settingsRendererRevision = ENHANCEMENT_SETTINGS_RENDERER_REVISION;
+    const enabledCount = ENHANCEMENT_MODULES.filter((module) => getModuleState(module.id).active > 0).length;
+    const categories = [...new Set(ENHANCEMENT_MODULES.map((module) => module.category))];
+    panel.innerHTML = `
+      <div class="settings-general-container pi-enh-plugins-shell">
+        <section class="pi-enh-plugins-toolbar" aria-label="增强模块管理工具栏">
+          <div class="pi-enh-plugins-heading-row">
+            <div class="pi-enh-plugins-title-wrap">
+              <h2 class="settings-general-title pi-enh-plugins-title">
+                <span>网页增强模块</span>
+                <span class="pi-enh-module-version">独立版 v${ENHANCEMENT_SUITE_VERSION}</span>
+                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_MODULES.length} 个模块已启用</span>
+              </h2>
+            </div>
+            <div class="pi-enh-plugins-actions" aria-label="批量操作">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-action="hot-reload" title="无感重新加载最新前端补丁，无需刷新或重启后台">↻ 重新热载</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="force-hard-reload" title="穿透 HTTP 强缓存更新前端静态资源并强制刷新">⚡ 强制刷新</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各模块，保留原有子功能选择">全部恢复</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">全部关闭</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="reset-defaults">恢复默认</button>
+            </div>
+          </div>
+          <p class="pi-enh-plugins-description">
+            <span>总开关：开启 / 部分开启 / 关闭。关闭保留子项选择，再次开启恢复；参数即时生效。</span>
+            ${renderKernelHealthBadgeHtml()}
+          </p>
+          <div class="pi-enh-plugins-filter-row" role="search">
+            <label class="pi-enh-plugin-search-wrap">
+              <svg class="pi-enh-plugin-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+              <input class="pi-enh-plugin-search" type="search" data-plugin-search aria-label="搜索增强模块" placeholder="搜索模块或子功能…" autocomplete="off">
+            </label>
+            <div class="pi-enh-category-filters" role="group" aria-label="按类别筛选">
+              <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
+              ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
+            </div>
+            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_MODULES.length} 个模块</span>
+          </div>
+        </section>
+
+        <div class="pi-enh-sync-card" data-pi-enh-sync-card>
+          <div class="pi-enh-sync-header">
+            <div class="pi-enh-sync-title-wrap">
+              <span class="pi-enh-sync-title">跨实例增强插件分发</span>
+              <span class="pi-enh-sync-status-badge" data-sync-badge data-state="DISCONNECTED">跨实例同步后端未配置</span>
+            </div>
+            <div class="pi-enh-sync-actions">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-sync-action="sync" title="跨实例同步后端未配置" disabled>跨实例分发未配置</button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="rollback" title="跨实例同步后端未配置" disabled>跨实例回滚未配置</button>
+              <button type="button" class="pi-enh-btn-sm" data-sync-action="refresh" title="显示跨实例同步配置状态">刷新</button>
+            </div>
+          </div>
+          <p data-sync-notice style="margin: 0 0 10px; color: var(--text-muted); font-size: 12px; line-height: 1.5;">不同独立实例间的增强插件分发需要部署同步后端，目前未配置。此状态不影响同一后台内由 Agent Web Plus 原生共享的会话与置顶状态。</p>
+          <div class="pi-enh-sync-body" data-sync-body>
+            <div class="pi-enh-sync-node pi-enh-sync-node-source" data-sync-node="source"><span class="pi-enh-sync-node-name">Agent Web Plus 当前实例（源）</span><span class="pi-enh-sync-node-detail" data-sync-source-detail>当前实例</span></div>
+            <div class="pi-enh-sync-arrow" data-sync-arrow aria-hidden="true">➔</div>
+            <div class="pi-enh-sync-targets-col">
+              <div class="pi-enh-sync-node" data-sync-node="target-colleague"><label class="pi-enh-sync-target-check-wrap" title="目标实例 1 尚未配置"><span class="pi-enh-sync-node-name">目标实例 1</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="colleague" aria-label="目标实例 1 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-target-detail>未配置</span></div>
+              <div class="pi-enh-sync-node" data-sync-node="target-windows"><label class="pi-enh-sync-target-check-wrap" title="目标实例 2 尚未配置"><span class="pi-enh-sync-node-name">目标实例 2</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="windows" aria-label="目标实例 2 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-windows-detail>未配置</span></div>
+              <div class="pi-enh-sync-node" data-sync-node="target-mac"><label class="pi-enh-sync-target-check-wrap" title="目标实例 3 尚未配置"><span class="pi-enh-sync-node-name">目标实例 3</span><input type="checkbox" class="pi-enh-sync-checkbox" data-sync-target-toggle="mac" aria-label="目标实例 3 自动同步" disabled></label><span class="pi-enh-sync-node-detail" data-sync-mac-detail>未配置</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pi-enh-pwa-card" data-pi-enh-pwa-card>
+          <div class="pi-enh-pwa-header">
+            <div class="pi-enh-pwa-title-wrap">
+              <span class="pi-enh-pwa-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>移动端与 PWA 独立应用模式</span>
+              <span class="pi-enh-pwa-badge" data-pwa-status-badge data-standalone="${isPwaStandaloneMode() ? 'true' : 'false'}">${isPwaStandaloneMode() ? "● 原生 PWA 独立运行中" : "○ 浏览器标签页模式"}</span>
+            </div>
+            <div class="pi-enh-pwa-actions">
+              <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-pwa-action="copy-flag-origin" title="一键复制局域网安全源地址用于 Chrome Flags 信任">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="pi-enh-inline-icon" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>复制局域网安全源地址
+              </button>
+            </div>
+          </div>
+          <div class="pi-enh-pwa-body">
+            <p class="pi-enh-pwa-desc">
+              ${isPwaStandaloneMode()
+                ? "当前已处于原生 PWA 独立窗口运行状态，已自动激活全面屏防误触安全区域与系统返回键防误退保护。"
+                : "在手机端 Chrome 打开时，如需像原生 App 一样全屏无地址栏运行：在手机 Chrome 访问 <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>，将当前地址填入并启用，即可在右上角菜单一键【安装应用】。"}
+            </p>
+          </div>
+        </div>
+
+        <div class="pi-enh-plugins-list pi-enh-modules-list">
+          ${ENHANCEMENT_MODULES.map((module) => {
+            const enabled = isModuleEnabled(module.id);
+            const disabled = !enabled;
+            const state = getModuleState(module.id);
+            const features = module.features.map((featureId) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === featureId)).filter(Boolean);
+            const isSubagent = module.id === SUBAGENT_DISPATCH_MODULE_ID;
+            const ariaChecked = isSubagent ? String(enabled) : (state.state === "partial" ? "mixed" : String(state.state === "on"));
+            const dataState = isSubagent ? (enabled ? "on" : "off") : state.state;
+            const statusText = isSubagent ? moduleStateLabel(state, enabled) : moduleStateLabel(state);
+            return `<article class="pi-enh-plugin-item pi-enh-module-item" data-module-row="${module.id}" data-plugin-category-name="${module.category}" data-enabled="${enabled ? "true" : "false"}">
+              <div class="pi-enh-module-header">
+                <div class="pi-enh-plugin-copy">
+                  <div class="pi-enh-plugin-name-row">
+                    <span class="pi-enh-plugin-name">${module.name}</span>
+                    <span class="pi-enh-plugin-category">${module.category}</span>
+                    <span class="pi-enh-module-version">v${module.version}</span>
+                  </div>
+                  <div class="pi-enh-plugin-desc">${module.desc}</div>
+                </div>
+                <div class="pi-enh-module-master">
+                  <span class="pi-enh-module-status" id="pi-enh-status-${module.id}" data-module-status data-state="${dataState}" aria-live="polite">${statusText}</span>
+                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
+                    <span class="config-switch-knob" aria-hidden="true"></span>
+                  </button>
+                </div>
+              </div>
+                <details class="pi-enh-module-settings" data-module-settings="${module.id}" ${disabled ? "data-module-disabled=true" : ""}>
+                  <summary data-module-expand="${module.id}">配置 ${features.length} 项子功能${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
+                  <div class="pi-enh-module-settings-body" ${disabled ? "aria-disabled=true" : ""}>
+                    <div class="pi-enh-module-features">${features.map((plugin) => renderFeatureToggle(plugin, disabled)).join("")}</div>
+                    ${module.id === "composer-workflow" ? renderQuickActionsEditor(disabled || !isPluginEnabled("quick-action-buttons")) : ""}
+                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, disabled || (setting.featureId && !isPluginEnabled(setting.featureId)))).join("")}</div>` : ""}
+                  </div>
+                </details>
+            </article>`;
+          }).join("")}
+        </div>
+        <div class="pi-enh-plugin-empty" data-plugin-empty role="status" hidden>没有匹配的模块，请调整搜索词或分类。</div>
+      </div>`;
+
+    bindQuickActionsEditor(panel);
+    if (!window.__PI_ENH_DISABLE_QUICK_ACTION_CONTEXT_FETCH__) void loadQuickActionsConfig().then(() => refreshQuickActionsEditorDom(panel));
+
+    const searchInput = panel.querySelector("[data-plugin-search]");
+    if (searchInput) {
+      searchInput.value = enhancementPanelFilter.query;
+      searchInput.addEventListener("input", () => {
+        enhancementPanelFilter.query = searchInput.value || "";
+        applyEnhancementPanelFilter(panel);
+      });
+    }
+    for (const categoryButton of panel.querySelectorAll("[data-plugin-category]")) {
+      categoryButton.addEventListener("click", () => {
+        enhancementPanelFilter.category = categoryButton.getAttribute("data-plugin-category") || "all";
+        applyEnhancementPanelFilter(panel);
+      });
+    }
+    panel.querySelector('[data-action="hot-reload"]')?.addEventListener("click", () => {
+      if (typeof window.__PI_ENH_RELOAD__ === "function") {
+        if (typeof window.__PI_WEB_ENHANCEMENTS_CLEANUP__ === "function") {
+          try { window.__PI_WEB_ENHANCEMENTS_CLEANUP__(); } catch (e) {}
+        }
+        window.__PI_ENH_PENDING_TOAST__ = { message: "已成功热载最新补丁，会话零中断" };
+        window.__PI_ENH_RELOAD__();
+      } else showToast("已处于最新热载状态");
+    });
+    panel.querySelector('[data-action="force-hard-reload"]')?.addEventListener("click", forceHardReloadApp);
+    let isSubagentDispatchBusy = false;
+    function setSubagentDispatchBusyState(busy) {
+      isSubagentDispatchBusy = busy;
+      const masterToggle = panel.querySelector(`[data-module-toggle="${SUBAGENT_DISPATCH_MODULE_ID}"]`);
+      if (masterToggle) {
+        masterToggle.disabled = busy;
+        if (busy) masterToggle.setAttribute("aria-busy", "true");
+        else masterToggle.removeAttribute("aria-busy");
+      }
+      const batchBtns = panel.querySelectorAll('[data-action="enable-all"], [data-action="disable-all"], [data-action="reset-defaults"]');
+      for (const btn of batchBtns) {
+        btn.disabled = busy;
+      }
+    }
+
+    panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", async () => {
+      if (isSubagentDispatchBusy) return;
+      setSubagentDispatchBusyState(true);
+      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+      try {
+        await enqueueSubagentDispatchCommit(true);
+        for (const module of ENHANCEMENT_MODULES) {
+          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, true);
+        }
+        const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
+        const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
+        if (st && st.selected === 0 && mod) {
+          for (const fId of mod.features) {
+            const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
+            if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
+          }
+        }
+        showToast("已恢复全部模块；保留原有子功能选择");
+      } catch (err) {
+        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
+        showToast(`恢复全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
+      } finally {
+        setSubagentDispatchBusyState(false);
+        syncEnhancementPanelControls();
+      }
+    });
+
+    panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", async () => {
+      if (isSubagentDispatchBusy) return;
+      setSubagentDispatchBusyState(true);
+      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+      try {
+        await enqueueSubagentDispatchCommit(false);
+        for (const module of ENHANCEMENT_MODULES) {
+          if (module.id !== SUBAGENT_DISPATCH_MODULE_ID) setModuleEnabled(module.id, false);
+        }
+        showToast("已关闭所有增强模块；子功能偏好已保留");
+      } catch (err) {
+        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
+        showToast(`关闭全部模块时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
+      } finally {
+        setSubagentDispatchBusyState(false);
+        syncEnhancementPanelControls();
+      }
+    });
+
+    panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", async () => {
+      if (isSubagentDispatchBusy) return;
+      setSubagentDispatchBusyState(true);
+      const prevSubagentEnabled = isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+      try {
+        await enqueueSubagentDispatchCommit(true);
+        resetEnhancementSettings();
+        showToast("已恢复默认增强设置");
+      } catch (err) {
+        setModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID, prevSubagentEnabled);
+        showToast(`恢复默认设置时同步子 Agent 调度失败: ${err.message || "请求异常"}`, null, 5000);
+      } finally {
+        setSubagentDispatchBusyState(false);
+        syncEnhancementPanelControls();
+      }
+    });
+
+    panel.querySelector('[data-pwa-action="copy-flag-origin"]')?.addEventListener("click", () => {
+      const origin = (typeof window !== "undefined" && window.location ? window.location.origin : "http://127.0.0.1:30141");
+      copyText(origin, "已复制局域网安全源地址: " + origin);
+      showToast("已复制地址！在手机 Chrome 访问 chrome://flags/#unsafely-treat-insecure-origin-as-secure 粘贴并启用即可一键安装 PWA", null, 6000);
+    });
+
+    for (const toggle of panel.querySelectorAll("[data-module-toggle]")) {
+      toggle.addEventListener("click", async () => {
+        const id = toggle.getAttribute("data-module-toggle");
+        if (id === SUBAGENT_DISPATCH_MODULE_ID) {
+          if (isSubagentDispatchBusy) return;
+          const nextEnabled = !isModuleEnabled(SUBAGENT_DISPATCH_MODULE_ID);
+          setSubagentDispatchBusyState(true);
+          try {
+            await enqueueSubagentDispatchCommit(nextEnabled);
+            const mod = getEnhancementModule(SUBAGENT_DISPATCH_MODULE_ID);
+            const st = getModuleState(SUBAGENT_DISPATCH_MODULE_ID);
+            if (nextEnabled && st && st.selected === 0 && mod) {
+              for (const fId of mod.features) {
+                const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === fId);
+                if (plugin?.defaultEnabled) setPluginEnabled(fId, true);
+              }
+            }
+            showToast(`子 Agent 调度已${nextEnabled ? "开启" : "关闭"}`);
+          } catch (err) {
+            showToast(`保存子 Agent 调度服务端总开关失败: ${err.message || "请求异常"}`, null, 5000);
+          } finally {
+            setSubagentDispatchBusyState(false);
+            syncEnhancementPanelControls();
+          }
+          return;
+        }
+        toggleModuleFromPanel(id);
+      });
+    }
+    for (const toggle of panel.querySelectorAll("[data-plugin-toggle]")) {
+      toggle.addEventListener("click", () => {
+        const id = toggle.getAttribute("data-plugin-toggle");
+        if (!toggle.disabled) setPluginEnabled(id, !isPluginSelected(id));
+      });
+    }
+    for (const range of panel.querySelectorAll("[data-plugin-setting-range]")) {
+      const identity = range.getAttribute("data-plugin-setting-range");
+      const [featureId, key] = identity.split(":");
+      const counterpartInput = panel.querySelector(`input[data-plugin-setting="${identity}"]`);
+      range.addEventListener("input", () => {
+        if (counterpartInput) counterpartInput.value = range.value;
+      });
+      range.addEventListener("change", () => {
+        const val = setPluginSetting(featureId, key, range.value);
+        range.value = String(val);
+        if (counterpartInput) counterpartInput.value = String(val);
+        showToast(`已设置 ${range.getAttribute("aria-label")?.replace("滑块", "") || "参数"}: ${val}`);
+      });
+    }
+    for (const input of panel.querySelectorAll("[data-plugin-setting]")) {
+      input.addEventListener("change", () => {
+        const identity = String(input.getAttribute("data-plugin-setting") || "");
+        const [featureId, key] = identity.split(":");
+        const value = setPluginSetting(featureId, key, input.value);
+        input.value = String(value);
+        const counterpartRange = panel.querySelector(`[data-plugin-setting-range="${identity}"]`);
+        if (counterpartRange) counterpartRange.value = String(value);
+        if (featureId === "session-pin-archive" && isPluginEnabled(featureId)) void purgeExpiredArchives();
+        showToast(`已更新 ${input.getAttribute("aria-label") || "参数"}: ${value}`);
+      });
+    }
+    for (const action of panel.querySelectorAll("[data-plugin-action]")) {
+      action.addEventListener("click", async () => {
+        const type = action.getAttribute("data-plugin-action");
+        if (type === "clear-session-cache") {
+          await clearSessionCaches();
+          showToast("已清空会话缓存");
+        } else if (type === "download-crash-diagnostics") {
+          window.__PI_ENH_CRASH_DIAGNOSTICS__?.download();
+        } else if (type === "request-desktop-notification") {
+          await requestDesktopAttentionPermission();
+        } else if (type === "sync-pinned-manifest") {
+          showToast("正在读取统一置顶配置...", sessionPinIcon, 2000);
+          await syncManifestPinnedEntries(true);
+          showToast("已同步统一置顶配置，正在刷新页面...", sessionPinIcon, 1500);
+          setTimeout(() => {
+            if (typeof window !== "undefined" && window.location && typeof window.location.reload === "function") {
+              window.location.reload();
+            }
+          }, 350);
+        }
+      });
+    }
+    bindSubagentModelControls(panel);
+    syncEnhancementPanelControls();
+    void syncSubagentDispatchRemoteState().then(() => {
+      syncEnhancementPanelControls();
+    });
+    const syncCard = panel.querySelector("[data-pi-enh-sync-card]");
+    if (syncCard) {
+      initCrossDeviceSyncController(syncCard);
+    }
+    applyEnhancementPanelFilter(panel);
+  }
+
   function applyEnhancementPanelFilter(panel) {
     const query = enhancementPanelFilter.query.trim().toLocaleLowerCase();
     let visibleCount = 0;
@@ -3762,8 +4183,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   }
 
   function renderEnhancementsPanel(panel, nav) {
-    if (!panel) return;
-    if (!panel.classList.contains("pi-enh-plugins-panel")) panel.classList.add("pi-enh-plugins-panel");
     if (!panel) return;
     if (!panel.classList.contains("pi-enh-plugins-panel")) panel.classList.add("pi-enh-plugins-panel");
     // Keep the v3 renderer as a one-release recovery surface while v4 modules
@@ -4343,9 +4762,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       }
       activeRevalidationHandles.clear();
 
-      // 2.4 Clear queue message detail cache and bump generation
-      clearQueueDetailCache();
-
       // 3. Clear all managed active event listeners and timers
       while (activeCleanups.length > 0) {
         try {
@@ -4429,8 +4845,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
       delete window.__PI_ENH_IS_PROJECT_STATUS_MONITORING__;
       delete window.__PI_ENH_SYNC_COMPACTION__;
       delete window.__PI_ENH_REMOVE_COMPACTION__;
-      delete window.__PI_ENH_FETCH_QUEUED_MESSAGE_DETAIL__;
-      delete window.__PI_ENH_GET_QUEUE_DETAIL_CACHE_STATS__;
       delete window.__PI_ENH_RECONCILE_USER_MESSAGE__;
       delete window.__PI_ENH_SESSION_HISTORY_ORDER_GUARD__;
       delete window.__PI_ENH_SYNC_SUBAGENT_DISPATCH_REMOTE_STATE__;
@@ -4456,14 +4870,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_ENH_IS_PROJECT_STATUS_MONITORING__ = () => isProjectStatusMonitoringActive;
   window.__PI_ENH_SYNC_COMPACTION__ = syncCompactionCards;
   window.__PI_ENH_REMOVE_COMPACTION__ = removeCompactionEnhancements;
-  window.__PI_ENH_FETCH_QUEUED_MESSAGE_DETAIL__ = fetchQueuedMessageDetail;
-  window.__PI_ENH_GET_QUEUE_ATTACHMENT_REVISION__ = () => queueAttachmentRevision;
-  window.__PI_ENH_GET_QUEUE_DETAIL_CACHE_STATS__ = () => ({
-    count: queuedMessageDetailCache.size,
-    bytes: currentQueueDetailCacheBytes,
-    generation: queueDetailCacheGeneration,
-    inFlightCount: queuedMessageDetailInFlight.size,
-  });
   window.__PI_ENH_SESSION_HISTORY_ORDER_GUARD__ = {
     handleStreamEvent: handleSessionHistoryOrderStreamEvent,
     handleAction: handleSessionHistoryOrderAction,
@@ -4507,7 +4913,6 @@ window.__PI_ENH_RENDER_USAGE_PANEL__ = renderUsagePanel;
   window.__PI_ENH_GET_DURABLE_STATE_INSTANCE_PARAM__ = getDurableStateInstanceParam;
 
   window.__PI_WEB_ENHANCEMENTS_LOADED__ = true;
-  window.dispatchEvent(new Event("pi-dom-feedback-ready"));
   runIsolatedKernelStep("initialDomSyncImmediate", () => {
     if (!isLoginPage()) {
       runAllSyncOperations();

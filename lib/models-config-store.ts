@@ -1,8 +1,32 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { writePrivateFileAtomicSync } from "./atomic-file";
 import { invalidateModelsCache } from "./models-cache";
+
+const require = createRequire(import.meta.url);
+const {
+  createStateStore,
+  withAgentStateLockSync,
+} = require("./enhancement-state-store.cjs") as {
+  createStateStore: (opts: { agentDir: string }) => {
+    ensureInitializedFromLegacyLocked: (opts?: { modelsConfigPath?: string }) => {
+      ok: boolean;
+      revision: number;
+      state: Record<string, unknown>;
+      storageVersion: number;
+      alreadyInitialized?: boolean;
+    };
+    read: () => {
+      ok: boolean;
+      revision: number;
+      state: Record<string, unknown>;
+      storageVersion: number;
+    };
+  };
+  withAgentStateLockSync: <T>(agentDir: string, fn: () => T) => T;
+};
 
 const MODEL_COST_KEYS = ["input", "output", "cacheRead", "cacheWrite"] as const;
 
@@ -77,6 +101,16 @@ export class ModelsConfigWriteError extends Error {
   }
 }
 
+/** Stale decorator submission conflicts with authoritative canonical enhancement state. */
+export class ModelsConfigConflictError extends Error {
+  constructor(
+    message = "Session tags or decorations have been modified. Please refresh the page or use the tag operations API to update tags.",
+  ) {
+    super(message);
+    this.name = "ModelsConfigConflictError";
+  }
+}
+
 /**
  * Mirrors pi's `stripJsonComments` (utils/json.js, not exported by the SDK):
  * drops `//` line comments and trailing commas, leaving string literals alone.
@@ -88,14 +122,9 @@ function stripJsonComments(input: string): string {
 }
 
 /**
- * Reads models.json with the same leniency as pi's loader (BOM, `//` comments,
- * trailing commas). A file pi accepts must never read as empty here: the panel
- * saves its whole draft, so an empty read would delete every provider on the
- * next save. Unusable contents throw instead.
+ * Reads models.json from disk with SDK leniency.
  */
-export function readModelsConfig(
-  modelsPath = getModelsConfigPath(),
-): Record<string, unknown> {
+function readDiskModelsConfig(modelsPath: string): Record<string, unknown> {
   if (!existsSync(modelsPath)) return { providers: {} };
   let parsed: unknown;
   try {
@@ -116,6 +145,40 @@ export function readModelsConfig(
     );
   }
   return parsed;
+}
+
+/**
+ * Reads models.json with the same leniency as pi's loader (BOM, `//` comments,
+ * trailing commas). A file pi accepts must never read as empty here: the panel
+ * saves its whole draft, so an empty read would delete every provider on the
+ * next save. Unusable contents throw instead.
+ *
+ * If canonical enhancement state exists, overlays authoritative tags, mappings, colors,
+ * sessionTagsRevision, and adds explicit enhancementStateRevision.
+ * Does not initialize state if it does not exist (legacy uninitialized reads raw disk).
+ */
+export function readModelsConfig(
+  modelsPath = getModelsConfigPath(),
+): Record<string, unknown> {
+  const diskConfig = readDiskModelsConfig(modelsPath);
+  const result: Record<string, unknown> = { ...diskConfig };
+
+  const agentDir = dirname(modelsPath);
+  try {
+    const store = createStateStore({ agentDir });
+    const canonical = store.read();
+    if (canonical && canonical.ok && canonical.state) {
+      result.sessionTagsDefinitions = structuredClone(canonical.state.sessionTagsDefinitions ?? []);
+      result.sessionTagMappings = structuredClone(canonical.state.sessionTagMappings ?? {});
+      result.sessionColors = structuredClone(canonical.state.sessionColors ?? {});
+      result.sessionTagsRevision = canonical.revision;
+      result.enhancementStateRevision = canonical.revision;
+    }
+  } catch {
+    // Uninitialized or missing canonical state: keep raw legacy disk contents, do not init
+  }
+
+  return result;
 }
 
 /** Compare JSON content without changing business arrays or nested revision fields. */
@@ -144,22 +207,112 @@ function sameStoredConfig(current: Record<string, unknown>, next: Record<string,
   return stableConfigJson(before) === stableConfigJson(after);
 }
 
+function hasDecoratorDifferences(
+  data: Record<string, unknown>,
+  canonicalState: Record<string, unknown>,
+): boolean {
+  if ("sessionTagsDefinitions" in data && data.sessionTagsDefinitions !== undefined) {
+    const fromBody = data.sessionTagsDefinitions;
+    const fromCanonical = canonicalState.sessionTagsDefinitions ?? [];
+    if (stableConfigJson(fromBody) !== stableConfigJson(fromCanonical)) {
+      return true;
+    }
+  }
+
+  if ("sessionTagMappings" in data && data.sessionTagMappings !== undefined) {
+    const fromBody = data.sessionTagMappings;
+    const fromCanonical = canonicalState.sessionTagMappings ?? {};
+    if (stableConfigJson(fromBody) !== stableConfigJson(fromCanonical)) {
+      return true;
+    }
+  }
+
+  if ("sessionColors" in data && data.sessionColors !== undefined) {
+    const fromBody = data.sessionColors;
+    const fromCanonical = canonicalState.sessionColors ?? {};
+    if (stableConfigJson(fromBody) !== stableConfigJson(fromCanonical)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function writeModelsConfig(
   data: Record<string, unknown>,
   modelsPath = getModelsConfigPath(),
 ): void {
-  // Refuse to replace a file this panel could not read: the draft being saved
-  // was not built from it, so writing would silently discard its contents.
-  const current = readModelsConfig(modelsPath);
-  if (!isRecord(data.providers)) {
+  if (!isRecord(data) || !isRecord(data.providers)) {
     throw new ModelsConfigWriteError(
       'Invalid models.json config: "providers" is required and must be an object',
     );
   }
-  const dir = dirname(modelsPath);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const normalized = normalizeModelsConfigCosts(sanitizeModelsConfig(data));
-  if (existsSync(modelsPath) && sameStoredConfig(current, normalized)) return;
-  writePrivateFileAtomicSync(modelsPath, JSON.stringify(normalized, null, 2));
-  invalidateModelsCache();
+
+  const agentDir = dirname(modelsPath);
+
+  withAgentStateLockSync(agentDir, () => {
+    // 1. Read disk config under lock to protect unknown keys and fail fast on corrupted legacy disk
+    const currentDisk = readDiskModelsConfig(modelsPath);
+
+    // 2. Ensure canonical state initialized from original disk decorators
+    const store = createStateStore({ agentDir });
+    store.ensureInitializedFromLegacyLocked({ modelsConfigPath: modelsPath });
+    const canonical = store.read();
+    const canonicalState = canonical.state as Record<string, unknown>;
+
+    // 3. Detect stale legacy decorator snapshot or modification conflict
+    if (hasDecoratorDifferences(data, canonicalState)) {
+      throw new ModelsConfigConflictError(
+        "Session tags or decorations have been modified. Please refresh the page or use the tag operations API to update tags.",
+      );
+    }
+
+    // 4. Prepare data to write to disk
+    const dir = dirname(modelsPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
+    const normalized = normalizeModelsConfigCosts(sanitizeModelsConfig(data));
+
+    // Whole-model config update preserving submitted fields and unknown disk fields
+    const toWrite: Record<string, unknown> = {
+      ...currentDisk,
+      ...normalized,
+    };
+
+    // Preserve existing disk decorator history; never apply body's 3 decorator fields to disk
+    if ("sessionTagsDefinitions" in currentDisk) {
+      toWrite.sessionTagsDefinitions = currentDisk.sessionTagsDefinitions;
+    } else {
+      delete toWrite.sessionTagsDefinitions;
+    }
+
+    if ("sessionTagMappings" in currentDisk) {
+      toWrite.sessionTagMappings = currentDisk.sessionTagMappings;
+    } else {
+      delete toWrite.sessionTagMappings;
+    }
+
+    if ("sessionColors" in currentDisk) {
+      toWrite.sessionColors = currentDisk.sessionColors;
+    } else {
+      delete toWrite.sessionColors;
+    }
+
+    if ("sessionTagsRevision" in currentDisk) {
+      toWrite.sessionTagsRevision = currentDisk.sessionTagsRevision;
+    } else {
+      delete toWrite.sessionTagsRevision;
+    }
+
+    // Never persist API-only enhancementStateRevision to disk
+    delete toWrite.enhancementStateRevision;
+
+    // 5. Check if changed before writing
+    if (existsSync(modelsPath) && sameStoredConfig(currentDisk, toWrite)) {
+      return;
+    }
+
+    writePrivateFileAtomicSync(modelsPath, JSON.stringify(toWrite, null, 2));
+    invalidateModelsCache();
+  });
 }

@@ -1,5 +1,22 @@
 # Codex headless connector
 
+## Maintenance revision 1.4.61.3
+
+- Fixed false busy rejection during deletion for sessions in confirmed terminal `systemError` status.
+- Added strict secondary preflight verification (`thread/read` with `includeTurns: true`) for `systemError`: validates that the thread ID, authorized workspace cwd, and runtime status remain `systemError` (or have safely transitioned to `idle`/`notLoaded`), and confirms that the `turns` array is non-empty with all turn statuses in terminal states (`completed`, `failed`, `interrupted`) and at least one terminal turn present.
+- In-progress turns, unknown/malformed turn data, empty turns, status transitions to `active`, or preflight RPC failures fail closed and prevent native deletion dispatch.
+- Normal `idle` and `notLoaded` sessions do not incur additional RPC overhead.
+- Preserves all invariants: active/unknown/missing rejections, authorized cwd checks, permission checks, native queue checks, and single-attempt non-retrying native delete.
+- Distinguishes exact error statuses in logging and user messaging rather than classifying all non-idle states as busy.
+- Candidate connector maintenance revision 1.4.61.3; the actual backend remains at 1.4.61.2 until a controlled service switch.
+- This is a connector-only maintenance revision; the Web application version remains 1.4.61.
+
+## Maintenance revision 1.4.61.1
+
+- Empty native threads with an exact no-rollout preflight response and fresh scoped store absence still receive queue validation and one native deletion request. Preflight failures are distinguished from uncertain delete receipts; no destructive request is retried.
+- Batched activity snapshots omit confirmed missing session IDs left by stale catalogs while preserving scope, UUID, permission, and storage-error checks.
+- This is a connector-only maintenance revision; the Web application version remains 1.4.61.
+
 This optional connector is adapted from the local `Codex Mobile Bridge` Python
 version 2.0.3 plus the Pi Web standalone WSL adapter snapshot. That source directory had no Git metadata when inspected, so
 there is no source commit to record.
@@ -54,3 +71,37 @@ event routes remain authoritative. There is no alternate login or permission
 mode in this connector.
 
 Pi Web adapter modifications include lazy runtime startup, API-only routing, strict configured-project workspace/catalog APIs, stable client request identity, and atomic automatic queue selection. Relative imports are included in the source closure; no browser assets are served.
+
+## Windows attachment readability and submission phases
+
+The Windows Desktop adapter checks attachments before native dispatch using
+the token of every matching app-server child of the connected Desktop pipe
+broker. The expected executable and process creation time are checked. Reads
+run on a disposable thread, compare the full byte count and SHA-256 with the
+stored upload, and always restore the thread token. This does not change ACLs,
+enable privileges, or create a second executor. Unknown checks fail closed.
+
+New ledger rows persist `trace` with separate `task_received`, `attachment_read`,
+`operation_executed`, and `result_verified` stages. Read the same trace through
+the authenticated existing `GET /api/sessions/{thread}/submissions/{request}`
+endpoint; request IDs and native turn IDs, rather than text, identify evidence.
+Known preflight failures return `dispatched:false`, `retryable:false`, and a
+specific code such as `receiver_attachment_access_denied`.
+
+`receiverReadability` records the preflight separately. A successful token read
+proves filesystem readability at that instant, not that the model consumed the
+image. Without a native content-read acknowledgement, `attachment_read` stays
+pending. Operation evidence requires terminal native operation items from the
+acknowledged turn; an assistant's prose or a completed turn cannot verify a
+business result. `result_verified` remains pending with
+`independent_verification_required` until independent verification is available.
+An exact persisted UserMessage receipt may settle a previously unknown task_received
+stage. Age, matching text, active status, or that receipt alone never confirms
+attachment consumption, operation success, or business-result verification.
+
+### Provenance and Differences
+
+- **Provenance**: Restored from the active runtime baseline (`/app/connectors/codex-bridge`) to bring `/workspace/agent-web-plus/connectors/codex-bridge` in alignment with the Windows Desktop adapter contract without whole-runtime overwrite.
+- **Recovered modules**: `bridge/clients/codex/{title_naming.py, windows_desktop.py, attachment_readability.py, submission_trace.py}`, `windows_desktop_main.py`.
+- **Integrated modifications**: `bridge/api/httpd.py` (runtime_status handling for Windows desktop, distinction of native desktop error messages, and structured ValueError/IPCError status/code/dispatched/retryable extraction) and `bridge/clients/codex/wsl_history.py` (titleNaming projection integration).
+

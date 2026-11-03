@@ -4181,9 +4181,8 @@
               const kind = isSteer ? "steer" : "follow-up";
               const rawMsg = typeof reqBody.message === "string" ? reqBody.message : (reqBody.message?.content || "");
               const rawImgs = Array.isArray(reqBody.images) ? reqBody.images : [];
-              if (typeof recordCapturedSubmissionAttachment === "function") {
-                recordCapturedSubmissionAttachment(ownerSessionId, kind, rawMsg, rawImgs);
-              }
+              // Retired: native prompt-submissions is the durable authority for submissions
+
             }
           }
         }
@@ -4263,7 +4262,10 @@
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       return null;
     }
-    if (payload.error) {
+    const unwrapped = (payload.data && typeof payload.data === "object" && !Array.isArray(payload.data))
+      ? payload.data
+      : payload;
+    if (unwrapped.error || payload.error) {
       return null;
     }
 
@@ -4271,7 +4273,7 @@
     // /api/sessions/:id/state 接口规范：rpc?.isAlive() 返回 { running: true, state: await rpc.send(get_state) }
     // 此时顶层 running: true 仅代表 RPC 进程存活，不能作为任务正在运行的依据；
     // 当 state 内明确提供布尔字段时，全 false 表示 idle，即便外层 running: true
-    const stateObj = payload.state;
+    const stateObj = unwrapped.state;
     if (stateObj && typeof stateObj === "object" && !Array.isArray(stateObj)) {
       const isStreamingBool = typeof stateObj.isStreaming === "boolean";
       const isPromptBool = typeof stateObj.isPromptRunning === "boolean";
@@ -4289,20 +4291,26 @@
     }
 
     // 2. 支持 agent GET 顶层明确任务布尔状态字段 (isStreaming / isPromptRunning / isBashRunning / isCompacting)
-    const topStreamingBool = typeof payload.isStreaming === "boolean";
-    const topPromptBool = typeof payload.isPromptRunning === "boolean";
-    const topBashBool = typeof payload.isBashRunning === "boolean";
-    const topCompactingBool = typeof payload.isCompacting === "boolean";
+    const topStreamingBool = typeof unwrapped.isStreaming === "boolean";
+    const topPromptBool = typeof unwrapped.isPromptRunning === "boolean";
+    const topBashBool = typeof unwrapped.isBashRunning === "boolean";
+    const topCompactingBool = typeof unwrapped.isCompacting === "boolean";
     if (topStreamingBool || topPromptBool || topBashBool || topCompactingBool) {
       return Boolean(
-        (topStreamingBool && payload.isStreaming) ||
-        (topPromptBool && payload.isPromptRunning) ||
-        (topBashBool && payload.isBashRunning) ||
-        (topCompactingBool && payload.isCompacting)
+        (topStreamingBool && unwrapped.isStreaming) ||
+        (topPromptBool && unwrapped.isPromptRunning) ||
+        (topBashBool && unwrapped.isBashRunning) ||
+        (topCompactingBool && unwrapped.isCompacting)
       );
     }
 
     // 3. 只有外层 running: false 可作为未连/未运行证据；running: true 单独不当任务运行，字段缺失或 error 返回 null
+    if (typeof unwrapped.running === "boolean") {
+      if (unwrapped.running === false) {
+        return false;
+      }
+      return null;
+    }
     if (typeof payload.running === "boolean") {
       if (payload.running === false) {
         return false;
@@ -4507,6 +4515,25 @@
             } else {
               // 仅在读到明确布尔运行态时采信；字段缺失、error 或未知 running:true 不能凭空标完成
               entry.state = { data: json, timestamp: Date.now() };
+            }
+            // 接入 taskTiming 权威状态同步
+            const unwrapped = (json?.data && typeof json.data === "object" && !Array.isArray(json.data)) ? json.data : json;
+            const stateObj = unwrapped?.state && typeof unwrapped.state === "object" ? unwrapped.state : unwrapped;
+            const taskTiming = stateObj?.taskTiming;
+            const handleSpeed = typeof handleModelSpeedStreamEvent === "function"
+              ? handleModelSpeedStreamEvent
+              : (typeof window !== "undefined" ? window.__PI_ENH_HANDLE_MODEL_SPEED_STREAM_EVENT__ : null);
+            const clearTurn = typeof clearActiveTurn === "function"
+              ? clearActiveTurn
+              : (typeof window !== "undefined" ? window.__PI_ENH_CLEAR_ACTIVE_TURN__ : null);
+            if (runningState && taskTiming && typeof taskTiming === "object" && typeof taskTiming.startedAt === "number" && Number.isFinite(taskTiming.startedAt) && taskTiming.startedAt > 0) {
+              if (typeof handleSpeed === "function") {
+                handleSpeed(sessionId, { type: "state_sync", taskTiming });
+              }
+            } else if (runningState === false) {
+              if (typeof clearTurn === "function") {
+                clearTurn(sessionId);
+              }
             }
           }
         } catch (e) {}

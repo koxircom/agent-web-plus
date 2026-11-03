@@ -45,7 +45,12 @@ test("public/offline.html 离线字标严格对齐 lib/branding.ts 矢量几何�
   assert.doesNotMatch(offlineHtml, /font-size:\s*94px/, "不应使用旧的 94px 大字号");
 });
 
-test("各语言文档及发布规范统一收敛为规范安装包 agent-web-plus-1.4.10.tgz", () => {
+test("各语言文档及发布规范统一收敛为规范安装包 agent-web-plus 安装包", () => {
+  const pkg = JSON.parse(readRootFile("package.json"));
+  const version = pkg.version;
+  const escapedVersion = version.replace(/\./g, "\\.");
+  const downloadRegex = new RegExp(`releases\\/download\\/v${escapedVersion}\\/agent-web-plus-${escapedVersion}\\.tgz`);
+
   const readmeZh = readRootFile("README.md");
   const readmeZhCn = readRootFile("README.zh-CN.md");
   const readmeJa = readRootFile("README.ja.md");
@@ -56,8 +61,8 @@ test("各语言文档及发布规范统一收敛为规范安装包 agent-web-plu
   // 中文 README 包含规范包名与两入口说明
   assert.match(
     readmeZh,
-    /releases\/download\/v1\.4\.10\/agent-web-plus-1\.4\.10\.tgz/,
-    "README.md 应提供 agent-web-plus-1.4.10.tgz 下载命令",
+    downloadRegex,
+    `README.md 应提供 agent-web-plus-${version}.tgz 下载命令`,
   );
   assert.doesNotMatch(
     readmeZh,
@@ -73,8 +78,8 @@ test("各语言文档及发布规范统一收敛为规范安装包 agent-web-plu
   // 日文与俄文 README 包含规范包名与两入口说明
   assert.match(
     readmeJa,
-    /releases\/download\/v1\.4\.10\/agent-web-plus-1\.4\.10\.tgz/,
-    "README.ja.md 应提供 agent-web-plus-1.4.10.tgz 下载命令",
+    downloadRegex,
+    `README.ja.md 应提供 agent-web-plus-${version}.tgz 下载命令`,
   );
   assert.match(
     readmeJa,
@@ -84,8 +89,8 @@ test("各语言文档及发布规范统一收敛为规范安装包 agent-web-plu
 
   assert.match(
     readmeRu,
-    /releases\/download\/v1\.4\.10\/agent-web-plus-1\.4\.10\.tgz/,
-    "README.ru.md 应提供 agent-web-plus-1.4.10.tgz 下载命令",
+    downloadRegex,
+    `README.ru.md 应提供 agent-web-plus-${version}.tgz 下载命令`,
   );
   assert.match(
     readmeRu,
@@ -107,6 +112,8 @@ test("各语言文档及发布规范统一收敛为规范安装包 agent-web-plu
 });
 
 test("中文主文档 README.md 清晰定义产品层级、两入口、共享架构与切换菜单", () => {
+  const pkg = JSON.parse(readRootFile("package.json"));
+  const escapedVersion = pkg.version.replace(/\./g, "\\.");
   const readme = readRootFile("README.md");
 
   // 验证总品牌与两入口层级
@@ -123,7 +130,7 @@ test("中文主文档 README.md 清晰定义产品层级、两入口、共享架
 
   // 严防旧版本 1.4.0 作为当前介绍版本
   assert.doesNotMatch(readme, /本文介绍面向 \*\*1\.4\.0\*\*/, "不应再出现本文介绍面向 1.4.0");
-  assert.match(readme, /本文介绍面向 \*\*1\.4\.10\*\*/, "当前介绍应面向 1.4.10");
+  assert.match(readme, new RegExp(`本文介绍面向 \\*\\*${escapedVersion}\\*\\*`), `当前介绍应面向 ${pkg.version}`);
 });
 
 test("日文与俄文文档准确说明双引擎层级与共享架构，不再声称仅面向 Pi 引擎", () => {

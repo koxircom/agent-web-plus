@@ -254,11 +254,9 @@ function putEvent(state, event) {
     Object.assign(old, event);
   }
 
-  if (event.timestamp != null) {
-    if (old.timestamp == null || old.timestamp !== event.timestamp) {
-      old.timestamp = event.timestamp;
-      old.day = core.day(event.timestamp);
-    }
+  if (old.timestamp == null && event.timestamp != null) {
+    old.timestamp = event.timestamp;
+    old.day = core.day(event.timestamp);
   }
 
   if ((!old.model || old.model === "unknown") && event.model && event.model !== "unknown") {
@@ -301,8 +299,15 @@ const FORK_PROVENANCE_TYPE = "pi-web:fork-provenance";
 
 async function scanSession(file, state, source, audit, options = {}) {
   let sessionId, current = {}, lastAssistant = {}, lineNo = 0, lastEntryId = null;
-  if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
-  const statBefore = fs.statSync(file);
+  let statBefore;
+  try { statBefore = fs.statSync(file); }
+  catch (error) {
+    if (error.code === "ENOENT" && options.skipDisappeared === true) {
+      audit.disappearedFiles = (audit.disappearedFiles || 0) + 1;
+      return null;
+    }
+    throw error;
+  }
   const initialPartial = audit.partialLines;
   const pendingToolCalls = new Set();
   const pendingSubagentCalls = new Set();
@@ -708,6 +713,20 @@ async function scanSession(file, state, source, audit, options = {}) {
       complete,
     };
   }
+
+  const effectiveStat = statAfter || statBefore;
+  const fingerprint = {
+    sessionId,
+    filePath: file,
+    ino: effectiveStat ? effectiveStat.ino : null,
+    dev: effectiveStat ? effectiveStat.dev : null,
+    mtimeMs: effectiveStat ? effectiveStat.mtimeMs : null,
+    size: effectiveStat ? effectiveStat.size : null,
+  };
+  if (options && options.sessionFingerprints instanceof Map && sessionId) {
+    options.sessionFingerprints.set(sessionId, fingerprint);
+  }
+  return fingerprint;
 }
 
 function mergeStates(states) {
@@ -802,6 +821,59 @@ async function generateUsageLedger(options = {}) {
   const lockFile = resolvedPaths.lockFile;
   const root = options.sessionsRoot || process.env.PI_SESSIONS_DIR || path.join(agentDir, "sessions");
 
+  // 1. 扫描前读取 baseState 快照并在锁外进行 candidate 扫描
+  const baseState = readState(stateFile);
+  const candidateState = deepClone(baseState);
+
+  for (const s of Object.values(candidateState.sessions)) {
+    if (Array.isArray(s.availableOn)) {
+      s.availableOn = s.availableOn.filter(x => x !== source);
+    }
+  }
+
+  const audit = { assistant: 0, subagentResults: 0, system: 0, partialLines: 0, aggregateOnlyTasks: 0, abandonedToolCalls: 0 };
+  const files = scanFiles(root);
+  const colleagueRoot = options.colleagueSessionsRoot !== undefined
+    ? options.colleagueSessionsRoot
+    : (!options.sessionsRoot ? path.join(agentDir, "colleague-sessions") : null);
+  if (colleagueRoot && fs.existsSync(colleagueRoot) && colleagueRoot !== root) {
+    try {
+      const colleagueFiles = scanFiles(colleagueRoot);
+      files.push(...colleagueFiles);
+    } catch (_) {}
+  }
+  files.sort();
+
+  const sessionFingerprints = new Map();
+  for (const file of files) {
+    try {
+      const fp = await scanSession(file, candidateState, source, audit, {
+        ...options,
+        skipDisappeared: true,
+        sessionFingerprints,
+      });
+      if (fp && fp.sessionId) sessionFingerprints.set(fp.sessionId, fp);
+    } catch (error) {
+      // A completed delete may remove a listed file before its stream opens.
+      // Keep already accounted events, but never mask malformed data or I/O errors.
+      if (error.code !== "ENOENT") throw error;
+      audit.disappearedFiles = (audit.disappearedFiles || 0) + 1;
+    }
+  }
+  candidateState.sources[source] = { scannedAt: new Date().toISOString(), fileCount: files.length, audit };
+
+  if (typeof options.__onAfterScanOutsideLock === "function") {
+    await options.__onAfterScanOutsideLock();
+  }
+
+  // options.write === false 时不获取写锁，可 read 原子快照 + scan，不写回 state
+  if (options.write === false) {
+    const ledger = buildLedger(candidateState);
+    console.log(`[usage] ${source}: ${files.length} files, ${Object.keys(candidateState.events).length} retained events; ${ledger.totals.totalTokens} tokens (read-only)`);
+    return { state: candidateState, ledger };
+  }
+
+  // 2. Commit 阶段：获取短写锁，读取磁盘最新 state，执行明确的 merge 语义
   const lockFd = acquireLock(lockFile);
   try {
     let oldState = null;
@@ -814,22 +886,101 @@ async function generateUsageLedger(options = {}) {
       }
     }
 
-    const state = readState(stateFile);
-    for (const s of Object.values(state.sessions)) s.availableOn = s.availableOn.filter(x => x !== source);
-    const audit = { assistant: 0, subagentResults: 0, system: 0, partialLines: 0, aggregateOnlyTasks: 0, abandonedToolCalls: 0 };
-    const files = scanFiles(root);
-    const colleagueRoot = options.colleagueSessionsRoot !== undefined
-      ? options.colleagueSessionsRoot
-      : (!options.sessionsRoot ? path.join(agentDir, "colleague-sessions") : null);
-    if (colleagueRoot && fs.existsSync(colleagueRoot) && colleagueRoot !== root) {
-      try {
-        const colleagueFiles = scanFiles(colleagueRoot);
-        files.push(...colleagueFiles);
-      } catch (_) {}
+    const latestState = readState(stateFile);
+
+    const finalState = {
+      version: 2,
+      events: { ...latestState.events },
+      sessions: {},
+      sources: {
+        ...(latestState.sources || {}),
+        [source]: candidateState.sources[source],
+      },
+    };
+
+    // 1. 仅合并有变化或新增的 events（保留 latest 的 better metadata，防止旧复合 timestamp 覆盖）
+    for (const [key, candEvent] of Object.entries(candidateState.events)) {
+      const baseEvent = baseState.events?.[key];
+      if (!baseEvent || !deepValueEqual(candEvent, baseEvent)) {
+        putEvent(finalState, candEvent);
+      }
     }
-    files.sort();
-    for (const file of files) await scanSession(file, state, source, audit, options);
-    state.sources[source] = { scannedAt: new Date().toISOString(), fileCount: files.length, audit };
+
+    // 2. 逐 session 合并：检查 observedpath 真实 lstat same，坚决杜绝复活 sealdelete 已 unlink 的 candidate.availableOn
+    const allSessionIds = new Set([
+      ...Object.keys(baseState.sessions || {}),
+      ...Object.keys(latestState.sessions || {}),
+      ...Object.keys(candidateState.sessions || {}),
+    ]);
+
+    for (const sid of allSessionIds) {
+      const baseRec = baseState.sessions?.[sid] || null;
+      const latestRec = latestState.sessions?.[sid] || null;
+      const candidateRec = candidateState.sessions?.[sid] || null;
+
+      // 检查当前 source 对应 session 文件的真实存活指纹 (lstat same)
+      let sessionLive = false;
+      const fp = sessionFingerprints.get(sid);
+      if (fp && fp.filePath) {
+        try {
+          const liveStat = fs.lstatSync(fp.filePath);
+          if (liveStat.isFile()) {
+            if (fp.ino != null && liveStat.ino != null) {
+              sessionLive = (liveStat.ino === fp.ino && liveStat.dev === fp.dev);
+            } else {
+              sessionLive = true;
+            }
+          }
+        } catch (_) {
+          sessionLive = false;
+        }
+      }
+
+      const isLatestSameAsBase = deepValueEqual(latestRec, baseRec);
+
+      if (isLatestSameAsBase && candidateRec) {
+        // 无并发修改，accept 候选，但必须根据 sessionLive 修正 availableOn，不能复活已被 unlink 的 session
+        const accepted = deepClone(candidateRec);
+        const availSet = new Set(accepted.availableOn || []);
+        if (sessionLive) {
+          availSet.add(source);
+        } else {
+          availSet.delete(source);
+        }
+        accepted.availableOn = Array.from(availSet);
+        finalState.sessions[sid] = accepted;
+      } else if (latestRec) {
+        // 并发修改（如 seal-worker 写入 complete=true），latest 赢！
+        const merged = deepClone(latestRec);
+        if (candidateRec) {
+          merged.sources = [...new Set([...(latestRec.sources || []), ...(candidateRec.sources || [])])];
+          if (!merged.title && candidateRec.title) {
+            merged.title = candidateRec.title;
+          }
+        }
+
+        const availableSet = new Set(latestRec.availableOn || []);
+        if (sessionLive) {
+          availableSet.add(source);
+        } else {
+          availableSet.delete(source);
+        }
+        merged.availableOn = Array.from(availableSet);
+
+        finalState.sessions[sid] = merged;
+      } else if (candidateRec) {
+        const accepted = deepClone(candidateRec);
+        const availSet = new Set(accepted.availableOn || []);
+        if (sessionLive) {
+          availSet.add(source);
+        } else {
+          availSet.delete(source);
+        }
+        accepted.availableOn = Array.from(availSet);
+        finalState.sessions[sid] = accepted;
+      }
+    }
+
     let oldLedger = null;
     if (fs.existsSync(outputFile)) {
       try {
@@ -839,21 +990,21 @@ async function generateUsageLedger(options = {}) {
       }
     }
 
-    const isStateEqual = Boolean(oldState && isStateBusinessEqual(state, oldState));
+    const isStateEqual = Boolean(oldState && isStateBusinessEqual(finalState, oldState));
     if (isStateEqual) {
       for (const src of Object.keys(oldState.sources || {})) {
-        if (state.sources[src] && oldState.sources[src]?.scannedAt) {
-          state.sources[src].scannedAt = oldState.sources[src].scannedAt;
+        if (finalState.sources[src] && oldState.sources[src]?.scannedAt) {
+          finalState.sources[src].scannedAt = oldState.sources[src].scannedAt;
         }
       }
       for (const sid of Object.keys(oldState.sessions || {})) {
-        if (state.sessions[sid]?.ingestion && oldState.sessions[sid]?.ingestion?.scannedAt) {
-          state.sessions[sid].ingestion.scannedAt = oldState.sessions[sid].ingestion.scannedAt;
+        if (finalState.sessions[sid]?.ingestion && oldState.sessions[sid]?.ingestion?.scannedAt) {
+          finalState.sessions[sid].ingestion.scannedAt = oldState.sessions[sid].ingestion.scannedAt;
         }
       }
     }
 
-    let ledger = buildLedger(state);
+    let ledger = buildLedger(finalState);
     let canReuseOldLedger = false;
     if (isStateEqual && oldLedger) {
       try {
@@ -872,12 +1023,11 @@ async function generateUsageLedger(options = {}) {
       ledger.snapshotId = oldLedger.snapshotId;
     }
 
-    if (options.write !== false) {
-      atomicWriteIfChanged(stateFile, state);
-      atomicWriteIfChanged(outputFile, ledger);
-    }
-    console.log(`[usage] ${source}: ${files.length} files, ${Object.keys(state.events).length} retained events; ${ledger.totals.totalTokens} tokens`);
-    return { state, ledger };
+    atomicWriteIfChanged(stateFile, finalState);
+    atomicWriteIfChanged(outputFile, ledger);
+
+    console.log(`[usage] ${source}: ${files.length} files, ${Object.keys(finalState.events).length} retained events; ${ledger.totals.totalTokens} tokens`);
+    return { state: finalState, ledger };
   } finally {
     releaseLock(lockFile, lockFd);
   }

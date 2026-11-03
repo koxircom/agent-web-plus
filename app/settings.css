@@ -241,6 +241,25 @@
   font-size: 10px;
 }
 
+/* ModelsConfig dedicated responsive layout */
+.models-config-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
+.models-config-layout > .config-split-view {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .oauth-paste-panel {
   display: flex;
   flex-direction: column;
@@ -2303,6 +2322,71 @@
   .config-add-source-example.has-label { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Settings › Models (components/ModelsConfig.tsx).
+   Prioritize two-column side-by-side layout in middle-width views (501px ~ 720px,
+   such as foldables / landscape phones / split screen), so list items are not crushed.
+   On true small screens (<= 500px), stack vertically with generous adaptive heights
+   and independent scrolling areas that comfortably fit at least 4 model items. */
+@container config-panel (max-width: 720px) {
+  .models-config-layout > .config-split-view {
+    flex-direction: row;
+  }
+
+  .models-config-layout .config-sidebar {
+    width: clamp(190px, 32%, 230px);
+    height: 100%;
+    min-height: 0;
+    flex: 0 0 auto;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+  }
+
+  .models-config-layout .config-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    padding: 16px;
+  }
+}
+
+@container config-panel (max-width: 500px) {
+  .models-config-layout > .config-split-view {
+    flex-direction: column;
+    /* Landscape / keyboard-reduced heights must remain scroll-reachable. */
+    overflow-y: auto;
+  }
+
+  .models-config-layout .config-sidebar {
+    width: 100%;
+    height: clamp(190px, 38dvh, 280px);
+    min-height: 190px;
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .models-config-layout .config-sidebar-list {
+    flex: 1 1 auto;
+    min-height: 135px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .models-config-layout .config-list-action {
+    flex-shrink: 0;
+    padding: 6px;
+  }
+
+  .models-config-layout .config-detail {
+    flex: 1 0 160px;
+    min-height: 160px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 14px;
+  }
+}
+
 @container settings-dialog (max-width: 960px) {
   .settings-dialog-surface > .settings-dialog-header {
     padding: 12px 6px;
@@ -3273,3 +3357,18 @@
   }
 }
 
+
+/* Browser tab preferences share the native settings card and input controls. */
+.settings-browser-tab { display: grid; gap: 12px; padding: 16px; border-top: 1px solid var(--border); min-width: 0; }
+.settings-browser-tab h3, .settings-browser-tab p { margin: 0; }
+.settings-browser-tab-fields { display: grid; gap: 8px; min-width: 0; }
+.settings-browser-tab-fields > input { width: 100%; min-width: 0; cursor: text; }
+.settings-browser-tab-presets, .settings-browser-tab-actions, .settings-browser-tab-color-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-browser-tab-colors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.settings-browser-tab-color { display: grid; gap: 6px; min-width: 0; }
+.settings-browser-tab-color input[type="color"] { width: 32px; height: 28px; padding: 2px; border: 1px solid var(--border); background: var(--bg); border-radius: 5px; cursor: pointer; }
+.settings-browser-tab-color-controls > span { font-family: var(--font-mono); font-size: 12px; }
+.settings-browser-tab-preview { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+.settings-browser-tab-preview img { flex-shrink: 0; }
+.settings-browser-tab-preview > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 540px) { .settings-browser-tab-colors { grid-template-columns: minmax(0, 1fr); } }

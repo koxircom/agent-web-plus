@@ -117,6 +117,10 @@ function resetState(scenario) {
     scenario,
     streams: new Set(),
     streamConnections: 0,
+    batchEpoch: `fixture-${scenario}-${Date.now()}`,
+    batchSequence: 0,
+    batchEvents: [],
+    batchInitialSent: false,
     promptPosts: [],
     historyReads: [],
     pendingHistory: [],
@@ -136,6 +140,7 @@ function emitEvent(event) {
     state.runtimeStreaming = false;
   }
   state.events.push({ ...event, sentAt: Date.now() });
+  state.batchEvents.push({ sequence: ++state.batchSequence, event: { ...event } });
   for (const stream of [...state.streams]) {
     if (!stream.destroyed && !stream.writableEnded) stream.write(`data: ${JSON.stringify(event)}\n\n`);
   }
@@ -215,6 +220,40 @@ const server = http.createServer(async (request, response) => {
     response.setHeader("content-type", "text/javascript; charset=utf-8");
     return response.end(bundle.outputFiles[0].text);
   }
+  if (url.pathname === `/api/agent/${sessionId}/events` && url.searchParams.get("format") === "batch") {
+    const epoch = state.batchEpoch;
+    const cursor = url.searchParams.get("cursor");
+    const separator = cursor?.lastIndexOf(":") ?? -1;
+    const cursorEpoch = separator > 0 ? cursor.slice(0, separator) : "";
+    const sequenceText = separator > 0 ? cursor.slice(separator + 1) : "";
+    const parsedSequence = Number(sequenceText);
+    const validCursor = cursorEpoch === epoch && /^\d+$/.test(sequenceText) && Number.isSafeInteger(parsedSequence);
+    const initial = cursor === null;
+    const reset = cursor !== null && !validCursor;
+    const connected = { type: "connected", isStreaming: state.runtimeStreaming, pendingExtensionUiIds: [] };
+    let events;
+
+    if (initial && !state.batchInitialSent) {
+      events = [connected, ...state.batchEvents.map(({ event }) => event)];
+      state.batchInitialSent = true;
+      state.streamConnections += 1;
+    } else if (validCursor) {
+      events = state.batchEvents
+        .filter(({ sequence }) => sequence > parsedSequence)
+        .map(({ event }) => event);
+    } else {
+      events = [connected];
+      if (initial) state.streamConnections += 1;
+      if (reset) state.batchInitialSent = true;
+    }
+
+    return json(response, {
+      reset,
+      epoch,
+      cursor: `${epoch}:${state.batchSequence}`,
+      events,
+    });
+  }
   if (url.pathname === `/api/agent/${sessionId}/events`) {
     response.setHeader("content-type", "text/event-stream; charset=utf-8");
     response.setHeader("cache-control", "no-cache");
@@ -285,9 +324,9 @@ async function waitFor(check, label, timeout = 5000) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-async function waitForSse(page, type, count = 1) {
+async function waitForEvent(page, type, count = 1) {
   await page.waitForFunction(({ eventType, minimum }) => (
-    (window.__identitySseEvents || []).filter((event) => event.type === eventType).length >= minimum
+    (window.__identityEvents || []).filter((event) => event.type === eventType).length >= minimum
   ), { eventType: type, minimum: count }, { timeout: 5000 });
 }
 
@@ -296,15 +335,28 @@ async function openScenario(browser, origin, spec) {
   const context = await browser.newContext({ locale: "zh-CN", viewport: { width: spec.width, height: 820 } });
   await context.addInitScript((fixture) => { window.__USER_MESSAGE_IDENTITY_FIXTURE__ = fixture; }, { sessionId });
   await context.addInitScript(() => {
-    window.__identitySseEvents = [];
+    window.__identityEvents = [];
+    const record = (event) => window.__identityEvents.push(event);
     const NativeEventSource = window.EventSource;
     window.EventSource = class extends NativeEventSource {
       constructor(...args) {
         super(...args);
         this.addEventListener("message", (event) => {
-          try { window.__identitySseEvents.push(JSON.parse(event.data)); } catch { /* fixture only */ }
+          try { record(JSON.parse(event.data)); } catch { /* fixture only */ }
         });
       }
+    };
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const response = await nativeFetch(input, init);
+      const requestUrl = new URL(typeof input === "string" ? input : input.url, location.href);
+      if (requestUrl.pathname.endsWith("/events") && requestUrl.searchParams.get("format") === "batch") {
+        try {
+          const payload = await response.clone().json();
+          for (const event of payload.events || []) record(event);
+        } catch { /* non-JSON responses are surfaced by the client */ }
+      }
+      return response;
     };
   });
   const page = await context.newPage();
@@ -315,7 +367,7 @@ async function openScenario(browser, origin, spec) {
   await page.goto(origin);
   await page.locator('[data-fixture-ready="true"]').waitFor({ state: "attached", timeout: 5000 });
   await waitFor(() => scenarioState.historyReads.length >= 1, `${spec.name} initial history GET`);
-  await waitFor(() => scenarioState.streamConnections >= 1, `${spec.name} SSE connection`);
+  await waitFor(() => scenarioState.streamConnections >= 1, `${spec.name} event connection`);
   return { context, page, scenarioState };
 }
 
@@ -345,7 +397,7 @@ async function userBubbleCount(page) {
 }
 
 async function finishScenario(page, scenarioState, spec, requestIds) {
-  await waitForSse(page, "message_end", spec.messageEndEvents || 1);
+  await waitForEvent(page, "message_end", spec.messageEndEvents || 1);
   const requiredMinimum = baseline
     ? (spec.baselineExact ?? spec.baselineMinimum ?? 0)
     : spec.candidateExact;
@@ -374,7 +426,7 @@ async function runScenario(browser, origin, spec) {
   const { context, page, scenarioState } = await openScenario(browser, origin, spec);
   try {
     const first = await sendPrompt(page, scenarioState);
-    await waitFor(() => scenarioState.streamConnections >= 1, `${spec.name} prompt SSE readiness`);
+      await waitFor(() => scenarioState.streamConnections >= 1, `${spec.name} prompt event transport readiness`);
 
     if (spec.name === "history-before-message-end") {
       emitEvent({ type: "agent_start" });
@@ -388,7 +440,7 @@ async function runScenario(browser, origin, spec) {
     if (spec.name === "sse-first-history-after") {
       emitEvent({ type: "agent_start" });
       emitEvent({ type: "message_end", requestId: first.requestId, message: historyUser(first, 0) });
-      await waitForSse(page, "message_end");
+      await waitForEvent(page, "message_end");
       await page.getByText(historyText, { exact: true }).waitFor({ state: "visible", timeout: 5000 });
       const readsBefore = scenarioState.historyReads.length;
       emitEvent({ type: "agent_end" });
@@ -407,7 +459,7 @@ async function runScenario(browser, origin, spec) {
       emitEvent({ type: "agent_start" });
       emitEvent({ type: "prompt_delivery", requestId: first.requestId,
         receipt: { status: "committed", entryId: "user-entry-1" } });
-      await waitForSse(page, "prompt_delivery");
+      await waitForEvent(page, "prompt_delivery");
       const readsBefore = scenarioState.historyReads.length;
       emitEvent({ type: "agent_end" });
       await waitForHistoryAfter(page, scenarioState, readsBefore, spec.name);

@@ -3,11 +3,13 @@ import tempfile
 import threading
 import unittest
 import uuid
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bridge.clients.codex.standalone import StandaloneBridge
+from bridge.features.workspace.workspace import Workspace
 
 
 class StandaloneWorkspaceTests(unittest.TestCase):
@@ -138,6 +140,47 @@ class StandaloneWorkspaceTests(unittest.TestCase):
             bridge.create_chat(
                 "local|test", "逃逸聊天", req_id, cwd=tempfile.gettempdir()
             )
+
+    def test_workspace_info_returns_safe_high_precision_file_fingerprint(self):
+        workspace = Workspace(self.ws_root)
+        file_path = self.ws_root / "watched.txt"
+        file_path.write_bytes(b"same-size-a")
+
+        first = workspace.info(file_path.name)
+        self.assertEqual(first["kind"], "file")
+        self.assertEqual(first["size"], len(b"same-size-a"))
+        self.assertEqual(first["sizeExact"], str(len(b"same-size-a")))
+        self.assertTrue(first["dev"].isdigit())
+        self.assertTrue(first["ino"].isdigit())
+        self.assertRegex(first["mtimeNs"], r"^-?\d+$")
+        self.assertRegex(first["ctimeNs"], r"^-?\d+$")
+
+        file_path.write_bytes(b"same-size-b")
+        os.utime(file_path, ns=(file_path.stat().st_atime_ns, int(first["mtimeNs"]) + 1_000_000_000))
+        second = workspace.info(file_path.name)
+        self.assertEqual(second["size"], first["size"])
+        self.assertNotEqual(second["mtimeNs"], first["mtimeNs"])
+
+        file_path.unlink()
+        self.assertEqual(workspace.info(file_path.name)["kind"], "missing")
+        file_path.write_bytes(b"same-size-c")
+        os.utime(file_path, ns=(file_path.stat().st_atime_ns, int(second["mtimeNs"]) + 1_000_000_000))
+        recreated = workspace.info(file_path.name)
+        self.assertEqual(recreated["kind"], "file")
+        self.assertNotEqual(recreated["mtimeNs"], second["mtimeNs"])
+
+        outside = self.ws_root.parent / (self.ws_root.name + "-outside.txt")
+        outside.write_text("outside", encoding="utf-8")
+        link = self.ws_root / "linked.txt"
+        try:
+            link.symlink_to(outside)
+            with self.assertRaises(OSError):
+                workspace.info(link.name)
+        finally:
+            outside.unlink(missing_ok=True)
+            link.unlink(missing_ok=True)
+        with self.assertRaises(PermissionError):
+            workspace.info("../outside.txt")
 
     def test_http_api_whitelist_enforcement(self):
         from bridge.api.httpd import Handler

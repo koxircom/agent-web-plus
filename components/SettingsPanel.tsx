@@ -28,6 +28,7 @@ import {
   CHAT_CONTENT_FONT_SIZE_MIN,
   useChatAppearance,
 } from "@/hooks/useChatAppearance";
+import { BrowserTabSettings } from "./BrowserTabSettings";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import {
@@ -113,6 +114,7 @@ export function preloadSettingsSection(section: SettingsSection) {
 }
 
 interface Props {
+  browserTabContext?: { cwd: string | null; engine: "pi" | "codex" };
   resolveReturnFocus?: (opener: Element) => Element | null;
   cwd: string | null;
   sessionId: string | null;
@@ -234,6 +236,7 @@ const subscribeSettingsPreferences = (listener: () => void) =>
 const readDashboardPreference = () => isSettingsPluginEnabled("general-settings-dashboard");
 
 function GeneralSettings({
+  browserTabContext,
   sessionId,
   onSessionReloaded,
   quoteSelectionEnabled,
@@ -247,6 +250,7 @@ function GeneralSettings({
   activateSection: (id: string) => boolean;
   availableSections: readonly string[];
   cwd: string | null;
+  browserTabContext?: Props["browserTabContext"];
 }) {
   const { locale, setLocale, supportedLocales, t } = useI18n();
   const { preference, setThemePreference } = useTheme();
@@ -406,6 +410,8 @@ function GeneralSettings({
               })}
             </div>
           </SettingsRow>
+
+          <BrowserTabSettings cwd={browserTabContext?.cwd ?? cwd} engine={browserTabContext?.engine ?? "pi"} />
         </div>
       </section>
 
@@ -617,6 +623,7 @@ function ExtensionSectionHost({ definition, ...props }: SettingsHostContextProps
 }
 
 export function SettingsPanel({
+  browserTabContext,
   resolveReturnFocus,
   cwd,
   sessionId,
@@ -1154,6 +1161,7 @@ export function SettingsPanel({
           {sectionHost(
             "general",
             <GeneralSettings
+              browserTabContext={browserTabContext}
               sessionId={sessionId}
               onSessionReloaded={onSessionReloaded}
               quoteSelectionEnabled={quoteSelectionEnabled}

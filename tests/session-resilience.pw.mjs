@@ -1,4 +1,4 @@
-// Real React hook + native EventSource, isolated HTTP fixture, no model calls.
+// Real React hook + native batch event polling, isolated HTTP fixture, no model calls.
 import http from 'node:http';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,14 +13,16 @@ const model={provider:'fixture',modelId:'fixture'};
 const rows=Array.from({length:2000},(_,i)=>({role:i%2?'assistant':'user',content:[{type:'text',text:`已保存轮次-${i}`}],timestamp:i+1}));
 const ids=rows.map((_,i)=>`entry-${i}`);
 let state;
-function reset(){state={streams:new Map(),reads:[],holds:[],holdSid:null,pageHold:false,pageRequests:[],running:false,count:2000,posts:[]};}
+function reset(){state={streams:new Map(),batches:new Map(),batchOpenCount:new Map(),failedBatchPolls:new Map(),historyDirty:false,reads:[],holds:[],holdSid:null,pageHold:false,pageRequests:[],running:false,count:2000,posts:[]};}
+function batchFor(sid){let batch=state.batches.get(sid);if(!batch){batch={epoch:`fixture-${sid}-${Date.now()}`,sequence:0,events:[],initialSent:false};state.batches.set(sid,batch);}return batch;}
 function snap(sid,start=1900,end=state.count){
   const msgs=rows.slice(start,end),entryIds=ids.slice(start,end);
   return{sessionId:sid,filePath:`/isolated/${sid}.jsonl`,info:{id:sid,path:`/isolated/${sid}.jsonl`,cwd:'/isolated',messageCount:end,name:sid},tree:[],treeFormat:'summary',leafId:ids[end-1],snapshotRevision:`${sid}-${end}`,promptEntryIds:{},totalActiveMs:0,context:{messages:msgs,entryIds,oldestEntryId:entryIds[0],hasMore:start>0,thinkingLevel:'off',model}};
 }
 function json(res,data){res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(data));}
-function emit(sid,event){for(const res of state.streams.get(sid)||[])if(!res.destroyed)res.write(`data: ${JSON.stringify(event)}\n\n`);}
-function cut(sid){for(const res of state.streams.get(sid)||[])res.destroy();}
+function emit(sid,event){const batch=batchFor(sid);batch.events.push({sequence:++batch.sequence,event});for(const res of state.streams.get(sid)||[])if(!res.destroyed)res.write(`data: ${JSON.stringify(event)}\n\n`);}
+function cut(sid){for(const res of state.streams.get(sid)||[])res.destroy();state.failedBatchPolls.set(sid,(state.failedBatchPolls.get(sid)||0)+1);}
+function hasEventConnection(sid){return(state.batchOpenCount.get(sid)||0)>0||(state.streams.get(sid)?.size||0)>0;}
 const bundle=await build({stdin:{resolveDir:root,loader:'tsx',contents:`
 import React,{useState} from 'react';import{createRoot}from'react-dom/client';
 import{useAgentSession}from'./hooks/useAgentSession';
@@ -29,7 +31,19 @@ function App(){const[sid,setSid]=useState('A');window.switchSession=setSid;retur
 const server=http.createServer(async(req,res)=>{
 const u=new URL(req.url,'http://fixture');if(u.pathname==='/bundle.js'){res.setHeader('content-type','text/javascript');return res.end(bundle.outputFiles[0].text);}
 const agent=u.pathname.match(/^\/api\/agent\/([^/]+)(\/events)?$/),session=u.pathname.match(/^\/api\/sessions\/([^/]+)(\/(context|state))?$/);
-if(agent?.[2]){const sid=agent[1];res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive'});if(!state.streams.has(sid))state.streams.set(sid,new Set());state.streams.get(sid).add(res);res.on('close',()=>state.streams.get(sid)?.delete(res));return res.write(`data: ${JSON.stringify({type:'connected',isStreaming:state.running,pendingExtensionUiIds:[]})}\n\n`);}
+if(agent?.[2]&&u.searchParams.get('format')==='batch'){
+const sid=agent[1],batch=batchFor(sid),failed=state.failedBatchPolls.get(sid)||0;
+if(failed>0){state.failedBatchPolls.set(sid,failed-1);res.writeHead(503,{'content-type':'application/json'});return res.end(JSON.stringify({error:'fixture transport interruption'}));}
+const cursor=u.searchParams.get('cursor'),separator=cursor?.lastIndexOf(':')??-1,epoch=separator>0?cursor.slice(0,separator):'',sequenceText=separator>0?cursor.slice(separator+1):'',sequence=Number(sequenceText);
+const valid=epoch===batch.epoch&&/^\d+$/.test(sequenceText)&&Number.isSafeInteger(sequence),initial=cursor===null,reset=cursor!==null&&!valid;
+const connected={type:'connected',isStreaming:state.running,pendingExtensionUiIds:[]};let events;
+if(initial&&!batch.initialSent){events=[connected];batch.initialSent=true;state.batchOpenCount.set(sid,(state.batchOpenCount.get(sid)||0)+1);}
+else if(valid){events=batch.events.filter(item=>item.sequence>sequence).map(item=>item.event);}
+else{events=[connected];if(initial)state.batchOpenCount.set(sid,(state.batchOpenCount.get(sid)||0)+1);}
+if(state.historyDirty){events.push({type:'session_history_changed'});state.historyDirty=false;}
+return json(res,{reset,epoch:batch.epoch,cursor:`${batch.epoch}:${batch.sequence}`,events});
+}
+if(agent?.[2]){const sid=agent[1];res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive'});if(!state.streams.has(sid))state.streams.set(sid,new Set());state.streams.get(sid).add(res);res.on('close',()=>state.streams.get(sid)?.delete(res));res.write(`data: ${JSON.stringify({type:'connected',isStreaming:state.running,pendingExtensionUiIds:[]})}\n\n`);if(state.historyDirty){state.historyDirty=false;res.write(`data: ${JSON.stringify({type:'session_history_changed'})}\n\n`);}return;}
 if(agent&&req.method==='POST'){let body='';for await(const c of req)body+=c;state.posts.push(JSON.parse(body));return json(res,{success:true,data:{},receipt:{status:'accepted'}});}
 if(agent||session?.[3]==='state')return json(res,{running:state.running,state:{isStreaming:state.running,isPromptRunning:false,thinkingLevel:'off',model,queuedMessages:{steering:[],followUp:[]}},uncommittedPrompts:[],pendingExtensionUiRequests:[]});
 if(session){const sid=session[1];if(session[3]==='context'){const before=u.searchParams.get('before');const end=ids.indexOf(before),start=Math.max(0,end-100);const body={context:snap(sid,start,end).context,before,tail:100};state.pageRequests.push({before,start,end});if(state.pageHold){state.holds.push({res,body,page:true});return;}return json(res,body);}
@@ -44,14 +58,15 @@ async function open(width,held=false,running=false){reset();state.running=runnin
 async function get(page){return page.evaluate(()=>window.fixture.state());}
 try{
 for(const width of[390,1280]){
-// A slow running-session bootstrap admits history before opening SSE. The
-// handshake must recover commits written while the initial snapshot was pending.
+// A slow running-session bootstrap admits history before opening batch polling.
+// The connected handshake must reconcile commits written while the snapshot was pending.
 let cold=await open(width,true,true);await wait(()=>state.holds.length>0,'cold snapshot held');
+assert.equal(state.batchOpenCount.get('A')||0,0,'batch polling waits for cold history hydration');
 assert.equal(state.streams.get('A')?.size||0,0,'SSE must not invalidate cold hydration');
 const initial=state.holds.splice(0);state.count=2002;
 rows[2000]={role:'assistant',content:[{type:'text',text:'加载期间完成的回答'}],timestamp:2001};ids[2000]='entry-2000';
 rows[2001]={role:'toolResult',toolCallId:'cold-tool',toolName:'read',content:[{type:'text',text:'加载期间工具结果'}],timestamp:2002};ids[2001]='entry-2001';
-emit('A',{type:'message_end',message:rows[2000]});emit('A',{type:'message_end',message:rows[2001]});
+ emit('A',{type:'message_end',entryId:'entry-2000',message:rows[2000]});emit('A',{type:'message_end',entryId:'entry-2001',message:rows[2001]});
 state.holdSid=null;for(const x of initial)json(x.res,x.body);
 await wait(async()=>(await get(cold.page)).ids.includes('entry-2001'),'cold handshake catches commits');
 let cv=await get(cold.page);assert.equal(cv.loading,false);assert.equal(cv.error,null);assert.equal(cv.running,true);
@@ -71,9 +86,9 @@ state.count=2001;await page.evaluate(()=>window.fixture.reload());await wait(asy
 state.pageHold=true;await page.evaluate(()=>void window.fixture.page());await wait(()=>state.holds.some(x=>x.page),'held page');state.count=2002;rows[2001]={role:'assistant',content:[{type:'text',text:'同步后最新回答'}],timestamp:2002};ids[2001]='entry-2001';await page.evaluate(()=>window.fixture.reload());await wait(async()=>(await get(page)).ids.includes('entry-2001'),'overlap tail');for(const x of state.holds.splice(0))json(x.res,x.body);await new Promise(r=>setTimeout(r,100));assert.equal((await get(page)).ids[0],'entry-1400','changed leaf rejects an obsolete page');state.pageHold=false;await page.evaluate(()=>window.fixture.page());await wait(async()=>(await get(page)).ids[0]==='entry-1300','retry current page');v=await get(page);assert.equal(v.ids.length,702);assert.equal(new Set(v.ids).size,702);assert.equal(v.ids.at(-1),'entry-2001');
 result.checks.push({width,scenario:'2000-entry-paging-refresh-race',passed:true,loaded:702});await ctx.close();
 // Native network stream drops, unseen completed turn is recovered by idle handshake.
-({ctx,page}=await open(width));await wait(()=>state.streams.get('A')?.size>0,'SSE open');state.holdSid='A';await page.evaluate(()=>void window.fixture.reload());await wait(()=>state.holds.length>0,'pre-disconnect read');const idleOld=state.holds.splice(0);cut('A');state.holdSid=null;state.count=2001;await wait(async()=>(await get(page)).ids.includes('entry-2000'),'idle reconnect',15000);for(const x of idleOld)json(x.res,x.body);await new Promise(r=>setTimeout(r,100));assert.equal((await get(page)).ids.filter(x=>x==='entry-2000').length,1);result.checks.push({width,scenario:'native-SSE-idle-reconnect',passed:true});await ctx.close();
+({ctx,page}=await open(width));await wait(()=>hasEventConnection('A'),'batch event connection');state.holdSid='A';await page.evaluate(()=>void window.fixture.reload());await wait(()=>state.holds.length>0,'pre-disconnect read');const idleOld=state.holds.splice(0);cut('A');state.holdSid=null;state.count=2001;state.historyDirty=true;await wait(async()=>(await get(page)).ids.includes('entry-2000'),'idle batch reconnect',15000);for(const x of idleOld)json(x.res,x.body);await new Promise(r=>setTimeout(r,100));assert.equal((await get(page)).ids.filter(x=>x==='entry-2000').length,1);result.checks.push({width,scenario:'batch-idle-reconnect',passed:true});await ctx.close();
 // A turn finishes while offline, another run is active at reconnect.
-({ctx,page}=await open(width));await wait(()=>state.streams.get('A')?.size>0,'SSE running');emit('A',{type:'agent_start'});await wait(async()=>(await get(page)).running,'run begins');state.holdSid='A';await page.evaluate(()=>void window.fixture.reload());await wait(()=>state.holds.length>0,'pre-running-disconnect read');const runningOld=state.holds.splice(0);cut('A');state.holdSid=null;state.count=2001;state.running=true;await wait(async()=>(await get(page)).ids.includes('entry-2000'),'running reconnect unseen committed turn',15000);for(const x of runningOld)json(x.res,x.body);await new Promise(r=>setTimeout(r,100));assert.equal((await get(page)).ids.at(-1),'entry-2000');assert.equal((await get(page)).running,true);result.checks.push({width,scenario:'native-SSE-running-reconnect',passed:true});await ctx.close();
+({ctx,page}=await open(width));await wait(()=>hasEventConnection('A'),'batch event connection with running session');emit('A',{type:'agent_start'});await wait(async()=>(await get(page)).running,'run begins');state.holdSid='A';await page.evaluate(()=>void window.fixture.reload());await wait(()=>state.holds.length>0,'pre-running-disconnect read');const runningOld=state.holds.splice(0);cut('A');state.holdSid=null;state.count=2001;state.running=true;state.historyDirty=true;await wait(async()=>(await get(page)).ids.includes('entry-2000'),'running batch reconnect unseen committed turn',15000);for(const x of runningOld)json(x.res,x.body);await new Promise(r=>setTimeout(r,100));assert.equal((await get(page)).ids.at(-1),'entry-2000');assert.equal((await get(page)).running,true);result.checks.push({width,scenario:'batch-running-reconnect',passed:true});await ctx.close();
 }
 assert.deepEqual(result.errors,[]);assert.equal(state.posts.length,0);result.status='passed';
 }catch(e){result.status='failed';result.failure=e.stack;console.error(e.stack);process.exitCode=1;}finally{result.at=new Date().toISOString();fs.writeFileSync(path.join(out,'receipt.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

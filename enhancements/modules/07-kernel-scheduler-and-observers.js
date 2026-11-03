@@ -167,7 +167,6 @@
               withMutationGuard(() => {
                 syncComposerMarkdownFormat();
                 syncComposerModes();
-                syncComposerQueuePanel();
                 syncComposerCleanPlaceholder();
               });
             }

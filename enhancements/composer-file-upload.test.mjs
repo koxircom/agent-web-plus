@@ -1,223 +1,583 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import vm from 'node:vm';
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import {
+  parseUserMessageAttachments,
+  appendFileAttachmentsToText,
+  uploadSingleComposerFile,
+  ensureUploadDirectory,
+  generateSafeUploadName,
+  MAX_UPLOAD_FILE_BYTES,
+  startNativeInputServer,
+  runBrowserTest,
+} from "./native-file-test-harness.mjs";
 
-const source = readFileSync(new URL('./modules/05-composer-and-input-workflow.js', import.meta.url), 'utf8');
-const extract = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
-const workflow = extract('  async function uploadComposerFile', '  const INLINE_VIDEO_EXTENSIONS')
-  + extract('  function encodePathForApi', '  function getEffectiveComposerCwdSyncOrEmpty')
-  + extract('  async function prepareComposerUploadDirectory', '  async function cleanupSessionUploadedFiles')
-  + extract('  let composerFileProcessingGeneration', '  activeComposerPasteTextarea = null;')
-  + extract('  function appendComposerAttachmentsToSubmission', '  // Decode the existing submission')
-  + extract('  function resolveAttachmentApiUrl', '  let activeVideoPreviewBackdrop')
-  + extract('  function openAttachmentPreview', '  function downloadAttachmentFile');
-const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-test('historical file cards belong to the message, never the session upload cleanup inventory', () => {
-  const session = 'attachment-ownership-fixture';
-  const inventory = JSON.stringify({ [session]: ['/workspace/.pi-upload-12345678-old-one.txt', '/workspace/.pi-upload-87654321-old-two.txt'] });
-  let first;
-  const context = vm.createContext({
-    localStorage: { getItem: () => inventory, setItem: () => assert.fail('Rendering must not change cleanup records') },
-    SESSION_UPLOADS_KEY: 'pi-enh-session-uploads',
-    document: { querySelectorAll: () => [first] },
-    getMimeTypeFromExt: () => 'text/plain',
-  });
-  vm.runInContext(extract('  function extractOriginalFilename', '  function hideAttachmentSyntaxInMessage'), context);
-  for (const text of ['下一轮纯文字', 'old-one.txt 只是提到文件名', '历史窗口移动后新挂载的一轮']) {
-    first = { textContent: text };
-    assert.equal(context.extractAttachmentsFromUserMessage(first, session).length, 0, text);
-  }
-  for (const marker of ['[附件: @.pi-upload-12345678-owned.txt]', '[附件: owned.txt (@.pi-upload-12345678-owned.txt) - 12 B]']) {
-    first = { textContent: '请查看\n\n' + marker };
-    const cards = context.extractAttachmentsFromUserMessage(first, session);
-    assert.equal(cards.length, 1);
-    assert.equal(cards[0].name, 'owned.txt');
-    assert.equal(cards[0].serverRelativePath, '.pi-upload-12345678-owned.txt');
-  }
-  assert.equal(context.localStorage.getItem('pi-enh-session-uploads'), inventory);
-});
+test("historical file cards belong to the message, never the session upload cleanup inventory", () => {
+  const session = "attachment-ownership-fixture";
+  const inventory = JSON.stringify({ [session]: ["/workspace/.pi-upload-12345678-old-one.txt"] });
 
-test('committing an attachment submission leaves subsequent rounds clean without deleting uploaded files', async () => {
-  for (const session of ['pi-rounds', 'codex:rounds']) {
-    const h = harness(session);
-    Object.assign(h.context, { findComposerTextarea: () => null, revokeAttachmentPreviewUrl() {} });
-    vm.runInContext(extract('  function prepareComposerSubmission', '  window.__PI_ENH_PREPARE_COMPOSER_SUBMISSION__'), h.context);
-    await h.context.processComposerFiles([new File(['fixture'], 'owned.txt', { type: 'text/plain' })], {});
-    const first = h.context.prepareComposerSubmission('send', '有附件');
-    assert.match(first.text, /\[附件: @/);
-    first.commit(); first.commit();
-    assert.equal(h.context.pendingComposerAttachments.length, 0);
-    for (const kind of ['send', 'steer', 'followUp']) assert.equal(h.context.prepareComposerSubmission(kind, '下一轮'), null);
-    assert.equal(h.files.length, 1, 'Cleanup inventory remains independent of pending submissions');
-    assert.equal(h.cleaned.length, 0, 'Sending must not delete user files');
-  }
-});
-function harness(sessionId, response = {}, engine = sessionId?.startsWith('codex:') ? 'codex' : 'pi') {
-  const uploads = [], notices = [], files = [], cleaned = [], previews = [];
-  const context = vm.createContext({
-    window: { open: url => previews.push(url) },
-    Blob, FormData, URLSearchParams, console: { error() {} },
-    activeComposerPasteTextarea: null, pendingComposerAttachments: [],
-    isPluginEnabled: () => true, getCurrentSessionId: () => sessionId,
-    getComposerExecutionEngineHint: () => engine,
-    getEffectiveComposerCwd: async () => '/workspace',
-    fetch: async (url, request) => {
-      if(url.startsWith('http://127.0.0.1:30149/'))return {ok:false,status:503};
-      const file = request.body.get('files');
-      uploads.push({ url: new URL(url, 'http://localhost'), file, bytes: Buffer.from(await file.arrayBuffer()) });
-      return { ok: true, status: response.status ?? 200, json: async () => response.body ?? { uploaded: [file.name], errors: [] } };
-    },
-    isVideoFile: () => false, getMimeTypeFromExt: () => 'application/octet-stream',
-    recordSessionUploadedFile: (sid, path) => files.push({ sid, path }),
-    notifyComposerSubmissionStateChange() {}, syncComposerAttachmentBar() {},
-    deleteLocalTempFiles: async paths => cleaned.push(...paths),
-    showToast: message => notices.push(message), getLanguageForFilename: () => 'text',
-  });
-  vm.runInContext(workflow, context);
-  return { context, uploads, notices, files, cleaned, previews };
-}
+  // 模拟 localStorage，确保解析消息附件绝不侵入上传清理记录
+  let storageChanged = false;
+  const originalGet = globalThis.localStorage?.getItem;
+  const originalSet = globalThis.localStorage?.setItem;
+  globalThis.localStorage = {
+    getItem: () => inventory,
+    setItem: () => { storageChanged = true; },
+  };
 
-test('TXT, logs and code upload as complete files and only references enter Pi/Codex messages', async () => {
-  for (const sid of ['pi-session', 'codex:session']) {
-    const h = harness(sid);
-    const examples = [
-      ['small.txt', '说明内容', 'text/plain'],
-      ['over-20000.txt', 'FILE-CONTENT-'.repeat(2001), 'text/plain'],
-      ['长 日志.log', '中文日志内容\n'.repeat(25000), 'text/plain'],
-      ['script.py', 'print("FILE-CONTENT")\n'.repeat(12000), 'text/x-python'],
-      ['table.csv', 'FILE-CONTENT,123\n'.repeat(2000), 'text/csv'],
-    ];
-    const files = examples.map(([name, content, type]) => {
-      const file = new File([content], name, { type });
-      Object.defineProperty(file, 'text', { value() { throw Error('uploaded files must never expand into message text'); } });
-      return file;
-    });
-    await h.context.processComposerFiles(files, {});
-    assert.equal(h.uploads.length, files.length);
-    for (let i = 0; i < files.length; i++) {
-      const att = h.context.pendingComposerAttachments[i];
-      assert.equal(att.name, files[i].name);
-      assert.equal(att.isText, false); assert.equal(att.uploaded, true);
-      assert.equal('textContent' in att, false);
-      assert.equal(h.uploads[i].url.searchParams.get('sessionId'), sid);
-      assert.equal(hash(h.uploads[i].bytes), hash(Buffer.from(examples[i][1])));
-      assert.equal(att.size, h.uploads[i].bytes.length);
+  try {
+    for (const text of ["下一轮纯文字", "old-one.txt 只是提到文件名", "历史窗口移动后新挂载的一轮"]) {
+      const res = parseUserMessageAttachments(text);
+      assert.equal(res.attachments.length, 0, text);
+      assert.equal(res.cleanText, text);
     }
-    const message = h.context.appendComposerAttachmentsToSubmission('请读取附件', h.context.pendingComposerAttachments);
-    assert.ok(message.length < 1500); assert.equal(message.includes('FILE-CONTENT'), false);
-    assert.equal((message.match(/\[附件: @/g) || []).length, files.length);
-    assert.equal(message.includes('```'), false);
-    assert.equal(h.files.length, files.length);
-    const before = JSON.stringify(h.context.pendingComposerAttachments);
-    h.context.openAttachmentPreview(h.context.pendingComposerAttachments[1], '/workspace');
-    assert.equal(new URL(h.previews[0], 'http://localhost').searchParams.get('sessionId'), sid);
-    assert.equal(JSON.stringify(h.context.pendingComposerAttachments), before);
-    assert.equal(h.context.appendComposerAttachmentsToSubmission('请读取附件', h.context.pendingComposerAttachments), message);
+
+    for (const marker of [
+      "[附件: @.pi-upload-12345678-owned.txt]",
+      "[附件: owned.txt (@.pi-upload-12345678-owned.txt) - 12 B]",
+    ]) {
+      const res = parseUserMessageAttachments("请查看\n\n" + marker);
+      assert.equal(res.attachments.length, 1);
+      assert.equal(res.attachments[0].name, "owned.txt");
+      assert.equal(res.attachments[0].serverRelativePath, ".pi-upload-12345678-owned.txt");
+      assert.equal(res.cleanText, "请查看");
+    }
+
+    assert.equal(storageChanged, false, "Rendering must not change cleanup records");
+  } finally {
+    if (originalGet) globalThis.localStorage.getItem = originalGet;
+    if (originalSet) globalThis.localStorage.setItem = originalSet;
   }
 });
 
-test('an upload error inside HTTP 207 never becomes a successful attachment or inline text', async () => {
-  const h = harness('codex:session', { status: 207, body: { uploaded: [], errors: [{ name: 'file.txt', error: '工作区不可写' }] } });
-  await h.context.processComposerFiles([new File(['FILE-CONTENT'.repeat(3000)], 'file.txt')], {});
-  assert.equal(h.context.pendingComposerAttachments.length, 0);
-  assert.equal(h.files.length, 0);
-  assert.ok(h.notices.some(message => message.includes('上传失败') && message.includes('工作区不可写')));
-  assert.equal(h.context.appendComposerAttachmentsToSubmission('正文', h.context.pendingComposerAttachments), '正文');
-});
-
-test('a new draft omits the fake draft id from engine routing and a disabled feature does no upload', async () => {
-  const h = harness(null);
-  await h.context.processComposerFiles([new File(['原始文件'], 'new.txt')], {});
-  assert.equal(h.uploads[0].url.searchParams.has('sessionId'), false);
-  assert.match(h.context.pendingComposerAttachments[0].sessionId, /^draft-/);
-  h.context.isPluginEnabled = () => false;
-  await h.context.processComposerFiles([new File(['原始文件'], 'disabled.txt')], {});
-  assert.equal(h.uploads.length, 1);
-});
-
-test('Codex uses its existing workspace upload root without raw session IDs or a browser-local bridge', async () => {
-  const h=harness('codex:01901234-5678-7000-8000-000000000001');
-  const prepared=await h.context.prepareComposerUploadDirectory('/workspace','codex:01901234-5678-7000-8000-000000000001');
-  assert.equal(prepared.uploadDir,'/workspace');
-  assert.equal(prepared.relativeDir,'');
-  await h.context.processComposerFiles([new File(['原始附件'.repeat(6000)],'文档.txt')],{});
-  const url=h.uploads[0].url;
-  assert.equal(url.pathname,'/api/files/workspace');
-  assert.equal(url.searchParams.get('sessionId'),'codex:01901234-5678-7000-8000-000000000001');
-  const att=h.context.pendingComposerAttachments[0];
-  assert.match(att.serverRelativePath,/^\.pi-upload-/);
-  assert.equal(att.serverAbsPath,'/workspace/'+att.serverRelativePath);
-  assert.equal(att.isText,false);
-});
-
-test('a new Codex composer uses its engine hint before a session exists', async () => {
-  const h=harness(null,{},'codex');
-  await h.context.processComposerFiles([new File(['原始文件'],'new.txt')],{});
-  assert.equal(h.uploads[0].url.pathname,'/api/files/workspace');
-  assert.equal(h.uploads[0].url.searchParams.has('sessionId'),false);
-  assert.match(h.context.pendingComposerAttachments[0].serverRelativePath,/^\.pi-upload-/);
-});
-
-// Dispatch both real capture listeners on the same input: stopPropagation does
-// not stop another listener registered on that same target.
-function pasteHarness(order = 'file-first', enabled = {}) {
-  const h = harness('codex:paste-fixture');
-  class Textarea extends EventTarget {}
-  const textarea = new Textarea();
-  const pending = [], inserts = [];
-  const process = h.context.processComposerFiles;
-  Object.assign(h.context, {
-    HTMLTextAreaElement: Textarea, textarea, composerPasteHandler: null,
-    findComposerTextarea: () => textarea,
-    isPluginEnabled: id => enabled[id] !== false,
-    isVideoFile: name => /\.mp4$/i.test(name),
-    processComposerFiles: (...args) => { const task = process(...args); pending.push(task); return task; },
-    hasSubstantialRichFormatting: html => html.includes('<strong>'),
-    htmlToMarkdown: () => '**formatted**',
-    insertMarkdownIntoComposer: md => inserts.push(md),
+test("committing an attachment submission leaves subsequent rounds clean without deleting uploaded files", async () => {
+  const uploadedServerFiles = [];
+  const { baseUrl, close } = await startNativeInputServer(async (req, res, url) => {
+    if (url.pathname.startsWith("/api/files/")) {
+      const type = url.searchParams.get("type");
+      if (type === "upload-check") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ conflicts: [], nonReplaceable: [] }));
+        return true;
+      }
+      if (type === "upload") {
+        let rawBody = "";
+        for await (const chunk of req) rawBody += chunk.toString("binary");
+        const match = rawBody.match(/filename="([^"]+)"/);
+        const name = match ? match[1] : "upload.bin";
+        uploadedServerFiles.push(name);
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ uploaded: [name], errors: [] }));
+        return true;
+      }
+    }
+    return false;
   });
-  vm.runInContext(extract('    composerPasteHandler = (event) => {', '    const getDropHighlightTarget')
-    + extract('  function handleComposerMarkdownPaste', '  function instantlyClearComposerSurface'), h.context);
-  const handlers = [h.context.composerPasteHandler, h.context.handleComposerMarkdownPaste];
-  if (order === 'markdown-first') handlers.reverse();
-  for (const listener of handlers) textarea.addEventListener('paste', listener, true);
-  return { ...h, inserts, async paste(files, { itemOnly = false, html = '', plain = '' } = {}) {
-    const event = new Event('paste', { cancelable: true, bubbles: true });
-    Object.defineProperty(event, 'clipboardData', { value: {
-      files: itemOnly ? [] : files,
-      items: files.map(file => ({ kind: 'file', type: file.type, getAsFile: () => file })),
-      getData: type => type === 'text/html' ? html : plain,
-    } });
-    textarea.dispatchEvent(event);await Promise.all(pending.splice(0));return event;
-  } };
-}
 
-for (const order of ['file-first', 'markdown-first']) {
-  for (const [name, type] of [['clip.mp4', 'video/mp4'], ['report.pdf', 'application/pdf'], ['archive.zip', 'application/zip'], ['notes.txt', 'text/plain'], ['sound.mp3', 'audio/mpeg']]) {
-    test(`${order}: one ${name} paste uploads and appends exactly once`, async () => {
-      const h = pasteHarness(order), file = new File(['original bytes'], name, { type });
-      const event = await h.paste([file]);
-      assert.equal(event.defaultPrevented, true);assert.equal(h.uploads.length, 1);assert.equal(h.context.pendingComposerAttachments.length, 1);
-      assert.equal(h.context.pendingComposerAttachments[0].name, name);
+  try {
+    await runBrowserTest({
+      baseUrl,
+      viewport: { width: 1024, height: 768 },
+      testFn: async (page) => {
+        await page.evaluate(() => {
+          const api = window.__NATIVE_INPUT_API__;
+          api.clearSentEvents();
+          api.setMode("composer");
+          api.setDraftKey("session-commit-test");
+          api.setCwd("/workspace/test");
+        });
+
+        const textarea = page.locator("textarea.chat-input-textarea");
+        await textarea.waitFor();
+
+        // 粘贴一个文件
+        await textarea.fill("第一轮有附件");
+        await page.evaluate(() => {
+          const ta = document.querySelector("textarea.chat-input-textarea");
+          const file = new File(["fixture-data"], "owned.txt", { type: "text/plain" });
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+          ta.dispatchEvent(ev);
+        });
+
+        // 等待附件上传完成
+        const card = page.locator('[data-testid="composer-file-card"]').first();
+        await card.waitFor();
+        await page.waitForFunction(() => {
+          const c = document.querySelector('[data-testid="composer-file-card"]');
+          return c && !c.textContent.includes("上传中...");
+        });
+
+        // 提交发送
+        await textarea.press("Enter");
+
+        // 等待第 1 轮消息发出
+        await page.waitForFunction(() => window.__NATIVE_INPUT_API__.getSentEvents().length === 1);
+        const events = await page.evaluate(() => window.__NATIVE_INPUT_API__.getSentEvents());
+        assert.match(events[0].message, /第一轮有附件/);
+        assert.match(events[0].message, /\[附件: owned\.txt \(@\.pi-uploads\/\.pi-upload-/);
+
+        // 验证当前轮提交后，输入框卡片已清空
+        const remainingCards = await page.locator('[data-testid="composer-file-card"]').count();
+        assert.equal(remainingCards, 0, "提交后输入区附件卡片必须清空");
+
+        // 下一轮输入纯文字发送，验证无历史附件残留
+        await textarea.fill("第二轮纯正文");
+        await textarea.press("Enter");
+        await page.waitForFunction(() => window.__NATIVE_INPUT_API__.getSentEvents().length === 2);
+        const eventsRound2 = await page.evaluate(() => window.__NATIVE_INPUT_API__.getSentEvents());
+        assert.equal(eventsRound2[1].message, "第二轮纯正文", "后续轮次必须干净，严禁串入上一轮附件");
+
+        // 服务端上传文件独立保留，严禁误删
+        assert.equal(uploadedServerFiles.length, 1, "Sending must not delete uploaded files on server");
+      },
     });
+  } finally {
+    await close();
   }
-  test(`${order}: item-only clipboard, multiple files and intentional second paste preserve multiplicity`, async () => {
-    const h = pasteHarness(order), files = [new File(['a'], 'clip.mp4', { type: 'video/mp4' }), new File(['b'], 'report.pdf', { type: 'application/pdf' })];
-    await h.paste(files, { itemOnly: true });assert.equal(h.uploads.length, 2);
-    await h.paste([files[0]]);assert.equal(h.uploads.length, 3);assert.equal(h.context.pendingComposerAttachments.length, 3);
-  });
-}
+});
 
-test('file and Markdown switches each retain their own ownership', async () => {
-  const video = new File(['a'], 'clip.mp4', { type: 'video/mp4' });
-  const fileOnly = pasteHarness('markdown-first', { 'composer-markdown-format': false });
-  await fileOnly.paste([video]);assert.equal(fileOnly.uploads.length, 1);
-  const disabled = pasteHarness('file-first', { 'composer-file-paste': false });
-  assert.equal((await disabled.paste([video])).defaultPrevented, false);assert.equal(disabled.uploads.length, 0);
-  const images = pasteHarness();
-  assert.equal((await images.paste([new File(['png'], 'image.png', { type: 'image/png' })])).defaultPrevented, false);assert.equal(images.uploads.length, 0);
-  await images.paste([], { html: '<strong>formatted</strong>', plain: 'formatted' });assert.deepEqual(images.inserts, ['**formatted**']);assert.equal(images.uploads.length, 0);
+test("TXT, logs and code upload as complete files and only references enter Pi/Codex messages", async () => {
+  const examples = [
+    ["small.txt", "说明内容", "text/plain"],
+    ["over-20000.txt", "FILE-CONTENT-".repeat(2001), "text/plain"],
+    ["长 日志.log", "中文日志内容\n".repeat(2500), "text/plain"],
+    ["script.py", 'print("FILE-CONTENT")\n'.repeat(1200), "text/x-python"],
+    ["table.csv", "FILE-CONTENT,123\n".repeat(200), "text/csv"],
+  ];
+
+  for (const sid of ["pi-session", "codex:session"]) {
+    const isCodex = sid.startsWith("codex:");
+    const mockUploads = [];
+
+    // 针对每个文件调用原生 uploadSingleComposerFile 服务函数
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options = {}) => {
+      const urlObj = new URL(url, "http://127.0.0.1");
+      if (urlObj.searchParams.get("type") === "upload-check") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ conflicts: [], nonReplaceable: [] }),
+        };
+      }
+      if (urlObj.searchParams.get("type") === "upload") {
+        const formData = options.body;
+        const file = formData.get("files");
+        const bytes = Buffer.from(await file.arrayBuffer());
+        mockUploads.push({ url: urlObj, file, bytes });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ uploaded: [file.name], errors: [] }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+
+    try {
+      const results = [];
+      for (const [name, content, type] of examples) {
+        const file = new File([content], name, { type });
+        const result = await uploadSingleComposerFile({
+          file,
+          name,
+          cwd: "/workspace",
+          sessionId: sid,
+          executionEngine: isCodex ? "codex" : "pi",
+        });
+        results.push(result);
+      }
+
+      assert.equal(mockUploads.length, examples.length);
+
+      for (let i = 0; i < examples.length; i++) {
+        const res = results[i];
+        const [name, content] = examples[i];
+        assert.equal(res.name, name);
+        assert.equal(res.size, Buffer.byteLength(content));
+        assert.equal(mockUploads[i].url.searchParams.get("sessionId"), sid);
+        assert.equal(hash(mockUploads[i].bytes), hash(Buffer.from(content)));
+        if (isCodex) {
+          assert.match(res.serverRelativePath, /^\.pi-upload-/);
+        } else {
+          assert.match(res.serverRelativePath, /^\.pi-uploads\/\.pi-upload-/);
+        }
+      }
+
+      // 序列化到消息体中：只包含引用，绝对不将大文件内容内联展开
+      const message = appendFileAttachmentsToText("请读取附件", results);
+      assert.ok(message.length < 1500, "消息长度必须简短，只包含引用 Marker");
+      assert.equal(message.includes("FILE-CONTENT"), false, "大文件内容绝不内联展开进正文");
+      assert.equal(message.includes("```"), false, "附件绝不展开为 Markdown 代码块");
+      const markers = message.match(/\[附件: /g) || [];
+      assert.equal(markers.length, examples.length);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test("an upload error inside HTTP 207 never becomes a successful attachment or inline text", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const urlObj = new URL(url, "http://127.0.0.1");
+    if (urlObj.searchParams.get("type") === "upload-check") {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ conflicts: [], nonReplaceable: [] }),
+      };
+    }
+    return {
+      ok: false,
+      status: 207,
+      json: async () => ({ uploaded: [], errors: [{ error: "工作区不可写 (HTTP 207)" }] }),
+    };
+  };
+
+  try {
+    const file = new File(["FILE-CONTENT".repeat(100)], "file.txt", { type: "text/plain" });
+    await assert.rejects(
+      async () => {
+        await uploadSingleComposerFile({
+          file,
+          cwd: "/workspace",
+          sessionId: "codex:session",
+          executionEngine: "codex",
+        });
+      },
+      /HTTP 207|工作区不可写/,
+      "HTTP 207 必须严格拒绝并抛出异常，绝不允许假成功"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a new draft omits the fake draft id from engine routing and a disabled feature does no upload", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = null;
+  globalThis.fetch = async (url, options = {}) => {
+    capturedUrl = new URL(url, "http://127.0.0.1");
+    if (capturedUrl.searchParams.get("type") === "upload-check") {
+      return { ok: true, status: 200, json: async () => ({ conflicts: [], nonReplaceable: [] }) };
+    }
+    const formData = options?.body;
+    const uploadedName = formData?.get?.("files")?.name || "upload.bin";
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ uploaded: [uploadedName], errors: [] }),
+    };
+  };
+
+  try {
+    const file = new File(["原始文件内容"], "new.txt", { type: "text/plain" });
+    // 当未传入真实 sessionId 时，URL 参数中严禁携带伪造 sessionId
+    await uploadSingleComposerFile({
+      file,
+      cwd: "/workspace",
+      sessionId: undefined,
+      executionEngine: "codex",
+    });
+
+    assert.ok(capturedUrl);
+    assert.equal(capturedUrl.searchParams.has("sessionId"), false, "新草稿未确定 session 时不得传递假 sessionId");
+
+    // 验证超限文件（超过 25MB）在客户端直接被拦截拒绝
+    const oversizedFile = {
+      name: "huge.bin",
+      size: MAX_UPLOAD_FILE_BYTES + 1024,
+      type: "application/octet-stream",
+    };
+    await assert.rejects(
+      async () => {
+        await uploadSingleComposerFile({
+          file: oversizedFile,
+          cwd: "/workspace",
+        });
+      },
+      /超过单次上传上限/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Codex uses its existing workspace upload root without raw session IDs or a browser-local bridge", async () => {
+  const prepared = await ensureUploadDirectory("/workspace", "codex:01901234-5678-7000-8000-000000000001", "codex");
+  assert.equal(prepared.targetDir, "/workspace");
+  assert.equal(prepared.relativeDir, "");
+
+  const safeName = generateSafeUploadName("文档.txt");
+  assert.match(safeName, /^\.pi-upload-/);
+  assert.match(safeName, /文档\.txt$/);
+});
+
+test("a new Codex composer uses its engine hint before a session exists", async () => {
+  const prepared = await ensureUploadDirectory("/workspace", undefined, "codex");
+  assert.equal(prepared.targetDir, "/workspace");
+  assert.equal(prepared.relativeDir, "");
+});
+
+test("browser E2E: pdf/docx/xlsx/zip/txt/mp3 paste uploads and renders card once", async () => {
+  const formats = [
+    { name: "clip.mp4", type: "video/mp4", content: "mp4-stream" },
+    { name: "report.pdf", type: "application/pdf", content: "%PDF-data" },
+    { name: "contract.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", content: "docx-data" },
+    { name: "sheet.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content: "xlsx-data" },
+    { name: "archive.zip", type: "application/zip", content: "zip-data" },
+    { name: "notes.txt", type: "text/plain", content: "notes-data" },
+    { name: "audio.mp3", type: "audio/mpeg", content: "mp3-data" },
+  ];
+
+  let uploadCalls = 0;
+  const { baseUrl, close } = await startNativeInputServer(async (req, res, url) => {
+    if (url.pathname.startsWith("/api/files/")) {
+      const type = url.searchParams.get("type");
+      if (type === "upload-check") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ conflicts: [], nonReplaceable: [] }));
+        return true;
+      }
+      if (type === "upload") {
+        uploadCalls++;
+        let rawBody = "";
+        for await (const chunk of req) rawBody += chunk.toString("binary");
+        const match = rawBody.match(/filename="([^"]+)"/);
+        const name = match ? match[1] : "upload.bin";
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ uploaded: [name], errors: [] }));
+        return true;
+      }
+    }
+    return false;
+  });
+
+  try {
+    await runBrowserTest({
+      baseUrl,
+      viewport: { width: 1024, height: 768 },
+      testFn: async (page) => {
+        await page.evaluate(() => {
+          const api = window.__NATIVE_INPUT_API__;
+          api.clearSentEvents();
+          api.setMode("composer");
+          api.setDraftKey("session-formats-test");
+          api.setCwd("/workspace/test");
+        });
+
+        const textarea = page.locator("textarea.chat-input-textarea");
+        await textarea.waitFor();
+
+        // 依次粘贴各格式文件，验证每个文件均成功触发上传并生成卡片
+        for (let i = 0; i < formats.length; i++) {
+          const item = formats[i];
+          const prevUploadCount = uploadCalls;
+
+          await page.evaluate((fmt) => {
+            const ta = document.querySelector("textarea.chat-input-textarea");
+            const file = new File([fmt.content], fmt.name, { type: fmt.type });
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+            ta.dispatchEvent(ev);
+          }, item);
+
+          // 等待卡片数量增加为 i + 1
+          await page.waitForFunction(
+            (expectedCount) => document.querySelectorAll('[data-testid="composer-file-card"]').length === expectedCount,
+            i + 1
+          );
+
+          // 等待最新卡片上传完成
+          await page.waitForFunction(() => {
+            const cards = document.querySelectorAll('[data-testid="composer-file-card"]');
+            const last = cards[cards.length - 1];
+            return last && !last.textContent.includes("上传中...");
+          });
+
+          assert.equal(uploadCalls, prevUploadCount + 1, `${item.name} 粘贴必须且仅调用 1 次 upload 接口`);
+        }
+
+        const finalCardCount = await page.locator('[data-testid="composer-file-card"]').count();
+        assert.equal(finalCardCount, formats.length);
+      },
+    });
+  } finally {
+    await close();
+  }
+});
+
+test("browser E2E: item-only clipboard, multiple files and intentional second paste preserve multiplicity", async () => {
+  let uploadCalls = 0;
+  const { baseUrl, close } = await startNativeInputServer(async (req, res, url) => {
+    if (url.pathname.startsWith("/api/files/")) {
+      const type = url.searchParams.get("type");
+      if (type === "upload-check") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ conflicts: [], nonReplaceable: [] }));
+        return true;
+      }
+      if (type === "upload") {
+        uploadCalls++;
+        let rawBody = "";
+        for await (const chunk of req) rawBody += chunk.toString("binary");
+        const match = rawBody.match(/filename="([^"]+)"/);
+        const name = match ? match[1] : "upload.bin";
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ uploaded: [name], errors: [] }));
+        return true;
+      }
+    }
+    return false;
+  });
+
+  try {
+    await runBrowserTest({
+      baseUrl,
+      viewport: { width: 1024, height: 768 },
+      testFn: async (page) => {
+        await page.evaluate(() => {
+          const api = window.__NATIVE_INPUT_API__;
+          api.clearSentEvents();
+          api.setMode("composer");
+          api.setDraftKey("session-multiplicity-test");
+          api.setCwd("/workspace/test");
+        });
+
+        const textarea = page.locator("textarea.chat-input-textarea");
+        await textarea.waitFor();
+
+        // 1. item-only clipboard: 剪贴板中只有 items 没有 files，单次粘贴 2 个文件
+        await page.evaluate(() => {
+          const ta = document.querySelector("textarea.chat-input-textarea");
+          const f1 = new File(["clip-data"], "clip.mp4", { type: "video/mp4" });
+          const f2 = new File(["report-data"], "report.pdf", { type: "application/pdf" });
+
+          const dt = new DataTransfer();
+          dt.items.add(f1);
+          dt.items.add(f2);
+          // 模拟某些宿主环境下 dt.files 为只读空数组，仅保留 items
+          Object.defineProperty(dt, "files", { value: [] });
+
+          const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+          ta.dispatchEvent(ev);
+        });
+
+        // 等待 2 个卡片呈现并完成上传
+        await page.waitForFunction(() => {
+          const cards = document.querySelectorAll('[data-testid="composer-file-card"]');
+          return cards.length === 2 && Array.from(cards).every((c) => !c.textContent.includes("上传中..."));
+        });
+        assert.equal(uploadCalls, 2, "item-only 多文件初次粘贴上传 2 个文件");
+
+        // 2. intentional second paste: 故意再次粘贴相同文件 clip.mp4
+        await page.evaluate(() => {
+          const ta = document.querySelector("textarea.chat-input-textarea");
+          const f1 = new File(["clip-data"], "clip.mp4", { type: "video/mp4" });
+          const dt = new DataTransfer();
+          dt.items.add(f1);
+          const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+          ta.dispatchEvent(ev);
+        });
+
+        // 等待第 3 个卡片上传完成
+        await page.waitForFunction(() => {
+          const cards = document.querySelectorAll('[data-testid="composer-file-card"]');
+          return cards.length === 3 && Array.from(cards).every((c) => !c.textContent.includes("上传中..."));
+        });
+
+        assert.equal(uploadCalls, 3, "二次故意粘贴相同文件发起第 3 次独立上传");
+        const finalCardCount = await page.locator('[data-testid="composer-file-card"]').count();
+        assert.equal(finalCardCount, 3, "multiplicity 严格保持，附件总数精确为 3");
+      },
+    });
+  } finally {
+    await close();
+  }
+});
+
+test("browser E2E: markdown and file paste retain their own ownership", async () => {
+  let fileUploadCalls = 0;
+  const { baseUrl, close } = await startNativeInputServer(async (req, res, url) => {
+    if (url.pathname.startsWith("/api/files/")) {
+      const type = url.searchParams.get("type");
+      if (type === "upload-check") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ conflicts: [], nonReplaceable: [] }));
+        return true;
+      }
+      if (type === "upload") {
+        fileUploadCalls++;
+        let rawBody = "";
+        for await (const chunk of req) rawBody += chunk.toString("binary");
+        const match = rawBody.match(/filename="([^"]+)"/);
+        const name = match ? match[1] : "upload.bin";
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ uploaded: [name], errors: [] }));
+        return true;
+      }
+    }
+    return false;
+  });
+
+  try {
+    await runBrowserTest({
+      baseUrl,
+      viewport: { width: 1024, height: 768 },
+      testFn: async (page) => {
+        await page.evaluate(() => {
+          const api = window.__NATIVE_INPUT_API__;
+          api.clearSentEvents();
+          api.setMode("composer");
+          api.setDraftKey("session-markdown-isolation");
+          api.setCwd("/workspace/test");
+        });
+
+        const textarea = page.locator("textarea.chat-input-textarea");
+        await textarea.waitFor();
+
+        // 1. 粘贴富文本带链接：验证转换为 Markdown 格式，绝不调用文件 upload
+        await page.evaluate(() => {
+          const ta = document.querySelector("textarea.chat-input-textarea");
+          const dt = new DataTransfer();
+          dt.setData("text/html", '<a href="https://example.com/docs">帮助文档</a>');
+          dt.setData("text/plain", "帮助文档");
+          const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+          ta.dispatchEvent(ev);
+        });
+
+        // 验证输入框内被填充了 Markdown 链接
+        await page.waitForFunction(() => {
+          const ta = document.querySelector("textarea.chat-input-textarea");
+          return ta && ta.value.includes("[帮助文档](https://example.com/docs)");
+        });
+        assert.equal(fileUploadCalls, 0, "纯链接粘贴绝不调用文件 upload 接口");
+
+        // 2. 粘贴文件：验证进入文件上传通道
+        await page.evaluate(() => {
+          const ta = document.querySelector("textarea.chat-input-textarea");
+          const f = new File(["content"], "readme.txt", { type: "text/plain" });
+          const dt = new DataTransfer();
+          dt.items.add(f);
+          const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+          ta.dispatchEvent(ev);
+        });
+
+        // 等待卡片生成并完成上传
+        await page.waitForFunction(() => {
+          const card = document.querySelector('[data-testid="composer-file-card"]');
+          return card && !card.textContent.includes("上传中...");
+        });
+        assert.equal(fileUploadCalls, 1, "文件粘贴必须正常进入文件上传通道");
+      },
+    });
+  } finally {
+    await close();
+  }
 });

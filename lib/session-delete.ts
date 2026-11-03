@@ -9,7 +9,7 @@ import { sessionPathKey } from "./session-path";
 import { abortSubagent, getRpcSession, getRpcSessionInfos, forgetRpcProjectStatus } from "./rpc-manager";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
 import type { SessionEntry, SessionHeader, SessionInfo } from "./types";
-import { deletedPaths as tombstones, ensureSessionWriteGuardInstalled, sealAndDeleteSync } from "./usage-delete-guard";
+import { deletedPaths as tombstones, ensureSessionWriteGuardInstalled, sealAndDelete, sealAndDeleteSync } from "./usage-delete-guard";
 import { createSessionDeletionAudit, type SessionDeletionOrigin } from "./session-deletion-audit";
 
 type DeleteContext = { sessions: SessionInfo[]; knownPaths: Set<string>; directoryFiles: (dir: string) => Promise<string[]> };
@@ -436,7 +436,7 @@ async function executeDeleteSessions(ids: string[], origin: SessionDeletionOrigi
       }
     }
     // One ledger lock/worker for the entire batch; retain fingerprint verification and tombstones.
-    sealAndDeleteSync(persisted, confirm);
+    await sealAndDelete(persisted, confirm);
     for (const [id, path] of unpersisted) { tombstones.add(resolvePath(path)); confirm(id, path); }
   } catch (error) { deleteError = String(error); }
   if (targets.size > 0) invalidateSessionListCache();

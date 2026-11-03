@@ -11,6 +11,13 @@ const esbuild = load('esbuild');
 const { chromium } = load(process.env.COMPOSER_PLAYWRIGHT_MODULE || 'playwright');
 const root = fileURLToPath(new URL('..', import.meta.url));
 
+const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+let piPkgVersion = 'unknown';
+try {
+  const piPkg = JSON.parse(readFileSync(path.join(root, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), 'utf8'));
+  piPkgVersion = piPkg.version || 'unknown';
+} catch {}
+
 // Ensure screenshot directory exists
 const screenshotsDir = process.env.PI_CODEX_SYNC_ARTIFACT_DIR || path.join(process.cwd(), 'output', 'screenshots');
 mkdirSync(screenshotsDir, { recursive: true });
@@ -166,7 +173,11 @@ const bundle = await esbuild.build({
   write: false,
   format: 'iife',
   alias: { '@': root },
-  define: { 'process.env.NODE_ENV': '"production"' },
+  define: {
+    'process.env.NODE_ENV': '"production"',
+    'process.env.NEXT_PUBLIC_APP_VERSION': JSON.stringify(pkg.version),
+    'process.env.NEXT_PUBLIC_PI_VERSION': JSON.stringify(piPkgVersion),
+  },
 });
 
 // Load and concatenate real enhancement modules into bundle
@@ -448,7 +459,9 @@ try {
 
         const restoreBtn = page.locator('[data-action="restore-archived-session"]').first();
         if (await restoreBtn.isVisible()) {
+          const dispatched = page.waitForRequest(request => request.method() === 'PATCH' && request.url().includes('/api/sessions/') && request.postDataJSON()?.action === 'unarchive');
           await restoreBtn.click();
+          await dispatched;
           assert(
             writes.some(w => w.method === 'PATCH' && w.body.action === 'unarchive'),
             'Real PATCH action: unarchive must be dispatched'
