@@ -781,6 +781,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   return function isPluginFastActive(pluginId) {
     if (!Object.prototype.hasOwnProperty.call(metadata, pluginId)) return true;
     const info = metadata[pluginId];
+    if (info.alwaysOn) return true;
+    if (info.alwaysOff) return false;
     const raw = read("pi-enh-settings-v1");
     if (raw !== lastRaw) {
       lastRaw = raw;
@@ -803,7 +805,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   };
 })(function(key) {
     return typeof localStorage !== "undefined" && localStorage ? localStorage.getItem(key) : null;
-  }, {"stop-fast-response":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"model-scope-warning":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"collapsed-sidebar-session-title":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
+  }, {"stop-fast-response":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"general-settings-dashboard":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"model-generation-speed":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-duration":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"turn-number-indicator":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"task-tool-auto-collapse":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"tool-card-layout-stability":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-dispatch-cards":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"subagent-model-override":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"subagent-dispatch","moduleDefaultEnabled":true},"history-scroll-stability":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-scroll-restore":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-virtual-scroll":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"compaction-auto-collapse":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"pi-mail-auto-collapse":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"live-stopwatch":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"model-scope-warning":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"safety-performance","moduleDefaultEnabled":true},"quick-quote":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"selection-context","moduleDefaultEnabled":true},"settings-tab-shortcuts":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"context-menu":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"thinking-persistence":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"preference-memory","moduleDefaultEnabled":true},"enhancement-settings-archive":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"preference-memory","moduleDefaultEnabled":true},"chat-scrollbar":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"native-message-font":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"turn-usage-total":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"minimap-full-nav":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"esc-guard":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"safety-performance","moduleDefaultEnabled":true},"mobile-enter-newline":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-clean-placeholder":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"ask-user-web-native":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"project-status-indicator":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-sound":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"session-attention-desktop":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":false,"moduleId":"background-attention","moduleDefaultEnabled":true},"ask-user-batch-prototype":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":true,"moduleId":"ask-user-experience","moduleDefaultEnabled":true},"quick-action-buttons":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"empty-send-continue":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"scroll-to-bottom":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"local-path-launcher":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-integrity":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-history-order-guard":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-memory-cache":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"usage-cost-dashboard":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"cross-device-session-sync":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"code-block-scan-guard":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"safety-performance","moduleDefaultEnabled":true},"session-pin-archive":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-section-headers":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-model-label":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-item-compact":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-color":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-tags":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-odoo-addons":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-dblclick-rename":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-draft-cache":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-file-paste":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"session-search-shortcut":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"session-search-project-folding":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"mobile-swipe-drawer":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"collapsed-sidebar-session-title":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"composer-image-zoom":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"codex-composer-layout":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-model-reasoning-pill":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"running-model-switch":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-queue-panel":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-format-toggle":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-compact-button":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-tool-preset":{"defaultEnabled":false,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-markdown-format":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"composer-modes":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"at-mention-plugins":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"composer-workflow","moduleDefaultEnabled":true},"image-dblclick-preview":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"conversation-navigation","moduleDefaultEnabled":true},"session-panel-binding":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"file-panel-overlay-guard":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"client-crash-diagnostics":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"safety-performance","moduleDefaultEnabled":true},"streaming-thinking-guard":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"safety-performance","moduleDefaultEnabled":true},"notification-center":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"notification-management","moduleDefaultEnabled":true},"obsidian-markdown-viewer":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"excel-sheet-preview":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"workspace-picker-hover":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true},"session-batch-actions":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"session-sidebar","moduleDefaultEnabled":true},"pi-agent-update-notice":{"defaultEnabled":true,"alwaysOn":true,"alwaysOff":false,"moduleId":"task-insights","moduleDefaultEnabled":true},"pi-web-plus-branding":{"defaultEnabled":true,"alwaysOn":false,"alwaysOff":false,"moduleId":"local-workspace","moduleDefaultEnabled":true}});
 ;
 /**
  * Agent Web Plus Enhancements v4.3.4:
@@ -1237,6 +1239,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "消除停止与中断指令被后台 SSE 连接准备阻塞的延迟，直通发送 abort 请求，并提供正在停止即时反馈与网络去重。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "general-settings-dashboard",
@@ -1244,6 +1247,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "将设置弹窗“常规”面板优化为现代双列卡片仪表盘布局，消除右侧大片空白，并在页面维护模块增加一键重启 Agent Web Plus 服务功能。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "model-generation-speed",
@@ -1251,6 +1255,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "模型运行时实时显示供应商输出 Token/s，单步结束后保留平均速度，并在会话数据落盘后锁定精确值。", 
       category: "运行监控",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "turn-duration",
@@ -1258,6 +1263,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "任务完成后在消息底部显示精确的总耗时徽章（如 ⏱️ 3分29秒），鼠标悬浮或手机点击可查看排队、模型生成与工具调用的耗时拆解。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "turn-number-indicator",
@@ -1265,6 +1271,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "在每一轮用户消息下面的时间左边显示轮次序号（如 #1、#2），直观掌握对话轮次与上下文深度。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "task-tool-auto-collapse",
@@ -1272,6 +1279,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "任务处理、等待模型及工具调用期间保持全部过程展开；仅任务完成后自动折叠本轮过程（bash、wiki 等）。最终答复保持可见，工具卡片仍可按需手动展开。", 
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "tool-card-layout-stability",
@@ -1279,6 +1287,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "限制所有会话中工具调用卡片在聊天列内伸缩与截断长路径，并在移动端与桌面端保持工具卡片及思考胶囊 100% 全宽撑满与文字左对齐，根除居中悬挂或向右阶梯式偏移。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "subagent-dispatch-cards",
@@ -1286,6 +1295,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "隐藏旧式“调度子代理”正文播报，并在 Agent Web Plus 原生 subagent 折叠卡片中补充无图标模型名；保留原生耗时、展开箭头和交互。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "subagent-model-override",
@@ -1300,6 +1310,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "自动加载早期记录并保留阅读位置；打开已完成会话后若已在底部，后续正文、图片与缓存校验加载期间持续贴底，主动上滚立即停止；支持手机阻尼下拉、慢响应和超时重试提示。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-scroll-restore",
@@ -1315,6 +1326,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "采用现代浏览器硬件级 content-visibility 视口虚拟化技术：自动跳过视口外历史消息的排版与代码高亮，将数百轮长会话的首次渲染与切换耗时降低90%以上，彻底根除CPU主线程卡顿。",
       category: "性能优化",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "compaction-auto-collapse",
@@ -1336,6 +1348,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "任务运行中在会话内显示执行时长；标签页标题由统一状态管理，避免计时前缀闪烁。", 
       category: "运行监控",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "model-scope-warning",
@@ -1357,6 +1370,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "双击设置弹窗的任意选项卡，可快速将其添加到侧边栏左下角的快捷入口；再次双击可取消。",
       category: "快捷操作",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "context-menu",
@@ -1364,6 +1378,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "在左侧侧边栏会话列表上右键单击，弹出快捷菜单：复制会话 ID、文件路径、跨 Agent 接力提示词与工作目录。",
       category: "快捷操作",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "thinking-persistence",
@@ -1385,6 +1400,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "恢复并美化右侧对话内容的原生垂直滚动条，方便直观拖拽滑块与快速定位长会话。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "native-message-font",
@@ -1392,6 +1408,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "将助手 Markdown 正文恢复为 Agent Web Plus 原生 14px 排版；不改变消息底部的时间、Token 消耗和费用显示。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "turn-usage-total",
@@ -1399,6 +1416,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "自动按回合（Turn）累加该轮任务中所有工具调用与模型交互产生的真实 Token 及总费用，纠正原生界面仅显示单步零头的缺陷，并支持鼠标悬浮查看明细对比。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "minimap-full-nav",
@@ -1406,6 +1424,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "显示完整历史总轮数与绝对序号；支持按需向上加载更早历史、屏幕边缘点按/纵向拖拽快切及触屏右滑关闭；拖拽松手按最终触点落定，重新点击当前选中方块可收起导航。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "esc-guard",
@@ -1427,6 +1446,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "清空主输入框中冗长繁杂的占位提示词（如‘输入 / 使用命令，输入 @ 查找文件’），去除折行干扰，优化中文字体呈现，保持输入框纯净极简。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "ask-user-web-native",
@@ -1434,6 +1454,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "原生稳定问答卡片：先选择、再确认，选项说明直接可读，背景与补充意见按需展开；关闭后使用终端兼容视图。", 
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "project-status-indicator",
@@ -1441,6 +1462,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "精简标签页标题，移除冗余 Agent Web Plus 标识与跳动的计时秒数。运行中以蓝色小球 🔵 纯净指示，需要确认 🟠、错误 🔴、已完成 🟢 显示状态文字与对应颜色小球；多标签页一目了然。", 
       category: "运行监控",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-attention-sound",
@@ -1462,6 +1484,8 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "仅用于预览四题批量问答的自动下一题、上一题、复杂选项说明与汇总提交；不会向 Agent 提交任何答案。",
       category: "交互增强",
       defaultEnabled: false,
+      uiHidden: true,
+      alwaysOff: true,
     },
     {
       id: "quick-action-buttons",
@@ -1483,6 +1507,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "向上浏览历史消息离开底部时，在输入框上方浮现类似 Codex 的向下箭头圆钮，点击一键平滑滚动到最新消息。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "local-path-launcher",
@@ -1490,6 +1515,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "自动识别对话消息中的本地文件路径与 file:// 链接，在右侧快捷提供 📂 直接打开资源管理器与 📋 一键复制按钮。",
       category: "快捷操作",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-history-integrity",
@@ -1504,6 +1530,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "防止慢速历史请求覆盖已到达的最新流式消息，自动对齐消息版本并覆盖乱序并发旧响应。",
       category: "安全防护",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-memory-cache",
@@ -1518,6 +1545,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "展示 Usage 服务端快照、角色模型拆分与费用非账单（SDK 记录），快捷键 Alt+U 随时唤起并支持一键穿透直达会话。",
       category: "运行监控",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "cross-device-session-sync",
@@ -1532,6 +1560,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "为新增的 pre/code 代码块增量添加禁止翻译与拼写检查属性，减少第三方文本扫描干扰；关闭时恢复原始属性。",
       category: "性能优化",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-pin-archive",
@@ -1539,6 +1568,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "在会话悬浮的更多菜单中置顶、标为未读或归档；置顶会话支持服务端清单跨浏览器统一读取；归档会话从主列表隐藏，可在设置中统一还原或删除；在已归档会话中布置新任务时自动唤醒恢复至列表。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-section-headers",
@@ -1546,6 +1576,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "模仿 Codex 桌面端，在左侧栏存在置顶会话时分别展示 Pinned 与 Recents 视觉分组小标题，清晰区隔置顶与常规会话。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-model-label",
@@ -1560,6 +1591,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "优化会话列表在手机浏览器与窄屏侧边栏的排版：手机端精简掉排不下的“多少条消息”，时间与标签强制单行防折行撑高，模型名称支持自适应省略截断，彻底避免挤压导致标题丢失与文字竖排问题。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-color",
@@ -1588,6 +1620,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "双击左侧会话列表中的任意会话即可直接进入重命名编辑输入框，按 Enter 保存，按 Escape 取消；编辑状态自动隐藏模型徽标并优化输入框宽度。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "composer-draft-cache",
@@ -1602,6 +1635,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "支持添加、粘贴（Ctrl+V）或拖拽图片、视频与各类文件：以附件卡片显示原始文件名、类型与大小；支持视频在线播放预览，并在会话进行中与历史复盘时在用户气泡顶部呈现高颜值附件卡片，隔离上传至 .pi-uploads/<会话>，支持一键预览与下载。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-search-shortcut",
@@ -1616,6 +1650,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "默认优先呈现本项目的匹配会话；其他项目与已归档的匹配会话默认折叠收起，清晰呈现匹配总数徽章，支持一键点击展开/收起。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "mobile-swipe-drawer",
@@ -1630,6 +1665,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "当侧边栏折叠时，在输入框底栏状态架显示当前会话标题，点击可快速展开会话列表。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "composer-image-zoom",
@@ -1637,6 +1673,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "点击输入框图片进入默认矩形标注；支持 Ctrl/Cmd+Z 30+ 次撤销，桌面滚轮与手机双指上下滑实时调节屏幕可见边框/画笔粗细。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "codex-composer-layout",
@@ -1644,6 +1681,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "编辑区与底栏统一网格，发送按键采用 Cursor 纯色圆形向上箭头 (↑)，模型居左、操作居右；停止按钮图标化，适配手机窄屏。", 
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "composer-model-reasoning-pill",
@@ -1651,6 +1689,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "将底栏的模型名称、思考深度与下拉箭头整合为 Cursor/Codex 风格的连贯圆角立体胶囊，保留各自原生选择菜单与切换行为。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "running-model-switch",
@@ -1658,6 +1697,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "任务执行期间保持模型选择器可用；切换后的模型由 Pi 原生 set_model 通道保存，并用于后续排队消息，不中断当前正在生成的回复。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "composer-queue-panel",
@@ -1665,6 +1705,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "排队消息独立显示在输入框上方，每条末尾提供转为引导的箭头。单条操作需服务端原子队列接口；旧后端保持安全禁用，不会清空再重发。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "composer-format-toggle",
@@ -1714,6 +1755,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "双击右侧文件预览、对话消息及页面中的任意图片，即可以全屏弹窗打开；支持滚轮缩放、拖拽平移、标注与全屏查看，复用图片查看器能力。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-panel-binding",
@@ -1721,6 +1763,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "右侧文件面板与当前会话深度绑定；切换会话时自动恢复该会话的面板开闭状态，避免上个会话打开的面板在其他会话中残留干扰。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "file-panel-overlay-guard",
@@ -1728,6 +1771,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "当打开右侧文件/预览窗口时，确保预览窗口位于最顶层，底部输入框与工具栏自动沉降在下层，彻底杜绝底部元素遮挡预览内容。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "client-crash-diagnostics",
@@ -1742,6 +1786,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "借鉴 Codex CLI 单例思考模型：当模型深度推理产生大量细碎空思考块（如 💡...）时，自动将其聚合为一个动态单例指示器并折叠多余空节点，防止数千个空灯泡刷屏及移动端 DOM 爆炸卡顿。",
       category: "安全防护",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "notification-center",
@@ -1749,6 +1794,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "按通知来源和级别控制站内提示、提示音及桌面通知，并保留最近通知历史供随时查看。",
       category: "偏好记忆",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "obsidian-markdown-viewer",
@@ -1756,6 +1802,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "打通群晖 NAS 与外部知识库路径读取权限，解决右侧面板 Access denied 问题；打开 Markdown 文件时默认呈现格式化预览，并提供便捷的源码/预览切换开关。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "excel-sheet-preview",
@@ -1763,6 +1810,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "在右侧文件面板中直接交互式预览 Excel（.xlsx / .xls / .csv）工作簿，支持多工作表标签切换、冻结表头、行列标尺与单元格搜索。",
       category: "显示增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "workspace-picker-hover",
@@ -1770,6 +1818,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "为侧边栏工作区/项目下拉菜单中的所有选项（历史路径、使用默认目录、自定义路径）添加平滑悬停与点击交互反馈，防止视觉上产生卡顿感。",
       category: "交互增强",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "session-batch-actions",
@@ -1777,6 +1826,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "支持在左侧会话列表进行鼠标多选、Shift 范围连续选择、全选并一键批量彻底删除会话。",
       category: "快捷操作",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "pi-agent-update-notice",
@@ -1784,6 +1834,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       desc: "实时检测上游官方 Pi Coding Agent (https://github.com/earendil-works/pi) 的版本发布。当有新版本时，在新建会话页面与设置面板中以轻量徽章形式醒目提示，并提供直达 Release 链接。",
       category: "运行监控",
       defaultEnabled: true,
+      alwaysOn: true,
     },
     {
       id: "pi-web-plus-branding",
@@ -1820,16 +1871,16 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   };
   const ENHANCEMENT_MODULES = [
     { id: "task-insights", name: "任务运行信息", desc: "集中管理任务耗时、速度和回合用量信息。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["model-generation-speed", "turn-duration", "turn-number-indicator", "live-stopwatch", "turn-usage-total", "usage-cost-dashboard", "pi-agent-update-notice"] },
-    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理过程折叠、工具卡片布局、滚动稳定、会话导航和回到底部工具。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
+    { id: "conversation-navigation", name: "对话阅读与导航", desc: "管理阅读位置、折叠偏好和会话导航参数。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["task-tool-auto-collapse", "tool-card-layout-stability", "subagent-dispatch-cards", "history-scroll-stability", "session-scroll-restore", "session-virtual-scroll", "compaction-auto-collapse", "pi-mail-auto-collapse", "chat-scrollbar", "native-message-font", "minimap-full-nav", "scroll-to-bottom", "image-dblclick-preview"] },
     { id: "subagent-dispatch", name: "子 Agent 调度", desc: "管理全部子任务统一使用的服务端模型；实际模型由服务端动态读取。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["subagent-model-override"] },
     { id: "selection-context", name: "划选引用与上下文", desc: "管理文本划选引用、注释与发送上下文。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["quick-quote"] },
-    { id: "session-sidebar", name: "会话列表增强", desc: "管理会话列表的快捷菜单、归档、标签、布局、颜色、快捷入口和搜索。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer", "collapsed-sidebar-session-title"] },
-    { id: "composer-workflow", name: "输入与附件增强", desc: "管理编辑器快捷操作、草稿、附件和移动端输入保护。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["stop-fast-response", "quick-action-buttons", "empty-send-continue", "composer-draft-cache", "composer-file-paste", "composer-image-zoom", "mobile-enter-newline", "composer-clean-placeholder", "codex-composer-layout", "composer-model-reasoning-pill", "composer-queue-panel", "running-model-switch", "composer-markdown-format", "composer-format-toggle", "composer-compact-button", "composer-tool-preset", "composer-modes", "at-mention-plugins"] },
+    { id: "session-sidebar", name: "会话列表增强", desc: "管理标签、颜色、模型显示和手势等偏好。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["context-menu", "session-pin-archive", "session-section-headers", "session-model-label", "session-item-compact", "session-color", "session-tags", "session-odoo-addons", "session-dblclick-rename", "session-search-shortcut", "session-search-project-folding", "session-batch-actions", "settings-tab-shortcuts", "mobile-swipe-drawer", "collapsed-sidebar-session-title"] },
+    { id: "composer-workflow", name: "输入与附件增强", desc: "管理快捷回复、输入方式和输入框按钮等偏好。", category: "交互增强", version: "1.0.0", defaultEnabled: true, features: ["stop-fast-response", "quick-action-buttons", "empty-send-continue", "composer-draft-cache", "composer-file-paste", "composer-image-zoom", "mobile-enter-newline", "composer-clean-placeholder", "codex-composer-layout", "composer-model-reasoning-pill", "composer-queue-panel", "running-model-switch", "composer-markdown-format", "composer-format-toggle", "composer-compact-button", "composer-tool-preset", "composer-modes", "at-mention-plugins"] },
     { id: "ask-user-experience", name: "ask_user 交互", desc: "管理网页原生问答选择器与批量原型预览。", category: "交互增强", version: "1.1.1", defaultEnabled: true, features: ["ask-user-web-native", "ask-user-batch-prototype"] },
-    { id: "background-attention", name: "后台会话提醒", desc: "管理跨项目状态、提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
+    { id: "background-attention", name: "后台会话提醒", desc: "管理提示音与桌面通知。", category: "运行监控", version: "1.0.0", defaultEnabled: true, features: ["project-status-indicator", "session-attention-sound", "session-attention-desktop"] },
     { id: "notification-management", name: "通知管理", desc: "管理所有站内通知、网页操作提示、提示音与桌面提醒，并查看通知历史。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["notification-center"] },
-    { id: "safety-performance", name: "安全与性能保护", desc: "管理误触保护、模型警告可见性和代码块扫描保护。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["model-scope-warning", "esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
-    { id: "local-workspace", name: "本地工作区工具", desc: "管理本地路径直达和会话缓存。", category: "快捷操作", version: "1.0.0", defaultEnabled: true, features: ["local-path-launcher", "obsidian-markdown-viewer", "excel-sheet-preview", "session-memory-cache", "session-history-integrity", "session-history-order-guard", "cross-device-session-sync", "session-panel-binding", "file-panel-overlay-guard", "general-settings-dashboard", "workspace-picker-hover", "pi-web-plus-branding"] },
+    { id: "safety-performance", name: "安全与性能保护", desc: "管理按键保护、模型提示和本地诊断。", category: "安全防护", version: "1.0.0", defaultEnabled: true, features: ["model-scope-warning", "esc-guard", "code-block-scan-guard", "streaming-thinking-guard", "client-crash-diagnostics"] },
+    { id: "local-workspace", name: "本地工作区工具", desc: "管理缓存、跨端同步、严格读取和外观偏好。", category: "快捷操作", version: "1.0.0", defaultEnabled: true, features: ["local-path-launcher", "obsidian-markdown-viewer", "excel-sheet-preview", "session-memory-cache", "session-history-integrity", "session-history-order-guard", "cross-device-session-sync", "session-panel-binding", "file-panel-overlay-guard", "general-settings-dashboard", "workspace-picker-hover", "pi-web-plus-branding"] },
     { id: "preference-memory", name: "偏好记忆", desc: "管理思考深度的跨会话记忆与浏览器增强设置归档。", category: "偏好记忆", version: "1.0.0", defaultEnabled: true, features: ["thinking-persistence", "enhancement-settings-archive"] },
   ];
   const ENHANCEMENT_MODULE_SETTINGS = {
@@ -2078,6 +2129,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     return ENHANCEMENT_MODULES.find((module) => module.features.includes(featureId)) || null;
   }
 
+  function getVisibleModuleFeatures(module) {
+    return module.features.map((id) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === id))
+      .filter((plugin) => plugin && !plugin.alwaysOn && !plugin.uiHidden);
+  }
+
+  function getVisibleEnhancementModules() {
+    return ENHANCEMENT_MODULES.filter((module) => getVisibleModuleFeatures(module).length || module.settings.length);
+  }
+
   function isModuleEnabled(moduleId) {
     const module = getEnhancementModule(moduleId);
     if (!module) return true;
@@ -2103,15 +2163,19 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function isPluginSelected(id) {
+    const plugin = ENHANCEMENT_PLUGINS.find((entry) => entry.id === id);
+    if (plugin?.alwaysOn) return true;
+    if (plugin?.alwaysOff) return false;
     return getEnhancementConfig().features[id]?.enabled === true;
   }
 
   function getModuleState(moduleId) {
     const module = getEnhancementModule(moduleId);
     if (!module) return null;
-    const selected = module.features.filter(isPluginSelected).length;
+    const features = getVisibleModuleFeatures(module);
+    const selected = features.filter((plugin) => isPluginSelected(plugin.id)).length;
     const active = isModuleEnabled(moduleId) ? selected : 0;
-    const total = module.features.length;
+    const total = features.length;
     const state = active === 0 ? "off" : active === total ? "on" : "partial";
     return { state, active, selected, total };
   }
@@ -2150,12 +2214,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function defaultFeatureEnabled(plugin) {
-    return plugin.defaultEnabled;
+    return !plugin.alwaysOff && (plugin.alwaysOn || plugin.defaultEnabled);
   }
 
   function isPluginEnabled(id) {
     const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === id);
     if (!plugin) return true;
+    if (plugin.alwaysOn) return true;
+    if (plugin.alwaysOff) return false;
     const module = getModuleForPlugin(id);
     if (module && !isModuleEnabled(module.id)) return false;
     const enabled = getEnhancementConfig().features[id]?.enabled;
@@ -2164,7 +2230,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function setPluginEnabled(id, enabled) {
     const plugin = ENHANCEMENT_PLUGINS.find((p) => p.id === id);
-    if (!plugin) return;
+    if (!plugin || plugin.alwaysOn || plugin.alwaysOff) return;
     const previous = isPluginEnabled(id);
     hasStoredEnhancementConfigInitially = true;
     const config = getEnhancementConfig();
@@ -40926,7 +40992,8 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
       const state = getModuleState(id);
       if (!state) continue;
       const enabled = isModuleEnabled(id);
-      const disabled = !enabled;
+      const module = getEnhancementModule(id);
+      const disabled = Boolean(module && getVisibleModuleFeatures(module).length && !enabled);
       row.setAttribute("data-enabled", String(enabled));
       const master = row.querySelector("[data-module-toggle]");
       const label = row.querySelector("[data-module-status]");
@@ -40953,8 +41020,6 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
           label.setAttribute("data-state", state.state);
         }
       }
-      const details = row.querySelector("[data-module-settings]");
-      details?.setAttribute("data-module-disabled", String(disabled));
       for (const toggle of row.querySelectorAll("[data-plugin-toggle]")) {
         const selected = isPluginSelected(toggle.getAttribute("data-plugin-toggle"));
         toggle.setAttribute("aria-checked", String(selected));
@@ -40963,12 +41028,12 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
       }
       for (const input of row.querySelectorAll("[data-plugin-setting]")) {
         const [featureId, key] = input.getAttribute("data-plugin-setting").split(":");
-        input.disabled = disabled || !isPluginEnabled(featureId);
+        input.disabled = !isPluginEnabled(featureId);
         if (document.activeElement !== input) input.value = String(getPluginSetting(featureId, key));
       }
       for (const range of row.querySelectorAll("[data-plugin-setting-range]")) {
         const [featureId, key] = range.getAttribute("data-plugin-setting-range").split(":");
-        range.disabled = disabled || !isPluginEnabled(featureId);
+        range.disabled = !isPluginEnabled(featureId);
         if (document.activeElement !== range) range.value = String(getPluginSetting(featureId, key));
       }
       for (const control of row.querySelectorAll("[data-subagent-model-control]")) {
@@ -40978,7 +41043,10 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     }
     refreshQuickActionsEditorDom(panel);
     const count = panel.querySelector("[data-enabled-count]");
-    if (count) count.textContent = `${ENHANCEMENT_MODULES.filter(m => getModuleState(m.id).active > 0).length} / ${ENHANCEMENT_MODULES.length} 个模块已启用`;
+    if (count) {
+      const configurable = getVisibleEnhancementModules().filter((module) => getVisibleModuleFeatures(module).length);
+      count.textContent = `${configurable.filter(m => getModuleState(m.id).active > 0).length} / ${configurable.length} 组选项已启用`;
+    }
     const khBadge = panel.querySelector("[data-kernel-health-badge]");
     if (khBadge) {
       const summary = getKernelHealthSummary();
@@ -41035,8 +41103,10 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
   const ENHANCEMENT_SETTINGS_RENDERER_REVISION = "1.4.61.2";
   function renderEnhancementModulesPanel(panel, nav) {
     panel.dataset.settingsRendererRevision = ENHANCEMENT_SETTINGS_RENDERER_REVISION;
-    const enabledCount = ENHANCEMENT_MODULES.filter((module) => getModuleState(module.id).active > 0).length;
-    const categories = [...new Set(ENHANCEMENT_MODULES.map((module) => module.category))];
+    const visibleModules = getVisibleEnhancementModules();
+    const configurableModules = visibleModules.filter((module) => getVisibleModuleFeatures(module).length);
+    const enabledCount = configurableModules.filter((module) => getModuleState(module.id).active > 0).length;
+    const categories = [...new Set(visibleModules.map((module) => module.category))];
     panel.innerHTML = `
       <div class="settings-general-container pi-enh-plugins-shell">
         <section class="pi-enh-plugins-toolbar" aria-label="增强模块管理工具栏">
@@ -41045,19 +41115,19 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               <h2 class="settings-general-title pi-enh-plugins-title">
                 <span>网页增强模块</span>
                 <span class="pi-enh-module-version">独立版 v${ENHANCEMENT_SUITE_VERSION}</span>
-                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_MODULES.length} 个模块已启用</span>
+                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${configurableModules.length} 组选项已启用</span>
               </h2>
             </div>
             <div class="pi-enh-plugins-actions" aria-label="批量操作">
               <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-action="hot-reload" title="无感重新加载最新前端补丁，无需刷新或重启后台">↻ 重新热载</button>
               <button type="button" class="pi-enh-btn-sm" data-action="force-hard-reload" title="穿透 HTTP 强缓存更新前端静态资源并强制刷新">⚡ 强制刷新</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各模块，保留原有子功能选择">全部恢复</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">全部关闭</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各组选项，保留原有选择">恢复选项</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">关闭可选项</button>
               <button type="button" class="pi-enh-btn-sm" data-action="reset-defaults">恢复默认</button>
             </div>
           </div>
           <p class="pi-enh-plugins-description">
-            <span>总开关：开启 / 部分开启 / 关闭。关闭保留子项选择，再次开启恢复；参数即时生效。</span>
+            <span>基础优化始终生效；可选项和参数即时生效。</span>
             ${renderKernelHealthBadgeHtml()}
           </p>
           <div class="pi-enh-plugins-filter-row" role="search">
@@ -41069,7 +41139,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
               ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
             </div>
-            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_MODULES.length} 个模块</span>
+            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${visibleModules.length} 组选项</span>
           </div>
         </section>
 
@@ -41119,11 +41189,11 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         </div>
 
         <div class="pi-enh-plugins-list pi-enh-modules-list">
-          ${ENHANCEMENT_MODULES.map((module) => {
+          ${visibleModules.map((module) => {
             const enabled = isModuleEnabled(module.id);
-            const disabled = !enabled;
             const state = getModuleState(module.id);
-            const features = module.features.map((featureId) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === featureId)).filter(Boolean);
+            const features = getVisibleModuleFeatures(module);
+            const disabled = features.length > 0 && !enabled;
             const isSubagent = module.id === SUBAGENT_DISPATCH_MODULE_ID;
             const ariaChecked = isSubagent ? String(enabled) : (state.state === "partial" ? "mixed" : String(state.state === "on"));
             const dataState = isSubagent ? (enabled ? "on" : "off") : state.state;
@@ -41138,19 +41208,19 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
                   </div>
                   <div class="pi-enh-plugin-desc">${module.desc}</div>
                 </div>
-                <div class="pi-enh-module-master">
+                ${features.length ? `<div class="pi-enh-module-master">
                   <span class="pi-enh-module-status" id="pi-enh-status-${module.id}" data-module-status data-state="${dataState}" aria-live="polite">${statusText}</span>
-                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
+                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}可选项总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
                     <span class="config-switch-knob" aria-hidden="true"></span>
                   </button>
-                </div>
+                </div>` : ""}
               </div>
-                <details class="pi-enh-module-settings" data-module-settings="${module.id}" ${disabled ? "data-module-disabled=true" : ""}>
-                  <summary data-module-expand="${module.id}">配置 ${features.length} 项子功能${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
-                  <div class="pi-enh-module-settings-body" ${disabled ? "aria-disabled=true" : ""}>
+                <details class="pi-enh-module-settings" data-module-settings="${module.id}">
+                  <summary data-module-expand="${module.id}">${features.length ? `配置 ${features.length} 项选项` : "配置参数"}${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
+                  <div class="pi-enh-module-settings-body">
                     <div class="pi-enh-module-features">${features.map((plugin) => renderFeatureToggle(plugin, disabled)).join("")}</div>
                     ${module.id === "composer-workflow" ? renderQuickActionsEditor(disabled || !isPluginEnabled("quick-action-buttons")) : ""}
-                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, disabled || (setting.featureId && !isPluginEnabled(setting.featureId)))).join("")}</div>` : ""}
+                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, setting.featureId ? !isPluginEnabled(setting.featureId) : false)).join("")}</div>` : ""}
                   </div>
                 </details>
             </article>`;
@@ -41371,10 +41441,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
 
     for (const row of panel.querySelectorAll("[data-module-row]")) {
       const module = getEnhancementModule(row.getAttribute("data-module-row"));
-      const featureText = module?.features.map((featureId) => {
-        const plugin = ENHANCEMENT_PLUGINS.find((item) => item.id === featureId);
-        return plugin ? `${plugin.name} ${plugin.desc}` : "";
-      }).join(" ") || "";
+      const featureText = module ? getVisibleModuleFeatures(module).map((plugin) => `${plugin.name} ${plugin.desc}`).join(" ") : "";
       const matchesCategory = enhancementPanelFilter.category === "all" || module?.category === enhancementPanelFilter.category;
       const searchable = module ? `${module.name} ${module.desc} ${module.category} ${featureText}`.toLocaleLowerCase() : "";
       const visible = Boolean(matchesCategory && (!query || searchable.includes(query)));
@@ -41390,7 +41457,8 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     const resultCount = panel.querySelector("[data-plugin-count]");
     if (resultCount) {
       const filtering = Boolean(query || enhancementPanelFilter.category !== "all");
-      resultCount.textContent = filtering ? `显示 ${visibleCount} / ${ENHANCEMENT_MODULES.length} 个模块` : `共 ${ENHANCEMENT_MODULES.length} 个模块`;
+      const total = getVisibleEnhancementModules().length;
+      resultCount.textContent = filtering ? `显示 ${visibleCount} / ${total} 组选项` : `共 ${total} 组选项`;
     }
     const emptyState = panel.querySelector("[data-plugin-empty]");
     if (emptyState) emptyState.hidden = visibleCount !== 0;
@@ -41403,8 +41471,9 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     // migrate existing browser preferences. Normal users always get modules.
     if (!window.__PI_ENH_LEGACY_SETTINGS_RENDERER__) return renderEnhancementModulesPanel(panel, nav);
 
-    const enabledCount = ENHANCEMENT_PLUGINS.filter((p) => isPluginEnabled(p.id)).length;
-    const categories = [...new Set(ENHANCEMENT_PLUGINS.map((plugin) => plugin.category))];
+    const visiblePlugins = ENHANCEMENT_PLUGINS.filter((plugin) => !plugin.alwaysOn && !plugin.uiHidden);
+    const enabledCount = visiblePlugins.filter((p) => isPluginEnabled(p.id)).length;
+    const categories = [...new Set(visiblePlugins.map((plugin) => plugin.category))];
     const archivedSessionIds = [...readStoredSessionIds(ARCHIVED_SESSION_STORAGE_KEY)];
     panel.innerHTML = `
       <div class="settings-general-container pi-enh-plugins-shell">
@@ -41413,7 +41482,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
             <div class="pi-enh-plugins-title-wrap">
               <h2 class="settings-general-title pi-enh-plugins-title">
                 <span>网页增强插件</span>
-                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_PLUGINS.length} 已启用</span>
+                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${visiblePlugins.length} 已启用</span>
               </h2>
               <p class="pi-enh-plugins-description">管理网页端交互、显示及保护增强特性。设置即时生效，并保存在当前浏览器。</p>
             </div>
@@ -41434,7 +41503,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
               ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
             </div>
-            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_PLUGINS.length} 个</span>
+            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${visiblePlugins.length} 个</span>
           </div>
         </section>
 
@@ -41463,7 +41532,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         </div>
 
         <div class="pi-enh-plugins-list">
-          ${ENHANCEMENT_PLUGINS.map((plugin) => {
+          ${visiblePlugins.map((plugin) => {
             const enabled = isPluginEnabled(plugin.id);
             return `
               <div class="pi-enh-plugin-item" data-plugin-row="${plugin.id}" data-plugin-category-name="${plugin.category}" data-enabled="${enabled ? "true" : "false"}">
@@ -41568,19 +41637,19 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     panel.querySelector('[data-action="force-hard-reload"]')?.addEventListener("click", forceHardReloadApp);
 
     panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", () => {
-      for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, true);
+      for (const p of visiblePlugins) setPluginEnabled(p.id, true);
       scheduleUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已开启所有增强插件");
     });
     panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", () => {
-      for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, false);
+      for (const p of visiblePlugins) setPluginEnabled(p.id, false);
       cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已关闭所有增强插件");
     });
     panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", () => {
-      for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, p.defaultEnabled);
+      for (const p of visiblePlugins) setPluginEnabled(p.id, p.defaultEnabled);
       if (isPluginEnabled("usage-cost-dashboard")) scheduleUsageLedgerPrefetch();
       else cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
@@ -41680,8 +41749,8 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         showToast(`${next ? "已启用" : "已停用"}: ${plugin ? plugin.name : id}`);
         const countBadge = panel.querySelector("[data-enabled-count]");
         if (countBadge) {
-          const newCount = ENHANCEMENT_PLUGINS.filter((p) => isPluginEnabled(p.id)).length;
-          countBadge.textContent = `${newCount} / ${ENHANCEMENT_PLUGINS.length} 已启用`;
+          const newCount = visiblePlugins.filter((p) => isPluginEnabled(p.id)).length;
+          countBadge.textContent = `${newCount} / ${visiblePlugins.length} 已启用`;
         }
       });
     }

@@ -6,6 +6,8 @@
 
 export interface EnhancementPluginMetadataItem {
   defaultEnabled: boolean;
+  alwaysOn: boolean;
+  alwaysOff: boolean;
   moduleId: string | null;
   moduleDefaultEnabled: boolean;
 }
@@ -15,401 +17,561 @@ export type EnhancementPluginMetadataMap = Record<string, EnhancementPluginMetad
 export const ENHANCEMENT_METADATA: EnhancementPluginMetadataMap = {
   "stop-fast-response": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "general-settings-dashboard": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "model-generation-speed": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "turn-duration": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "turn-number-indicator": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "task-tool-auto-collapse": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "tool-card-layout-stability": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "subagent-dispatch-cards": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "subagent-model-override": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "subagent-dispatch",
     "moduleDefaultEnabled": true
   },
   "history-scroll-stability": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "session-scroll-restore": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "session-virtual-scroll": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "compaction-auto-collapse": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "pi-mail-auto-collapse": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "live-stopwatch": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "model-scope-warning": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
   "quick-quote": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "selection-context",
     "moduleDefaultEnabled": true
   },
   "settings-tab-shortcuts": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "context-menu": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "thinking-persistence": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "preference-memory",
     "moduleDefaultEnabled": true
   },
   "enhancement-settings-archive": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "preference-memory",
     "moduleDefaultEnabled": true
   },
   "chat-scrollbar": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "native-message-font": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "turn-usage-total": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "minimap-full-nav": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "esc-guard": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
   "mobile-enter-newline": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-clean-placeholder": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "ask-user-web-native": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "ask-user-experience",
     "moduleDefaultEnabled": true
   },
   "project-status-indicator": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "background-attention",
     "moduleDefaultEnabled": true
   },
   "session-attention-sound": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "background-attention",
     "moduleDefaultEnabled": true
   },
   "session-attention-desktop": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "background-attention",
     "moduleDefaultEnabled": true
   },
   "ask-user-batch-prototype": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": true,
     "moduleId": "ask-user-experience",
     "moduleDefaultEnabled": true
   },
   "quick-action-buttons": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "empty-send-continue": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "scroll-to-bottom": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "local-path-launcher": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "session-history-integrity": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "session-history-order-guard": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "session-memory-cache": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "usage-cost-dashboard": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "cross-device-session-sync": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "code-block-scan-guard": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
   "session-pin-archive": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-section-headers": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-model-label": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-item-compact": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-color": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-tags": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-odoo-addons": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-dblclick-rename": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "composer-draft-cache": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-file-paste": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "session-search-shortcut": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "session-search-project-folding": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "mobile-swipe-drawer": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "collapsed-sidebar-session-title": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "composer-image-zoom": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "codex-composer-layout": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-model-reasoning-pill": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "running-model-switch": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-queue-panel": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-format-toggle": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-compact-button": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-tool-preset": {
     "defaultEnabled": false,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-markdown-format": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "composer-modes": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "at-mention-plugins": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "composer-workflow",
     "moduleDefaultEnabled": true
   },
   "image-dblclick-preview": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "conversation-navigation",
     "moduleDefaultEnabled": true
   },
   "session-panel-binding": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "file-panel-overlay-guard": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "client-crash-diagnostics": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
   "streaming-thinking-guard": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "safety-performance",
     "moduleDefaultEnabled": true
   },
   "notification-center": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "notification-management",
     "moduleDefaultEnabled": true
   },
   "obsidian-markdown-viewer": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "excel-sheet-preview": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "workspace-picker-hover": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   },
   "session-batch-actions": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "session-sidebar",
     "moduleDefaultEnabled": true
   },
   "pi-agent-update-notice": {
     "defaultEnabled": true,
+    "alwaysOn": true,
+    "alwaysOff": false,
     "moduleId": "task-insights",
     "moduleDefaultEnabled": true
   },
   "pi-web-plus-branding": {
     "defaultEnabled": true,
+    "alwaysOn": false,
+    "alwaysOff": false,
     "moduleId": "local-workspace",
     "moduleDefaultEnabled": true
   }
@@ -439,6 +601,8 @@ export function createFastPluginReader(
   return function isPluginFastActive(pluginId: string): boolean {
     if (!Object.prototype.hasOwnProperty.call(metadata, pluginId)) return true;
     const info = metadata[pluginId];
+    if (info.alwaysOn) return true;
+    if (info.alwaysOff) return false;
     const raw = read("pi-enh-settings-v1");
     if (raw !== lastRaw) {
       lastRaw = raw;

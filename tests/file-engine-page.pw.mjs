@@ -26,7 +26,7 @@ try{
   const context=await browser.newContext({viewport:{width,height:900},hasTouch:width===390,locale:'zh-CN',serviceWorkers:'block'});
   const token='v1.'+(Math.floor(Date.now()/1000)+3600)+'.'+crypto.randomBytes(16).toString('hex'),sig=crypto.createHmac('sha256',password).update('pi-web-session:'+token).digest('hex');
   await context.addCookies([{name:'pi_web_session',value:token+'.'+sig,url:origin}]);
-  await context.addInitScript(()=>{localStorage.setItem('pi-locale','zh-CN');localStorage.setItem('pi-theme','dark');localStorage.setItem('pi-enh-plugin-at-mention-plugins','false');});
+  await context.addInitScript(()=>{localStorage.setItem('pi-locale','zh-CN');localStorage.setItem('pi-theme','dark');localStorage.setItem('pi-web:file-explorer:visible','true');localStorage.setItem('pi-enh-plugin-at-mention-plugins','false');});
   await context.route('**/*',async route=>{
    const req=route.request(),u=new URL(req.url()),p=u.pathname,json=(data,status=200)=>route.fulfill({status,json:data});
    if(u.origin!==origin)return route.abort('blockedbyclient');

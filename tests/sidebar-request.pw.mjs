@@ -69,6 +69,7 @@ const bundle = await esbuild.build({
 
         return <div style={{ height: 800, width: 360, display: "flex" }}>
           <SessionSidebar
+            explorerVisible
             bootstrap={bootstrap}
             initialSessionId={bootstrap.sessions[0].id}
             selectedSessionId={bootstrap.sessions[0].id}

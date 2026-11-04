@@ -131,6 +131,8 @@ test("运行审计：在隔离沙箱中执行 renderEnhancementsPanel 正确调�
     SUBAGENT_DISPATCH_MODULE_ID: "subagent-dispatch",
     enhancementPanelFilter: { query: "", category: "all" },
     getModuleState: () => ({ active: 1, state: "on", selected: 1 }),
+    getVisibleModuleFeatures: (module) => module.features.map((id) => dummyPlugins.find((plugin) => plugin.id === id)).filter(Boolean),
+    getVisibleEnhancementModules: () => dummyModules,
     isModuleEnabled: () => true,
     moduleStateLabel: () => "已开启",
     renderKernelHealthBadgeHtml: () => '<span class="test-health">OK</span>',

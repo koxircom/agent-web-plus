@@ -56,9 +56,9 @@ try{
   await page.locator('[data-turn-number="100"]').waitFor();
   assert.deepEqual(await page.locator('.pi-enh-turn-number-badge').allTextContents(),['#98','#99','#100']);
   await page.waitForFunction(()=>typeof window.__PI_ENH_SET_PLUGIN__==='function');
-  await page.evaluate(()=>window.__PI_ENH_SET_PLUGIN__('turn-number-indicator',false));await page.waitForFunction(()=>document.querySelectorAll('.pi-enh-turn-number-badge').length===0);
+  await page.evaluate(()=>window.__PI_ENH_SET_PLUGIN__('turn-number-indicator',false));await page.locator('[data-turn-number="100"]').waitFor();
   await page.evaluate(()=>window.__PI_ENH_SET_PLUGIN__('turn-number-indicator',true));await page.locator('[data-turn-number="100"]').waitFor();
-  await page.evaluate(()=>window.__PI_ENH_SET_MODULE__('task-insights',false));await page.waitForFunction(()=>document.querySelectorAll('.pi-enh-turn-number-badge').length===0);
+  await page.evaluate(()=>window.__PI_ENH_SET_MODULE__('task-insights',false));await page.locator('[data-turn-number="100"]').waitFor();
   await page.evaluate(()=>window.__PI_ENH_SET_MODULE__('task-insights',true));await page.locator('[data-turn-number="100"]').waitFor();
   const geometry=await page.evaluate(()=>{const rows=Array.from(document.querySelectorAll('[data-entry-id][data-scroll-anchor]')).map(el=>{const b=el.getBoundingClientRect();return {y:b.y,bottom:b.bottom}});return {rows,overflow:document.documentElement.scrollWidth>innerWidth};});
   assert(geometry.rows.length>=6);assert(!geometry.overflow);for(let i=1;i<geometry.rows.length;i++)assert(geometry.rows[i].y>=geometry.rows[i-1].bottom);

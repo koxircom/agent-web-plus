@@ -26,6 +26,7 @@ function TestSettingsRoot() {
   const [section, setSection] = useState<SettingsSection>("general");
   const [rerenderCount, setRerenderCount] = useState(0);
   const [closeCalls, setCloseCalls] = useState(0);
+  const [explorerVisible, setExplorerVisible] = useState(false);
 
   useEffect(() => {
     window.__SETTINGS_TEST_API__ = {
@@ -51,6 +52,8 @@ function TestSettingsRoot() {
           onSessionReloaded={() => {}}
           quoteSelectionEnabled={true}
           onQuoteSelectionChange={() => {}}
+          explorerVisible={explorerVisible}
+          onExplorerVisibilityChange={setExplorerVisible}
         />
       </div>
     </I18nProvider>

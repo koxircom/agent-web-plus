@@ -4363,7 +4363,6 @@
       max-width: 100%;
       box-sizing: border-box;
     }
-    .pi-enh-module-settings[data-module-disabled="true"] { opacity: 0.58; }
     .pi-enh-module-features {
       display: flex;
       flex-direction: column;

@@ -28,6 +28,7 @@ export function SettingsMigrationApp() {
   const [remountKey, setRemountKey] = useState(0);
   const [parentRevision, setParentRevision] = useState(0);
   const [quoteSelection, setQuoteSelection] = useState(true);
+  const [explorerVisible, setExplorerVisible] = useState(false);
 
   React.useEffect(() => {
     const unregisterOpen = registerEnhancementOpenSettings((sec) => {
@@ -101,6 +102,8 @@ export function SettingsMigrationApp() {
           onSessionReloaded={() => {}}
           quoteSelectionEnabled={quoteSelection}
           onQuoteSelectionChange={setQuoteSelection}
+          explorerVisible={explorerVisible}
+          onExplorerVisibilityChange={setExplorerVisible}
         />
       )}
     </div>

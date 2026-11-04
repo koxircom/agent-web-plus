@@ -452,6 +452,8 @@
             "tests/file-engine-context.test.mjs",
             "tests/file-engine-context.pw.mjs",
             "tests/file-engine-page.pw.mjs",
+            "tests/file-explorer-visibility.pw.mjs",
+            "lib/file-explorer-state.test.mjs",
             "tests/suggestion-submission.pw.mjs"
           ],
           "timeoutSeconds": 180
@@ -947,6 +949,25 @@
             "enhancements/modules/07-kernel-scheduler-and-observers.js"
           ],
           "timeoutSeconds": 120
+        },
+        {
+          "name": "release-core-enhancement-settings",
+          "command": ["node", "scripts/qa/enhancement-settings-simplify.cjs"],
+          "files": [
+            "scripts/qa/enhancement-settings-simplify.cjs",
+            "enhancements/tests/core-feature-settings.test.cjs",
+            "enhancements/tests/modules-panel-renderer.test.cjs",
+            "lib/enhancement-chat-bridge.test.mjs",
+            "lib/settings-extensions.test.mjs",
+            "tests/enhancement-settings-simplify.pw.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-learning-settings",
+          "command": ["node", "scripts/qa/learning-settings.cjs"],
+          "files": ["scripts/qa/learning-settings.cjs", "lib/learning.test.mjs", "tests/learning-settings-page.pw.mjs", "components/LearningSettings.tsx", "components/LearningSettings.module.css"],
+          "timeoutSeconds": 180
         }
       ]
     }

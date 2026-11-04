@@ -1,6 +1,6 @@
 {
   "name": "@agegr/pi-web",
-  "version": "1.4.67",
+  "version": "1.4.69",
   "capabilities": {
     "nativeSettingsHost": true,
     "nativeSettingsLayout": true,

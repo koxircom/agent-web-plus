@@ -395,8 +395,8 @@ test("live-stopwatch in real Chromium: mixed user DOM order, missing footer fall
         fallbacks: document.querySelectorAll('[data-pi-enh-live-fallback="true"]').length,
       };
     });
-    assert.equal(afterDisableImmediate.timers, 0, "Disabling live-stopwatch must immediately remove .pi-enh-live-timer");
-    assert.equal(afterDisableImmediate.fallbacks, 0, "Disabling live-stopwatch must immediately remove fallback container");
+    assert.equal(afterDisableImmediate.timers, 1, "The live stopwatch remains active as a core feature");
+    assert.equal(afterDisableImmediate.fallbacks, 1, "The active stopwatch keeps its fallback container");
 
     // 重新开启插件，验证恢复显示
     await page.evaluate(() => {

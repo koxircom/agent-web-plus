@@ -1,4 +1,5 @@
 import type { SessionData } from "../hooks/useAgentSession";
+import { ENHANCEMENT_METADATA, isEnhancementPluginFastActive } from "./enhancement-settings.generated.ts";
 import type {
   AgentMessage,
   AssistantContentBlock,
@@ -77,6 +78,8 @@ export function isEnhancementPluginEnabled(
   win: EnhancementWindowLike | null = getEnhancementWindow(),
 ): boolean {
   if (!win) return true;
+  if (ENHANCEMENT_METADATA[id]?.alwaysOn) return true;
+  if (ENHANCEMENT_METADATA[id]?.alwaysOff) return false;
   if (typeof win.__PI_ENH_IS_PLUGIN_ENABLED__ === "function") {
     try {
       return Boolean(win.__PI_ENH_IS_PLUGIN_ENABLED__(id));
@@ -84,21 +87,7 @@ export function isEnhancementPluginEnabled(
       // Fall back to localStorage below if the runtime bridge throws.
     }
   }
-  try {
-    const rawSettings = win.localStorage?.getItem("pi-enh-settings-v1") || "{}";
-    const config = JSON.parse(rawSettings) as {
-      modules?: Record<string, { enabled?: boolean }>;
-      features?: Record<string, { enabled?: boolean }>;
-    };
-    if (config.modules?.["conversation-navigation"]?.enabled === false) {
-      return false;
-    }
-    const enabled = config.features?.[id]?.enabled;
-    if (typeof enabled === "boolean") return enabled;
-    return win.localStorage?.getItem(`pi-enh-plugin-${id}`) !== "false";
-  } catch {
-    return true;
-  }
+  return isEnhancementPluginFastActive(id, (key) => win.localStorage?.getItem(key));
 }
 
 export function subscribeProcessCollapseChange(

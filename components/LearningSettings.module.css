@@ -3,6 +3,9 @@
   gap: 20px;
   width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+  align-content: start;
+  padding: 20px clamp(16px, 3vw, 32px) 36px;
   color: var(--text);
 }
 
@@ -11,10 +14,8 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-panel);
+  padding: 0 0 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .heading {
@@ -39,9 +40,18 @@
   overflow-wrap: anywhere;
 }
 
-.header > :global(.config-switch) {
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
   margin-top: 2px;
+}
+
+.toggleState {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .error {
@@ -173,7 +183,7 @@
   min-width: 0;
   padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--bg-panel);
 }
 
@@ -299,11 +309,11 @@
 }
 
 @media (max-width: 520px) {
-  .root { gap: 16px; }
+  .root { gap: 16px; padding: 12px 12px 24px; }
 
   .header {
     gap: 12px;
-    padding: 13px;
+    padding: 0 0 14px;
   }
 
   .heading h2 { font-size: 15px; }
@@ -325,7 +335,7 @@
 
 @media (max-width: 360px) {
   .header { flex-direction: column; }
-  .header > :global(.config-switch) { align-self: flex-end; }
+  .toggle { align-self: flex-end; }
   .recordsHeader { flex-wrap: wrap; }
 }
 

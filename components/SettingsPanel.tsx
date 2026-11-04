@@ -123,6 +123,8 @@ interface Props {
   onSessionReloaded: () => void;
   quoteSelectionEnabled: boolean;
   onQuoteSelectionChange: (enabled: boolean) => void;
+  explorerVisible: boolean;
+  onExplorerVisibilityChange: (visible: boolean) => void;
   /** The page's trust status for `cwd`; Settings › MCP reloads when it changes. */
   projectTrust?: ProjectTrustStatus | null;
   /** Opens the page's trust dialog for `cwd`. */
@@ -237,6 +239,8 @@ const readDashboardPreference = () => isSettingsPluginEnabled("general-settings-
 
 function GeneralSettings({
   browserTabContext,
+  explorerVisible,
+  onExplorerVisibilityChange,
   sessionId,
   onSessionReloaded,
   quoteSelectionEnabled,
@@ -245,7 +249,7 @@ function GeneralSettings({
   activateSection,
   availableSections,
   cwd,
-}: Pick<Props, "sessionId" | "onSessionReloaded" | "quoteSelectionEnabled" | "onQuoteSelectionChange"> & {
+}: Pick<Props, "sessionId" | "onSessionReloaded" | "quoteSelectionEnabled" | "onQuoteSelectionChange" | "explorerVisible" | "onExplorerVisibilityChange"> & {
   onClose: () => void;
   activateSection: (id: string) => boolean;
   availableSections: readonly string[];
@@ -411,6 +415,9 @@ function GeneralSettings({
             </div>
           </SettingsRow>
 
+          <SettingsRow label={t("settings.showFileExplorer")} isSwitch>
+            <ConfigSwitch checked={explorerVisible} label={t("settings.showFileExplorer")} onChange={onExplorerVisibilityChange} />
+          </SettingsRow>
           <BrowserTabSettings cwd={browserTabContext?.cwd ?? cwd} engine={browserTabContext?.engine ?? "pi"} />
         </div>
       </section>
@@ -624,6 +631,8 @@ function ExtensionSectionHost({ definition, ...props }: SettingsHostContextProps
 
 export function SettingsPanel({
   browserTabContext,
+  explorerVisible,
+  onExplorerVisibilityChange,
   resolveReturnFocus,
   cwd,
   sessionId,
@@ -1162,6 +1171,8 @@ export function SettingsPanel({
             "general",
             <GeneralSettings
               browserTabContext={browserTabContext}
+              explorerVisible={explorerVisible}
+              onExplorerVisibilityChange={onExplorerVisibilityChange}
               sessionId={sessionId}
               onSessionReloaded={onSessionReloaded}
               quoteSelectionEnabled={quoteSelectionEnabled}
@@ -1189,7 +1200,7 @@ export function SettingsPanel({
               <PluginsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
             )}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
-          {sectionHost("learning", <LearningSettings cwd={cwd} />)}
+          {sectionHost("learning", <LearningSettings cwd={cwd} engine={browserTabContext?.engine ?? "pi"} />)}
           {sectionHost("execution-engine", <ExecutionEngineSettings />)}
           {sectionHost("collaboration", <CollaborationSettings />)}
 

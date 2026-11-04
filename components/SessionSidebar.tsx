@@ -161,6 +161,7 @@ const EMPTY_LOCAL_SESSIONS: SessionInfo[] = [];
 import type { SidebarBootstrap } from "@/lib/sidebar-bootstrap";
 
 interface Props {
+  explorerVisible?: boolean;
   bootstrap?: SidebarBootstrap;
   executionEngine?: "pi" | "codex";
   codexEnabled?: boolean;
@@ -348,7 +349,7 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 
 
 
-export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled = false, onExecutionEngineChange, initialCwd, selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, localSessions = EMPTY_LOCAL_SESSIONS }: Props) {
+export function SessionSidebar({ bootstrap, explorerVisible = false, executionEngine = "pi", codexEnabled = false, onExecutionEngineChange, initialCwd, selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, localSessions = EMPTY_LOCAL_SESSIONS }: Props) {
   const isCodexEngine = executionEngine === "codex";
   const { t } = useI18n();
   // First client render must use the server snapshot clock; subsequent renders
@@ -432,7 +433,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
   const listScrollRef = useRef<HTMLDivElement>(null);
   const explorerScrollRef = useRef<HTMLDivElement>(null);
   useScrollbarVisibility(listScrollRef);
-  useScrollbarVisibility(explorerScrollRef, explorerOpen && Boolean(selectedCwdProp || selectedCwd));
+  useScrollbarVisibility(explorerScrollRef, explorerVisible && explorerOpen && Boolean(selectedCwdProp || selectedCwd));
   const sessionPaneRef = useRef<HTMLDivElement>(null);
   const explorerSectionRef = useRef<HTMLDivElement>(null);
   const sessionPaneHeightRef = useRef(SESSION_PANE_DEFAULT_HEIGHT);
@@ -2201,7 +2202,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
         style={{
           display: "flex",
           flexDirection: "column",
-          flex: explorerOpen && (selectedCwdProp || selectedCwd)
+          flex: explorerVisible && explorerOpen && (selectedCwdProp || selectedCwd)
             ? "0 1 var(--sidebar-session-pane-height, 320px)"
             : "1 1 auto",
           minHeight: SESSION_PANE_MIN_HEIGHT,
@@ -2286,7 +2287,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
         </SessionSearch>
       </div>
 
-      {explorerOpen && (selectedCwdProp || selectedCwd) && (
+      {explorerVisible && explorerOpen && (selectedCwdProp || selectedCwd) && (
         <div
           className={`sidebar-section-resize-handle${sessionPaneResizer.isResizing ? " is-resizing" : ""}`}
           data-resize-handle="sidebar-sections"
@@ -2306,7 +2307,7 @@ export function SessionSidebar({ bootstrap, executionEngine = "pi", codexEnabled
       )}
 
       {/* File Explorer section */}
-      {(selectedCwdProp || selectedCwd) && (
+      {explorerVisible && (selectedCwdProp || selectedCwd) && (
         <div
           ref={explorerSectionRef}
           style={{

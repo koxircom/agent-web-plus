@@ -3712,7 +3712,8 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
       const state = getModuleState(id);
       if (!state) continue;
       const enabled = isModuleEnabled(id);
-      const disabled = !enabled;
+      const module = getEnhancementModule(id);
+      const disabled = Boolean(module && getVisibleModuleFeatures(module).length && !enabled);
       row.setAttribute("data-enabled", String(enabled));
       const master = row.querySelector("[data-module-toggle]");
       const label = row.querySelector("[data-module-status]");
@@ -3739,8 +3740,6 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
           label.setAttribute("data-state", state.state);
         }
       }
-      const details = row.querySelector("[data-module-settings]");
-      details?.setAttribute("data-module-disabled", String(disabled));
       for (const toggle of row.querySelectorAll("[data-plugin-toggle]")) {
         const selected = isPluginSelected(toggle.getAttribute("data-plugin-toggle"));
         toggle.setAttribute("aria-checked", String(selected));
@@ -3749,12 +3748,12 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
       }
       for (const input of row.querySelectorAll("[data-plugin-setting]")) {
         const [featureId, key] = input.getAttribute("data-plugin-setting").split(":");
-        input.disabled = disabled || !isPluginEnabled(featureId);
+        input.disabled = !isPluginEnabled(featureId);
         if (document.activeElement !== input) input.value = String(getPluginSetting(featureId, key));
       }
       for (const range of row.querySelectorAll("[data-plugin-setting-range]")) {
         const [featureId, key] = range.getAttribute("data-plugin-setting-range").split(":");
-        range.disabled = disabled || !isPluginEnabled(featureId);
+        range.disabled = !isPluginEnabled(featureId);
         if (document.activeElement !== range) range.value = String(getPluginSetting(featureId, key));
       }
       for (const control of row.querySelectorAll("[data-subagent-model-control]")) {
@@ -3764,7 +3763,10 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     }
     refreshQuickActionsEditorDom(panel);
     const count = panel.querySelector("[data-enabled-count]");
-    if (count) count.textContent = `${ENHANCEMENT_MODULES.filter(m => getModuleState(m.id).active > 0).length} / ${ENHANCEMENT_MODULES.length} 个模块已启用`;
+    if (count) {
+      const configurable = getVisibleEnhancementModules().filter((module) => getVisibleModuleFeatures(module).length);
+      count.textContent = `${configurable.filter(m => getModuleState(m.id).active > 0).length} / ${configurable.length} 组选项已启用`;
+    }
     const khBadge = panel.querySelector("[data-kernel-health-badge]");
     if (khBadge) {
       const summary = getKernelHealthSummary();
@@ -3821,8 +3823,10 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
   const ENHANCEMENT_SETTINGS_RENDERER_REVISION = "1.4.61.2";
   function renderEnhancementModulesPanel(panel, nav) {
     panel.dataset.settingsRendererRevision = ENHANCEMENT_SETTINGS_RENDERER_REVISION;
-    const enabledCount = ENHANCEMENT_MODULES.filter((module) => getModuleState(module.id).active > 0).length;
-    const categories = [...new Set(ENHANCEMENT_MODULES.map((module) => module.category))];
+    const visibleModules = getVisibleEnhancementModules();
+    const configurableModules = visibleModules.filter((module) => getVisibleModuleFeatures(module).length);
+    const enabledCount = configurableModules.filter((module) => getModuleState(module.id).active > 0).length;
+    const categories = [...new Set(visibleModules.map((module) => module.category))];
     panel.innerHTML = `
       <div class="settings-general-container pi-enh-plugins-shell">
         <section class="pi-enh-plugins-toolbar" aria-label="增强模块管理工具栏">
@@ -3831,19 +3835,19 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               <h2 class="settings-general-title pi-enh-plugins-title">
                 <span>网页增强模块</span>
                 <span class="pi-enh-module-version">独立版 v${ENHANCEMENT_SUITE_VERSION}</span>
-                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_MODULES.length} 个模块已启用</span>
+                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${configurableModules.length} 组选项已启用</span>
               </h2>
             </div>
             <div class="pi-enh-plugins-actions" aria-label="批量操作">
               <button type="button" class="pi-enh-btn-sm pi-enh-btn-primary" data-action="hot-reload" title="无感重新加载最新前端补丁，无需刷新或重启后台">↻ 重新热载</button>
               <button type="button" class="pi-enh-btn-sm" data-action="force-hard-reload" title="穿透 HTTP 强缓存更新前端静态资源并强制刷新">⚡ 强制刷新</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各模块，保留原有子功能选择">全部恢复</button>
-              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">全部关闭</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="enable-all" title="恢复各组选项，保留原有选择">恢复选项</button>
+              <button type="button" class="pi-enh-btn-sm" data-action="disable-all">关闭可选项</button>
               <button type="button" class="pi-enh-btn-sm" data-action="reset-defaults">恢复默认</button>
             </div>
           </div>
           <p class="pi-enh-plugins-description">
-            <span>总开关：开启 / 部分开启 / 关闭。关闭保留子项选择，再次开启恢复；参数即时生效。</span>
+            <span>基础优化始终生效；可选项和参数即时生效。</span>
             ${renderKernelHealthBadgeHtml()}
           </p>
           <div class="pi-enh-plugins-filter-row" role="search">
@@ -3855,7 +3859,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
               ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
             </div>
-            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_MODULES.length} 个模块</span>
+            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${visibleModules.length} 组选项</span>
           </div>
         </section>
 
@@ -3905,11 +3909,11 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         </div>
 
         <div class="pi-enh-plugins-list pi-enh-modules-list">
-          ${ENHANCEMENT_MODULES.map((module) => {
+          ${visibleModules.map((module) => {
             const enabled = isModuleEnabled(module.id);
-            const disabled = !enabled;
             const state = getModuleState(module.id);
-            const features = module.features.map((featureId) => ENHANCEMENT_PLUGINS.find((plugin) => plugin.id === featureId)).filter(Boolean);
+            const features = getVisibleModuleFeatures(module);
+            const disabled = features.length > 0 && !enabled;
             const isSubagent = module.id === SUBAGENT_DISPATCH_MODULE_ID;
             const ariaChecked = isSubagent ? String(enabled) : (state.state === "partial" ? "mixed" : String(state.state === "on"));
             const dataState = isSubagent ? (enabled ? "on" : "off") : state.state;
@@ -3924,19 +3928,19 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
                   </div>
                   <div class="pi-enh-plugin-desc">${module.desc}</div>
                 </div>
-                <div class="pi-enh-module-master">
+                ${features.length ? `<div class="pi-enh-module-master">
                   <span class="pi-enh-module-status" id="pi-enh-status-${module.id}" data-module-status data-state="${dataState}" aria-live="polite">${statusText}</span>
-                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
+                  <button type="button" role="checkbox" aria-checked="${ariaChecked}" aria-label="${module.name}可选项总开关" aria-describedby="pi-enh-status-${module.id}" class="config-switch pi-enh-module-toggle" data-state="${dataState}" data-module-toggle="${module.id}">
                     <span class="config-switch-knob" aria-hidden="true"></span>
                   </button>
-                </div>
+                </div>` : ""}
               </div>
-                <details class="pi-enh-module-settings" data-module-settings="${module.id}" ${disabled ? "data-module-disabled=true" : ""}>
-                  <summary data-module-expand="${module.id}">配置 ${features.length} 项子功能${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
-                  <div class="pi-enh-module-settings-body" ${disabled ? "aria-disabled=true" : ""}>
+                <details class="pi-enh-module-settings" data-module-settings="${module.id}">
+                  <summary data-module-expand="${module.id}">${features.length ? `配置 ${features.length} 项选项` : "配置参数"}${module.settings.length ? ` · ${module.settings.length} 项参数` : ""}</summary>
+                  <div class="pi-enh-module-settings-body">
                     <div class="pi-enh-module-features">${features.map((plugin) => renderFeatureToggle(plugin, disabled)).join("")}</div>
                     ${module.id === "composer-workflow" ? renderQuickActionsEditor(disabled || !isPluginEnabled("quick-action-buttons")) : ""}
-                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, disabled || (setting.featureId && !isPluginEnabled(setting.featureId)))).join("")}</div>` : ""}
+                    ${module.settings.length ? `<div class="pi-enh-plugin-number-settings pi-enh-module-parameters">${module.settings.map((setting) => renderModuleSettingControl(setting, setting.featureId ? !isPluginEnabled(setting.featureId) : false)).join("")}</div>` : ""}
                   </div>
                 </details>
             </article>`;
@@ -4157,10 +4161,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
 
     for (const row of panel.querySelectorAll("[data-module-row]")) {
       const module = getEnhancementModule(row.getAttribute("data-module-row"));
-      const featureText = module?.features.map((featureId) => {
-        const plugin = ENHANCEMENT_PLUGINS.find((item) => item.id === featureId);
-        return plugin ? `${plugin.name} ${plugin.desc}` : "";
-      }).join(" ") || "";
+      const featureText = module ? getVisibleModuleFeatures(module).map((plugin) => `${plugin.name} ${plugin.desc}`).join(" ") : "";
       const matchesCategory = enhancementPanelFilter.category === "all" || module?.category === enhancementPanelFilter.category;
       const searchable = module ? `${module.name} ${module.desc} ${module.category} ${featureText}`.toLocaleLowerCase() : "";
       const visible = Boolean(matchesCategory && (!query || searchable.includes(query)));
@@ -4176,7 +4177,8 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     const resultCount = panel.querySelector("[data-plugin-count]");
     if (resultCount) {
       const filtering = Boolean(query || enhancementPanelFilter.category !== "all");
-      resultCount.textContent = filtering ? `显示 ${visibleCount} / ${ENHANCEMENT_MODULES.length} 个模块` : `共 ${ENHANCEMENT_MODULES.length} 个模块`;
+      const total = getVisibleEnhancementModules().length;
+      resultCount.textContent = filtering ? `显示 ${visibleCount} / ${total} 组选项` : `共 ${total} 组选项`;
     }
     const emptyState = panel.querySelector("[data-plugin-empty]");
     if (emptyState) emptyState.hidden = visibleCount !== 0;
@@ -4189,8 +4191,9 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     // migrate existing browser preferences. Normal users always get modules.
     if (!window.__PI_ENH_LEGACY_SETTINGS_RENDERER__) return renderEnhancementModulesPanel(panel, nav);
 
-    const enabledCount = ENHANCEMENT_PLUGINS.filter((p) => isPluginEnabled(p.id)).length;
-    const categories = [...new Set(ENHANCEMENT_PLUGINS.map((plugin) => plugin.category))];
+    const visiblePlugins = ENHANCEMENT_PLUGINS.filter((plugin) => !plugin.alwaysOn && !plugin.uiHidden);
+    const enabledCount = visiblePlugins.filter((p) => isPluginEnabled(p.id)).length;
+    const categories = [...new Set(visiblePlugins.map((plugin) => plugin.category))];
     const archivedSessionIds = [...readStoredSessionIds(ARCHIVED_SESSION_STORAGE_KEY)];
     panel.innerHTML = `
       <div class="settings-general-container pi-enh-plugins-shell">
@@ -4199,7 +4202,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
             <div class="pi-enh-plugins-title-wrap">
               <h2 class="settings-general-title pi-enh-plugins-title">
                 <span>网页增强插件</span>
-                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${ENHANCEMENT_PLUGINS.length} 已启用</span>
+                <span class="pi-enh-plugins-enabled-count" data-enabled-count>${enabledCount} / ${visiblePlugins.length} 已启用</span>
               </h2>
               <p class="pi-enh-plugins-description">管理网页端交互、显示及保护增强特性。设置即时生效，并保存在当前浏览器。</p>
             </div>
@@ -4220,7 +4223,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               <button type="button" class="pi-enh-category-btn" data-plugin-category="all" aria-pressed="${enhancementPanelFilter.category === "all" ? "true" : "false"}">全部</button>
               ${categories.map((category) => `<button type="button" class="pi-enh-category-btn" data-plugin-category="${category}" aria-pressed="${enhancementPanelFilter.category === category ? "true" : "false"}">${category}</button>`).join("")}
             </div>
-            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${ENHANCEMENT_PLUGINS.length} 个</span>
+            <span class="pi-enh-plugin-result-count" data-plugin-count aria-live="polite">共 ${visiblePlugins.length} 个</span>
           </div>
         </section>
 
@@ -4249,7 +4252,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         </div>
 
         <div class="pi-enh-plugins-list">
-          ${ENHANCEMENT_PLUGINS.map((plugin) => {
+          ${visiblePlugins.map((plugin) => {
             const enabled = isPluginEnabled(plugin.id);
             return `
               <div class="pi-enh-plugin-item" data-plugin-row="${plugin.id}" data-plugin-category-name="${plugin.category}" data-enabled="${enabled ? "true" : "false"}">
@@ -4354,19 +4357,19 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
     panel.querySelector('[data-action="force-hard-reload"]')?.addEventListener("click", forceHardReloadApp);
 
     panel.querySelector('[data-action="enable-all"]')?.addEventListener("click", () => {
-      for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, true);
+      for (const p of visiblePlugins) setPluginEnabled(p.id, true);
       scheduleUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已开启所有增强插件");
     });
     panel.querySelector('[data-action="disable-all"]')?.addEventListener("click", () => {
-      for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, false);
+      for (const p of visiblePlugins) setPluginEnabled(p.id, false);
       cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
       showToast("已关闭所有增强插件");
     });
     panel.querySelector('[data-action="reset-defaults"]')?.addEventListener("click", () => {
-      for (const p of ENHANCEMENT_PLUGINS) setPluginEnabled(p.id, p.defaultEnabled);
+      for (const p of visiblePlugins) setPluginEnabled(p.id, p.defaultEnabled);
       if (isPluginEnabled("usage-cost-dashboard")) scheduleUsageLedgerPrefetch();
       else cancelUsageLedgerPrefetch();
       renderEnhancementsPanel(panel, nav);
@@ -4466,8 +4469,8 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         showToast(`${next ? "已启用" : "已停用"}: ${plugin ? plugin.name : id}`);
         const countBadge = panel.querySelector("[data-enabled-count]");
         if (countBadge) {
-          const newCount = ENHANCEMENT_PLUGINS.filter((p) => isPluginEnabled(p.id)).length;
-          countBadge.textContent = `${newCount} / ${ENHANCEMENT_PLUGINS.length} 已启用`;
+          const newCount = visiblePlugins.filter((p) => isPluginEnabled(p.id)).length;
+          countBadge.textContent = `${newCount} / ${visiblePlugins.length} 已启用`;
         }
       });
     }

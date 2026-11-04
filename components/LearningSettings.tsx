@@ -7,6 +7,7 @@ import styles from "./LearningSettings.module.css";
 
 interface Props {
   cwd: string | null;
+  engine?: "pi" | "codex";
 }
 
 type ReviewState = LearningReview["status"];
@@ -34,7 +35,7 @@ function isLearningStatus(value: unknown): value is LearningStatus {
   return typeof data.enabled === "boolean" && Array.isArray(data.lessons);
 }
 
-export function LearningSettings({ cwd }: Props) {
+export function LearningSettings({ cwd, engine = "pi" }: Props) {
   const descriptionId = useId();
   const idPrefix = useId();
   const loadSequenceRef = useRef(0);
@@ -170,17 +171,20 @@ export function LearningSettings({ cwd }: Props) {
         <div className={styles.heading}>
           <h2 id={`${idPrefix}-title`}>自动复盘</h2>
           <p id={descriptionId}>
-            启用后，任务结束会使用该会话模型进行一次限量后台复盘，会产生额外模型调用费用；经验按项目保存，后续只作为参考。技能须确认采用，不覆盖已有技能。
+            适用于 Pi Agent 会话。符合条件的任务结束后，会使用该会话模型进行限量后台复盘并产生额外费用；经验按项目保存，技能须确认采用。
           </p>
         </div>
-        <ConfigSwitch
-          checked={status?.enabled ?? false}
-          disabled={!status || loading || busy}
-          loading={loading || pendingWrite !== null}
-          label="启用自动复盘"
-          describedBy={descriptionId}
-          onChange={(enabled) => void toggleEnabled(enabled)}
-        />
+        <div className={styles.toggle}>
+          <span className={styles.toggleState} role="status">{loading ? "读取中" : status ? (status.enabled ? "已开启" : "已关闭") : "状态未确认"}</span>
+          <ConfigSwitch
+            checked={status?.enabled ?? false}
+            disabled={!status || loading || busy}
+            loading={loading || pendingWrite !== null}
+            label="启用自动复盘"
+            describedBy={descriptionId}
+            onChange={(enabled) => void toggleEnabled(enabled)}
+          />
+        </div>
       </header>
 
       {error && <p className={styles.error} role="alert">{error}</p>}
@@ -193,7 +197,9 @@ export function LearningSettings({ cwd }: Props) {
           </ConfigButton>
         </div>
 
-        {!cwd ? (
+        {engine === "codex" ? (
+          <p className={styles.empty} role="status">当前 Codex 会话暂不支持自动复盘；切换到 Pi Agent 项目可查看复盘记录。</p>
+        ) : !cwd ? (
           <p className={styles.empty} role="status">请先打开项目，再查看该项目的复盘记录。</p>
         ) : loading && !status ? (
           <p className={styles.empty} role="status" aria-live="polite">正在读取复盘记录…</p>

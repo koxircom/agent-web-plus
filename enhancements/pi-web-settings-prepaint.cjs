@@ -245,6 +245,8 @@ function extractEnhancementMetadata(sourceCodeOrPath) {
       const modInfo = featureToModule[plug.id] || null;
       metadata[plug.id] = {
         defaultEnabled: plug.defaultEnabled !== false,
+        alwaysOn: plug.alwaysOn === true,
+        alwaysOff: plug.alwaysOff === true,
         moduleId: modInfo ? modInfo.moduleId : null,
         moduleDefaultEnabled: modInfo ? modInfo.moduleDefaultEnabled : true,
       };
@@ -274,6 +276,8 @@ function createFastPluginReader(storageGetter, metadata) {
   return function isPluginFastActive(pluginId) {
     if (!Object.prototype.hasOwnProperty.call(metadata, pluginId)) return true;
     const info = metadata[pluginId];
+    if (info.alwaysOn) return true;
+    if (info.alwaysOff) return false;
     const raw = read("pi-enh-settings-v1");
     if (raw !== lastRaw) {
       lastRaw = raw;
@@ -323,6 +327,8 @@ function buildNativePluginSettingsModuleCode(metadata) {
 
 export interface EnhancementPluginMetadataItem {
   defaultEnabled: boolean;
+  alwaysOn: boolean;
+  alwaysOff: boolean;
   moduleId: string | null;
   moduleDefaultEnabled: boolean;
 }
@@ -355,6 +361,8 @@ export function createFastPluginReader(
   return function isPluginFastActive(pluginId: string): boolean {
     if (!Object.prototype.hasOwnProperty.call(metadata, pluginId)) return true;
     const info = metadata[pluginId];
+    if (info.alwaysOn) return true;
+    if (info.alwaysOff) return false;
     const raw = read("pi-enh-settings-v1");
     if (raw !== lastRaw) {
       lastRaw = raw;

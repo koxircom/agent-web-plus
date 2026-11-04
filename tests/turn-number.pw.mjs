@@ -619,20 +619,20 @@ try {
     receipt.checks.push({ name: "session-switch-and-refresh-isolation", passed: true });
     console.log("✓ Scenario 5: Session switch A -> B -> A passed");
 
-    // === 6. Feature & Module Toggles (Real localStorage & Events) ===
-    console.log("Checking Scenario 6: Plugin and module toggles...");
-    // 6.1 Toggle plugin off via real __PI_ENH_SET_PLUGIN__
+    // === 6. Legacy feature and module switches cannot disable the core badge ===
+    console.log("Checking Scenario 6: Core behavior and legacy switches...");
+    // 6.1 Attempt to disable the former plugin switch.
     await page.evaluate(() => {
       if (typeof window.__PI_ENH_SET_PLUGIN__ !== "function") throw Error("Real plugin setter not loaded");
       window.__PI_ENH_SET_PLUGIN__("turn-number-indicator", false);
     });
-    await page.waitForFunction(() => document.querySelectorAll(".pi-enh-turn-number-badge").length === 0, {
+    await page.waitForFunction(() => document.querySelectorAll(".pi-enh-turn-number-badge").length === 4, {
       timeout: 6000,
     });
     let badgeCount = await page.$$eval(".pi-enh-turn-number-badge", (els) => els.length);
-    assert.equal(badgeCount, 0, "Badges must immediately exit when plugin is disabled");
+    assert.equal(badgeCount, 4, "Core badges stay visible when the old plugin switch is disabled");
 
-    // 6.2 Toggle plugin back on
+    // 6.2 Reapplying the former enabled state stays harmless.
     await page.evaluate(() => {
       if (typeof window.__PI_ENH_SET_PLUGIN__ !== "function") throw Error("Real plugin setter not loaded");
       window.__PI_ENH_SET_PLUGIN__("turn-number-indicator", true);
@@ -643,18 +643,18 @@ try {
     badgeCount = await page.$$eval(".pi-enh-turn-number-badge", (els) => els.length);
     assert.equal(badgeCount, 4, "Badges must immediately restore when plugin is re-enabled");
 
-    // 6.3 Toggle module off via __PI_ENH_SET_MODULE__
+    // 6.3 Disabling the former parent module keeps core behavior active.
     await page.evaluate(() => {
       if (typeof window.__PI_ENH_SET_MODULE__ !== "function") throw Error("Real module setter not loaded");
       window.__PI_ENH_SET_MODULE__("task-insights", false);
     });
-    await page.waitForFunction(() => document.querySelectorAll(".pi-enh-turn-number-badge").length === 0, {
+    await page.waitForFunction(() => document.querySelectorAll(".pi-enh-turn-number-badge").length === 4, {
       timeout: 6000,
     });
     badgeCount = await page.$$eval(".pi-enh-turn-number-badge", (els) => els.length);
-    assert.equal(badgeCount, 0, "Badges must immediately exit when task-insights module is disabled");
+    assert.equal(badgeCount, 4, "Core badges stay visible when the old module is disabled");
 
-    // 6.4 Toggle module back on
+    // 6.4 Re-enabling the former parent remains harmless.
     await page.evaluate(() => {
       if (typeof window.__PI_ENH_SET_MODULE__ !== "function") throw Error("Real module setter not loaded");
       window.__PI_ENH_SET_MODULE__("task-insights", true);

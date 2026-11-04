@@ -15,6 +15,7 @@ import { CHAT_SCROLL_STORAGE_KEY, MAX_SAVED_CHAT_POSITIONS, readChatScrollPositi
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, saveFileViewerState } from "./file-tab-state";
+import { EXPLORER_VISIBLE_STORAGE_KEY, loadExplorerVisible, saveExplorerVisible } from "@/lib/file-explorer-state";
 import { SettingsPanel } from "./SettingsPanel";
 import { SettingsShortcuts, resolveSettingsShortcutFocus } from "./SettingsShortcuts";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
@@ -120,6 +121,19 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
   // is not mounted. ChatWindow receives the audio callbacks as props.
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio, soundEnabledRef } = useAudio();
   useTouchContactGuard();
+  const [explorerVisible, setExplorerVisible] = useState(false);
+  useEffect(() => {
+    setExplorerVisible(loadExplorerVisible());
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === EXPLORER_VISIBLE_STORAGE_KEY || event.key === null) setExplorerVisible(loadExplorerVisible());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  const handleExplorerVisibilityChange = useCallback((visible: boolean) => {
+    setExplorerVisible(visible);
+    saveExplorerVisible(visible);
+  }, []);
   const [quoteSelectionEnabled, setQuoteSelectionEnabled] = useState(false);
   useEffect(() => {
     try {
@@ -1715,6 +1729,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
     <>
       {executionEngineReady && <SessionSidebar
         key={catalogEngine}
+        explorerVisible={explorerVisible}
         executionEngine={catalogEngine}
         codexEnabled={codexEnabled}
         onExecutionEngineChange={switchExecutionEngine}
@@ -2946,6 +2961,8 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         sessionId={piExecutionReady ? selectedSession?.id ?? null : null}
         browserTabContext={{ cwd: activeCwd, engine: activeExecutionEngine }}
         initialSection={settingsSection}
+        explorerVisible={explorerVisible}
+        onExplorerVisibilityChange={handleExplorerVisibilityChange}
         quoteSelectionEnabled={quoteSelectionEnabled}
         onQuoteSelectionChange={handleQuoteSelectionChange}
         onClose={() => {
