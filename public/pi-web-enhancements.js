@@ -30241,6 +30241,19 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           });
         }
       } else if (!initialUMsg && targetAMsg && targetAEntryId && turnUsage.stepCount > 0) {
+        if (String(explicitSessionId || getCurrentSessionId() || "").startsWith("codex:")) {
+          // A paged Codex fragment does not contain the native turn's start or
+          // total duration. Never invent a completed total from its last step.
+          knownTurnMetrics.delete(targetAEntryId);
+          if ((explicitSessionId || getCurrentSessionId()) === getCurrentSessionId()) {
+            for (const node of document.querySelectorAll('div[data-message-role="assistant"]')) {
+              if (getMessageEntryId(node) !== targetAEntryId) continue;
+              for (const badge of node.querySelectorAll(".pi-enh-duration-badge")) badge.remove();
+              node.removeAttribute("data-pi-enh-completed");
+            }
+          }
+          return;
+        }
         // 兜底保障：当历史由于极端截断未包含 user 起点消息时，依然为终态 assistant 消息记录多步执行耗时与累计 Token/费用
         const fTime = (firstAMsg && parseTime(firstAMsg.timestamp)) || 0;
         const aStartTime = parseTime(targetAMsg.timestamp);
@@ -36705,9 +36718,11 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           footer = ensureLiveTimerFallbackFooter(latestActiveMsg);
           usingFallbackFooter = Boolean(footer);
         }
-      } else if (lastUserMsg && !hasCompletedAssistantAfterLastUser) {
-        // 关键不变量：必须存在未完成的真实 User 提问轮次，且新 User 提问之后尚未出现已完成 assistant 时才允许 fallback 到 chat tail。
-        // 空会话（lastUserMsg 为 null）绝对禁止挂载任何 fallback live timer！
+      } else if ((lastUserMsg && !hasCompletedAssistantAfterLastUser)
+        || activeSessionTurns.get(currentSessionId)?.authoritativeTaskTiming === true) {
+        // Native execution timing remains authoritative when history pagination removes
+        // the user/start card. Empty sessions were rejected above; mount on the chat
+        // tail rather than attaching a live clock to a completed historical assistant.
         const tailHost = findChatTailFallbackHost(lastUserMsg);
         if (tailHost) {
           footer = ensureLiveTimerFallbackFooter(tailHost);

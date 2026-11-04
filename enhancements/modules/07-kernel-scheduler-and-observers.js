@@ -1102,9 +1102,11 @@
           footer = ensureLiveTimerFallbackFooter(latestActiveMsg);
           usingFallbackFooter = Boolean(footer);
         }
-      } else if (lastUserMsg && !hasCompletedAssistantAfterLastUser) {
-        // 关键不变量：必须存在未完成的真实 User 提问轮次，且新 User 提问之后尚未出现已完成 assistant 时才允许 fallback 到 chat tail。
-        // 空会话（lastUserMsg 为 null）绝对禁止挂载任何 fallback live timer！
+      } else if ((lastUserMsg && !hasCompletedAssistantAfterLastUser)
+        || activeSessionTurns.get(currentSessionId)?.authoritativeTaskTiming === true) {
+        // Native execution timing remains authoritative when history pagination removes
+        // the user/start card. Empty sessions were rejected above; mount on the chat
+        // tail rather than attaching a live clock to a completed historical assistant.
         const tailHost = findChatTailFallbackHost(lastUserMsg);
         if (tailHost) {
           footer = ensureLiveTimerFallbackFooter(tailHost);

@@ -933,6 +933,20 @@
             "components/SettingsPanel.test.mjs"
           ],
           "timeoutSeconds": 180
+        },
+        {
+          "name": "release-native-live-stopwatch",
+          "command": [
+            "node",
+            "--test",
+            "enhancements/tests/live-stopwatch-browser.spec.cjs"
+          ],
+          "files": [
+            "enhancements/tests/live-stopwatch-browser.spec.cjs",
+            "enhancements/modules/06-chat-view-and-tool-cards.js",
+            "enhancements/modules/07-kernel-scheduler-and-observers.js"
+          ],
+          "timeoutSeconds": 120
         }
       ]
     }

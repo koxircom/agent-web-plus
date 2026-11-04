@@ -1,7 +1,7 @@
 {
-  "maintenanceVersion": "1.4.64.1",
-  "webVersion": "1.4.64",
-  "fix": "Use original native Codex turn identity and start timestamp for running duration across metadata reads, tools, reconnects and refresh; clear timing when execution is idle",
+  "maintenanceVersion": "1.4.65.1",
+  "webVersion": "1.4.65",
+  "fix": "Preserve original native Codex turn timing across refresh and paged history; never fabricate a completed duration from a truncated assistant fragment",
   "sourceHashes": {
     "app/api/agent/running/route.ts": "767dd45487ffcb374a243a11df5c3b6e2152811119bc998757917a25aa07b424",
     "app/api/files/[...path]/route.ts": "40c6057d8b34509f798c345ed1afed559a3becf7d584d511d5e20e1144001a84",
@@ -31,8 +31,8 @@
     "lib/subagent-extension.integration.test.mjs": "79a8a8ef475328586f09d47346824ded267b7e6862fb7831b504cec64c7cd7ea",
     "lib/subagent-extension.ts": "98ef79109627e847a3ea55f1c7e9b739e8a64243ccfe8068a28fd2719e8c2c76",
     "lib/terminal-poll-owner.ts": "a5b00727f21b8065435d5b3c3e3dabb76ad44a98b431719e67a5dbf6e358afd1",
-    "package-lock.json": "4c8aa837ce1215e7a601a446ddf845f588338b4b733f11dcbc9fca015e02f199",
-    "package.json": "15ff60fc34494c6f4ea8bc88bf6b50a181bd57c716295d1e4918a12a6fdcd7a3",
+    "package-lock.json": "4473698ace6c804902ac8a1ae1dff600057256351cb580b0a1de5d8d25237347",
+    "package.json": "4b2b10f7aa521d8d4b5cd9402437939e13c19f33a87055820121688f8b528e7c",
     "lib/browser-tab-appearance.ts": "2f417ff99aefb7f09ce6d722ab4e6fbb1729e15ec9cc656bb52da0196e6fb2f6",
     "components/BrowserTabSettings.tsx": "51414a6e5a0b6f28f1451b8b64f97aefa82ee83dab1f5a4fdd3051279a964418",
     "components/SettingsPanel.tsx": "16373fbf5c102b0b4b5c53365e812d9af8190ce30a61919113c85406a1214d27",
@@ -55,7 +55,10 @@
     "connectors/codex-bridge/bridge/features/sessions/model.py": "50aba4caa982f0a52daf57bac1ce6e15ac457e904635f5b69676129400db3fdc",
     "connectors/codex-bridge/bridge/features/sessions/side_chat.py": "1bd0372b18f9c0cc50e72228b2c0c14ca27cafc9f599216b9ea7169bdee4e376",
     "connectors/codex-bridge/tests/test_task_timing.py": "40a27761ca4d1b42ce75a2357337d77e7372a5677fff8d4158c68b7a8a047aeb",
-    "lib/execution-engines/codex-projection.ts": "966aba8344a3d4801b690df0cb648ae8467c803290b0e6b350f7a44297f7254d"
+    "lib/execution-engines/codex-projection.ts": "966aba8344a3d4801b690df0cb648ae8467c803290b0e6b350f7a44297f7254d",
+    "enhancements/modules/06-chat-view-and-tool-cards.js": "7f8f6f6fa4f5091107a5e4fbc772550fbaabbfb0c6c2aa4f91de0e54cc1dea8c",
+    "enhancements/modules/07-kernel-scheduler-and-observers.js": "255e9d02f164a8a67fb7055c5cde5214fd9d13c1dd97b2ba966daab176aeac82",
+    "enhancements/tests/live-stopwatch-browser.spec.cjs": "60bc82a75167dc96acdaf67e74f17a99500883c12b83905419aa87fdb4b6364a"
   },
   "sdkVersion": "1.5.0"
 }

@@ -71,7 +71,12 @@ function buildInMemoryBundleFromModules() {
   const parts = manifest.modules.map((mod) =>
     fs.readFileSync(path.join(MODULES_DIR, mod.file), "utf8")
   );
-  return parts.join("");
+  const icons = require("../../lib/composer-mode-icons.json");
+  const markup = Object.fromEntries(Object.entries(icons).map(([mode, paths]) => [mode,
+    '<g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">' + paths.map(d => `<path d="${d}" />`).join("") + "</g>"
+  ]));
+  const ledger = fs.readFileSync(path.resolve(__dirname, "../usage-ledger-core.js"), "utf8");
+  return `var COMPOSER_MODE_ICON_MARKUP = ${JSON.stringify(markup)};\n${ledger}\n` + parts.join("");
 }
 
 test("live-stopwatch in real Chromium: mixed user DOM order, missing footer fallback, recovery to native footer, disable/stop cleanup, and zero historical pollution", async () => {
@@ -117,7 +122,7 @@ test("live-stopwatch in real Chromium: mixed user DOM order, missing footer fall
       <div style="min-width: 0; padding: 0 16px;">
         <div id="chat-message-list" style="width: 100%; min-width: 0; max-width: var(--chat-content-max-width, 820px); margin: 0 auto;">
           <!-- 1. 历史用户消息 u1：仅有 var(--user-bg) 气泡，初始无 data-message-role="user" -->
-          <div id="entry-u1" data-entry-id="entry-u1">
+          <div id="entry-u1" data-entry-id="entry-u1" data-message-role="user">
             <div style="margin-bottom: 16px; display: flex; flex-direction: column; align-items: flex-end;">
               <div style="display: flex; align-items: flex-end; gap: 6px; max-width: 85%;">
                 <div style="background: var(--user-bg); border-radius: 12px; padding: 8px 12px;">历史提问 1</div>
@@ -206,9 +211,11 @@ test("live-stopwatch in real Chromium: mixed user DOM order, missing footer fall
     });
 
     const page = await context.newPage();
+    const errors = []; page.on("pageerror", e => errors.push(e.message));
     await page.goto("http://pi-test.local/?session=live-stopwatch-test", { waitUntil: "domcontentloaded" });
     await page.addScriptTag({ content: bundleCode });
 
+    if(errors.length) throw Error(errors.join("; "));
     // 等待一个秒表周期（400ms）触发 tickLiveDuration
     await page.waitForTimeout(550);
 
@@ -248,7 +255,7 @@ test("live-stopwatch in real Chromium: mixed user DOM order, missing footer fall
     });
 
     assert.equal(step1.isRunning, true, "Session must be detected as live running");
-    assert.equal(step1.u1MarkedUser, true, "Bubble user message u1 must be normalized with data-message-role='user'");
+    assert.equal(step1.u1MarkedUser, true, "Native user message u1 must retain data-message-role='user'");
     assert.equal(step1.timerCount, 1, "Must render exactly 1 live stopwatch timer");
     assert.match(step1.timerText || "", /^⏱️ 运行中 [\d.]+s$/, "Live timer text must match '⏱️ 运行中 Xs'");
     assert.equal(step1.fallbackCount, 1, "Must mount 1 fallback footer container when active assistant message has no native footer");
@@ -447,6 +454,38 @@ test("live-stopwatch in real Chromium: mixed user DOM order, missing footer fall
     assert.equal(step5.timers, 0, "All live timers must be cleaned up when run ends");
     assert.equal(step5.fallbacks, 0, "All fallback containers must be cleaned up when run ends");
     assert.equal(step5.histDurationSec, "12", "Historical turn duration badge must never be overwritten by an aborted/empty new turn");
+    // Native Codex history may page out every user message during a long tool turn.
+    await page.evaluate(() => {
+      const sid = "codex:long-history-clock";
+      history.replaceState({}, "", "?session=" + encodeURIComponent(sid));
+      document.getElementById("entry-u1")?.remove();
+      document.getElementById("entry-u2")?.remove();
+      const list = document.getElementById("chat-message-list");
+      const row = document.createElement("div");
+      row.id = "entry-a3";
+      row.setAttribute("data-entry-id", "entry-a3");
+      row.innerHTML = '<div id="msg-a3" data-message-role="assistant" data-entry-id="entry-a3" data-pi-enh-completed="true"><div data-message-text="true">中间进度，仍在执行工具</div><div style="display:flex;gap:8px;margin-top:4px"><span class="pi-enh-duration-badge" data-total-sec="1">⏱️ 1.0s</span></div></div>';
+      list.appendChild(row);
+      const stop = document.createElement("button");
+      stop.id = "active-stop-btn"; stop.setAttribute("aria-label", "停止"); document.body.appendChild(stop);
+      document.querySelector("textarea").placeholder = "立即引导 / 排队后续消息";
+      const startedAt = Date.now() - 1800000;
+      window.__PI_ENH_HANDLE_MODEL_SPEED_STREAM_EVENT__(sid, {type:"agent_start",taskTiming:{taskId:"native-long-turn",startedAt}});
+    });
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('.pi-enh-live-timer').count(),1,"authoritative clock must render even before truncated metrics are corrected");
+    assert.equal(await page.locator('#msg-a3 .pi-enh-live-timer').count(),0,"completed card must not own a live clock");
+    await page.evaluate(() => {
+      const data = {context:{messages:[{role:"assistant",timestamp:Date.now()-15000,stopReason:"stop",model:"Codex",content:[{type:"text",text:"中间进度，仍在执行工具"}]}],entryIds:["entry-a3"],hasMore:true},tree:[]};
+      window.__PI_WEB_GET_RESIDENT_SESSION_DATA__ = () => data;
+      window.dispatchEvent(new CustomEvent("pi-native-session-data-change",{detail:{sessionId:"codex:long-history-clock"}}));
+    });
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('[data-message-role="user"]').count(),0,"fixture must omit the user page");
+    assert.equal(await page.locator('.pi-enh-live-timer').count(),1,"native clock survives when user is outside the rendered history window");
+    assert.match(await page.locator('.pi-enh-live-timer').innerText(),/运行中 30分/);
+    assert.equal(await page.locator('#msg-a3 .pi-enh-duration-badge').count(),0,"never show a fabricated one-second total for a truncated Codex turn");
+    assert.equal(await page.locator('#msg-a1 .pi-enh-duration-badge').getAttribute("data-total-sec"),"12","old complete turn keeps its saved duration");
   } finally {
     await browser.close();
   }
