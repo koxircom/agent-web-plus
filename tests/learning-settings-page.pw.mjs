@@ -34,13 +34,15 @@ try {
         learningRequests.push({method:request.method(),cwd:url.searchParams.get('cwd')});
         if(request.method()==='PUT'){enabled=request.postDataJSON().enabled;return json({enabled});}
         if(request.method()!=='GET')return route.fulfill({status:403,json:{error:'fixture write blocked'}});
-        return json({enabled,project:url.searchParams.get('cwd'),lastReview:null,lessons:[]});
+        const cwd=url.searchParams.get('cwd');
+        const lessons=cwd==='/pi/alpha'||cwd==='/pi/beta'?[{id:cwd,title:cwd==='/pi/alpha'?'甲项目复盘':'乙项目复盘',content:'隔离复盘内容',kind:'experience',status:'active',occurrences:1}]:[];
+        return json({enabled,project:cwd,lastReview:null,lessons});
       }
       if(!['GET','HEAD'].includes(request.method())&&!['/api/cwd/validate','/api/execution-engines/check'].includes(p))return route.fulfill({status:403,json:{error:'fixture is read-only'}});
       if(p==='/api/execution-engines')return json({defaultEngine:engine,codex:{enabled:true,url:origin+'/native'}});
       if(p==='/api/execution-engines/check')return json({connected:true,projects:[{cwd:'/isolated'}]});
       if(p==='/api/cwd/validate')return json({valid:true,cwd:'/isolated',exists:true});
-      if(p==='/api/sessions')return json({sessions:[]});
+      if(p==='/api/sessions')return json({sessions:engine==='codex'&&url.searchParams.get('engine')==='pi'?[{id:'pi-alpha',cwd:'/pi/alpha'},{id:'pi-beta',cwd:'/pi/beta'}]:[]});
       if(p==='/api/project-trust')return json({trusted:true,requiresTrust:false});
       if(p==='/api/agent/running')return json({runningSessionIds:[],completionNotificationSuppressedSessionIds:[],sessionListVersion:1});
       if(p==='/api/worktrees')return json({isGit:false,projectRoot:'/isolated',currentWorktreePath:'/isolated',worktrees:[]});
@@ -54,7 +56,25 @@ try {
     const heading=page.getByRole('heading',{name:'自动复盘',exact:true});await heading.waitFor();
     const panel=heading.locator('xpath=../..');const toggle=page.getByRole('switch',{name:'启用自动复盘'});await toggle.waitFor();
     await page.getByText('已关闭',{exact:true}).waitFor();assert.equal(await toggle.getAttribute('aria-checked'),'false');
-    if(engine==='codex')await page.getByText('当前 Codex 会话暂不支持自动复盘；切换到 Pi Agent 项目可查看复盘记录。',{exact:true}).waitFor();
+    if(engine==='codex'){
+      await page.getByText('Codex 会话暂不支持自动复盘。',{exact:true}).waitFor();
+      const beforeUrl=page.url();
+      await page.getByRole('tab',{name:'Pi Agent'}).click();
+      await page.getByText('甲项目复盘',{exact:true}).waitFor();
+      assert.equal(await page.getByRole('tab',{name:'Pi Agent'}).getAttribute('aria-selected'),'true');
+      const project=page.getByLabel('Pi Agent 项目');
+      assert.equal(await project.inputValue(),'/pi/alpha');
+      await project.selectOption('/pi/beta');
+      await page.getByText('乙项目复盘',{exact:true}).waitFor();
+      assert.equal(await page.getByText('甲项目复盘',{exact:true}).count(),0);
+      assert.equal(page.url(),beforeUrl,'switching review source must not change the current session');
+      assert(learningRequests.some(row=>row.cwd==='/pi/alpha')&&learningRequests.some(row=>row.cwd==='/pi/beta'));
+      assert(!learningRequests.some(row=>row.cwd==='/isolated'),'Codex project is not a Pi project');
+      await page.getByRole('tab',{name:'Codex'}).click();
+      await page.getByText('Codex 会话暂不支持自动复盘。',{exact:true}).waitFor();
+      await page.getByRole('tab',{name:'Pi Agent'}).click();
+      await page.getByText('乙项目复盘',{exact:true}).waitFor();
+    }
     else await page.getByText('暂无项目经验或技能候选。',{exact:true}).waitFor();
     const geometry=await page.evaluate(()=>{
       const host=document.querySelector('.settings-dialog-main').getBoundingClientRect();

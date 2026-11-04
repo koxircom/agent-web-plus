@@ -7,9 +7,11 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bridge.features.sessions.usage import CodexUsageCollector
+from test_compressed_history import compress
 
 
 SESSION = '4c415d98-57ef-4e6c-b2ed-3c48486c735a'
@@ -131,6 +133,48 @@ class CodexUsageLedgerTests(unittest.TestCase):
         self.assertEqual(after['buckets'], before['buckets'])
         self.assertEqual(after['sources']['codex']['unavailableHistoryCount'], 1)
         self.assertFalse(after['sources']['codex']['complete'])
+
+    def test_compressed_history_is_counted_once_and_unchanged_files_are_reused(self):
+        path = self.add_session()
+        original = (b'{"type":"response_item","payload":"' + b'x' * (1024 * 1024) + b'"}\n'
+                    + self.token('2026-10-18T01:00:00Z', 10, 2, 3))
+        compressed = path.with_name(path.name + '.zst')
+        compressed.write_bytes(compress(original))
+        path.unlink()
+        before = compressed.read_bytes()
+        with patch('bridge.features.sessions.compressed_rollout.tempfile.TemporaryFile', side_effect=AssertionError('usage must stream archives')):
+            with patch('bridge.features.sessions.compressed_rollout.MAX_EXPANDED_BYTES', 10):
+                first = self.collector.refresh_sync()
+        self.assertEqual(first['sources']['codex']['unavailableHistoryCount'], 0)
+        self.assertTrue(first['sources']['codex']['complete'])
+        self.assertEqual(first['buckets'][0]['totalTokens'], 13)
+        with patch('bridge.features.sessions.usage.iter_zstd_chunks', side_effect=AssertionError('unchanged archive was decompressed again')):
+            second = self.collector.refresh_sync()
+        self.assertEqual(second['buckets'], first['buckets'])
+        self.assertEqual(compressed.read_bytes(), before)
+        self.assertFalse(path.exists())
+        compressed.write_bytes(compress(original + self.token('2026-10-18T01:01:00Z', 20, 4, 6)))
+        updated = self.collector.refresh_sync()
+        self.assertEqual(updated['buckets'][0]['totalTokens'], 26)
+        self.assertEqual(updated['buckets'][0]['records'], 2)
+
+    def test_corrupt_or_escaped_compressed_history_does_not_replace_valid_usage(self):
+        path = self.add_session()
+        path.write_bytes(self.token('2026-10-18T01:00:00Z', 10, 2, 3))
+        before = self.collector.refresh_sync()
+        path.unlink()
+        compressed = path.with_name(path.name + '.zst')
+        compressed.write_bytes(b'invalid compressed data')
+        with self.assertRaisesRegex(Exception, '读取 Codex rollout 文件失败'):
+            self.collector.refresh_sync()
+        self.assertEqual(self.collector.snapshot['buckets'], before['buckets'])
+        compressed.unlink()
+        outside = self.root / 'outside.zst'
+        outside.write_bytes(compress(self.token('2026-10-18T01:00:00Z', 900, 0, 0)))
+        compressed.symlink_to(outside)
+        result = self.collector.refresh_sync()
+        self.assertEqual(result['buckets'], before['buckets'])
+        self.assertEqual(result['sources']['codex']['unavailableHistoryCount'], 1)
 
     def test_append_scan_keeps_complete_offset_and_finishes_partial_tail_once(self):
         path = self.add_session()

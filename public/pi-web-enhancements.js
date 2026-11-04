@@ -710,7 +710,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 /* Optional resources share one request and publish no UI ownership. */
 (function (root) {
   "use strict";
-  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-151436c8dff200f2.js","integrity":"sha256-FRQ2yN/yAPLOPBWnCZxg1XB4TQKDjgbhtw/9PZ8VKOk=","bytes":80990},"image-editor":{"path":"/pi-web-assets/image-editor-f36306f7ea9c3df6.js","integrity":"sha256-82MG9+qcPfb12GTafSoash5lvbQ4zLFr9YjfATuo82M=","bytes":54119}};
+  const assets = {"xlsx-engine":{"path":"/pi-web-assets/xlsx-engine-ca804c22e21dd24b.js","integrity":"sha256-yoBMIuId0ksu79m7pYMZbbCTcQew2ejVoD+cI1B/VXU=","bytes":279670},"usage-panel":{"path":"/pi-web-assets/usage-panel-5a890e01a049683c.js","integrity":"sha256-WokOAaBJaDyrPD8LZs2Y3Fmo86Nwenkg7K5D2Vc2KXw=","bytes":82677},"image-editor":{"path":"/pi-web-assets/image-editor-f36306f7ea9c3df6.js","integrity":"sha256-82MG9+qcPfb12GTafSoash5lvbQ4zLFr9YjfATuo82M=","bytes":54119}};
   const pending = new Map();
   // Hot reloads may change an optional asset while keeping the same window.
   // Reuse only an export stamped with this exact content-addressed path.
@@ -41816,7 +41816,6 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
   }
 
   let usageLedgerPrefetchCancel = null;
-  let usageLedgerPrefetchStarted = false;
 
   function cancelUsageLedgerPrefetch() {
     if (usageLedgerPrefetchCancel) {
@@ -41826,7 +41825,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
   }
 
   function scheduleUsageLedgerPrefetch() {
-    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchStarted || usageLedgerPrefetchCancel) return;
+    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchCancel) return;
 
     let cancelled = false;
     let idleId = null;
@@ -41845,7 +41844,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         prefetchAbortController.abort();
         prefetchAbortController = null;
       }
-      if (loadListener) window.removeEventListener("load", loadListener);
+      if (loadListener) document.removeEventListener("DOMContentLoaded", loadListener);
       loadListener = null;
       removeVisibilityListener();
       if (idleId !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idleId);
@@ -41873,20 +41872,25 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         return;
       }
       const loadOptional = window.__PI_ENH_LOAD_OPTIONAL__;
-      if (typeof loadOptional !== "function") return;
+      let nextDelay = 30000;
       try {
+        if (typeof loadOptional !== "function") throw new Error("Usage loader unavailable");
         const usagePanel = await loadOptional("usage-panel");
         if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
         if (document.visibilityState === "hidden") {
           waitUntilVisible();
           return;
         }
-        if (typeof usagePanel?.prefetch !== "function") return;
-        usageLedgerPrefetchStarted = true;
+        if (typeof usagePanel?.prefetch !== "function") throw new Error("Usage prefetch unavailable");
         prefetchAbortController = typeof AbortController === "function" ? new AbortController() : null;
-        void usagePanel.prefetch(prefetchAbortController?.signal).catch(() => {});
+        const snapshot = await usagePanel.prefetch(prefetchAbortController?.signal);
+        const status = snapshot?.engineStatus;
+        if (status?.pi?.status !== "loading" && status?.codex?.status !== "loading") nextDelay = 5 * 60000;
       } catch (_) {
-        // Keep startup quiet; opening Usage remains the visible retry path.
+        // Foreground errors remain visible in the usage panel.
+      }
+      if (!cancelled && !isDisposed && isPluginEnabled("usage-cost-dashboard")) {
+        timerId = setTimeout(() => { timerId = null; scheduleIdle(); }, nextDelay);
       }
     };
 
@@ -41908,10 +41912,10 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
       scheduleIdle();
     };
     usageLedgerPrefetchCancel = cancel;
-    if (document.readyState === "complete") afterLoad();
+    if (document.readyState !== "loading") afterLoad();
     else {
       loadListener = afterLoad;
-      window.addEventListener("load", loadListener, { once: true });
+      document.addEventListener("DOMContentLoaded", loadListener, { once: true });
     }
   }
 
@@ -42269,7 +42273,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
 
   if (typeof setTimeout === "function") {
     setTimeout(() => {
-      if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi") scheduleUsageLedgerPrefetch();
+      if (!isDisposed && !isLoginPage()) scheduleUsageLedgerPrefetch();
     }, 1200);
   }
 

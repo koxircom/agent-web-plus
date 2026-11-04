@@ -115,6 +115,7 @@ export function preloadSettingsSection(section: SettingsSection) {
 
 interface Props {
   browserTabContext?: { cwd: string | null; engine: "pi" | "codex" };
+  learningPiCwd?: string | null;
   resolveReturnFocus?: (opener: Element) => Element | null;
   cwd: string | null;
   sessionId: string | null;
@@ -629,6 +630,7 @@ function ExtensionSectionHost({ definition, ...props }: SettingsHostContextProps
 
 export function SettingsPanel({
   browserTabContext,
+  learningPiCwd,
   explorerVisible,
   onExplorerVisibilityChange,
   resolveReturnFocus,
@@ -1199,7 +1201,7 @@ export function SettingsPanel({
               <PluginsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />,
             )}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
-          {sectionHost("learning", <LearningSettings cwd={cwd} engine={browserTabContext?.engine ?? "pi"} />)}
+          {sectionHost("learning", <LearningSettings cwd={cwd} engine={browserTabContext?.engine ?? "pi"} preferredPiCwd={learningPiCwd} />)}
           {sectionHost("execution-engine", <ExecutionEngineSettings />)}
           {sectionHost("collaboration", <CollaborationSettings />)}
 

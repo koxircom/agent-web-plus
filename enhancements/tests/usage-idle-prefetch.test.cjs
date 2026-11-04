@@ -52,17 +52,18 @@ function fixture({ readyState = 'loading', visibilityState = 'visible', enabled 
   return { context, window, document, windowEvents, documentEvents, idle, timers, calls, prefetchSignals };
 }
 
-test('Usage waits for load and one idle slot, then shares a one-shot optional-module prefetch', async () => {
+test('Usage starts after DOM readiness, shares the snapshot and schedules bounded refresh', async () => {
   const f = fixture();
   f.context.scheduleUsageLedgerPrefetch();
   assert.equal(f.idle.size, 0);
-  f.windowEvents.get('load')();
+  f.documentEvents.get('DOMContentLoaded')();
   assert.equal(f.idle.size, 1);
   assert.deepEqual(f.calls, []);
   [...f.idle.values()][0]();
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(f.calls, ['usage-panel', 'snapshot']);
   assert.equal(f.prefetchSignals[0] instanceof AbortSignal, true);
+  assert.equal(f.timers.size, 1, 'a future refresh is scheduled after prefetch');
   f.context.scheduleUsageLedgerPrefetch();
   assert.equal(f.idle.size, 0);
   f.context.cancelUsageLedgerPrefetch();
@@ -83,7 +84,36 @@ test('hidden pages defer work until visible and disabling cancels scheduled idle
   const disabled = fixture();
   disabled.context.scheduleUsageLedgerPrefetch();
   disabled.context.cancelUsageLedgerPrefetch();
-  disabled.windowEvents.get('load')?.();
+  disabled.documentEvents.get('DOMContentLoaded')?.();
   assert.equal(disabled.idle.size, 0);
   assert.deepEqual(disabled.calls, []);
+});
+
+test('the startup prefetch is scheduled for both execution engines', () => {
+  const startup = source.slice(source.lastIndexOf('// 页面加载完成后后台静默预热模型设置数据'));
+  const usage = startup.match(/setTimeout\(\(\) => \{\s*if \(([^\n]+)\) scheduleUsageLedgerPrefetch\(\);/);
+  assert(usage, 'startup schedules usage prefetch');
+  assert.doesNotMatch(usage[1], /getComposerExecutionEngineHint|===\s*["']pi/);
+});
+
+test('a failed warmup schedules a retry and recovers while the page remains open', async () => {
+  const f = fixture({ readyState: 'complete' });
+  let attempts = 0;
+  f.window.__PI_ENH_LOAD_OPTIONAL__ = async () => ({ prefetch: async () => {
+    attempts++;
+    if (attempts === 1) throw new Error('temporary failure');
+    return { engineStatus: { pi: { status: 'ready' }, codex: { status: 'ready' } } };
+  } });
+  f.context.scheduleUsageLedgerPrefetch();
+  [...f.idle.values()][0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  const [id, retry] = [...f.timers.entries()][0];
+  f.timers.delete(id);
+  retry();
+  [...f.idle.values()][0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 2);
+  assert.equal(f.timers.size, 1);
+  f.context.cancelUsageLedgerPrefetch();
 });

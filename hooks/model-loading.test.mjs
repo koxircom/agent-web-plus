@@ -34,15 +34,16 @@ function setup(fetchImpl) {
   const context = {
     Error, DOMException, AbortSignal, URLSearchParams,
     controller: new AbortController(),
-    newSessionCwd: "/project", session: null, isNew: true,
-    sessionIdRef: { current: null }, thinkingLevelOverrideRef: { current: null },
+    newSessionCwd: "/project", session: null, isNew: true, executionEngine: "pi",
+    sessionIdRef: { current: null }, thinkingLevelOverrideRef: { current: null }, newSessionModelOverrideRef: { current: null }, modelCatalogReadyRef: { current: false },
     thinkingLevelPinsRef: { current: {} }, defaultThinkingLevelRef: { current: null },
+    getNewSessionModelPreference: () => null,
     asConcreteThinkingLevel: (value) => (!value || value === "auto" ? null : value),
     fetch: fetchImpl,
     MODELS_RETRY_DELAYS_MS: script(schedule.initializer.getText(source)).runInNewContext(),
     delay: async (ms) => { delays.push(ms); },
   };
-  for (const name of ["ModelError", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "ModelsLoading"]) {
+  for (const name of ["ModelError", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionModel", "NewSessionThinkingLevel", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "ModelsLoading"]) {
     context[`set${name}`] = (value) => writes.push([name, value]);
   }
   context.loadModels = loadScript.runInNewContext(context);
@@ -79,6 +80,25 @@ test("model-load failures become visible only after bounded retries and clear on
   assert.ok(recovered.writes.some(([name, value]) => name === "ModelList" && value[0].id === "test"));
   assert.ok(recovered.writes.some(([name, value]) => name === "NewSessionDefaultModel" && value.modelId === "test"));
   assert.ok(recovered.writes.some(([name, value]) => name === "NewSessionDefaultThinkingLevel" && value === "high"));
+});
+
+test("new drafts restore a saved selection without overwriting a newer user choice", async () => {
+  const state = setup(async () => Response.json({
+    models: { "pi:old": "Old", "pi:saved": "Saved" },
+    modelList: [{ provider: "pi", id: "old" }, { provider: "pi", id: "saved" }],
+    defaultModel: { provider: "pi", modelId: "old" }, defaultThinkingLevel: "low",
+    thinkingLevels: { "pi:saved": ["low", "high"] },
+  }));
+  state.context.getNewSessionModelPreference = () => ({ provider: "pi", modelId: "saved", thinkingLevel: "high" });
+  await state.context.loadModels();
+  assert.equal(state.context.newSessionModelOverrideRef.current.modelId, "saved");
+  assert.equal(state.context.thinkingLevelOverrideRef.current, "high");
+  assert.ok(state.writes.some(([name, value]) => name === "NewSessionThinkingLevel" && value === "high"));
+  state.context.newSessionModelOverrideRef.current = { provider: "pi", modelId: "old" };
+  state.context.thinkingLevelOverrideRef.current = "low";
+  await state.context.loadModels();
+  assert.equal(state.context.newSessionModelOverrideRef.current.modelId, "old");
+  assert.equal(state.context.thinkingLevelOverrideRef.current, "low");
 });
 
 test("cancelling model loads prevents state writes and further retries", async () => {

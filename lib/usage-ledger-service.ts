@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { loadNativeCommonJs, resolveUsageGuardBinDir } from "./usage-delete-guard";
 import * as os from "node:os";
 import path from "node:path";
@@ -12,13 +12,15 @@ export type UsageLedger = Record<string, unknown> & {
   snapshotId?: string;
 };
 
-type UsageLedgerResult = { ledger: UsageLedger; mode: UsageLedgerMode };
+type UsageLedgerResult = { ledger: UsageLedger; mode: UsageLedgerMode; refreshStatus?: "loading" | "error" };
 type ServiceOptions = {
   cwd?: string;
   platform?: string;
   resolveNativeLedgerPath?: (source: string) => string;
   generate?: (source: string, cwd: string) => Promise<void>;
   validate?: (ledger: unknown) => asserts ledger is UsageLedger;
+  now?: () => number;
+  refreshIntervalMs?: number;
 };
 
 const guardBinDir = resolveUsageGuardBinDir();
@@ -110,7 +112,12 @@ export function createUsageLedgerService(options: ServiceOptions = {}) {
   const nativeSource = platform === "win32" ? "windows" : "nas";
   const resolveNativePath = options.resolveNativeLedgerPath || defaultNativeLedgerPath;
   const generate = options.generate || runGenerator;
+  const now = options.now || Date.now;
+  const refreshIntervalMs = options.refreshIntervalMs ?? 5 * 60_000;
   let generation: Promise<void> | null = null;
+  let nextBackgroundAttempt = 0;
+  let backgroundFailed = false;
+  let lastVerifiedRefresh = 0;
 
   const publicLedgerPath = path.join(cwd, "public", "pi-usage-ledger.json");
 
@@ -146,7 +153,21 @@ export function createUsageLedgerService(options: ServiceOptions = {}) {
   async function readNative(): Promise<UsageLedgerResult> {
     const nativeLedgerPath = resolveNativePath(nativeSource);
     const existing = readValidLedger(nativeLedgerPath, validate);
-    if (existing) return { ledger: existing, mode: "native-local" };
+    if (existing) {
+      let stale = false;
+      try { stale = now() - Math.max(statSync(nativeLedgerPath).mtimeMs, lastVerifiedRefresh) >= refreshIntervalMs; }
+      catch { stale = true; }
+      if (stale && !generation && now() >= nextBackgroundAttempt) {
+        nextBackgroundAttempt = now() + refreshIntervalMs;
+        backgroundFailed = false;
+        void runSingleflight(nativeSource).then(() => {
+          if (!readValidLedger(nativeLedgerPath, validate)) throw new Error("Usage ledger refresh produced an invalid snapshot");
+          lastVerifiedRefresh = now();
+        }).catch(() => { backgroundFailed = true; nextBackgroundAttempt = now() + refreshIntervalMs; });
+      }
+      const refreshStatus = stale && generation ? "loading" : stale && backgroundFailed ? "error" : undefined;
+      return { ledger: existing, mode: "native-local", ...(refreshStatus ? { refreshStatus } : {}) };
+    }
     await runSingleflight(nativeSource);
     const generated = readValidLedger(nativeLedgerPath, validate);
     if (!generated) throw modeError("Native usage ledger generation produced no valid snapshot", "native-local");
@@ -165,6 +186,9 @@ export function createUsageLedgerService(options: ServiceOptions = {}) {
     await runSingleflight(nativeSource);
     const generated = readValidLedger(resolveNativePath(nativeSource), validate);
     if (!generated) throw modeError("Native usage ledger generation produced no valid snapshot", "native-local");
+    backgroundFailed = false;
+    lastVerifiedRefresh = now();
+    nextBackgroundAttempt = now() + refreshIntervalMs;
     return { ledger: generated, mode: "native-local" };
   }
 

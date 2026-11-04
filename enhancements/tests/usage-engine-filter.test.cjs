@@ -203,6 +203,48 @@ test('disposing a loading panel clears its per-panel poll timer', async () => {
   assert.equal([...f.timers.values()].filter(timer => timer.delay === 2000).length, 0);
 });
 
+test('Pi background refresh is visible and updates the existing snapshot', async () => {
+  const loading = ledger([bucket({ inputTokens: 10 })], {
+    engineStatus: { pi: { status: 'loading', message: '正在后台更新 Pi Agent 用量' }, codex: { status: 'ready' } },
+  });
+  const ready = ledger([bucket({ inputTokens: 20 })], {
+    snapshotId: 'pi-refresh-ready', generatedAt: '2026-10-18T04:00:02.000Z',
+    engineStatus: { pi: { status: 'ready' }, codex: { status: 'ready' } },
+  });
+  const f = panelFixture(loading, { connected: true, fetchLedgers: [loading, ready] });
+  f.context.PiUsagePanel.render(f.panel, {}, { enabled: () => true });
+  assert.match(f.panel.innerHTML, /正在后台更新 Pi Agent 用量/);
+  await new Promise(resolve => setImmediate(resolve));
+  const [id, timer] = [...f.timers.entries()].find(([, item]) => item.delay === 10000);
+  f.timers.delete(id);
+  await timer.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.panel.dataset.totalTokens, 20);
+  assert.doesNotMatch(f.panel.innerHTML, /正在后台更新 Pi Agent 用量/);
+  f.context.PiUsagePanel.dispose(f.panel);
+});
+
+test('a successful background prefetch recovers an open panel after an earlier failure', async () => {
+  const ready = ledger([bucket({ inputTokens: 42 })], {
+    snapshotId: 'recovered', engineStatus: { pi: { status: 'ready' }, codex: { status: 'ready' } },
+  });
+  const f = panelFixture(null, { connected: true });
+  let calls = 0;
+  f.context.fetch = async () => {
+    calls++;
+    if (calls === 1) return { ok: false, status: 503, headers: { get: () => null }, text: async () => '{}' };
+    return { ok: true, headers: { get: () => null }, text: async () => JSON.stringify(ready) };
+  };
+  f.context.PiUsagePanel.render(f.panel, {}, { enabled: () => true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(f.panel.innerHTML, /用量统计面板渲染遇到异常/);
+  await f.context.PiUsagePanel.prefetch();
+  assert.equal(f.panel.dataset.usageSnapshot, 'recovered');
+  assert.equal(f.panel.dataset.totalTokens, 42);
+  assert.doesNotMatch(f.panel.innerHTML, /用量统计面板渲染遇到异常/);
+  f.context.PiUsagePanel.dispose(f.panel);
+});
+
 
 test('Codex nested workers count as one conversation while physical totals/date/role filters stay exact',()=>{
  const root='codex:root',child='codex:child',nested='codex:nested';

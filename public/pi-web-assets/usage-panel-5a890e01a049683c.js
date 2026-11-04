@@ -88,7 +88,7 @@
   const VALID_TIME_RANGES = new Set(["today", "yesterday", "24h", "7d", "30d", "all", "custom"]);
   const VALID_ROLES = new Set(["all", "main", "subagent", "system"]);
   const VALID_ENGINES = new Set(["all", "pi", "codex"]);
-  const CODEX_LOADING_POLL_MS = 2000;
+  const USAGE_LOADING_POLL_MS = 2000;
 
   function readSavedFilters() {
     try {
@@ -243,6 +243,7 @@
 
   const DEFAULT_RETRY_DELAYS = [3000, 8000];
   const DEFAULT_POST_TIMEOUT_MS = 40000;
+  const DEFAULT_SNAPSHOT_TIMEOUT_MS = 15000;
   function getPostTimeoutMs() {
     if (typeof root !== "undefined" && typeof root.__PI_USAGE_POST_TIMEOUT_MS__ === "number" && root.__PI_USAGE_POST_TIMEOUT_MS__ > 0) {
       return root.__PI_USAGE_POST_TIMEOUT_MS__;
@@ -287,15 +288,22 @@
     const start = () => {
       if (inflightFetchPromise) return inflightFetchPromise;
       const task = (async () => {
-        const response = await fetch(`/api/usage/ledger?usageSnapshot=${Date.now()}`, { cache: "no-store" });
-        const text = (await response.text()).trimStart();
-        let body = null;
-        try { body = text ? JSON.parse(text) : null; } catch (_) {}
-        if (!response.ok) throw new Error(body?.error || `账本快照请求失败: HTTP ${response.status}`);
-        const fresh = body?.ledger && typeof body.ledger === "object" ? body.ledger : body;
-        const mode = response.headers?.get?.("X-Pi-Usage-Mode") || response.headers?.get?.("x-pi-usage-mode");
-        if (mode === "native-local" || mode === "legacy-central") setUsageMode(mode);
-        return cacheValidatedLedger(fresh);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), root.__PI_USAGE_SNAPSHOT_TIMEOUT_MS__ || DEFAULT_SNAPSHOT_TIMEOUT_MS);
+        try {
+          const response = await fetch(`/api/usage/ledger?usageSnapshot=${Date.now()}`, { cache: "no-store", signal: controller.signal });
+          const text = (await response.text()).trimStart();
+          let body = null;
+          try { body = text ? JSON.parse(text) : null; } catch (_) {}
+          if (!response.ok) throw new Error(body?.error || `账本快照请求失败: HTTP ${response.status}`);
+          const fresh = body?.ledger && typeof body.ledger === "object" ? body.ledger : body;
+          const mode = response.headers?.get?.("X-Pi-Usage-Mode") || response.headers?.get?.("x-pi-usage-mode");
+          if (mode === "native-local" || mode === "legacy-central") setUsageMode(mode);
+          return cacheValidatedLedger(fresh);
+        } catch (error) {
+          if (controller.signal.aborted) throw new Error("用量快照请求超时，请重试");
+          throw error;
+        } finally { clearTimeout(timeout); }
       })();
       const shared = task.finally(() => {
         if (inflightFetchPromise === shared) inflightFetchPromise = null;
@@ -552,6 +560,7 @@
   const outsideClickDisposers = new WeakMap();
   const enginePollers = new WeakMap();
   const enginePollErrors = new WeakMap();
+  const mountedUsagePanels = new Map();
 
   function engineStatuses(ledger) {
     const declared = ledger?.engineStatus;
@@ -567,7 +576,7 @@
       return { status, message: typeof value.message === "string" ? value.message : "" };
     };
     return {
-      pi: normalize(declared.pi, ["ready", "unavailable"]),
+      pi: normalize(declared.pi, ["ready", "partial", "loading", "unavailable"]),
       codex: normalize(declared.codex, ["ready", "partial", "loading", "unavailable", "disabled"]),
     };
   }
@@ -629,6 +638,7 @@
 
   function scheduleEnginePoll(poll, ledger) {
     if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
+    const pollDelay = engineStatuses(ledger).pi.status === "loading" ? 10000 : USAGE_LOADING_POLL_MS;
     poll.timer = setTimeout(async () => {
       poll.timer = null;
       if (poll.cancelled || enginePollers.get(poll.panel) !== poll) return;
@@ -657,7 +667,9 @@
           render(poll.panel, poll.nav, poll.hooks);
           return;
         }
-        if (engineStatuses(next).codex.status !== "loading") {
+        const statuses = engineStatuses(next);
+        if (!((engine === "all" || engine === "pi") && statuses.pi.status === "loading")
+            && !((engine === "all" || engine === "codex") && statuses.codex.status === "loading")) {
           stopEnginePoll(poll.panel);
           return;
         }
@@ -680,12 +692,13 @@
           stopEnginePoll(poll.panel);
         }
       }
-    }, CODEX_LOADING_POLL_MS);
+    }, pollDelay);
   }
 
   function ensureEnginePoll(panel, nav, hooks, ledger) {
-    const selected = engineStatuses(ledger).codex.status;
-    if ((engine !== "all" && engine !== "codex") || selected !== "loading") {
+    const statuses = engineStatuses(ledger);
+    if (!((engine === "all" || engine === "pi") && statuses.pi.status === "loading")
+        && !((engine === "all" || engine === "codex") && statuses.codex.status === "loading")) {
       stopEnginePoll(panel);
       return;
     }
@@ -716,7 +729,7 @@
     if (pollError && !currentPollError) enginePollErrors.delete(panel);
     const labels = { pi: "Pi Agent", codex: "Codex" };
     const defaultMessages = {
-      pi: { unavailable: "用量不可用" },
+      pi: { loading: "用量正在更新", partial: "用量可能不是最新", unavailable: "用量不可用" },
       codex: {
         loading: "用量正在加载",
         unavailable: "用量不可用",
@@ -725,7 +738,7 @@
     };
     const issues = selectedEngines.filter(key => statuses[key].status !== "ready").map(key => {
       const current = statuses[key];
-      const detail = key === "codex" && currentPollError
+      const detail = currentPollError && current.status === "loading"
         ? `加载失败：${currentPollError.message}`
         : (current.message || defaultMessages[key][current.status] || "用量状态不可用");
       return `${labels[key]}：${detail}`;
@@ -737,6 +750,7 @@
   }
 
   function dispose(panel) {
+    mountedUsagePanels.delete(panel);
     outsideClickDisposers.get(panel)?.();
     outsideClickDisposers.delete(panel);
     stopEnginePoll(panel);
@@ -745,6 +759,7 @@
   function render(panel, nav, hooks) {
     if (!panel) return;
     dispose(panel);
+    mountedUsagePanels.set(panel, { nav, hooks, snapshotKey: null });
     try {
       _renderInternal(panel, nav, hooks);
     } catch (err) {
@@ -758,6 +773,7 @@
     if (!ledger) {
       _renderLoading(panel);
       refresh({
+        retryDelays: [],
         isCancelled: () => !panel.isConnected || (hooks && hooks.enabled && !hooks.enabled()),
       })
         .then(() => {
@@ -1473,11 +1489,20 @@
     });
 
     ensureEnginePoll(panel, nav, hooks, ledger);
+    const mounted = mountedUsagePanels.get(panel);
+    if (mounted) mounted.snapshotKey = JSON.stringify([engineSnapshotKey(ledger), engineStatusKey(ledger), pricingKey(ledger)]);
   }
 
   // Use the same request/cache for idle preloading and foreground consumers.
   function prefetch(signal) {
-    return fetchSnapshotOnce(signal);
+    return fetchSnapshotOnce(signal).then(ledger => {
+      const key = JSON.stringify([engineSnapshotKey(ledger), engineStatusKey(ledger), pricingKey(ledger)]);
+      for (const [panel, mounted] of [...mountedUsagePanels]) {
+        if (!isPanelActive(panel, mounted.hooks)) mountedUsagePanels.delete(panel);
+        else if (mounted.snapshotKey !== key) render(panel, mounted.nav, mounted.hooks);
+      }
+      return ledger;
+    });
   }
 
   root.PiUsagePanel = {

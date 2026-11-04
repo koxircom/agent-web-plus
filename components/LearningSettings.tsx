@@ -8,6 +8,7 @@ import styles from "./LearningSettings.module.css";
 interface Props {
   cwd: string | null;
   engine?: "pi" | "codex";
+  preferredPiCwd?: string | null;
 }
 
 type ReviewState = LearningReview["status"];
@@ -35,9 +36,14 @@ function isLearningStatus(value: unknown): value is LearningStatus {
   return typeof data.enabled === "boolean" && Array.isArray(data.lessons);
 }
 
-export function LearningSettings({ cwd, engine = "pi" }: Props) {
+export function LearningSettings({ cwd: currentCwd, engine = "pi", preferredPiCwd = null }: Props) {
   const descriptionId = useId();
   const idPrefix = useId();
+  const [view, setView] = useState<"pi" | "codex">(engine);
+  const [piProjects, setPiProjects] = useState<string[] | null>(null);
+  const [piProjectError, setPiProjectError] = useState(false);
+  const [selectedPiCwd, setSelectedPiCwd] = useState<string | null>(preferredPiCwd);
+  const cwd = engine === "pi" ? currentCwd : selectedPiCwd;
   const loadSequenceRef = useRef(0);
   const contextGenerationRef = useRef(0);
   const previousCwdRef = useRef(cwd);
@@ -49,6 +55,32 @@ export function LearningSettings({ cwd, engine = "pi" }: Props) {
   const [pendingWrite, setPendingWrite] = useState<number | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+
+  useEffect(() => { setView(engine); }, [engine]);
+
+  useEffect(() => {
+    if (engine !== "codex" || view !== "pi") return;
+    const controller = new AbortController();
+    setPiProjectError(false);
+    void (async () => {
+      try {
+        const response = await fetch("/api/sessions?engine=pi&summary=1", { cache: "no-store", signal: controller.signal });
+        const data: unknown = await response.json();
+        if (!response.ok || !data || typeof data !== "object" || !Array.isArray((data as { sessions?: unknown }).sessions)) throw new Error("Invalid Pi sessions");
+        const sessions = (data as { sessions: Array<{ id?: unknown; cwd?: unknown }> }).sessions;
+        const paths = Array.from(new Set(sessions.filter((session) => session && typeof session.id === "string"
+          && !session.id.startsWith("codex:") && typeof session.cwd === "string" && session.cwd.length > 0)
+          .map((session) => session.cwd as string)));
+        if (preferredPiCwd && !paths.includes(preferredPiCwd)) paths.unshift(preferredPiCwd);
+        if (controller.signal.aborted) return;
+        setPiProjects(paths);
+        setSelectedPiCwd((current) => current && paths.includes(current) ? current : preferredPiCwd && paths.includes(preferredPiCwd) ? preferredPiCwd : paths[0] ?? null);
+      } catch {
+        if (!controller.signal.aborted) setPiProjectError(true);
+      }
+    })();
+    return () => controller.abort();
+  }, [engine, view, preferredPiCwd, reloadKey]);
 
   useEffect(() => {
     if (previousCwdRef.current !== cwd) {
@@ -197,8 +229,30 @@ export function LearningSettings({ cwd, engine = "pi" }: Props) {
           </ConfigButton>
         </div>
 
-        {engine === "codex" ? (
-          <p className={styles.empty} role="status">当前 Codex 会话暂不支持自动复盘；切换到 Pi Agent 项目可查看复盘记录。</p>
+        <div className={styles.tabs} role="tablist" aria-label="复盘来源">
+          {(["pi", "codex"] as const).map((item) => (
+            <button key={item} type="button" role="tab" aria-selected={view === item}
+              className={styles.tab} onClick={() => setView(item)}>
+              {item === "pi" ? "Pi Agent" : "Codex"}
+            </button>
+          ))}
+        </div>
+        {view === "pi" && engine === "codex" && (
+          <div className={styles.projectPicker}>
+            <label htmlFor={`${idPrefix}-project`}>Pi Agent 项目</label>
+            <select id={`${idPrefix}-project`} value={selectedPiCwd ?? ""} disabled={!piProjects?.length || busy}
+              onChange={(event) => setSelectedPiCwd(event.target.value || null)}>
+              {!selectedPiCwd && <option value="">选择项目</option>}
+              {piProjects?.map((project) => <option key={project} value={project}>{project}</option>)}
+            </select>
+          </div>
+        )}
+        {view === "codex" ? (
+          <p className={styles.empty} role="status">Codex 会话暂不支持自动复盘。</p>
+        ) : engine === "codex" && piProjectError ? (
+          <p className={styles.empty} role="alert">读取 Pi Agent 项目失败，请手动刷新重试。</p>
+        ) : engine === "codex" && !piProjects ? (
+          <p className={styles.empty} role="status">正在读取 Pi Agent 项目…</p>
         ) : !cwd ? (
           <p className={styles.empty} role="status">请先打开项目，再查看该项目的复盘记录。</p>
         ) : loading && !status ? (

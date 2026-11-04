@@ -5,7 +5,7 @@ import type { UsageLedger, UsageLedgerMode } from "./usage-ledger-service";
 
 type Status = { status: "ready" | "partial" | "loading" | "unavailable" | "disabled"; message?: string };
 type Snapshot = UsageLedger & { sources?: Record<string, unknown>; sessions?: Record<string, unknown>; loading?: boolean; error?: string };
-type PiResult = { ledger: UsageLedger; mode: UsageLedgerMode };
+type PiResult = { ledger: UsageLedger; mode: UsageLedgerMode; refreshStatus?: "loading" | "error" };
 type Outcome<T> = { value: T } | { error: unknown };
 const core = loadNativeCommonJs<{ validate: (ledger: unknown) => unknown; aggregate: (ledger: unknown) => Record<string, unknown> }>(path.join(resolveUsageGuardBinDir(), "usage-ledger-core.js"));
 const settle = async <T>(work: () => Promise<T>): Promise<Outcome<T>> => {
@@ -20,7 +20,10 @@ export function combineUsageLedgers(pi: Outcome<PiResult>, codex: Outcome<Snapsh
   if (codexValue) core.validate(codexValue);
   const coverage = codexValue?.sources?.codex as { complete?: boolean; counterGapCount?: number; unavailableHistoryCount?: number } | undefined;
   const engineStatus: { pi: Status; codex: Status } = {
-    pi: piValue ? { status: "ready" } : { status: "unavailable", message: "Pi Agent 用量暂不可用，当前统计不完整" },
+    pi: !piValue ? { status: "unavailable", message: "Pi Agent 用量暂不可用，当前统计不完整" }
+      : piValue.refreshStatus === "loading" ? { status: "loading", message: "正在后台更新 Pi Agent 用量，暂显示上次快照" }
+      : piValue.refreshStatus === "error" ? { status: "partial", message: "Pi Agent 用量更新失败，暂显示上次快照" }
+      : { status: "ready" },
     codex: "error" in codex ? { status: "unavailable", message: "Codex 用量暂不可用，请检查执行端连接或升级连接器" }
       : !codexValue ? { status: "disabled", message: "尚未启用 Codex 执行引擎" }
       : codexValue.error ? { status: "unavailable", message: "Codex 用量同步失败，保留上次快照" }

@@ -54,6 +54,7 @@ import {
 import { fetchHistoryPageContext } from "@/lib/session-history-page-client";
 import { isSessionResidentFresh, markSessionResidentFresh, waitForSessionPreload } from "@/lib/session-preload";
 import { clampModelThinkingLevel } from "@/lib/model-thinking-level";
+import { getNewSessionModelPreference, hasNewSessionModelPreference, setNewSessionModelPreference } from "@/lib/new-session-model-preference";
 import { readSessionWireDisk } from "@/lib/session-sync-storage";
 import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
@@ -619,6 +620,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const slashCommandsGenerationRef = useRef(0);
   const newSessionPromotedRef = useRef(false);
   const newSessionModelOverrideRef = useRef<SelectedModel | null>(null);
+  const modelCatalogReadyRef = useRef(false);
   const thinkingLevelOverrideRef = useRef<ConcreteThinkingLevel | null>(null);
   const thinkingLevelPinsRef = useRef<Record<string, string>>({});
   const defaultThinkingLevelRef = useRef<ConcreteThinkingLevel | null>(null);
@@ -1215,6 +1217,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (sessionIdRef.current) return sessionIdRef.current;
     if (!isNew || !newSessionCwd) return sessionIdRef.current;
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
+    if (!modelCatalogReadyRef.current && !newSessionModelOverrideRef.current && hasNewSessionModelPreference(executionEngine)) {
+      throw new Error("模型列表尚未加载完成，已保留输入，请稍后重试");
+    }
 
     const promise = (async () => {
       // Only send explicit user overrides for Pi. For Codex, capture the currently displayed
@@ -2777,6 +2782,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const nextThinking = clampModelThinkingLevel(asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current, supported);
         setNewSessionDefaultThinkingLevel(nextThinking);
       }
+      const chosenThinking = thinkingLevelOverrideRef.current ?? clampModelThinkingLevel(
+        asConcreteThinkingLevel(thinkingLevelPinsRef.current[`${provider}/${modelId}`]) ?? defaultThinkingLevelRef.current,
+        supported,
+      );
+      setNewSessionModelPreference(executionEngine, { ...selectedModel, thinkingLevel: chosenThinking });
       try {
         if (executionEngine === "codex") {
           await updateNewCodexSettings({ type: "set_model", provider, modelId });
@@ -2907,15 +2917,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     thinkingLevelPinsRef.current = d.thinkingLevelPins ?? {};
     defaultThinkingLevelRef.current = asConcreteThinkingLevel(d.defaultThinkingLevel);
     if (isNew && !sessionIdRef.current) {
+      const preferred = getNewSessionModelPreference(executionEngine, nextModelList, d.thinkingLevels ?? {});
+      if (preferred && !newSessionModelOverrideRef.current) {
+        const selected = { provider: preferred.provider, modelId: preferred.modelId };
+        newSessionModelOverrideRef.current = selected;
+        setNewSessionModel(selected);
+        if (thinkingLevelOverrideRef.current === null && preferred.thinkingLevel !== null) {
+          thinkingLevelOverrideRef.current = preferred.thinkingLevel;
+          setNewSessionThinkingLevel(preferred.thinkingLevel);
+        }
+      }
       // The first listed model is not necessarily the runtime's automatic choice.
       // An `enabledModels` pattern may pin a thinking level (`anthropic/*:high`).
       // Like pi, apply it to the model a new session starts with.
-      const pinned = displayDefaultModel && d.thinkingLevelPins?.[`${displayDefaultModel.provider}/${displayDefaultModel.id}`];
+      const initialModel = newSessionModelOverrideRef.current ?? (displayDefaultModel
+        ? { provider: displayDefaultModel.provider, modelId: displayDefaultModel.id } : null);
+      const pinned = initialModel && d.thinkingLevelPins?.[`${initialModel.provider}/${initialModel.modelId}`];
       if (thinkingLevelOverrideRef.current === null) {
         const nextDefaultThinking = asConcreteThinkingLevel(pinned) ?? defaultThinkingLevelRef.current;
         setNewSessionDefaultThinkingLevel(nextDefaultThinking);
       }
     }
+    modelCatalogReadyRef.current = true;
   }, [executionEngine, isNew, newSessionCwd, session?.cwd, session?.id]);
 
   const handleBuiltinSlashCommand = useCallback(async (text: string): Promise<BuiltinSlashCommandResult> => {
@@ -3228,11 +3251,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       thinkingLevelOverrideRef.current = null;
       setNewSessionThinkingLevel(null);
       setCurrentThinkingOverride(null);
+      if (isNew && displayModel) setNewSessionModelPreference(executionEngine, { ...displayModel, thinkingLevel: null });
       return;
     }
     if (isNew) {
       thinkingLevelOverrideRef.current = level;
       setNewSessionThinkingLevel(level);
+      if (displayModel) setNewSessionModelPreference(executionEngine, { ...displayModel, thinkingLevel: level });
       if (executionEngine === "codex") {
         try {
           const result = await updateNewCodexSettings({ type: "set_thinking_level", level }) as { thinkingLevel?: string } | null;

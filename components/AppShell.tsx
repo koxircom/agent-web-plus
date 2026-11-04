@@ -2960,6 +2960,7 @@ export function AppShell({ bootstrap }: { bootstrap?: SidebarBootstrap } = {}) {
         cwd={piExecutionReady ? projectTrustCwd : null}
         sessionId={piExecutionReady ? selectedSession?.id ?? null : null}
         browserTabContext={{ cwd: activeCwd, engine: activeExecutionEngine }}
+        learningPiCwd={piExecutionReady ? projectTrustCwd : lastPiCwdRef.current}
         initialSection={settingsSection}
         explorerVisible={explorerVisible}
         onExplorerVisibilityChange={handleExplorerVisibilityChange}

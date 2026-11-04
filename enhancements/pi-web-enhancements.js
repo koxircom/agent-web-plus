@@ -41007,7 +41007,6 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
   }
 
   let usageLedgerPrefetchCancel = null;
-  let usageLedgerPrefetchStarted = false;
 
   function cancelUsageLedgerPrefetch() {
     if (usageLedgerPrefetchCancel) {
@@ -41017,7 +41016,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
   }
 
   function scheduleUsageLedgerPrefetch() {
-    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchStarted || usageLedgerPrefetchCancel) return;
+    if (isDisposed || isLoginPage() || !isPluginEnabled("usage-cost-dashboard") || usageLedgerPrefetchCancel) return;
 
     let cancelled = false;
     let idleId = null;
@@ -41036,7 +41035,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         prefetchAbortController.abort();
         prefetchAbortController = null;
       }
-      if (loadListener) window.removeEventListener("load", loadListener);
+      if (loadListener) document.removeEventListener("DOMContentLoaded", loadListener);
       loadListener = null;
       removeVisibilityListener();
       if (idleId !== null && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idleId);
@@ -41064,20 +41063,25 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
         return;
       }
       const loadOptional = window.__PI_ENH_LOAD_OPTIONAL__;
-      if (typeof loadOptional !== "function") return;
+      let nextDelay = 30000;
       try {
+        if (typeof loadOptional !== "function") throw new Error("Usage loader unavailable");
         const usagePanel = await loadOptional("usage-panel");
         if (cancelled || isDisposed || !isPluginEnabled("usage-cost-dashboard")) return;
         if (document.visibilityState === "hidden") {
           waitUntilVisible();
           return;
         }
-        if (typeof usagePanel?.prefetch !== "function") return;
-        usageLedgerPrefetchStarted = true;
+        if (typeof usagePanel?.prefetch !== "function") throw new Error("Usage prefetch unavailable");
         prefetchAbortController = typeof AbortController === "function" ? new AbortController() : null;
-        void usagePanel.prefetch(prefetchAbortController?.signal).catch(() => {});
+        const snapshot = await usagePanel.prefetch(prefetchAbortController?.signal);
+        const status = snapshot?.engineStatus;
+        if (status?.pi?.status !== "loading" && status?.codex?.status !== "loading") nextDelay = 5 * 60000;
       } catch (_) {
-        // Keep startup quiet; opening Usage remains the visible retry path.
+        // Foreground errors remain visible in the usage panel.
+      }
+      if (!cancelled && !isDisposed && isPluginEnabled("usage-cost-dashboard")) {
+        timerId = setTimeout(() => { timerId = null; scheduleIdle(); }, nextDelay);
       }
     };
 
@@ -41099,10 +41103,10 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
       scheduleIdle();
     };
     usageLedgerPrefetchCancel = cancel;
-    if (document.readyState === "complete") afterLoad();
+    if (document.readyState !== "loading") afterLoad();
     else {
       loadListener = afterLoad;
-      window.addEventListener("load", loadListener, { once: true });
+      document.addEventListener("DOMContentLoaded", loadListener, { once: true });
     }
   }
 
@@ -41460,7 +41464,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
 
   if (typeof setTimeout === "function") {
     setTimeout(() => {
-      if (!isDisposed && !isLoginPage() && getComposerExecutionEngineHint(getCurrentSessionId()) === "pi") scheduleUsageLedgerPrefetch();
+      if (!isDisposed && !isLoginPage()) scheduleUsageLedgerPrefetch();
     }, 1200);
   }
 

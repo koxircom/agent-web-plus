@@ -1437,6 +1437,7 @@ test("Codex ensureNewSession captures displayed default model/thinking while Pi 
       creationRequestIdRef: ref(null),
       createNoticeId: () => "creation-fixture-20261025",
       executionEngine: "codex",
+      modelCatalogReadyRef: ref(true),
       newSessionModelOverrideRef: ref(null),
       thinkingLevelOverrideRef: ref(null),
       newSessionModel: null,
@@ -1486,6 +1487,7 @@ test("Codex ensureNewSession captures displayed default model/thinking while Pi 
       newSessionCwd: "/workspace/pi",
       ensuringNewSessionRef: ref(null),
       executionEngine: "pi",
+      modelCatalogReadyRef: ref(true),
       newSessionModelOverrideRef: ref(null),
       thinkingLevelOverrideRef: ref(null),
       newSessionModel: null,
@@ -1531,7 +1533,7 @@ test('new-session rejection exposes the server reason and leaves the draft sessi
   {ok:false,status:500,json:async()=>{throw new SyntaxError('non-JSON')}},
  ]) {
  const scope={sessionIdRef:ref(null),assistantRunIdentityRef:ref(null),isNew:true,newSessionCwd:'D:\\CODEX',ensuringNewSessionRef:ref(null),creationRequestIdRef:ref(null),createNoticeId:()=> 'creation-fixture-20261025',executionEngine:'codex',
-   newSessionModelOverrideRef:ref(null),thinkingLevelOverrideRef:ref(null),displayModelSnapshotRef:ref({model:null,thinkingLevel:null}),
+   modelCatalogReadyRef:ref(true),newSessionModelOverrideRef:ref(null),thinkingLevelOverrideRef:ref(null),displayModelSnapshotRef:ref({model:null,thinkingLevel:null}),
    toolPreset:'full',sessionToolsPinnedRef:ref(false),getToolNamesForPreset:()=>undefined,fetch:async()=>response};
   const ensure=callback('ensureNewSession',scope);
   await assert.rejects(ensure(),response.status===400?/Windows 桌面基础接入尚不支持此操作/:/HTTP 500/);
@@ -1543,12 +1545,22 @@ test('manual retry of an unconfirmed new Codex session keeps the same creation i
  let attempts=0,generated=0;const bodies=[];
  const scope={sessionIdRef:ref(null),assistantRunIdentityRef:ref(null),isNew:true,newSessionCwd:'D:\\CODEX',ensuringNewSessionRef:ref(null),creationRequestIdRef:ref(null),executionEngine:'codex',
   createNoticeId:()=> 'creation-fixture-'+(++generated)+'-20261025',
-  newSessionModelOverrideRef:ref(null),thinkingLevelOverrideRef:ref(null),displayModelSnapshotRef:ref({model:null,thinkingLevel:null}),
+  modelCatalogReadyRef:ref(true),newSessionModelOverrideRef:ref(null),thinkingLevelOverrideRef:ref(null),displayModelSnapshotRef:ref({model:null,thinkingLevel:null}),
   toolPreset:'full',sessionToolsPinnedRef:ref(false),getToolNamesForPreset:()=>undefined,resolveExecutionEngine:()=> 'codex',
   fetch:async(_,options)=>{bodies.push(JSON.parse(options.body));attempts++;return attempts===1?{ok:false,status:502,json:async()=>({error:'等待桌面接管'})}:{ok:true,json:async()=>({sessionId:'codex:11111111-2222-4333-8444-555555555555'})};}};
  const ensure=callback('ensureNewSession',scope);
  await assert.rejects(ensure(),/等待桌面接管/);
  await ensure();assert.equal(generated,1);assert.equal(bodies[0].creationRequestId,bodies[1].creationRequestId);
+});
+
+test('saved new-session selection cannot be skipped while its model catalog is loading', async () => {
+ let requests = 0;
+ const scope = { sessionIdRef: ref(null), isNew: true, newSessionCwd: '/fixture', ensuringNewSessionRef: ref(null),
+   modelCatalogReadyRef: ref(false), newSessionModelOverrideRef: ref(null), executionEngine: 'codex',
+   hasNewSessionModelPreference: () => true, fetch: async () => { requests++; } };
+ const ensure = callback('ensureNewSession', scope);
+ await assert.rejects(ensure(), /模型列表尚未加载完成/);
+ assert.equal(requests, 0);
 });
 
 test("useAgentSession lifecycle: hidden/pagehide releases SSE, shouldMaintain refuses background reconnect, visible reconciles and restores maintain", async () => {

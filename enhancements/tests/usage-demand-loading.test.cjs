@@ -68,3 +68,18 @@ test('invalid API data is rejected and never becomes a cache or an empty success
   assert.equal(f.cache.has('pi-enh-usage-ledger-cache'), false);
   assert.equal(f.calls.length, 1, 'invalid data does not fall back to downloading the enhancement bundle');
 });
+
+test('a stuck shared request times out and a later request can recover', async () => {
+  const f = fixture();
+  f.context.__PI_USAGE_SNAPSHOT_TIMEOUT_MS__ = 10;
+  let calls = 0;
+  f.context.fetch = (_url, options) => {
+    calls++;
+    if (calls === 1) return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+    return Promise.resolve({ ok: true, headers: { get: () => null }, text: async () => snapshot });
+  };
+  await assert.rejects(f.context.PiUsagePanel.prefetch(), /超时/);
+  const result = await f.context.PiUsagePanel.prefetch();
+  assert.equal(result.snapshotId, 'owned-fixture');
+  assert.equal(calls, 2);
+});

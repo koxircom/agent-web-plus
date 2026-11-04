@@ -2,7 +2,7 @@
 import ctypes
 import ctypes.util
 import tempfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 MAX_EXPANDED_BYTES = 1024 * 1024 * 1024
@@ -23,12 +23,7 @@ class _Buffer(ctypes.Structure):
     _fields_ = [('data', ctypes.c_void_p), ('size', ctypes.c_size_t), ('pos', ctypes.c_size_t)]
 
 
-@contextmanager
-def open_rollout(path):
-    if path.suffix != '.zst':
-        with path.open('rb') as stream:
-            yield stream
-        return
+def iter_zstd_chunks(source):
     library = ctypes.util.find_library('zstd')
     if not library:
         raise ValueError('读取压缩历史需要系统 Zstandard 库')
@@ -47,25 +42,37 @@ def open_rollout(path):
     try:
         if zstd.ZSTD_isError(zstd.ZSTD_initDStream(decoder)):
             raise ValueError('无法初始化压缩历史读取器')
-        with path.open('rb') as source, tempfile.TemporaryFile() as target:
-            total, remaining = 0, 1
-            while chunk := source.read(131072):
-                source_buffer = ctypes.create_string_buffer(chunk)
-                incoming = _Buffer(ctypes.addressof(source_buffer), len(chunk), 0)
-                while incoming.pos < incoming.size:
-                    output_buffer = ctypes.create_string_buffer(131072)
-                    outgoing = _Buffer(ctypes.addressof(output_buffer), len(output_buffer), 0)
-                    before = incoming.pos
-                    remaining = zstd.ZSTD_decompressStream(decoder, ctypes.byref(outgoing), ctypes.byref(incoming))
-                    if zstd.ZSTD_isError(remaining) or (incoming.pos == before and not outgoing.pos):
-                        raise ValueError('压缩历史损坏，无法读取')
-                    total += outgoing.pos
-                    if total > MAX_EXPANDED_BYTES:
-                        raise ValueError('压缩历史解压后超过大小限制')
-                    target.write(output_buffer.raw[:outgoing.pos])
-            if remaining != 0:
-                raise ValueError('压缩历史不完整，无法读取')
-            target.seek(0)
-            yield target
+        remaining = 1
+        while chunk := source.read(131072):
+            source_buffer = ctypes.create_string_buffer(chunk)
+            incoming = _Buffer(ctypes.addressof(source_buffer), len(chunk), 0)
+            while incoming.pos < incoming.size:
+                output_buffer = ctypes.create_string_buffer(131072)
+                outgoing = _Buffer(ctypes.addressof(output_buffer), len(output_buffer), 0)
+                before = incoming.pos
+                remaining = zstd.ZSTD_decompressStream(decoder, ctypes.byref(outgoing), ctypes.byref(incoming))
+                if zstd.ZSTD_isError(remaining) or (incoming.pos == before and not outgoing.pos):
+                    raise ValueError('压缩历史损坏，无法读取')
+                if outgoing.pos:
+                    yield output_buffer.raw[:outgoing.pos]
+        if remaining != 0:
+            raise ValueError('压缩历史不完整，无法读取')
     finally:
         zstd.ZSTD_freeDStream(decoder)
+
+
+@contextmanager
+def open_rollout(path, *, source=None):
+    if getattr(path, 'suffix', '') != '.zst':
+        with (nullcontext(source) if source is not None else path.open('rb')) as stream:
+            yield stream
+        return
+    with (nullcontext(source) if source is not None else path.open('rb')) as stream, tempfile.TemporaryFile() as target:
+        total = 0
+        for chunk in iter_zstd_chunks(stream):
+            total += len(chunk)
+            if total > MAX_EXPANDED_BYTES:
+                raise ValueError('压缩历史解压后超过大小限制')
+            target.write(chunk)
+        target.seek(0)
+        yield target

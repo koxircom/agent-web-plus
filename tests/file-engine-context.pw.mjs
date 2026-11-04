@@ -37,6 +37,8 @@ const cssBundle = bundle.outputFiles.filter(f=>f.path.endsWith('.css')).map(f=>f
 const requests=[], heldLists=[], heldChecks=[];
 let codexWatchRevision=1;
 let holdPiList=false,holdPiCheck=false;
+let heldListReady,heldCheckReady;
+function waitForHeld(setNotify){return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('Fixture request did not reach server')),12000);setNotify(()=>{clearTimeout(timer);resolve();});});}
 const json=(res,data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
 const entries=names=>names.map(name=>({name,isDir:name==='shared-dir',size:100,modified:'2026-10-20T00:00:00Z'}));
 const server=http.createServer((req,res)=>{
@@ -51,13 +53,13 @@ const server=http.createServer((req,res)=>{
    if(type==='list'){
     if(p.endsWith('/shared-dir')){
      const send=()=>json(res,{entries:entries([engine+'-child.txt']),path:p});
-     if(engine==='pi'&&holdPiList){holdPiList=false;heldLists.push(send);return;}return send();
+     if(engine==='pi'&&holdPiList){holdPiList=false;heldLists.push(send);heldListReady?.();heldListReady=null;return;}return send();
     }
     return json(res,{entries:entries(['shared-dir','shared.md','notes.txt','third.txt']),path:p});
    }
    if(type==='upload-check'){
     const send=()=>json(res,{conflicts:[],nonReplaceable:[]});
-    if(engine==='pi'&&holdPiCheck){holdPiCheck=false;heldChecks.push(send);return;}return send();
+    if(engine==='pi'&&holdPiCheck){holdPiCheck=false;heldChecks.push(send);heldCheckReady?.();heldCheckReady=null;return;}return send();
    }
    if(type==='upload'){req.resume();return req.on('end',()=>json(res,{uploaded:['fixture.txt'],skipped:[],errors:[]}));}
    if(type==='download'){res.writeHead(200,{'Content-Type':'text/plain','Content-Disposition':'attachment; filename="shared.md"'});return res.end(engine+' fixture');}
@@ -92,7 +94,8 @@ try{
   for(const name of ['shared-dir','shared.md','notes.txt','third.txt'])boxes.push(await explorer.getByText(name,{exact:true}).evaluate(el=>{const r=(el.closest('div[title]')||el.parentElement).getBoundingClientRect();return {name:el.textContent,y:r.y,bottom:r.bottom};}));
   for(let i=1;i<boxes.length;i++)assert(boxes[i].y>=boxes[i-1].bottom,'Adjacent file rows must not overlap');
   holdPiList=true;
-  await Promise.all([page.waitForRequest(r=>r.url().includes('shared-dir')&&r.url().includes('type=list')),explorer.getByText('shared-dir',{exact:true}).click()]);
+  const listReady=waitForHeld(notify=>{heldListReady=notify;});
+  await Promise.all([listReady,explorer.getByText('shared-dir',{exact:true}).click()]);
   assert.equal(heldLists.length,1,'The stale request must actually be in flight');
   await page.locator('#codex').click();await explorer.getByText('shared.md',{exact:true}).waitFor();
   await explorer.getByText('shared-dir',{exact:true}).click();await explorer.getByText('codex-child.txt',{exact:true}).waitFor();
@@ -117,7 +120,8 @@ try{
   assert.equal(await page.locator('[data-tab-engine="codex"]').count(),2,'Markdown links retain the original backend');
   // An old successful upload check must not resume after Pi -> Codex -> Pi (ABA).
   const beforeUpload=requests.filter(r=>r.type==='upload').length;holdPiCheck=true;
-  await Promise.all([page.waitForRequest(r=>r.url().includes('type=upload-check')),explorer.locator('input[type=file]').setInputFiles({name:'fixture.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')})]);
+  const checkReady=waitForHeld(notify=>{heldCheckReady=notify;});
+  await Promise.all([checkReady,explorer.locator('input[type=file]').setInputFiles({name:'fixture.txt',mimeType:'text/plain',buffer:Buffer.from('fixture')})]);
   assert.equal(heldChecks.length,1);
   await page.locator('#codex').click();await explorer.getByText('shared.md',{exact:true}).waitFor();
   await page.locator('#pi').click();await explorer.getByText('shared.md',{exact:true}).waitFor();

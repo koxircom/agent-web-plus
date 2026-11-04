@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "edition": "koxir-standalone-1.4.73",
-  "version": "1.4.73",
+  "edition": "koxir-standalone-1.4.77",
+  "version": "1.4.77",
   "targetFile": "enhancements/pi-web-enhancements.js",
   "mirrorFile": "public/pi-web-enhancements.js",
-  "totalLines": 41479,
-  "totalBytes": 1838737,
-  "bundleSha256": "18179497d60420c7d8132c716c5831a7264e15741e24d75c5f4ff1444064efe5",
-  "publicSha256": "c3ffb833d8c896b2e19f68bb799d71d84240ffe5abaa2277483815e3f87be58c",
+  "totalLines": 41483,
+  "totalBytes": 1839008,
+  "bundleSha256": "018186ccdac9a7e34908bff6ac4447052622e5e003d09bb742a8be9fa9e9c904",
+  "publicSha256": "298bb9d59ebb8fc046ac7f5a37483b26b449e0b88dfbad5ace863793196acb53",
   "runtimeAsset": {
-    "path": "/pi-web-assets/enhancements-8ee1fbe43e095f5f.js",
-    "sha256": "8ee1fbe43e095f5f7f3843a7c62d6ebd2a7f79db7bb8b9378fc6945618eafaec",
-    "integrity": "sha256-juH75D4JX19/OEOnxi1uvSp/edt7uLk3j8aUVhjq+uw=",
-    "bytes": 1408988
+    "path": "/pi-web-assets/enhancements-90eb790128f58743.js",
+    "sha256": "90eb790128f58743355718519a60b1c5d9be3ddd30f5cd488a4856a4b0a61fc8",
+    "integrity": "sha256-kOt5ASj1h0M1VxhRmmCxxdm+Pd0w9c1IikhWpLCmH8g=",
+    "bytes": 1409203
   },
   "modules": [
     {
@@ -140,15 +140,15 @@
       "name": "08-settings-panels-and-lifecycle.js",
       "file": "08-settings-panels-and-lifecycle.js",
       "startLine": 36511,
-      "endLine": 41479,
-      "lineCount": 4969,
+      "endLine": 41483,
+      "lineCount": 4973,
       "lineRange": [
         36511,
-        41479
+        41483
       ],
-      "lineRangeText": "36511-41479",
-      "bytes": 254225,
-      "sha256": "513dfbbf81c5c272716ce6359e4941982d813d60de8ceabd37d4fc8d11794388",
+      "lineRangeText": "36511-41483",
+      "bytes": 254496,
+      "sha256": "d568257826e7099565620ad52bda761ad8227a5731c774927ec7a8727d922c9f",
       "responsibility": "设置对话框尺寸与侧边栏宽度拖拽调节、设置侧边栏折叠控制器、设置弹窗增强插件面板与归档管理标签页、设置项双击快捷入口与底部快捷栏、全局用量与成本大盘 (Usage & Cost Dashboard)、静默热载探针、零泄漏清理钩子 (__PI_WEB_ENHANCEMENTS_CLEANUP__)、Plugin Micro-Kernel 异常隔离沙箱与首屏 0ms 同步立即执行挂载。"
     }
   ]

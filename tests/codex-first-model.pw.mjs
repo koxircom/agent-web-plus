@@ -607,6 +607,30 @@ try {
     assert.equal(sentPrompts[0].effort, "low", "延迟创建期间切换的思考深度必须在首发中确认生效");
 
     caseResults.push({viewport:1280,scenario:'selection-during-creation',sent:[...sentPrompts],pageErrors:pageErrors.map(e=>e.message)});
+    let releaseModels;
+    const modelGate = new Promise(resolve => { releaseModels = resolve; });
+    await page.route('**/api/models?*', async route => { await modelGate; await route.continue(); });
+    await page.goto(baseUrl);
+    sentPrompts.length = 0;
+    const draft = page.locator('textarea').first();
+    await draft.waitFor({ state: 'visible' });
+    await draft.fill('Remembered new session selection');
+    await page.locator('button.chat-composer-send,button[aria-label="发送"]').first().click();
+    await page.waitForFunction(() => document.querySelector('textarea')?.value.includes('Remembered new session selection'));
+    assert.equal(sentPrompts.length, 0, 'A pending model catalog must not send with a different model');
+    releaseModels();
+    await page.waitForFunction(() => document.body.innerText.includes('5.6'), null, { timeout: 15000 });
+    await page.waitForFunction(() => {
+      const selection = JSON.parse(localStorage.getItem('pi-new-session-model-codex-v1') || 'null');
+      return selection?.modelId === 'gpt-5.6-luna' && selection?.thinkingLevel === 'low';
+    });
+    await page.locator('button.chat-composer-send,button[aria-label="发送"]').first().click();
+    const deadline = Date.now() + 10000;
+    while (!sentPrompts.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(sentPrompts.length, 1);
+    assert.equal(sentPrompts[0].model, 'gpt-5.6-luna');
+    assert.equal(sentPrompts[0].effort, 'low');
+    caseResults.push({viewport:1280,scenario:'remembered-new-session',sent:[...sentPrompts]});
     await page.close();
     console.log("✅ Playwright Scenario 3 passed: 创建被 gate 延迟 -> 选 5.6/low -> 释放 gate -> 唯一 send 确认为 5.6 与 low");
   }

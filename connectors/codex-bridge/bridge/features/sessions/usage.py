@@ -18,6 +18,7 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
+from bridge.features.sessions.compressed_rollout import iter_zstd_chunks, resolve_rollout_path
 from bridge.features.sessions.store import SessionStore, StoreUnavailable
 
 
@@ -127,23 +128,22 @@ def _interesting(prefix):
     return event and token
 
 
-def _iter_usage_records(stream, start_offset):
+def _iter_usage_records(stream, start_offset, chunks=None):
     """Yield only complete, small usage/context records with their end offsets.
 
     Large irrelevant records are discarded in bounded chunks. An incomplete
     final line is deliberately left at the prior newline so the next refresh
     can finish it safely.
     """
-    stream.seek(start_offset)
+    if chunks is None:
+        stream.seek(start_offset)
+        chunks = iter(lambda: stream.read(CHUNK_SIZE), b'')
     chunk_start = start_offset
     prefix = bytearray()
     selected = None
     processed = start_offset
 
-    while True:
-        chunk = stream.read(CHUNK_SIZE)
-        if not chunk:
-            break
+    for chunk in chunks:
         index = 0
         while index < len(chunk):
             newline = chunk.find(b'\n', index)
@@ -435,8 +435,12 @@ class CodexUsageCollector:
                     cwd = Path(raw_cwd).resolve()
                     if not any(_is_within(cwd, root) for root in roots):
                         continue
-                    path = Path(raw_path).resolve()
+                    original = Path(raw_path).resolve()
+                    if not any(_is_within(original, root) for root in allowed_rollouts):
+                        continue
+                    path = resolve_rollout_path(raw_path).resolve()
                     if not any(_is_within(path, root) for root in allowed_rollouts):
+                        unavailable_sessions.add('codex:' + identifier)
                         continue
                     if not path.is_file():
                         unavailable_sessions.add('codex:' + identifier)
@@ -546,93 +550,140 @@ class CodexUsageCollector:
     def _scan_file(self, meta, state):
         path = Path(meta['path'])
         stat = meta['stat']
-        current_prefix = ''
-        current_boundary = ''
         try:
-            with path.open('rb') as stream:
-                opened_stat = os.fstat(stream.fileno())
+            with path.open('rb') as source:
+                opened_stat = os.fstat(source.fileno())
                 if (opened_stat.st_dev, opened_stat.st_ino) != (stat.st_dev, stat.st_ino):
                     raise UsageScanError('Codex rollout 文件在索引期间发生变化，未更新统计。')
-                current_prefix = stream.read(256).hex()
-                offset = state.get('offset', 0)
-                if not isinstance(offset, int) or offset < 0:
-                    offset = 0
-                reset = (offset > stat.st_size
-                         or state.get('prefix', current_prefix) != current_prefix
-                         or state.get('size') == stat.st_size and state.get('mtimeNs') not in (None, stat.st_mtime_ns))
-                if not reset and offset:
-                    stream.seek(max(0, offset - 64))
-                    current_boundary = stream.read(min(64, offset)).hex()
-                    if state.get('boundary', current_boundary) != current_boundary:
-                        reset = True
-                if reset:
+                compressed = path.suffix == '.zst'
+                raw_prefix = raw_boundary = ''
+                if compressed:
+                    if (opened_stat.st_size, opened_stat.st_mtime_ns) != (stat.st_size, stat.st_mtime_ns):
+                        raise UsageScanError('Codex rollout 文件在索引期间发生变化，未更新统计。')
+                    raw_prefix = source.read(256).hex()
+                    source.seek(max(0, opened_stat.st_size - 64))
+                    raw_boundary = source.read(64).hex()
+                    if (state.get('compression') == 'zstd-v1' and state.get('size') == opened_stat.st_size
+                            and state.get('mtimeNs') == opened_stat.st_mtime_ns
+                            and state.get('compressedPrefix') == raw_prefix
+                            and state.get('compressedBoundary') == raw_boundary):
+                        final_stat = path.stat()
+                        if (final_stat.st_dev, final_stat.st_ino, final_stat.st_size, final_stat.st_mtime_ns) != (
+                                opened_stat.st_dev, opened_stat.st_ino, opened_stat.st_size, opened_stat.st_mtime_ns):
+                            raise UsageScanError('Codex rollout 文件在索引期间发生变化，未更新统计。')
+                        return state
                     state = _zero_file(meta['sessionId'], meta['model'], meta['provider'], meta['role'])
-                    offset = 0
-                    current_boundary = ''
-                state['identity'] = meta['identity']
-                state['sessionId'] = meta['sessionId']
-                state['model'] = state.get('model') or meta['model']
-                state['provider'] = state.get('provider') or meta['provider']
-                state['role'] = meta['role']
-                start_offset = offset
-                state['partialTail'] = False
+                    source.seek(0)
+                return self._scan_stream(meta, state, source, opened_stat, compressed, raw_prefix, raw_boundary)
+        except UsageScanError:
+            raise
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise UsageScanError('读取 Codex rollout 文件失败，未更新统计。') from exc
 
-                # The iterator decodes only filtered lines. Its return value is
-                # the final complete-line cursor; partial bytes are rescanned.
+    def _scan_stream(self, meta, state, stream, opened_stat, compressed, raw_prefix, raw_boundary):
+        path = Path(meta['path'])
+        stat = meta['stat']
+        try:
+            logical_size = 0
+            if not compressed:
+                stream.seek(0, os.SEEK_END)
+                logical_size = stream.tell()
+                stream.seek(0)
+            current_prefix = '' if compressed else stream.read(256).hex()
+            current_boundary = ''
+            offset = state.get('offset', 0)
+            if not isinstance(offset, int) or offset < 0:
+                offset = 0
+            reset = (not compressed and offset > logical_size
+                     or state.get('prefix', current_prefix) != current_prefix
+                     or state.get('size') == stat.st_size and state.get('mtimeNs') not in (None, stat.st_mtime_ns))
+            if not reset and offset:
+                stream.seek(max(0, offset - 64))
+                current_boundary = stream.read(min(64, offset)).hex()
+                if state.get('boundary', current_boundary) != current_boundary:
+                    reset = True
+            if reset:
+                state = _zero_file(meta['sessionId'], meta['model'], meta['provider'], meta['role'])
+                offset = 0
+                current_boundary = ''
+            state['identity'] = meta['identity']
+            state['sessionId'] = meta['sessionId']
+            state['model'] = state.get('model') or meta['model']
+            state['provider'] = state.get('provider') or meta['provider']
+            state['role'] = meta['role']
+            start_offset = offset
+            state['partialTail'] = False
+
+            # The iterator decodes only filtered lines. Its return value is
+            # the final complete-line cursor; partial bytes are rescanned.
+            if not compressed:
                 stream.seek(start_offset)
-                processed = start_offset
-                for raw, end_offset in _iter_usage_records(stream, start_offset):
-                    processed = end_offset
-                    if raw is None:
+            expanded_size = 0
+            def count_chunks():
+                nonlocal expanded_size
+                for chunk in iter_zstd_chunks(stream):
+                    expanded_size += len(chunk)
+                    yield chunk
+            processed = start_offset
+            chunks = count_chunks() if compressed else None
+            for raw, end_offset in _iter_usage_records(stream, start_offset, chunks):
+                processed = end_offset
+                if raw is None:
+                    continue
+                try:
+                    record = json.loads(raw)
+                except (ValueError, UnicodeDecodeError) as exc:
+                    raise UsageScanError('Codex 用量记录格式无效，未更新统计。') from exc
+                payload = record.get('payload') if isinstance(record, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                if record.get('type') == 'turn_context':
+                    settings = (payload.get('collaboration_mode') or {}).get('settings') or {}
+                    model = payload.get('model') or settings.get('model')
+                    if isinstance(model, str) and model:
+                        state['model'] = model
+                    provider = payload.get('model_provider')
+                    if isinstance(provider, str) and provider:
+                        state['provider'] = provider
+                elif record.get('type') == 'event_msg' and payload.get('type') == 'token_count':
+                    info = payload.get('info')
+                    if not isinstance(info, dict):
                         continue
-                    try:
-                        record = json.loads(raw)
-                    except (ValueError, UnicodeDecodeError) as exc:
-                        raise UsageScanError('Codex 用量记录格式无效，未更新统计。') from exc
-                    payload = record.get('payload') if isinstance(record, dict) else None
-                    if not isinstance(payload, dict):
+                    delta = _counter_delta(state, info)
+                    if delta is None:
                         continue
-                    if record.get('type') == 'turn_context':
-                        settings = (payload.get('collaboration_mode') or {}).get('settings') or {}
-                        model = payload.get('model') or settings.get('model')
-                        if isinstance(model, str) and model:
-                            state['model'] = model
-                        provider = payload.get('model_provider')
-                        if isinstance(provider, str) and provider:
-                            state['provider'] = provider
-                    elif record.get('type') == 'event_msg' and payload.get('type') == 'token_count':
-                        info = payload.get('info')
-                        if not isinstance(info, dict):
-                            continue
-                        delta = _counter_delta(state, info)
-                        if delta is None:
-                            continue
-                        cache_read = min(delta['cached'], delta['input'])
-                        noncache_input = max(0, delta['input'] - cache_read)
-                        output = delta['output']
-                        total = noncache_input + cache_read + output
-                        if total <= 0:
-                            continue
-                        timestamp_ms = _timestamp_ms(record.get('timestamp') or payload.get('timestamp'))
-                        self._add_event(state, _day(timestamp_ms), timestamp_ms,
-                                        noncache_input, output, cache_read, total)
-                state['offset'] = processed
-                read_end = stream.tell()
-                final_stat = path.stat()
-                if (final_stat.st_dev, final_stat.st_ino) != (opened_stat.st_dev, opened_stat.st_ino):
-                    raise UsageScanError('Codex rollout 文件在索引期间发生变化，未更新统计。')
-                if final_stat.st_size != read_end:
-                    raise UsageScanError('Codex rollout 文件在索引期间继续更新，未更新统计。')
-                state['partialTail'] = processed < read_end
-                state['size'] = final_stat.st_size
-                state['mtimeNs'] = final_stat.st_mtime_ns
-                with path.open('rb') as stream:
-                    state['prefix'] = stream.read(256).hex()
-                    if processed:
-                        stream.seek(max(0, processed - 64))
-                        state['boundary'] = stream.read(min(64, processed)).hex()
-                    else:
-                        state['boundary'] = ''
+                    cache_read = min(delta['cached'], delta['input'])
+                    noncache_input = max(0, delta['input'] - cache_read)
+                    output = delta['output']
+                    total = noncache_input + cache_read + output
+                    if total <= 0:
+                        continue
+                    timestamp_ms = _timestamp_ms(record.get('timestamp') or payload.get('timestamp'))
+                    self._add_event(state, _day(timestamp_ms), timestamp_ms,
+                                    noncache_input, output, cache_read, total)
+            state['offset'] = processed
+            read_end = expanded_size if compressed else stream.tell()
+            final_stat = path.stat()
+            if (final_stat.st_dev, final_stat.st_ino) != (opened_stat.st_dev, opened_stat.st_ino):
+                raise UsageScanError('Codex rollout 文件在索引期间发生变化，未更新统计。')
+            if compressed and (final_stat.st_size, final_stat.st_mtime_ns) != (opened_stat.st_size, opened_stat.st_mtime_ns):
+                raise UsageScanError('Codex rollout 文件在索引期间继续更新，未更新统计。')
+            if not compressed and final_stat.st_size != read_end:
+                raise UsageScanError('Codex rollout 文件在索引期间继续更新，未更新统计。')
+            state['partialTail'] = processed < read_end
+            state['size'] = final_stat.st_size
+            state['mtimeNs'] = final_stat.st_mtime_ns
+            if compressed:
+                state.update(compression='zstd-v1', compressedPrefix=raw_prefix, compressedBoundary=raw_boundary,
+                             prefix='', boundary='')
+            else:
+                stream.seek(0)
+                state['prefix'] = stream.read(256).hex()
+                if processed:
+                    stream.seek(max(0, processed - 64))
+                    state['boundary'] = stream.read(min(64, processed)).hex()
+                else:
+                    state['boundary'] = ''
         except UsageScanError:
             raise
         except (OSError, RuntimeError, ValueError) as exc:
