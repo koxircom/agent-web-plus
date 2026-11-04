@@ -257,6 +257,18 @@ def token_usage(state):
             'totalTokens': total_tokens}
 
 
+def native_task_timing(state, turns):
+    """Keep the native turn clock; observing a thread never starts a task."""
+    if state.get("threadRuntimeStatus", {}).get("type") != "active" or not turns:
+        return None
+    turn = turns[-1]
+    identifier = turn.get("turnId") or turn.get("id")
+    started = normalize_timestamp(turn.get("turnStartedAtMs") or turn.get("startedAt"))
+    if turn.get("status") != "inProgress" or not isinstance(identifier, str) or not identifier.strip() or started is None:
+        return None
+    return {"taskId": identifier, "startedAt": started}
+
+
 def normalize_state(state, connected=True, *, include_turns=True):
     turns = ordered_turns(state)
     result = []
@@ -305,6 +317,7 @@ def normalize_state(state, connected=True, *, include_turns=True):
     return {"id": state.get("id", state.get("sessionId")), "title": state.get("title") or "未命名聊天",
             "cwd": state.get("cwd"), "model": state.get("latestModel"), "provider": state.get("modelProvider"), "effort": state.get("latestReasoningEffort") or (state.get("latestThreadSettings") or {}).get("effort"),
             "connected": connected, "status": state.get("threadRuntimeStatus", {}).get("type", "idle"),
+            "taskTiming": native_task_timing(state, turns),
             "permissionMode": permission_mode(state),
             "contextUsage": context_usage(state),
             "tokenUsage": token_usage(state),

@@ -36,6 +36,7 @@ export interface CodexComposerState {
   goalElapsedMs?: number; goalActiveSinceMs?: number;
 }
 export interface CodexMeta {
+  taskTiming?: { taskId: string; startedAt: number } | null;
   composerState?: CodexComposerState;
   id: string; title: string; cwd: string; model?: string | null; provider?: string; effort?: string;
   status: string; connected: boolean; sequence: number;

@@ -230,7 +230,7 @@ class SideChat:
                     pending = next((row for row in self.submissions.values() if row['status'] == 'unknown' and row.get('mode') != 'steer' and not row.get('turnId')), None)
                     if pending is not None and getattr(self, 'bind_submission_on_turn_started', True):
                         pending['turnId'] = source['id']
-                for key in ('status', 'error'):
+                for key in ('status', 'error', 'startedAt', 'turnStartedAtMs', 'completedAt', 'durationMs'):
                     if key in source:
                         turn[key] = source[key]
                 if source.get('items'):

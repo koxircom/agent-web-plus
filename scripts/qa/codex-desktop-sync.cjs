@@ -44,6 +44,7 @@ const commands = [
       'test_native_metadata_sync',
       'test_title_naming',
       'test_timeline_timestamp',
+      'test_task_timing',
       'test_windows_desktop',
       'test_windows_http_boundary',
       'test_attachment_receipts',

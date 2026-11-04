@@ -1,7 +1,7 @@
 {
-  "maintenanceVersion": "1.4.63.1",
-  "webVersion": "1.4.63",
-  "fix": "Keep Ask User requests and full queue snapshots on reconnect; preserve shared session row content layout when batch checkboxes are added; includes Codex completion state and complete relay prompts",
+  "maintenanceVersion": "1.4.64.1",
+  "webVersion": "1.4.64",
+  "fix": "Use original native Codex turn identity and start timestamp for running duration across metadata reads, tools, reconnects and refresh; clear timing when execution is idle",
   "sourceHashes": {
     "app/api/agent/running/route.ts": "767dd45487ffcb374a243a11df5c3b6e2152811119bc998757917a25aa07b424",
     "app/api/files/[...path]/route.ts": "40c6057d8b34509f798c345ed1afed559a3becf7d584d511d5e20e1144001a84",
@@ -31,8 +31,8 @@
     "lib/subagent-extension.integration.test.mjs": "79a8a8ef475328586f09d47346824ded267b7e6862fb7831b504cec64c7cd7ea",
     "lib/subagent-extension.ts": "98ef79109627e847a3ea55f1c7e9b739e8a64243ccfe8068a28fd2719e8c2c76",
     "lib/terminal-poll-owner.ts": "a5b00727f21b8065435d5b3c3e3dabb76ad44a98b431719e67a5dbf6e358afd1",
-    "package-lock.json": "21477fc6edf3e366d0f227805116e9971383821380df19a7dea23e30a187b3be",
-    "package.json": "62a3437072fd51dce8b0748e979aead7ad54c3fe57a9c100df2691050b199ea4",
+    "package-lock.json": "4c8aa837ce1215e7a601a446ddf845f588338b4b733f11dcbc9fca015e02f199",
+    "package.json": "15ff60fc34494c6f4ea8bc88bf6b50a181bd57c716295d1e4918a12a6fdcd7a3",
     "lib/browser-tab-appearance.ts": "2f417ff99aefb7f09ce6d722ab4e6fbb1729e15ec9cc656bb52da0196e6fb2f6",
     "components/BrowserTabSettings.tsx": "51414a6e5a0b6f28f1451b8b64f97aefa82ee83dab1f5a4fdd3051279a964418",
     "components/SettingsPanel.tsx": "16373fbf5c102b0b4b5c53365e812d9af8190ce30a61919113c85406a1214d27",
@@ -45,13 +45,17 @@
     "enhancements/tests/batch-row-decorations.test.cjs": "4ad4e7362f53df02f32022fd0b3962dd9b00fa746f2207eb249040fe3b0ead36",
     "enhancements/tests/batch-touch-activation.test.cjs": "0515705dda7df08b3e849a9fe29bbe07efb19fd3db6d4c56f31df81c5008dc8d",
     "tests/file-engine-context.pw.mjs": "4a555965a4661f6319c512a4358c773209121ed7db8b9dd965c12d2e5c21b6fe",
-    "lib/execution-engines/codex-engine.ts": "129ddf9a2ddbd72fc630c43778115c1d46e34ec8a9b67275c276b8de216997f2",
-    "lib/execution-engines/codex-events.test.mjs": "1b06fc42e739dceec522d5759bb49764905a404c760c7a892fa0eda64590d45c",
+    "lib/execution-engines/codex-engine.ts": "e9a86858252ce00511184760f23fcf8d08987e312eb8027c4a617b8c64c39cca",
+    "lib/execution-engines/codex-events.test.mjs": "02154e48942a784244dff6030bb0e90f3b6ef53d4e022c16afc3583efeba6891",
     "enhancements/tests/agent-relay-prompt.test.cjs": "f6308884f81f5f3e7402e4ee51ee82b1401614421a44ab52a8064454ab2d9e89",
     "lib/agent-event-stream.ts": "84adbeefdf5b06c9ef551296b9c9b4b69360fcc3e219d1aca30d4dd81bb974e8",
     "app/enhancements.css": "4c1ce9853d99ad21deb6dbe50e943f7e084b3e857158799b2829bab6eb064e42",
     "components/SessionSidebar.test.mjs": "2a12746f2febc6ce615ef07c1fa90861037a5f7e05abe3671c1d0bcebe8ecf7b",
-    "components/SessionSidebar.tsx": "8042bddf7e6df5133f8c87a54ec3fea33a757e25a790b2fbaea932fd648b1154"
+    "components/SessionSidebar.tsx": "8042bddf7e6df5133f8c87a54ec3fea33a757e25a790b2fbaea932fd648b1154",
+    "connectors/codex-bridge/bridge/features/sessions/model.py": "50aba4caa982f0a52daf57bac1ce6e15ac457e904635f5b69676129400db3fdc",
+    "connectors/codex-bridge/bridge/features/sessions/side_chat.py": "1bd0372b18f9c0cc50e72228b2c0c14ca27cafc9f599216b9ea7169bdee4e376",
+    "connectors/codex-bridge/tests/test_task_timing.py": "40a27761ca4d1b42ce75a2357337d77e7372a5677fff8d4158c68b7a8a047aeb",
+    "lib/execution-engines/codex-projection.ts": "966aba8344a3d4801b690df0cb648ae8467c803290b0e6b350f7a44297f7254d"
   },
   "sdkVersion": "1.5.0"
 }

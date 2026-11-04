@@ -533,6 +533,7 @@
             "connectors/codex-bridge/tests/test_native_metadata_sync.py",
             "connectors/codex-bridge/tests/test_title_naming.py",
             "connectors/codex-bridge/tests/test_timeline_timestamp.py",
+            "connectors/codex-bridge/tests/test_task_timing.py",
             "lib/execution-engines/codex-composer.test.mjs",
             "lib/execution-engines/codex-events.test.mjs",
             "connectors/codex-bridge/tests/test_windows_desktop.py",

@@ -614,6 +614,7 @@ export class CodexRuntime {
   private pollController: AbortController | null = null;
   private reachable = true;
   private publishedStreaming: boolean;
+  private publishedTaskId: string | null;
   private publishedQueue: string;
   private queueMutationGeneration = 0;
   private publishedUsage: string;
@@ -634,12 +635,13 @@ export class CodexRuntime {
     this.publishedUsage = JSON.stringify(projectCodexUsage(page.meta));
     this.publishedComposer = codexComposerStatuses(page.meta)[0].text;
     this.publishedStreaming = this.isStreaming;
+    this.publishedTaskId = this.getCurrentTaskTiming()?.taskId ?? null;
     for (const row of page.rows) this.rows.set(row.key, row);
     const last = page.rows.at(-1);
     const liveLast = this.isStreaming && last?.role === "assistant" && last.turnStatus === "inProgress";
     for (const row of page.rows) if (row.role === "assistant" && !(liveLast && row === last)) this.completedAssistantKeys.add(row.key);
     if (liveLast && last) {
-      this.assistantKey = last.key; this.streamingMessage = assistantText(this.meta, last.text);
+      this.assistantKey = last.key; this.streamingMessage = assistantText(this.meta, last.text, last.timestamp);
     }
     this.updateRequests();
   }
@@ -694,6 +696,12 @@ export class CodexRuntime {
   isAlive() { return this.reachable; } // History-only views are valid even without an active executor.
   hasViewers() { return this.listeners.size > 0; }
   pendingRequests() { return [...this.requests.values()].map(r => r.event); }
+  getCurrentTaskTiming() {
+    const timing = this.meta.taskTiming;
+    if (!this.isStreaming || !timing || typeof timing.taskId !== "string" || !timing.taskId.trim()
+      || typeof timing.startedAt !== "number" || !Number.isFinite(timing.startedAt) || timing.startedAt <= 0) return null;
+    return { taskId: timing.taskId, startedAt: timing.startedAt };
+  }
   getPendingExtensionUiRequests() { return this.pendingRequests(); }
   clientQueuedMessages() { return queue(this.meta); }
   onEvent(listener: (event: AgentEventLike) => void) {
@@ -791,7 +799,11 @@ export class CodexRuntime {
       this.emit({type:"session_usage",sessionId:this.id,usage});
     }
     this.updateRequests();
-    if (this.isStreaming && !wasActive) this.emit({ type: "agent_start" });
+    const taskTiming = this.getCurrentTaskTiming();
+    if (this.isStreaming && (!wasActive || (taskTiming && taskTiming.taskId !== this.publishedTaskId))) {
+      this.emit({ type: "agent_start", ...(taskTiming ? { taskTiming } : {}) });
+    }
+    this.publishedTaskId = taskTiming?.taskId ?? null;
     let historyChanged = Boolean(next.reset);
     // Reset is a full authoritative snapshot, not permission to replay saved
     // assistant entries into the native append-only event channel.
@@ -812,7 +824,7 @@ export class CodexRuntime {
         }
         if (this.assistantKey && this.assistantKey !== row.key) this.finishAssistant();
         this.assistantKey = row.key;
-        this.streamingMessage = assistantText(this.meta, answerBodies.get(row.key)!);
+        this.streamingMessage = assistantText(this.meta, answerBodies.get(row.key)!, row.timestamp);
         this.emit({ type: "message_start", message: this.streamingMessage });
       } else if (row.role === "user") {
         this.emit({ type: "message_end", entryId: row.key + ":0", ...(row.requestId ? { requestId: row.requestId } : {}), message: projectCodexRow(row, this.meta)[0], queuedMessages: queueSnapshot });
@@ -825,7 +837,7 @@ export class CodexRuntime {
           } catch { markPromptDeliveryUnconfirmed(this.id, row.requestId); }
         }
       } else if (row.role === "activity" && row.kind === "reasoning" && (this.isStreaming || wasActive)) {
-        this.emit({ type: "message_end", message: { ...assistantText(this.meta, ""), content: [{ type: "thinking", thinking: row.text }] } });
+        this.emit({ type: "message_end", message: { ...assistantText(this.meta, "", row.timestamp), content: [{ type: "thinking", thinking: row.text }] } });
       } else if (row.role === "activity" && (this.isStreaming || wasActive)) {
         this.finishAssistant();
         const name = row.kind === "commandExecution" ? "bash" : "codex_tool";
@@ -957,6 +969,7 @@ export class CodexRuntime {
         // An unopened native thread may not have a live model yet. Shared UI treats a model object as a valid ID.
         return { model: typeof effectiveModel === "string" && effectiveModel.trim() ? { provider: "codex", id: effectiveModel } : null, thinkingLevel: effortToThinkingLevel(effectiveEffort || "high"),
           isStreaming: this.isStreaming, isPromptRunning: this.isStreaming, isBashRunning: false, isCompacting: false,
+          taskTiming: this.getCurrentTaskTiming(),
           autoCompactionEnabled: false, contextUsage: projectCodexUsage(this.meta).contextUsage,
           queuedMessages: queue(this.meta), extensionStatuses: codexComposerStatuses(this.meta), extensionWidgets: [] };
       }
