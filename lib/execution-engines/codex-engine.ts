@@ -20,7 +20,7 @@ type CatalogRow = {
   title: string;
   cwd: string;
   pinned?: boolean;
-  archived?: boolean;
+  archived?: boolean | 0 | 1;
   nativeMetadata?: { desktopShared: boolean; pinningSupported: boolean };
   titleNaming?: SessionInfo["titleNaming"];
 };
@@ -84,7 +84,8 @@ function catalogVersion(rows: CatalogRow[]) {
 function mapCodexSession(row: CatalogRow): SessionInfo {
   const session = projectCodexSession(row);
   if (row.pinned !== undefined) session.pinned = row.pinned;
-  if (row.archived !== undefined) session.archived = row.archived;
+  if (row.archived === true || row.archived === 1) session.archived = true;
+  else if (row.archived === false || row.archived === 0) session.archived = false;
   if (row.nativeMetadata !== undefined) session.nativeMetadata = row.nativeMetadata;
   if (row.titleNaming !== undefined) session.titleNaming = row.titleNaming;
   return session;
@@ -208,6 +209,10 @@ export async function listCodexSessions(options?: ListCodexSessionsOptions | Abo
       throw new CodexBridgeError(`Codex 执行端部分或全部节点不可用 (${result.unavailableHosts.join(", ")})`, 503, "codex_unavailable_hosts");
     }
     const rows: CatalogRow[] = result.sessions;
+    if (rows.some(row => !row || typeof row !== "object" || typeof row.id !== "string" || !row.id.trim()
+      || (row.archived !== true && row.archived !== 1))) {
+      throw new CodexBridgeError("Codex 执行端返回的归档会话格式异常", 502, "codex_malformed_response");
+    }
     if (await codexConnectionIdentity() !== identity) throw new CodexBridgeError("执行端配置已改变，请重新打开会话", 409, "codex_session_refresh");
     return {
       sessions: rows.map(mapCodexSession),

@@ -1,7 +1,7 @@
 {
-  "maintenanceVersion": "1.4.65.1",
-  "webVersion": "1.4.65",
-  "fix": "Preserve original native Codex turn timing across refresh and paged history; never fabricate a completed duration from a truncated assistant fragment",
+  "maintenanceVersion": "1.4.66.1",
+  "webVersion": "1.4.66",
+  "fix": "Normalize native Codex archived flags from Windows SQLite and boolean bridge responses while rejecting invalid archived entries",
   "sourceHashes": {
     "app/api/agent/running/route.ts": "767dd45487ffcb374a243a11df5c3b6e2152811119bc998757917a25aa07b424",
     "app/api/files/[...path]/route.ts": "40c6057d8b34509f798c345ed1afed559a3becf7d584d511d5e20e1144001a84",
@@ -31,8 +31,8 @@
     "lib/subagent-extension.integration.test.mjs": "79a8a8ef475328586f09d47346824ded267b7e6862fb7831b504cec64c7cd7ea",
     "lib/subagent-extension.ts": "98ef79109627e847a3ea55f1c7e9b739e8a64243ccfe8068a28fd2719e8c2c76",
     "lib/terminal-poll-owner.ts": "a5b00727f21b8065435d5b3c3e3dabb76ad44a98b431719e67a5dbf6e358afd1",
-    "package-lock.json": "4473698ace6c804902ac8a1ae1dff600057256351cb580b0a1de5d8d25237347",
-    "package.json": "4b2b10f7aa521d8d4b5cd9402437939e13c19f33a87055820121688f8b528e7c",
+    "package-lock.json": "63a199198835db8c7eea0b0e1702a41bc3c358575686da263a8d580e633e7999",
+    "package.json": "01da0826361c19941e09c21c5bf21c3f881a0633fa2e6b38f1cb3a05205f95e9",
     "lib/browser-tab-appearance.ts": "2f417ff99aefb7f09ce6d722ab4e6fbb1729e15ec9cc656bb52da0196e6fb2f6",
     "components/BrowserTabSettings.tsx": "51414a6e5a0b6f28f1451b8b64f97aefa82ee83dab1f5a4fdd3051279a964418",
     "components/SettingsPanel.tsx": "16373fbf5c102b0b4b5c53365e812d9af8190ce30a61919113c85406a1214d27",
@@ -45,7 +45,7 @@
     "enhancements/tests/batch-row-decorations.test.cjs": "4ad4e7362f53df02f32022fd0b3962dd9b00fa746f2207eb249040fe3b0ead36",
     "enhancements/tests/batch-touch-activation.test.cjs": "0515705dda7df08b3e849a9fe29bbe07efb19fd3db6d4c56f31df81c5008dc8d",
     "tests/file-engine-context.pw.mjs": "4a555965a4661f6319c512a4358c773209121ed7db8b9dd965c12d2e5c21b6fe",
-    "lib/execution-engines/codex-engine.ts": "e9a86858252ce00511184760f23fcf8d08987e312eb8027c4a617b8c64c39cca",
+    "lib/execution-engines/codex-engine.ts": "bfadbe6d8834b9e6a8cabf2896c6a158375e3c4701e76a09eebf503e9aee2370",
     "lib/execution-engines/codex-events.test.mjs": "02154e48942a784244dff6030bb0e90f3b6ef53d4e022c16afc3583efeba6891",
     "enhancements/tests/agent-relay-prompt.test.cjs": "f6308884f81f5f3e7402e4ee51ee82b1401614421a44ab52a8064454ab2d9e89",
     "lib/agent-event-stream.ts": "84adbeefdf5b06c9ef551296b9c9b4b69360fcc3e219d1aca30d4dd81bb974e8",
@@ -58,7 +58,8 @@
     "lib/execution-engines/codex-projection.ts": "966aba8344a3d4801b690df0cb648ae8467c803290b0e6b350f7a44297f7254d",
     "enhancements/modules/06-chat-view-and-tool-cards.js": "7f8f6f6fa4f5091107a5e4fbc772550fbaabbfb0c6c2aa4f91de0e54cc1dea8c",
     "enhancements/modules/07-kernel-scheduler-and-observers.js": "255e9d02f164a8a67fb7055c5cde5214fd9d13c1dd97b2ba966daab176aeac82",
-    "enhancements/tests/live-stopwatch-browser.spec.cjs": "60bc82a75167dc96acdaf67e74f17a99500883c12b83905419aa87fdb4b6364a"
+    "enhancements/tests/live-stopwatch-browser.spec.cjs": "60bc82a75167dc96acdaf67e74f17a99500883c12b83905419aa87fdb4b6364a",
+    "lib/execution-engines/codex-status.test.mjs": "768f44e92b72d7b8f1e6eea7ef11caeaba5bd1ddcf61055abfef8d626b8ea722"
   },
   "sdkVersion": "1.5.0"
 }
