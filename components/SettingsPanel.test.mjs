@@ -325,8 +325,9 @@ test("collaboration relay settings tab is registered natively with lazy loading 
   assert.match(cssSource, /\.settings-collaboration-card/);
 });
 
-test("General settings mounts the shared tab editor with template, text, colors and reset", () => {
-  assert.match(panelSource, /<BrowserTabSettings cwd=\{browserTabContext\?\.cwd \?\? cwd\}/);
+test("Browser tab settings has a dedicated native section with the shared editor", () => {
+  assert.match(panelSource, /\{ id: "browser-tab", label: t\("settings.browserTab"\), requiresProject: false \}/);
+  assert.match(panelSource, /sectionHost\("browser-tab", <BrowserTabSettings cwd=\{browserTabContext\?\.cwd \?\? cwd\}/);
   assert.match(tabSettingsSource, /id="settings-browser-tab-title"/);
   assert.match(tabSettingsSource, /id="settings-browser-tab-template"/);
   for(const label of ["Logo 颜色","标签页主题色","恢复默认","保存标签页设置"]) assert.ok(tabSettingsSource.includes(label));

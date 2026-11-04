@@ -7,7 +7,8 @@ from pathlib import Path
 from bridge.clients.codex.native_metadata import PINNED_SECTION_ID
 from bridge.clients.codex.title_naming import read_status, project_status
 from bridge.features.sessions.model import normalize_state
-from bridge.features.sessions.store import SessionStore
+from bridge.features.sessions.store import SessionStore, StoreUnavailable
+from bridge.features.sessions.compressed_rollout import resolve_rollout_path
 from bridge.features.sessions.timeline import Timeline
 
 
@@ -46,7 +47,7 @@ class WslHistory(SessionStore):
         if not isinstance(value, str) or not value:
             return None
         try:
-            path = Path(value).resolve(strict=True)
+            path = resolve_rollout_path(value).resolve(strict=True)
             if not path.is_file():
                 return None
             for folder in ('sessions', 'archived_sessions'):
@@ -170,7 +171,11 @@ class HistorySession:
                 self.limit = None
             elif turn_limit and self.limit is not None:
                 self.limit = max(self.limit, turn_limit)
-            stat = Path(meta['rollout_path']).stat()
+            path = resolve_rollout_path(meta['rollout_path'])
+            try:
+                stat = path.stat()
+            except FileNotFoundError as exc:
+                raise StoreUnavailable('找不到会话历史文件，请检查原始记录或备份') from exc
             fingerprint = (stat.st_ino, stat.st_size, stat.st_mtime_ns,
                            meta.get('name'), meta.get('title'), self.limit)
             if fingerprint != self.fingerprint:

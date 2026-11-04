@@ -3358,9 +3358,9 @@
 }
 
 
-/* Browser tab preferences share the native settings card and input controls. */
-.settings-browser-tab { display: grid; gap: 12px; padding: 16px; border-top: 1px solid var(--border); min-width: 0; }
-.settings-browser-tab h3, .settings-browser-tab p { margin: 0; }
+/* Browser tab preferences use the same content rail as other settings sections. */
+.settings-browser-tab { display: grid; gap: 12px; min-width: 0; align-content: start; }
+.settings-browser-tab h2, .settings-browser-tab p { margin: 0; }
 .settings-browser-tab-fields { display: grid; gap: 8px; min-width: 0; }
 .settings-browser-tab-fields > input { width: 100%; min-width: 0; cursor: text; }
 .settings-browser-tab-presets, .settings-browser-tab-actions, .settings-browser-tab-color-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

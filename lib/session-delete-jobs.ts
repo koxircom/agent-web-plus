@@ -12,9 +12,9 @@ export type DeleteJobEvent = { seq: number; frame: BatchDeleteFrame };
 type JobMeta = {
   schema: 1; id: string; ids: string[]; createdAt: string; ownerPid: number;
   ownerTicks: string | null; ownerRuntime: string; connectionIdentity?: string;
-  interruptedAt?: string;
+  interruptedAt?: string; cancelRequestedAt?: string;
 };
-type Job = { meta: JobMeta; events: DeleteJobEvent[] };
+type Job = { meta: JobMeta; events: DeleteJobEvent[]; controller?: AbortController };
 export class DeleteJobError extends Error {
   readonly code = "session_delete_job_error";
   constructor(message: string, public status = 400) { super(message); }
@@ -50,7 +50,7 @@ function info(job: Job) {
   return { id: job.meta.id, createdAt: job.meta.createdAt, ids: [...job.meta.ids], total: job.meta.ids.length,
     status: (job.meta.interruptedAt ? "interrupted" : done ? (done.stopped ? "stopped" : "completed") : "running") as DeleteJobStatus,
     processed: done?.processed ?? (lastResult?.type === "result" ? lastResult.processed : 0),
-    lastSequence: job.events.length };
+    lastSequence: job.events.length, cancelRequested: Boolean(job.meta.cancelRequestedAt) };
 }
 
 /** One app process owns execution; files own intent and confirmed events. HTTP readers never own or cancel a job. */
@@ -152,6 +152,7 @@ export function createSessionDeleteJobStore(agentDir: string, dependencies: {
         let storageFailure: unknown;
         const result = await execute(chunk, {
           origin: "api-batch", expectedCodexIdentity: job.meta.connectionIdentity, reconcileUncertainDeletes: true,
+          signal: job.controller?.signal,
           onFrame(frame) {
             try {
             if (frame.type === "item-start") append(job, { ...frame, index: offset + frame.index, total: job.meta.ids.length });
@@ -191,7 +192,7 @@ export function createSessionDeleteJobStore(agentDir: string, dependencies: {
       }
       mkdirSync(directory, { recursive: true, mode: 0o700 });
       const job: Job = { meta: { schema: 1, id, ids, createdAt: new Date().toISOString(),
-        ownerPid: process.pid, ownerTicks, ownerRuntime: runtime }, events: [] };
+        ownerPid: process.pid, ownerTicks, ownerRuntime: runtime }, events: [], controller: new AbortController() };
       try { writeFileSync(metaPath(id), JSON.stringify(job.meta), { flag: "wx", mode: 0o600, flush: true }); }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") return this.create(id, requested);
@@ -214,6 +215,17 @@ export function createSessionDeleteJobStore(agentDir: string, dependencies: {
       return info(job);
     },
     get(id: string) { return info(load(id)); },
+    cancel(id: string) {
+      const job = load(id);
+      if (doneFrame(job)) return info(job);
+      if (!job.controller || active.get(id) !== job) throw new DeleteJobError("任务执行者暂不可用，取消结果未确认", 409);
+      if (!job.meta.cancelRequestedAt) {
+        job.meta.cancelRequestedAt = new Date().toISOString();
+        try { saveMeta(job); } catch (error) { delete job.meta.cancelRequestedAt; throw error; }
+        job.controller.abort();
+      }
+      return info(job);
+    },
     events(id: string, after = 0) {
       const job = load(id);
       if (!Number.isSafeInteger(after) || after < 0 || after > job.events.length) throw new DeleteJobError("删除进度游标无效", 409);

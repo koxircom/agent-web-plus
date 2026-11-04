@@ -937,6 +937,18 @@
           "timeoutSeconds": 180
         },
         {
+          "name": "release-browser-tab-section",
+          "command": ["node", "tests/browser-tab-section.pw.mjs"],
+          "files": [
+            "tests/browser-tab-section.pw.mjs",
+            "components/SettingsPanel.tsx",
+            "components/BrowserTabSettings.tsx",
+            "lib/settings-navigation.ts",
+            "app/settings.css"
+          ],
+          "timeoutSeconds": 120
+        },
+        {
           "name": "release-native-live-stopwatch",
           "command": [
             "node",

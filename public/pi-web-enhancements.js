@@ -27312,6 +27312,33 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     }
   }
 
+  async function requestBatchDeleteCancellation(job, button) {
+    if (!job || job.done || job.cancelPending || job.cancelRequested) return;
+    job.cancelPending = true;
+    if (button) { button.disabled = true; button.textContent = "正在请求取消..."; }
+    try {
+      const response = await fetch(`/api/sessions/batch-delete/jobs/${encodeURIComponent(job.id)}`, {
+        method: "POST", cache: "no-store", signal: AbortSignal.timeout(15000),
+      });
+      const data = await response.json();
+      if (!response.ok || data?.id !== job.id) throw new Error(data?.error || `HTTP ${response.status}`);
+      if (data.cancelRequested) {
+        job.cancelRequested = true;
+        showToast("已请求取消，正在处理的会话或批次仍需等待结果", sessionDeleteIcon);
+      } else {
+        showToast("任务已结束，请查看实际删除结果", sessionDeleteIcon);
+      }
+    } catch (error) {
+      showToast(`取消结果未确认，请查看任务状态后重试：${error?.message || String(error)}`, sessionDeleteIcon);
+    } finally {
+      job.cancelPending = false;
+      if (button && button.isConnected) {
+        button.disabled = Boolean(job.cancelRequested || job.done);
+        button.textContent = job.cancelRequested ? "取消处理中" : "取消剩余删除";
+      }
+    }
+  }
+
   function createBatchDeleteModal(targetIds, view = "confirm") {
     const count = targetIds.length;
     const previewHtml = targetIds.slice(0, 6).map((sid) => {
@@ -27353,12 +27380,14 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         </div>
         <div class="pi-enh-batch-modal-footer">
           <button type="button" class="pi-enh-btn-sm" data-action="cancel" style="padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">${isJobView ? (isBatchDeleteJobTerminal() ? "关闭结果" : "隐藏到后台") : "取消"}</button>
+          <button type="button" class="pi-enh-btn-sm" data-action="stop" style="${isJobView && !isBatchDeleteJobTerminal() && batchDeleteJob?.connectionState !== "not_found" ? "" : "display:none;"}padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);" ${batchDeleteJob?.cancelRequested ? "disabled" : ""}>${batchDeleteJob?.cancelRequested ? "取消处理中" : "取消剩余删除"}</button>
           <button type="button" class="pi-enh-btn-sm" data-action="hide" style="display:none;padding: 6px 14px; font-size: 12.5px; border-radius: 6px; cursor: pointer; background: var(--bg-hover); border: 1px solid var(--border); color: var(--text);">隐藏到后台</button>
           <button type="button" class="pi-enh-btn-sm" data-action="confirm" style="${isJobView ? (retryCount ? "" : "display:none;") : ""} padding: 6px 16px; font-size: 12.5px; border-radius: 6px; font-weight: 500; cursor: pointer; background: #ef4444; border: 1px solid transparent; color: #fff;">${isJobView ? `选择可重试项 (${retryCount})` : "确认彻底删除"}</button>
         </div>
       </div>
     `;
     const cancelBtn = backdrop.querySelector('[data-action="cancel"]');
+    const stopBtn = backdrop.querySelector('[data-action="stop"]');
     const hideBtn = backdrop.querySelector('[data-action="hide"]');
     const confirmBtn = backdrop.querySelector('[data-action="confirm"]');
     const hideOrDismiss = () => {
@@ -27372,6 +27401,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       }
     };
     cancelBtn?.addEventListener("click", hideOrDismiss);
+    stopBtn?.addEventListener("click", () => void requestBatchDeleteCancellation(batchDeleteJob, stopBtn));
     hideBtn?.addEventListener("click", () => setSessionBatchMode(false));
     backdrop.addEventListener("click", (e) => {
       if (e.target === backdrop) {
@@ -27549,11 +27579,17 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         renderBatchDeleteResultDetails(resultIdsEl, job);
       }
       const cancelBtn = modal?.querySelector?.('[data-action="cancel"]');
+      const stopBtn = modal?.querySelector?.('[data-action="stop"]');
       const modalConfirmBtn = modal?.querySelector?.('[data-action="confirm"]');
       if (cancelBtn && batchDeleteJob === job) {
         cancelBtn.textContent = isBatchDeleteJobTerminal(job)
           ? "关闭结果"
           : job.connectionState === "not_found" ? "清除记录" : "隐藏到后台";
+      }
+      if (stopBtn && batchDeleteJob === job) {
+        stopBtn.style.display = !job.done && job.connectionState !== "not_found" ? "" : "none";
+        stopBtn.disabled = Boolean(job.cancelPending || job.cancelRequested);
+        stopBtn.textContent = job.cancelPending ? "正在请求取消..." : job.cancelRequested ? "取消处理中" : "取消剩余删除";
       }
       if (modalConfirmBtn && batchDeleteJob === job) {
         const retryCount = (job.failedIds?.length || 0) + (job.notStartedIds?.length || 0);
@@ -27626,6 +27662,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         throw err;
       }
       job.serverStatus = data.status;
+      job.cancelRequested = Boolean(data.cancelRequested);
       job.metadataStatus = data.status;
       job.lastSequence = data.lastSequence;
       job.metadataProcessed = data.processed;
@@ -28193,7 +28230,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       job.done = true;
       job.status = job.serverStatus === "completed" ? "completed" : job.serverStatus;
       if (!["completed", "stopped", "interrupted"].includes(job.status)) job.status = job.doneFrameStopped ? "stopped" : "completed";
-      job.processed = totalRequested;
+      job.processed = processedSoFar;
       job.failedIds = [...failedIds];
       job.unknownIds = [...unknownIds];
       job.notStartedIds = [...notStartedIds];
@@ -28201,10 +28238,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const unresolvedCount = failedIds.size + unknownIds.size + notStartedIds.size;
       const completedStatus = job.status === "completed"
         ? (unresolvedCount > 0 ? `处理完成，部分未删除 (${totalRequested}/${totalRequested})` : `删除任务完成 (${totalRequested}/${totalRequested})`)
-        : `任务已停止，部分结果需要核对 (${totalRequested}/${totalRequested})`;
+        : job.cancelRequested
+          ? `任务已停止，${notStartedIds.size} 个会话未处理 (${processedSoFar}/${totalRequested})`
+          : `任务已停止，部分结果需要核对 (${processedSoFar}/${totalRequested})`;
       renderProgress({
         status: completedStatus,
-        processed: totalRequested,
+        processed: processedSoFar,
         confirmed: successCount,
         failed: failedIds.size,
         unknown: unknownIds.size,

@@ -12,6 +12,7 @@ from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 
 from bridge.features.sessions.model import normalize_state, text_content, normalize_timestamp
+from bridge.features.sessions.compressed_rollout import open_rollout, resolve_rollout_path
 
 
 def runtime_context_input(payload):
@@ -49,8 +50,8 @@ class SessionStore:
         Rollouts append. Cache a count, bounded input previews and file boundary, not transcripts;
         read the appended suffix and reset on truncation/replacement/rewrite.
         """
-        with self.user_count_lock, path.open('rb') as stream:
-            stat = os.fstat(stream.fileno())
+        with self.user_count_lock, open_rollout(path) as stream:
+            stat = path.stat() if path.suffix == '.zst' else os.fstat(stream.fileno())
             stamp = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
             key = str(path)
             cached = self.user_count_cache.get(key)
@@ -58,7 +59,7 @@ class SessionStore:
                 return cached
             count, offset, previews = 0, 0, []
             pending_context, turn_id = None, None
-            if cached and cached['stamp'][0] == stat.st_ino and stat.st_size > cached['offset']:
+            if path.suffix != '.zst' and cached and cached['stamp'][0] == stat.st_ino and stat.st_size > cached['offset']:
                 stream.seek(max(0, cached['offset'] - 64))
                 if stream.read(min(64, cached['offset'])) == cached['boundary']:
                     count, offset = cached['count'], cached['offset']
@@ -116,11 +117,11 @@ class SessionStore:
         are cached only for the same file fingerprint, so late appends retry.
         """
         meta = self.get(thread_id)
-        resolved = Path(meta['rollout_path']).resolve()
+        resolved = resolve_rollout_path(meta['rollout_path']).resolve()
         if not any(root.resolve() in resolved.parents for root in (self.home / 'sessions', self.home / 'archived_sessions')):
             raise ValueError('会话记录路径不在 Codex 数据目录中')
-        with self.receipt_lock, resolved.open('rb') as stream:
-            stat = os.fstat(stream.fileno())
+        with self.receipt_lock, open_rollout(resolved) as stream:
+            stat = resolved.stat() if resolved.suffix == '.zst' else os.fstat(stream.fileno())
             key = (str(resolved), stat.st_ino, stat.st_size, stat.st_mtime_ns, client_id)
             if key in self.receipt_cache:
                 self.receipt_cache.move_to_end(key)
@@ -270,9 +271,9 @@ class SessionStore:
     @staticmethod
     def _recent_lines(path, turn_limit):
         """Read complete turns backwards without parsing the older rollout prefix."""
-        if turn_limit is None:
-            return path.read_bytes(), True
-        with path.open('rb') as stream:
+        with open_rollout(path) as stream:
+            if turn_limit is None:
+                return stream.read(), True
             stream.seek(0, 2)
             position = stream.tell()
             parts, pending, starts = [], [], 0
@@ -511,7 +512,7 @@ class SessionStore:
         }
 
     def _history(self, thread_id, meta, turn_limit=None):
-        path = Path(meta["rollout_path"])
+        path = resolve_rollout_path(meta["rollout_path"])
         # The file path must be an actual rollout in this user's Codex home.
         resolved = path.resolve()
         if not any(root.resolve() in resolved.parents for root in (self.home / "sessions", self.home / "archived_sessions")):

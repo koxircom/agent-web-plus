@@ -76,6 +76,18 @@ function jsonResponse(value,status=200){return{ok:status>=200&&status<300,status
 function successful(ids,deletedById={}){return frameSet(ids,{},deletedById);}
 async function waitUntil(fn){for(let i=0;i<100;i++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,2));}throw Error('condition not reached');}
 
+test('cancel control requests the existing job once and reports unconfirmed responses honestly',async()=>{
+  const begin=source.indexOf('  async function requestBatchDeleteCancellation('),finish=source.indexOf('\n  function createBatchDeleteModal(',begin);
+  const requests=[],toasts=[];let response=jsonResponse({id:jobId,cancelRequested:true,status:'running'});
+  const c={AbortSignal,encodeURIComponent,showToast:message=>toasts.push(message),sessionDeleteIcon:'',fetch:async(url,options)=>{requests.push({url,options});return response;}};
+  vm.runInNewContext(source.slice(begin,finish)+'\nthis.cancel=requestBatchDeleteCancellation;',c);
+  const job={id:jobId,done:false},button={isConnected:true};await c.cancel(job,button);await c.cancel(job,button);
+  assert.equal(requests.length,1);assert.equal(requests[0].url,`/api/sessions/batch-delete/jobs/${jobId}`);assert.equal(requests[0].options.method,'POST');
+  assert.equal(job.cancelRequested,true);assert.equal(button.disabled,true);assert.match(toasts[0],/正在处理/);
+  response=jsonResponse({error:'offline'},503);const another={id:jobId,done:false},retry={isConnected:true};await c.cancel(another,retry);
+  assert.equal(another.cancelRequested,undefined);assert.equal(retry.disabled,false);assert.match(toasts.at(-1),/未确认/);
+});
+
 test('job transport POSTs once, confirms only returned IDs, and preserves cascade cleanup',async()=>{
   const frames=successful(['a','b'],{a:['a','child'],b:['b']});
   const f=fixture(frames);

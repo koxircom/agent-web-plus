@@ -39,7 +39,7 @@ function fixture() {
     settingsPanel: `
       const enabledExtensions = LEGACY_SETTINGS_EXTENSIONS.filter((ext) => isExtensionEnabled(ext));
       const nativeSections = [
-        { id: "general" }, { id: "models" }, { id: "skills" },
+        { id: "general" }, { id: "browser-tab" }, { id: "models" }, { id: "skills" },
         { id: "agents" }, { id: "plugins" }, { id: "mcp" }, { id: "execution-engine" }, { id: "collaboration" }, { id: "learning" },
       ];
       const sections = useMemo(() => {

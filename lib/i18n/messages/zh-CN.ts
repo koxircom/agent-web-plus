@@ -14,6 +14,7 @@ export const zhCNLocale: LocalePlugin = {
     "common.settings": "设置",
     "settings.title": "设置",
     "settings.general": "常规",
+    "settings.browserTab": "浏览器标签页",
     "settings.generalDescription": "选择 Agent Web Plus 的显示方式和界面语言。",
     "settings.appearance": "外观",
     "settings.showFileExplorer": "显示文件浏览器",

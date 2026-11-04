@@ -14,6 +14,7 @@ export const enLocale: LocalePlugin = {
     "common.settings": "Settings",
     "settings.title": "Settings",
     "settings.general": "General",
+    "settings.browserTab": "Browser tab",
     "settings.generalDescription": "Choose how Agent Web Plus looks and which language it uses.",
     "settings.appearance": "Appearance",
     "settings.showFileExplorer": "Show file explorer",

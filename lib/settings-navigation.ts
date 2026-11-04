@@ -1,5 +1,6 @@
 export const NATIVE_SETTINGS_SECTION_VALUES = [
   "general",
+  "browser-tab",
   "models",
   "skills",
   "agents",

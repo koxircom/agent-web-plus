@@ -530,7 +530,7 @@ test("用例 7: executeBatchDeleteSessions 完整状态机：result 与 done 保
   assert.equal(job.itemErrors["session-notstart"], "批次因未知状态停止，未执行");
 
   // 2. 验证完成时标题：由于stopped且有未完成项
-  assert.equal(statusEl.textContent, "任务已停止，部分结果需要核对 (4/4)");
+  assert.equal(statusEl.textContent, "任务已停止，部分结果需要核对 (3/4)");
 
   // 3. 验证详情渲染包含标题与各状态原因
   assert.equal(resultIdsEl.children.length, 3, "未完成项恰好为 3 项");

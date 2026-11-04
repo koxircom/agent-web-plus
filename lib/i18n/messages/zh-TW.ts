@@ -14,6 +14,7 @@ export const zhTWLocale: LocalePlugin = {
     "common.settings": "設定",
     "settings.title": "設定",
     "settings.general": "一般",
+    "settings.browserTab": "瀏覽器分頁",
     "settings.generalDescription": "選擇 Agent Web Plus 的外觀與介面語言。",
     "settings.appearance": "外觀",
     "settings.showFileExplorer": "顯示檔案瀏覽器",

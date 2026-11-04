@@ -33,9 +33,9 @@ export function BrowserTabSettings({ cwd, engine }: { cwd: string | null; engine
       else setFeedback(result.conflict ? "设置已被其他页面修改。你的草稿已保留，请核对后再次保存。" : `保存失败：${result.error || "请稍后重试"}`);
     } finally { setSaving(false); }
   };
-  return <section className="settings-browser-tab" aria-label="浏览器标签页">
+  return <section className="settings-general settings-browser-tab" aria-label="浏览器标签页">
     <div className="settings-row-info">
-      <h3 className="settings-row-label">浏览器标签页</h3>
+      <h2 className="settings-general-title">浏览器标签页</h2>
       <p className="settings-row-description">组合项目、Agent 名称和自定义文本；保存到当前服务，跨浏览器同步。</p>
     </div>
     <div className="settings-browser-tab-fields">
