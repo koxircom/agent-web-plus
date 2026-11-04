@@ -180,7 +180,7 @@ sys.exit(0)
             "ssh": {
                 "port": 22,
                 "user": "root",
-                "host": "10.0.0.2",
+                "host": "192.0.2.1",
                 "identityFile": "/root/.ssh/id_rsa",
                 "container": "pi-agent",
             },

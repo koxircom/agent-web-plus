@@ -34,12 +34,17 @@ test("静态审计：renderEnhancementModulesPanel 声明存在且没有重复 i
   // 4. 不硬编码特定内网机器和 IP
   assert.doesNotMatch(
     moduleSource,
-    /Windows\s*本地端\s*\(10\.0\.0\.89\)/,
+    /(?:Windows|MacBook)\s*本地端\s*\((?:\d{1,3}\.){3}\d{1,3}\)/,
+    "模块渲染器不能硬编码设备 IP"
+  );
+  assert.doesNotMatch(
+    moduleSource,
+    /Windows\s*本地端\s*\(192\.0\.2\.99\)/,
     "模块渲染器不能硬编码内网专用设备 IP"
   );
   assert.doesNotMatch(
     moduleSource,
-    /MacBook\s*本地端\s*\(10\.7\.7\.2\)/,
+    /MacBook\s*本地端\s*\(192\.0\.2\.99\)/,
     "模块渲染器不能硬编码内网专用设备 IP"
   );
 });

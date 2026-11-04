@@ -66,7 +66,7 @@ const bridgeServer = http.createServer(async (req, res) => {
   if (pathname === "/api/projects") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
-      projects: [{ key: "work", name: "Work", cwd: "/home/koxir/Work" }]
+      projects: [{ key: "work", name: "Work", cwd: "/home/test/Work" }]
     }));
     return;
   }
@@ -221,7 +221,7 @@ const bundle = await esbuild.build({
                 chatInputRef={chatInputRef}
                 session={null}
                 executionEngine="codex"
-                newSessionCwd="/home/koxir/Work"
+                newSessionCwd="/home/test/Work"
                 newSessionDraftKey="test-draft-new"
               />
             </div>
@@ -304,7 +304,7 @@ const appServer = http.createServer(async (req, res) => {
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     try {
-      const result = await createCodexSession(body.cwd || "/home/koxir/Work", body);
+      const result = await createCodexSession(body.cwd || "/home/test/Work", body);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result));
     } catch (e) {
@@ -428,11 +428,11 @@ async function testPage(options) {
         return route.continue();
       }
       if(p==='/api/execution-engines')return route.continue();
-      if(p==='/api/execution-engines/check')return json({connected:true,projects:[{cwd:'/home/koxir/Work'}]});
-      if(p==='/api/cwd/validate')return json({valid:true,cwd:'/home/koxir/Work',exists:true});
+      if(p==='/api/execution-engines/check')return json({connected:true,projects:[{cwd:'/home/test/Work'}]});
+      if(p==='/api/cwd/validate')return json({valid:true,cwd:'/home/test/Work',exists:true});
       if(p==='/api/sessions')return json({sessions:[]});
-      if(p==='/api/worktrees')return json({isGit:false,projectRoot:'/home/koxir/Work',worktrees:[]});
-      if(p.startsWith('/api/files/'))return json({entries:[],path:'/home/koxir/Work'});
+      if(p==='/api/worktrees')return json({isGit:false,projectRoot:'/home/test/Work',worktrees:[]});
+      if(p.startsWith('/api/files/'))return json({entries:[],path:'/home/test/Work'});
       if(p==='/api/git/status')return json({isGitRepository:false,files:[]});
       if(p==='/api/enhancement-state')return route.fulfill({status:200,headers:{'x-pi-enhancement-state':'absent'}});
       return json({success:true,data:{},skills:[],tools:[],models:[],sessions:[],projects:[]});
@@ -447,7 +447,7 @@ try {
     nextProcess=spawn(process.execPath,[load.resolve('next/dist/bin/next'),'start','-H','127.0.0.1','-p',String(port)],{cwd:root,env:{...process.env,PI_AGENT_DIR:tempAgentDir,PI_CODING_AGENT_DIR:tempAgentDir,PI_WEB_PASSWORD:password,NEXT_TELEMETRY_DISABLED:'1'},stdio:['ignore','pipe','pipe']});
     nextProcess.stdout.on('data',x=>nextLog+=x);nextProcess.stderr.on('data',x=>nextLog+=x);
     let ready=false;for(let i=0;i<100;i++){if(nextProcess.exitCode!==null)throw Error(nextLog);try{if((await fetch(origin+'/login')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,200));}assert(ready,nextLog);
-    baseUrl=origin+'/?engine=codex&cwd='+encodeURIComponent('/home/koxir/Work');
+    baseUrl=origin+'/?engine=codex&cwd='+encodeURIComponent('/home/test/Work');
   }
   // Scenario 1: Desktop Viewport (1280x800)
   {
