@@ -1,7 +1,7 @@
 {
-  "maintenanceVersion": "1.4.61.8",
-  "webVersion": "1.4.61",
-  "fix": "Codex file watch follows the file panel visibility and captured engine context; includes preserved batch row decorations, owned touch activation and native browser tab customization",
+  "maintenanceVersion": "1.4.62.1",
+  "webVersion": "1.4.62",
+  "fix": "Separate completed Codex execution from pending async input; copy complete target-session handoff URLs and verified paths",
   "sourceHashes": {
     "app/api/agent/running/route.ts": "767dd45487ffcb374a243a11df5c3b6e2152811119bc998757917a25aa07b424",
     "app/api/files/[...path]/route.ts": "40c6057d8b34509f798c345ed1afed559a3becf7d584d511d5e20e1144001a84",
@@ -13,7 +13,7 @@
     "connectors/codex-bridge/bridge/features/workspace/workspace.py": "07be4a08e071e34ae3037f6d8a59d67e56225b01ece95a9ffec77df07fc40dda",
     "connectors/codex-bridge/tests/test_standalone_workspace.py": "196d2390d8f9ddf61d58be4f88bd7e6c707890f8f92f67b1c63dca13eaa0d5d9",
     "enhancements/modules/02-plugin-registry-and-settings-schema.js": "f88d4adce138623839c2c52c0d2430c731fa8561599566f7d1605c3e01189ffc",
-    "enhancements/modules/04-sidebar-and-session-management.js": "d4e8d2ed24ef97257f7b82827cb834126fff9361ed409dbe3e3a293fee1349a9",
+    "enhancements/modules/04-sidebar-and-session-management.js": "4dc847b6c358fcff5360e9f9eecbafaf788a7506022cdabbdd940be4b348b5ee",
     "enhancements/modules/05-composer-and-input-workflow.js": "6ccaeb001254d54212f79422f179e443bbf8333f16f5ba6c4c38b2800e0ff753",
     "enhancements/modules/08-settings-panels-and-lifecycle.js": "f4fcfa5570f5f27c82e36dd8222b52a240cceea255795bcc7724ba27fc38cb53",
     "enhancements/tests/batch-delete-dismiss.test.cjs": "300facae8be95d98e51c2974d91a26bb4cdfeb26428f0b75255d0192bf0a89ca",
@@ -31,8 +31,8 @@
     "lib/subagent-extension.integration.test.mjs": "79a8a8ef475328586f09d47346824ded267b7e6862fb7831b504cec64c7cd7ea",
     "lib/subagent-extension.ts": "98ef79109627e847a3ea55f1c7e9b739e8a64243ccfe8068a28fd2719e8c2c76",
     "lib/terminal-poll-owner.ts": "a5b00727f21b8065435d5b3c3e3dabb76ad44a98b431719e67a5dbf6e358afd1",
-    "package-lock.json": "1a6ff5ec26061342fef99a58466b4db612eada30d217653dffb225dadea79a1f",
-    "package.json": "4dfcead9fbc044e583a64d1a97c40a12f9f3e91bb8c1bdd0e9168c58442e7538",
+    "package-lock.json": "da97ecf361b58d1dfd0ded4ac0dc6dd1c8f9693e6a8dabd6f054a9f73c50ed07",
+    "package.json": "b37d6e07d245a3cdac745f12058ec14ef83989732c3a7f4f5c135a7247427c91",
     "lib/browser-tab-appearance.ts": "2f417ff99aefb7f09ce6d722ab4e6fbb1729e15ec9cc656bb52da0196e6fb2f6",
     "components/BrowserTabSettings.tsx": "51414a6e5a0b6f28f1451b8b64f97aefa82ee83dab1f5a4fdd3051279a964418",
     "components/SettingsPanel.tsx": "16373fbf5c102b0b4b5c53365e812d9af8190ce30a61919113c85406a1214d27",
@@ -44,7 +44,10 @@
     "app/settings.css": "3b9fa2f47c442d9effc3bd5218f4ee66d716c37eb82ce5067e379bd2c1c6f350",
     "enhancements/tests/batch-row-decorations.test.cjs": "4ad4e7362f53df02f32022fd0b3962dd9b00fa746f2207eb249040fe3b0ead36",
     "enhancements/tests/batch-touch-activation.test.cjs": "0515705dda7df08b3e849a9fe29bbe07efb19fd3db6d4c56f31df81c5008dc8d",
-    "tests/file-engine-context.pw.mjs": "4a555965a4661f6319c512a4358c773209121ed7db8b9dd965c12d2e5c21b6fe"
+    "tests/file-engine-context.pw.mjs": "4a555965a4661f6319c512a4358c773209121ed7db8b9dd965c12d2e5c21b6fe",
+    "lib/execution-engines/codex-engine.ts": "1dae262f34026d9f9ee5fbf36ef8fa8f7a6dcf3271f6ba3b0302de6c43b0a72c",
+    "lib/execution-engines/codex-events.test.mjs": "8a833f9c54356ba03a37f282e843c47bdfbf23a1df5397d0b9d698524f968890",
+    "enhancements/tests/agent-relay-prompt.test.cjs": "f6308884f81f5f3e7402e4ee51ee82b1401614421a44ab52a8064454ab2d9e89"
   },
   "sdkVersion": "1.5.0"
 }

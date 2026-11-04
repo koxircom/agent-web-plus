@@ -15103,6 +15103,42 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   // ==========================================
   // 会话引擎与合法 Native 路径识别核心逻辑
   // ==========================================
+  function buildAgentRelayPrompt({ origin, sessionId, engine, title, sessionPath, cwd, projectRoot }) {
+    const field = (value) => (typeof value === "string" && value.trim() ? value : "未提供");
+    let sessionUrl = "未提供";
+
+    if (typeof sessionId === "string" && sessionId && typeof origin === "string" && origin) {
+      try {
+        const parsedOrigin = new URL(origin);
+        if (parsedOrigin.protocol === "http:" || parsedOrigin.protocol === "https:") {
+          const url = new URL("/", parsedOrigin.origin);
+          url.searchParams.set("session", sessionId);
+          sessionUrl = url.href;
+        }
+      } catch (_) {}
+    }
+
+    const engineLabel = engine === "codex" ? "Codex" : engine === "pi" ? "Pi Agent" : "未提供";
+    return [
+      "请接手下面明确指定的既有会话，并只延续该会话中已经授权的工作。",
+      "",
+      `- 引擎: ${engineLabel}`,
+      `- Session ID: ${field(sessionId)}`,
+      `- Session URL: ${sessionUrl}`,
+      `- 会话标题: ${field(title)}`,
+      `- 会话记录文件: ${field(sessionPath)}`,
+      `- 工作目录 (cwd): ${field(cwd)}`,
+      `- 项目根目录 (projectRoot): ${field(projectRoot)}`,
+      "",
+      "接手顺序与边界：",
+      "1. 先通过指定 Session URL/ID 读取该会话的完整历史和当前上下文，再读取历史中引用的现有交付物、验收回执及进度记录；确认原始目标、已完成项、未完成项和最新状态后再续做。未提供的路径不要猜测，也不要按会话 ID 拼造文件路径。",
+      "2. 继续前核对这项工作的运行状态、相关锁/租约及持有人、工作树现有改动，并检查已有回执和副作用；确认尚未完成后再执行，避免重复写入、提交、发布或其它不确定操作。",
+      "3. 仅处理上述指定会话及其已授权任务；本提示不增加业务授权。不要遍历、发送命令或无差别控制其它会话、设备或全局配置。",
+      "4. 保留他人和其它会话的现有改动，禁止覆盖或回退；锁冲突或归属不清时先协调，超出原授权的事项先报告。",
+      "5. 根据已核实的当前进度继续未完成项，并用与改动范围相称的证据验证；开始执行前简要回报已读到的进度、未完成项和下一步。",
+    ].join("\n");
+  }
+
   function isLegalAbsolutePath(p) {
     if (typeof p !== "string") return false;
     const trimmed = p.trim();
@@ -15847,8 +15883,22 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         }
       } else if (action === "copy-prompt") {
         if (isMultiSelect) return;
-        const targetPath = resolveSessionRolloutPath(id, path);
-        const prompt = `这是我之前的 ${isCodex ? "Codex" : "Pi"} 会话（ID: ${id}，文件路径: ${targetPath || ""}，工作目录: ${cwd || ""}）。请读取并分析该会话的上下文记录与遗留任务，接着继续推进下一步工作。`;
+        let rawSession = null;
+        try {
+          const rawSessions = typeof window.__PI_ENH_GET_RAW_SESSIONS__ === "function"
+            ? window.__PI_ENH_GET_RAW_SESSIONS__()
+            : null;
+          rawSession = Array.isArray(rawSessions) ? rawSessions.find((session) => session && session.id === id) || null : null;
+        } catch (_) {}
+        const prompt = buildAgentRelayPrompt({
+          origin: window.location?.origin,
+          sessionId: id,
+          engine: isCodex ? "codex" : "pi",
+          title: name || rawSession?.name || rawSession?.firstMessage,
+          sessionPath: validRolloutPath,
+          cwd: cwd || rawSession?.cwd,
+          projectRoot: rawSession?.projectRoot,
+        });
         copyText(prompt, `已复制跨 Agent 接力提示词`);
       } else if (action === "copy-cwd") {
         if (isMultiSelect) {

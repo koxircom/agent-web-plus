@@ -686,7 +686,11 @@ export class CodexRuntime {
   private json(path: string, body?: unknown, options?: { signal?: AbortSignal; timeout?: number }) {
     return codexBridgeJson(path, body, { connectionIdentity: this.identity, signal: options?.signal, timeout: options?.timeout });
   }
-  get isStreaming() { return this.meta.status === "active" || Boolean(this.meta.requests?.length); }
+  get isStreaming() {
+    // Async questions can remain answerable after a completed turn. Only
+    // synchronous requests keep execution blocked, independently of async input.
+    return this.meta.status === "active" || Boolean(this.meta.requests?.some(request => request.method !== "bridge/requestUserInputAsync"));
+  }
   isAlive() { return this.reachable; } // History-only views are valid even without an active executor.
   hasViewers() { return this.listeners.size > 0; }
   pendingRequests() { return [...this.requests.values()].map(r => r.event); }
