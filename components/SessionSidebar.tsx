@@ -8,7 +8,7 @@ import { mergeLocalSessions } from "@/lib/session-catalog-client";
 
 import { registerSessionPreloadBridge, updateSessionPreloadCatalog } from "@/lib/session-preload";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, useId, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { listSessionFamilies } from "@/lib/session-family";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
@@ -2630,6 +2630,7 @@ function SessionItem({
   onToggleCollapse?: () => void;
 }) {
   const { locale, t } = useI18n();
+  const batchTitleId = useId();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -2733,6 +2734,8 @@ function SessionItem({
       ref={rowRef}
       data-pi-enh-editing={renaming ? "true" : undefined}
       data-pi-enh-session-id={session.id}
+      data-pi-enh-session-title={title}
+      data-pi-enh-session-title-id={batchTitleId}
       data-execution-engine={executionEngine}
       data-pi-native-session-tags="true"
       data-pi-native-session-odoo-addons="true"
@@ -2811,7 +2814,7 @@ function SessionItem({
               }}
               title={title}
             >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+              <span id={batchTitleId} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
               {session.titleNaming?.status === "failed" && (

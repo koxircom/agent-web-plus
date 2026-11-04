@@ -2912,6 +2912,19 @@
 
   let activeSearchFocusedCard = null;
 
+  function renderSearchHighlight(text, regex) {
+    return text.split(regex).map((part, index) => index % 2
+      ? `<mark class="pi-enh-search-highlight">${escapeHtml(part)}</mark>`
+      : escapeHtml(part)).join("");
+  }
+
+  function searchHighlightMatches(element, html) {
+    if (!element.querySelector("mark.pi-enh-search-highlight.is-focused-mark")) return element.innerHTML === html;
+    const copy = element.cloneNode(true);
+    copy.querySelectorAll("mark.pi-enh-search-highlight.is-focused-mark").forEach((mark) => mark.classList.remove("is-focused-mark"));
+    return copy.innerHTML === html;
+  }
+
   function highlightSearchResultsKeywords() {
     const searchInput = getSessionSearchInput();
     const rawQuery = (searchInput?.value || "").trim();
@@ -2932,11 +2945,9 @@
         if (!titleSpan.hasAttribute("data-pi-enh-raw-title")) {
           titleSpan.setAttribute("data-pi-enh-raw-title", rawTitle);
         }
-        if (regex.test(rawTitle)) {
-          const nextTitleHtml = escapeHtml(rawTitle).replace(regex, `<mark class="pi-enh-search-highlight">$1</mark>`);
-          if (titleSpan.innerHTML !== nextTitleHtml) {
-            titleSpan.innerHTML = nextTitleHtml;
-          }
+        const nextTitleHtml = renderSearchHighlight(rawTitle, regex);
+        if (!searchHighlightMatches(titleSpan, nextTitleHtml)) {
+          titleSpan.innerHTML = nextTitleHtml;
         }
       }
 
@@ -2947,11 +2958,9 @@
         if (!snippetSpan.hasAttribute("data-pi-enh-raw-snippet")) {
           snippetSpan.setAttribute("data-pi-enh-raw-snippet", rawSnippet);
         }
-        if (regex.test(rawSnippet)) {
-          const nextSnippetHtml = escapeHtml(rawSnippet).replace(regex, `<mark class="pi-enh-search-highlight">$1</mark>`);
-          if (snippetSpan.innerHTML !== nextSnippetHtml) {
-            snippetSpan.innerHTML = nextSnippetHtml;
-          }
+        const nextSnippetHtml = renderSearchHighlight(rawSnippet, regex);
+        if (!searchHighlightMatches(snippetSpan, nextSnippetHtml)) {
+          snippetSpan.innerHTML = nextSnippetHtml;
         }
       }
 
@@ -2965,9 +2974,9 @@
           nav.className = "pi-enh-search-snippet-nav";
           nav.setAttribute("title", "使用键盘 ↑/↓ 键或点击切换定位匹配片段");
           nav.innerHTML = `
-            <button type="button" class="pi-enh-snip-btn" data-snip-action="prev" title="上一处 (↑)">▲</button>
+            <button type="button" class="pi-enh-snip-btn" data-snip-action="prev" aria-label="上一处匹配" title="上一处 (↑)">▲</button>
             <span class="pi-enh-snip-counter">1/${marks.length}</span>
-            <button type="button" class="pi-enh-snip-btn" data-snip-action="next" title="下一处 (↓)">▼</button>
+            <button type="button" class="pi-enh-snip-btn" data-snip-action="next" aria-label="下一处匹配" title="下一处 (↓)">▼</button>
           `;
           const headerRow = card.querySelector("span.mt-1.flex") || card.children[1] || card.firstElementChild;
           if (headerRow) {
@@ -2991,7 +3000,6 @@
             if (activeSearchFocusedCard === card) {
               activeSearchFocusedCard = null;
             }
-            card.querySelectorAll("mark.is-focused-mark").forEach((m) => m.classList.remove("is-focused-mark"));
           });
 
           card.addEventListener("click", (e) => {
@@ -3032,13 +3040,17 @@
   }
 
   addManagedListener(window, "keydown", (e) => {
-    if (!activeSearchFocusedCard) return;
+    const target = e.target;
+    if (target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+    const focusedCard = target?.closest?.('button[data-search-session-id]');
+    const card = focusedCard || activeSearchFocusedCard;
+    if (!card) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      const marks = activeSearchFocusedCard.querySelectorAll("mark.pi-enh-search-highlight");
+      const marks = card.querySelectorAll("mark.pi-enh-search-highlight");
       if (marks.length <= 1) return;
       e.preventDefault();
       e.stopPropagation();
-      navigateCardSnippets(activeSearchFocusedCard, e.key === "ArrowDown" ? 1 : -1);
+      navigateCardSnippets(card, e.key === "ArrowDown" ? 1 : -1);
     }
   }, true);
 

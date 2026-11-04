@@ -7367,6 +7367,14 @@
       wrap.appendChild(checkbox);
       row.insertBefore(wrap, row.firstElementChild);
     }
+    const checkbox = wrap.querySelector(".pi-enh-session-batch-checkbox");
+    if (checkbox) {
+      checkbox.setAttribute("data-session-id", sessionId);
+      checkbox.setAttribute("aria-label", `选择会话：${row.getAttribute("data-pi-enh-session-title") || sessionId}`);
+      const titleId = row.getAttribute("data-pi-enh-session-title-id");
+      if (titleId) checkbox.setAttribute("aria-labelledby", titleId);
+      else checkbox.removeAttribute("aria-labelledby");
+    }
     return wrap;
   }
 
@@ -7383,10 +7391,7 @@
       return;
     }
 
-    let wrap = row.querySelector(".pi-enh-session-batch-checkbox-wrap");
-    if (!wrap) {
-      wrap = ensureBatchCheckboxOnRow(row, sessionId);
-    }
+    const wrap = ensureBatchCheckboxOnRow(row, sessionId);
     const checkbox = wrap.querySelector(".pi-enh-session-batch-checkbox");
     if (checkbox && checkbox.checked !== isSelected) {
       checkbox.checked = isSelected;
@@ -7411,9 +7416,7 @@
         continue;
       }
 
-      if (!wrap) {
-        wrap = ensureBatchCheckboxOnRow(row, sessionId);
-      }
+      wrap = ensureBatchCheckboxOnRow(row, sessionId);
 
       const isSelected = selectedSessionBatchIds.has(sessionId);
       const checkbox = wrap.querySelector(".pi-enh-session-batch-checkbox");
