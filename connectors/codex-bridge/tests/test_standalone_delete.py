@@ -110,6 +110,25 @@ class DeleteTests(unittest.TestCase):
                 self.assertEqual(len(backend.calls), 1)
                 self.assertIn(ID, b.records['threads'])
 
+    def test_dismissed_async_question_does_not_block_idle_native_delete(self):
+        with tempfile.TemporaryDirectory() as root:
+            b, backend = self.fixture(root)
+            qid = '["request_user_input_async","question",0]'
+            request = 'async:turn:question'
+            state = {'turns': [{'id': 'turn', 'turnId': 'turn', 'status': 'completed', 'items': [
+                {'id': 'question', 'type': 'agentMessage', 'questions': [{'title': '问题', 'options': []}]}
+            ]}]}
+            chat = SimpleNamespace(actions=threading.RLock(), condition=threading.Condition(),
+                                   queue_event=threading.Event(), closed=False, submissions={}, state=state,
+                                   dismissed_async_questions={})
+            b.live[ID] = chat
+            with self.assertRaisesRegex(ValueError, '等待回复'):
+                b.delete_thread(ID)
+            self.assertFalse(backend.calls)
+            chat.dismissed_async_questions[request] = [qid]
+            self.assertEqual(b.delete_thread(ID), {'ok': True})
+            self.assertEqual([method for method, _ in backend.calls], ['thread/read', 'thread/queue/list', 'thread/delete'])
+
     def test_system_error_with_terminal_turns_deletes_safely(self):
         with tempfile.TemporaryDirectory() as root:
             b, backend = self.fixture(root)

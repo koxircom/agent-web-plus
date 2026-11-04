@@ -14,6 +14,7 @@ export async function GET(
   if (isCodexSessionId(id)) {
     const runtime = await (await import("@/lib/execution-engines/codex-engine")).getCodexRuntime(id);
     if (isExtensionUiQuery) {
+      await runtime.send({ type: "get_state" });
       return NextResponse.json({
         running: runtime.isStreaming,
         runtimeAlive: runtime.isAlive(),

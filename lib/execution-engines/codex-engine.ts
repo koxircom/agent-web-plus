@@ -629,6 +629,8 @@ export class CodexRuntime {
   private completedAssistantKeys = new Set<string>();
   private requests = new Map<string, { native: CodexRequest; event: AgentEventLike; questionId?: string }>();
   private answers = new Map<string, Record<string, string[]>>();
+  private draftAnswers = new Map<string, Record<string, string[]>>();
+  private dismissedQuestions = new Set<string>();
   private modelWriteSequence = 0;
   private lastConfirmedModelWrite = 0;
   private settingsChain: Promise<void> = Promise.resolve();
@@ -747,13 +749,16 @@ export class CodexRuntime {
           title: "Codex 需要确认：" + (request.params.command || request.params.reason || "修改工作区权限"), options } });
       } else if (request.supported && ["item/tool/requestUserInput", "tool/requestUserInput", "bridge/requestUserInputAsync"].includes(request.method)) {
         const answered = this.answers.get(String(request.id)) || {};
-        for (const question of request.params.questions || []) if (!answered[question.id]) {
+        const questions = (request.params.questions || []).filter((question: { id: string }) => !this.dismissedQuestions.has(base + ":" + question.id));
+        const visibleRequest = { ...request, params: { ...request.params, questions } };
+        for (const question of questions) if (!answered[question.id]) {
           const id = base + ":" + question.id;
           const options = (question.options || []).map((option: { label: string; description?: string }) => ({ title: option.label, description: option.description }));
-          next.set(id, { native: request, questionId: question.id, event: { type: "extension_ui_request", id,
+          next.set(id, { native: visibleRequest, questionId: question.id, event: { type: "extension_ui_request", id,
             method: "input", title: question.question, allowDefer: request.method === "bridge/requestUserInputAsync",
             askUser: { toolCallId: String(request.id), question: question.question,
-              options, allowMultiple: false, allowFreeform: true, allowComment: false } } });
+              options, allowMultiple: false, allowFreeform: true, allowComment: false,
+              draftAnswer: this.draftAnswers.get(String(request.id))?.[question.id]?.[0] } } });
         }
       } else {
         next.set(base, { native: request, event: { type: "extension_ui_request", id: base, method: "notify", notifyType: "warning", recovery: "codex-client",
@@ -764,6 +769,7 @@ export class CodexRuntime {
     // Drop its partial answers instead of retaining stale per-request state.
     const pendingIds = new Set((this.meta.requests || []).map(request => String(request.id)));
     for (const id of this.answers.keys()) if (!pendingIds.has(id)) this.answers.delete(id);
+    for (const id of this.draftAnswers.keys()) if (!pendingIds.has(id)) this.draftAnswers.delete(id);
     for (const id of this.requests.keys()) if (!next.has(id)) this.emit({ type: "extension_ui_closed", id });
     for (const [id, item] of next) if (!this.requests.has(id)) this.emit(item.event);
     this.requests = next;
@@ -1104,6 +1110,24 @@ export class CodexRuntime {
       case "set_session_name": return this.json(base + "/rename", { title: command.name });
       case "get_messages": return (await readCodexSession(this.id) as ReturnType<typeof projectCodexPage>).context.messages;
       case "get_last_assistant_text": return { text: [...this.rows.values()].filter(r => r.role === "assistant").at(-1)?.text || "" };
+      case "extension_ui_dismiss": {
+        const id = String(command.id), item = this.requests.get(id);
+        if (!item) return { id, status: "closed" };
+        if (!item.questionId || item.native.method !== "bridge/requestUserInputAsync") {
+          throw new Error("此请求不能直接关闭，请处理或暂时隐藏");
+        }
+        const receipt = await this.json(base + "/respond", { requestId: item.native.id,
+          response: { dismissQuestionId: item.questionId } });
+        if (receipt?.status !== "dismissed" || receipt.questionId !== item.questionId) throw new Error("关闭结果未确认，请检查状态");
+        this.dismissedQuestions.add(id);
+        const requestId = String(item.native.id), staged = this.answers.get(requestId);
+        if (staged) {
+          this.draftAnswers.set(requestId, { ...this.draftAnswers.get(requestId), ...staged });
+          this.answers.delete(requestId);
+        }
+        this.updateRequests();
+        return { id, status: "closed" };
+      }
       case "extension_ui_response": {
         const id = String(command.id), item = this.requests.get(id);
         if (!item) throw new CodexBridgeError("该确认已处理或已失效，请刷新会话状态。", 409, "codex_session_refresh", false, false);

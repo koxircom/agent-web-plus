@@ -799,10 +799,10 @@ test("queues extension dialogs and custom panels by request id instead of sharin
   assert.match(source, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, requestId\)\)/);
   assert.match(closedSource, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, event\.id as string\)\)/);
   // The hook keeps exposing what is on screen under the old names, plus how many wait behind it.
-  assert.match(source, /const extensionDialog = extensionDialogs\[0\] \?\? null;/);
-  assert.match(source, /const waitingExtensionDialogCount = Math\.max\(0, extensionDialogs\.length - 1\);/);
-  assert.match(source, /const extensionCustomUi = extensionCustomUis\[0\] \?\? null;/);
-  assert.match(source, /const waitingExtensionCustomUiCount = Math\.max\(0, extensionCustomUis\.length - 1\);/);
+  assert.match(source, /const extensionDialog = visibleDialogRequests\[0\] \?\? null;/);
+  assert.match(source, /const waitingExtensionDialogCount = Math\.max\(0, visibleDialogRequests\.length - 1\);/);
+  assert.match(source, /const extensionCustomUi = visibleCustomRequests\[0\] \?\? null;/);
+  assert.match(source, /const waitingExtensionCustomUiCount = Math\.max\(0, visibleCustomRequests\.length - 1\);/);
   const { scope, state } = hookHarness();
   const first = { id: "dialog-1", method: "confirm", title: "First", message: "Continue?" };
   const second = { id: "dialog-2", method: "editor", title: "Second" };
@@ -815,11 +815,15 @@ test("queues extension dialogs and custom panels by request id instead of sharin
   // requiring the properties to remain adjacent in a destructuring statement.
   for (const name of ["extensionDialog", "waitingExtensionDialogCount", "extensionCustomUi", "waitingExtensionCustomUiCount"]) {
     const declaration = findNode(hookFile, (node) => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === name);
-    const project = () => evaluate(declaration.initializer, hookFile, { extensionDialogs: state.dialogs, extensionCustomUis: state.custom });
+    const project = () => evaluate(declaration.initializer, hookFile, { visibleDialogRequests: state.dialogs, visibleCustomRequests: state.custom });
     assert.deepEqual(project(), { extensionDialog: first, waitingExtensionDialogCount: 1, extensionCustomUi: state.custom[0], waitingExtensionCustomUiCount: 0 }[name]);
     findNode(hookFile, (node) => ts.isShorthandPropertyAssignment(node) && node.name.text === name);
     findNode(chatFile, (node) => ts.isBindingElement(node) && node.name.getText(chatFile) === name);
   }
+  const visibleDeclaration = findNode(hookFile, (node) => ts.isVariableDeclaration(node) && node.name.getText(hookFile) === "visibleDialogRequests");
+  const visible = hiddenExtensionRequests => evaluate(visibleDeclaration.initializer, hookFile, { extensionDialogs: state.dialogs, hiddenExtensionRequests, session: { id: "session" }, JSON });
+  assert.deepEqual(visible(new Set([JSON.stringify(["session", first.id])])), [second]);
+  assert.deepEqual(visible(new Set([JSON.stringify(["other", first.id])])), [first, second]);
   await callback("respondToExtensionUi", scope)(first, { confirmed: true });
   assert.deepEqual(state.dialogs, [second]);
   scope.handleAgentEvent({ type: "extension_ui_closed", id: second.id });

@@ -78,14 +78,14 @@ Codex 尚未对接 Pi 专用分支、工具预设、手动压缩、终端及 HTM
 
 ## 安装与启动
 
-项目统一总品牌为 **Agent Web Plus**，GitHub 仓库名为 `koxircom/agent-web-plus`。本文介绍面向 **1.4.66**（本地维护候选；已验证配套 Pi Agent **1.5.0** 四 SDK 与 CLI）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
+项目统一总品牌为 **Agent Web Plus**，GitHub 仓库名为 `koxircom/agent-web-plus`。本文介绍面向 **1.4.67**（本地维护候选；已验证配套 Pi Agent **1.5.0** 四 SDK 与 CLI）。需要 Node.js **22.19.0 或更新版本**，推荐 Node.js 24 LTS。
 
 从 **1.4.10** 起，官方 Release 规范安装包统一命名为 `agent-web-plus-<version>.tgz`；旧版历史命名的 `pi-web-plus-*.tgz` 仅供历史版本追溯。
 
-> 本页介绍 **1.4.66 双引擎、品牌响应式、原生归档治理与价格估算功能**（1.4.66 为本地维护候选，实际已公开包以 Releases 为准，不声称已在 GitHub 正式发布）。本发行配套已验证 Pi Agent 1.5.0 运行环境。安装时请从本仓库正式 Releases 下载对应版本，并保留原数据目录；实际可用安装包以 Releases 页面为准。
+> 本页介绍 **1.4.67 双引擎、品牌响应式、原生归档治理与价格估算功能**（1.4.67 为本地维护候选，实际已公开包以 Releases 为准，不声称已在 GitHub 正式发布）。本发行配套已验证 Pi Agent 1.5.0 运行环境。安装时请从本仓库正式 Releases 下载对应版本，并保留原数据目录；实际可用安装包以 Releases 页面为准。
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.66/agent-web-plus-1.4.66.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.67/agent-web-plus-1.4.67.tgz
 agent-web --no-open
 ```
 

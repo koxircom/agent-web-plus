@@ -123,6 +123,14 @@ def prior_async_questions(row):
     return [{'id': reply['questionItemId'], 'question': reply['question']} for reply in replies]
 
 
+def visible_async_requests(state, dismissed):
+    requests = async_requests(state)
+    for request in requests:
+        hidden = set(dismissed.get(request['id'], []))
+        request['params']['questions'] = [q for q in request['params']['questions'] if q['id'] not in hidden]
+    return [request for request in requests if request['params']['questions']]
+
+
 class Runtime(SideRuntime):
     def __init__(self, executable, home, cwd, event):
         # Keep project browsing and catalog reads from acquiring the Codex
@@ -230,6 +238,7 @@ class Chat(SideChat):
         self.pending_completions = {}
         entry = entry if entry is not None else bridge.records['threads'][identifier]
         self.submissions = copy.deepcopy(entry.get('submissions', {}))
+        self.dismissed_async_questions = copy.deepcopy(entry.get('dismissedAsyncQuestions', {}))
         self.goal_known = bool(entry.get('goalKnown', False))
         self.goal_supported = entry.get('goalSupported') is not False
         self.goal_support_checked = bool(entry.get('goalSupportChecked', entry.get('goalSupported') is not None))
@@ -671,6 +680,7 @@ class Chat(SideChat):
                 if entry is None:
                     return  # A read-only shared observer has no durable web record.
                 update = dict(model=model, effort=effort, submissions=submissions,
+                              dismissedAsyncQuestions=copy.deepcopy(self.dismissed_async_questions),
                               goalKnown=goal_known, goalSupported=goal_supported,
                               goalSupportChecked=goal_support_checked)
                 if goal_known:
@@ -879,7 +889,7 @@ class Chat(SideChat):
         # Use native parsing, including attachments overlaid from the ledger.
         with self.lock:
             result = super().view(include_turns=include_turns)
-            async_pending = async_requests(self.state)
+            async_pending = visible_async_requests(self.state, self.dismissed_async_questions)
             restored_async = []
             for request in async_pending:
                 submission = self.submissions.get(async_submission_id(self.id, request['id']))
@@ -1808,7 +1818,21 @@ class StandaloneBridge(Bridge):
         with chat.actions:
             submission_id = async_submission_id(thread_id, request_id)
             with chat.condition:
-                pending = next((row for row in async_requests(chat.state) if row['id'] == request_id), None)
+                raw_pending = next((row for row in async_requests(chat.state) if row['id'] == request_id), None)
+                if isinstance(response, dict) and set(response) == {'dismissQuestionId'}:
+                    question_id = response['dismissQuestionId']
+                    previous = chat.dismissed_async_questions.get(request_id, [])
+                    if not isinstance(question_id, str) or not question_id:
+                        raise ValueError('问题标识无效')
+                    if question_id not in previous:
+                        if not raw_pending or question_id not in [q['id'] for q in raw_pending['params']['questions']]:
+                            raise ValueError('该问题已结束，请刷新会话查看最新内容')
+                        chat.dismissed_async_questions[request_id] = [*previous, question_id]
+                        chat.persist(touch=False)
+                        chat.changed()
+                    return {'status': 'dismissed', 'questionId': question_id}
+                pending = next((row for row in visible_async_requests(chat.state, chat.dismissed_async_questions)
+                                if row['id'] == request_id), None)
                 prior = copy.deepcopy(chat.submissions.get(submission_id))
                 active = chat.state.get('threadRuntimeStatus', {}).get('type') == 'active'
             if prior:
@@ -1974,7 +1998,7 @@ class StandaloneBridge(Bridge):
             submissions = chat.submissions if chat else entry.get('submissions', {})
             if any(row.get('status') in ('queued', 'unknown') for row in submissions.values()):
                 raise ValueError('会话还有待发送或待确认的消息，请处理队列后再删除')
-            if chat and (chat.state.get('requests') or async_requests(chat.state)):
+            if chat and (chat.state.get('requests') or visible_async_requests(chat.state, getattr(chat, 'dismissed_async_questions', {}))):
                 raise ValueError('会话正在等待回复，请处理当前问题后再删除')
             backend = self._history_backend() if entry.get('runtime') == 'history' else self.runtime
             if entry.get('runtime') != 'history':

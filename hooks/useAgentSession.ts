@@ -510,6 +510,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialogs, setExtensionDialogs] = useState<ExtensionUiDialogRequest[]>([]);
+  const [hiddenExtensionRequests, setHiddenExtensionRequests] = useState<Set<string>>(() => new Set());
   const [extensionCustomUis, setExtensionCustomUis] = useState<ExtensionUiCustomRequest[]>([]);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const composerStatusOwner = useRef(session?.id);
@@ -1565,6 +1566,32 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice]);
 
+  const hideExtensionUi = useCallback((requestId: string) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    setHiddenExtensionRequests(previous => new Set(previous).add(JSON.stringify([sid, requestId])));
+  }, []);
+
+  const closeExtensionUi = useCallback(async (request: ExtensionUiDialogRequest | ExtensionUiCustomRequest) => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const generation = extensionUiViewRef.current.generation;
+    if (request.method === "input" && request.allowDefer && resolveExecutionEngine(undefined, "pi", sid) === "codex") {
+      try {
+        const receipt = await sendAgentCommand<{ id?: string; status?: string }>(sid, { type: "extension_ui_dismiss", id: request.id });
+        if (receipt?.id === request.id && receipt.status === "closed") {
+          applyExtensionUiResult(sid, generation, request.id, request.method, { status: "closed" });
+          return;
+        }
+      } catch { /* Confirm state without sending an answer or retrying a write. */ }
+      const checked = await checkPendingExtensionUi(request.id);
+      if (checked.status === "closed") return;
+      if (!isExtensionUiDeliveryCurrent({ sessionId: sid, generation }, { sessionId: sessionIdRef.current, generation: extensionUiViewRef.current.generation })) return;
+      addNotice({ type: "warning", message: "暂时隐藏，关闭结果尚未确认；请求可能仍待处理", recovery: "session" });
+    }
+    hideExtensionUi(request.id);
+  }, [addNotice, applyExtensionUiResult, checkPendingExtensionUi, hideExtensionUi]);
+
   useEffect(() => {
     const onPolicyChange = () => dispatchNotice({ type: "refilter" });
     window.addEventListener(NATIVE_NOTIFICATION_POLICY_CHANGE_EVENT, onPolicyChange);
@@ -1645,6 +1672,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (Array.isArray(snapshot.uncommittedPrompts)) mergeServerPromptSubmissions(snapshot.uncommittedPrompts);
         if (extensionUiRevisionRef.current !== revision) return;
         if (!Array.isArray(snapshot.pendingExtensionUiRequests)) return;
+        const pendingIds = new Set<string>(snapshot.pendingExtensionUiRequests.map((request: ExtensionUiRequest) => request.id));
+        setExtensionDialogs(queue => retainExtensionUiRequests(queue, pendingIds));
+        setExtensionCustomUis(queue => retainExtensionUiRequests(queue, pendingIds));
         for (const request of snapshot.pendingExtensionUiRequests as ExtensionUiRequest[]) {
           if (isBlockingExtensionUiRequest(request)) restorePendingInteraction(request);
         }
@@ -3721,10 +3751,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const thinkingLevel: ThinkingLevelOption = displayThinkingLevel ?? "auto";
   // The head of each queue is on screen; the rest wait behind it.
-  const extensionDialog = extensionDialogs[0] ?? null;
-  const waitingExtensionDialogCount = Math.max(0, extensionDialogs.length - 1);
-  const extensionCustomUi = extensionCustomUis[0] ?? null;
-  const waitingExtensionCustomUiCount = Math.max(0, extensionCustomUis.length - 1);
+  const visibleDialogRequests = extensionDialogs.filter(request => !hiddenExtensionRequests.has(JSON.stringify([session?.id, request.id])));
+  const visibleCustomRequests = extensionCustomUis.filter(request => !hiddenExtensionRequests.has(JSON.stringify([session?.id, request.id])));
+  const extensionDialog = visibleDialogRequests[0] ?? null;
+  const waitingExtensionDialogCount = Math.max(0, visibleDialogRequests.length - 1);
+  const extensionCustomUi = visibleCustomRequests[0] ?? null;
+  const waitingExtensionCustomUiCount = Math.max(0, visibleCustomRequests.length - 1);
+  const hiddenExtensionCount = extensionDialogs.length + extensionCustomUis.length - visibleDialogRequests.length - visibleCustomRequests.length;
+  const restoreHiddenExtensionUi = () => setHiddenExtensionRequests(previous => {
+    const next = new Set(previous);
+    for (const request of [...extensionDialogs, ...extensionCustomUis]) next.delete(JSON.stringify([session?.id, request.id]));
+    return next;
+  });
 
   return {
     navigationTotalTurns: typeof data?.navigationTotalTurns === "number"
@@ -3737,7 +3775,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats, autoCompactionEnabled,
     slashCommands, slashCommandsLoading, queuedMessages, queueSyncStatus, unconfirmedSubmissions,
-    notices: noticeState.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, checkPendingExtensionUi,
+    notices: noticeState.visible, extensionDialogs, extensionCustomUis, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, hiddenExtensionCount, restoreHiddenExtensionUi, closeExtensionUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, checkPendingExtensionUi,
     isAutoModelSelection: isNew && newSessionModel === null,
     isAutoThinkingSelection: isNew && newSessionThinkingLevel === null,
     agentPhase: stopRequested && (agentRunning || bashRunning) ? { kind: "stopping" } as AgentPhase : agentPhase,

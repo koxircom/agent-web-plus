@@ -378,7 +378,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, modelSwitching, sessionStats, navigationTotalTurns,
     slashCommands, slashCommandsLoading, queuedMessages, queueSyncStatus, unconfirmedSubmissions,
-    notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, checkPendingExtensionUi, setNoticePaused, dismissNotice,
+    notices, extensionDialogs, extensionCustomUis, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, hiddenExtensionCount, restoreHiddenExtensionUi, closeExtensionUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, checkPendingExtensionUi, setNoticePaused, dismissNotice,
     isAutoModelSelection,
     isAutoThinkingSelection,
     agentPhase,
@@ -1457,13 +1457,20 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       ref={chatInputRef}
       executionEngine={isCodexSession ? "codex" : "pi"}
       columnEndInset={columnEndInset}
-      extensionPanel={(extensionDialog || extensionCustomUi) && (
+      extensionPanel={(extensionDialog || extensionCustomUi || hiddenExtensionCount > 0) && (
           <div className="pi-native-extension-dock">
             <div className="pi-native-extension-column">
-              {extensionDialog && (extensionDialog.method === "input" || extensionDialog.method === "editor"
-                ? <AskUserTextPanel key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} onCheck={checkPendingExtensionUi} />
-                : <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />)}
-              {extensionCustomUi && <AskUserSurface key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} onCheck={checkPendingExtensionUi} fallback={<ExtensionCustomPanel request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />} />}
+              {hiddenExtensionCount > 0 && <button type="button" className="pi-native-ask-cancel" onClick={restoreHiddenExtensionUi}>查看已隐藏的请求 ({hiddenExtensionCount})</button>}
+              {extensionDialogs.map(request => <div key={`${session?.id}:${request.id}`} style={{ display: request.id === extensionDialog?.id ? undefined : "none" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}><button type="button" className="pi-native-ask-cancel" aria-label="关闭交互提示" title={request.method === "input" && request.allowDefer ? "关闭提示，不发送答案" : "暂时隐藏，仍可查看"} onClick={() => void closeExtensionUi(request)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
+                {request.method === "input" || request.method === "editor"
+                  ? <AskUserTextPanel request={request} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} onCheck={checkPendingExtensionUi} onClose={() => void closeExtensionUi(request)} />
+                  : <ExtensionDialog request={request} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />}
+              </div>)}
+              {extensionCustomUis.map(request => <div key={`${session?.id}:${request.id}`} style={{ display: request.id === extensionCustomUi?.id ? undefined : "none" }}>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}><button type="button" className="pi-native-ask-cancel" aria-label="隐藏交互提示" title="暂时隐藏，仍可查看" onClick={() => void closeExtensionUi(request)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
+                <AskUserSurface request={request} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} onCheck={checkPendingExtensionUi} fallback={<ExtensionCustomPanel request={request} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />} />
+              </div>)}
             </div>
           </div>
       )}

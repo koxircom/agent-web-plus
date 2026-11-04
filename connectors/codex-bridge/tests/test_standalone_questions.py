@@ -104,6 +104,36 @@ class StandaloneQuestionsTests(unittest.TestCase):
                       backend=chat.backend, entry=bridge_state.records['threads'][THREAD])
         self.assertFalse(any(row['id'] == REQUEST for row in masked.view()['requests']))
 
+    def test_dismissed_question_stays_closed_without_answering_or_stopping(self):
+        bridge, records, chat, backend = self.fixture(status='idle')
+        answer = bridge.respond(THREAD, REQUEST, {'dismissQuestionId': QUESTION_ID})
+        self.assertEqual(answer['status'], 'dismissed')
+        self.assertEqual(backend.calls, [])
+        self.assertFalse(any(row['id'] == REQUEST for row in chat.view()['requests']))
+        self.assertFalse(bridge.activity([THREAD])[0]['hasPendingRequests'])
+        refreshed = Chat(bridge=chat.bridge, identifier=THREAD, result=thread_result(),
+                         backend=backend, entry=copy.deepcopy(records.records['threads'][THREAD]))
+        self.assertFalse(any(row['id'] == REQUEST for row in refreshed.view()['requests']))
+        self.assertEqual(bridge.respond(THREAD, REQUEST, {'dismissQuestionId': QUESTION_ID})['status'], 'dismissed')
+        self.assertEqual(backend.calls, [])
+
+    def test_dismiss_one_of_two_questions_preserves_other_question(self):
+        bridge, _records, chat, backend = self.fixture(status='idle')
+        chat.state['turns'][-1]['items'][0]['questions'].append({'title': '第二个', 'options': []})
+        second = '["request_user_input_async","' + ITEM + '",1]'
+        bridge.respond(THREAD, REQUEST, {'dismissQuestionId': QUESTION_ID})
+        pending = next(row for row in chat.view()['requests'] if row['id'] == REQUEST)
+        self.assertEqual([q['id'] for q in pending['params']['questions']], [second])
+        bridge.respond(THREAD, REQUEST, {'answers': {second: ['继续']}})
+        self.assertEqual(len([c for c in backend.calls if c[0] == 'turn/start']), 1)
+
+    def test_dismiss_rejects_unrelated_question_identity(self):
+        bridge, _records, chat, backend = self.fixture(status='idle')
+        with self.assertRaises(ValueError):
+            bridge.respond(THREAD, REQUEST, {'dismissQuestionId': 'other'})
+        self.assertTrue(any(row['id'] == REQUEST for row in chat.view()['requests']))
+        self.assertEqual(backend.calls, [])
+
     def test_reply_uses_stable_identity_native_question_id_and_current_mode(self):
         bridge, _records, chat, backend = self.fixture(status='active')
         result = bridge.respond(THREAD, REQUEST, {'answers': {QUESTION_ID: ['甲']}})

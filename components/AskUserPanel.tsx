@@ -45,9 +45,9 @@ export function AskUserSurface({ request, onInput, onCheck, fallback, waitingCou
 type TextRequest = Extract<ExtensionUiRequest, { method: "input" | "editor" }>;
 type TextResponse = { value: string } | { cancelled: true };
 type TextResponder = (request: TextRequest, response: TextResponse) => void | boolean | Promise<ExtensionUiDeliveryResult | boolean | undefined>;
-export function AskUserTextPanel(props: { request: TextRequest; onRespond: TextResponder; onCheck?: Checker; waitingCount?: number }) {
+export function AskUserTextPanel(props: { request: TextRequest; onRespond: TextResponder; onCheck?: Checker; onClose?: () => void; waitingCount?: number }) {
   return props.request.method === "input" && props.request.askUser
-    ? <AskUserPanel request={props.request} question={props.request.askUser} waitingCount={props.waitingCount} onReply={props.onRespond} onCheck={props.onCheck} />
+    ? <AskUserPanel request={props.request} question={props.request.askUser} waitingCount={props.waitingCount} onReply={props.onRespond} onCheck={props.onCheck} onClose={props.onClose} />
     : <AskUserPlainTextPanel {...props} />;
 }
 function AskUserPlainTextPanel({ request, onRespond, onCheck, waitingCount = 0 }: { request: TextRequest; onRespond: TextResponder; onCheck?: Checker; waitingCount?: number }) {
@@ -171,13 +171,13 @@ function AskUserPlainTextPanel({ request, onRespond, onCheck, waitingCount = 0 }
   </div>;
 }
 
-export function AskUserPanel({ request, question, onInput, onReply, onCheck, waitingCount = 0 }: { request: Request | TextRequest; question: AskUserQuestion; onInput?: Input; onReply?: TextResponder; onCheck?: Checker; waitingCount?: number }) {
+export function AskUserPanel({ request, question, onInput, onReply, onCheck, onClose, waitingCount = 0 }: { request: Request | TextRequest; question: AskUserQuestion; onInput?: Input; onReply?: TextResponder; onCheck?: Checker; onClose?: () => void; waitingCount?: number }) {
   const lines = request.method === "custom" ? request.lines : [];
   const [selected, setSelected] = useState<number[]>(() => {
     const checked = readAskTerminal(lines).options.flatMap((option, index) => option.checked ? [index] : []);
     return readAskTerminal(lines).mode === "freeform" ? [] : checked.length ? checked : question.options.length ? [0] : [];
   });
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(question.draftAnswer ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [uncertain, setUncertain] = useState(false);
@@ -342,11 +342,11 @@ export function AskUserPanel({ request, question, onInput, onReply, onCheck, wai
               </button>
             )}
             {(request.method === "custom" || (request.method === "input" && request.allowDefer)) && (
-              <button type="button" className="pi-native-ask-cancel" disabled={busy || uncertain} onClick={() => {
+              <button type="button" className="pi-native-ask-cancel" disabled={request.method === "custom" && (busy || uncertain)} onClick={() => {
                 if (request.method === "custom" && onInput) void send(() => onInput(request, ["\x03"]));
-                else if (request.method !== "custom" && onReply) void send(() => onReply(request, { cancelled: true }));
+                else onClose?.();
               }}>
-                <span className="pi-native-ask-button-label">{request.method === "custom" ? "取消" : "稍后回答"}</span>
+                <span className="pi-native-ask-button-label">{request.method === "custom" ? "取消" : "关闭"}</span>
               </button>
             )}
             <button type="button" className="pi-native-ask-submit" disabled={!canSubmit} onClick={submit}>

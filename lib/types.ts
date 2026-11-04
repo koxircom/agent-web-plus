@@ -145,6 +145,7 @@ export type SessionMessage = AgentMessage | SystemMessage;
 export interface AskUserQuestion {
   toolCallId: string;
   question: string;
+  draftAnswer?: string;
   context?: string;
   options: Array<{ title: string; description?: string }>;
   allowMultiple: boolean;

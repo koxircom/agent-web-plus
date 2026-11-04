@@ -85,7 +85,7 @@ async function fixture(route){
 }
 const focus=page=>page.evaluate(()=>{document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('online'))});
 const occurrences=(value,text)=>value.split(text).length-1;
-async function open(page,s){await page.goto(origin+'/?session='+encodeURIComponent(s.sid)+'&engine='+(s.sid.startsWith('codex:')?'codex':'pi'),{waitUntil:'domcontentloaded'});await page.locator('textarea').last().waitFor({timeout:20000})}
+async function open(page,s){await page.goto(origin+'/?session='+encodeURIComponent(s.sid)+'&engine='+(s.sid.startsWith('codex:')?'codex':'pi'),{waitUntil:'domcontentloaded'});await page.locator('textarea').last().waitFor({timeout:20000});await page.waitForFunction(()=>typeof window.__PI_ENH_SET_PLUGIN__==='function',{},{timeout:20000})}
 async function clickEdit(page,text){const b=page.locator('[data-pi-native-queue] .pi-enh-queue-text').filter({hasText:text}).first();await b.waitFor();await page.waitForFunction(text=>[...document.querySelectorAll('.pi-enh-queue-text')].some(e=>e.textContent===text&&!e.disabled),text,{timeout:15000});await b.click();await page.waitForFunction(text=>document.querySelector('textarea')?.value.includes(text),text,{timeout:10000})}
 try{
  assert(fs.existsSync(path.join(root,'.next/BUILD_ID')),'Build the real candidate before browser acceptance');
