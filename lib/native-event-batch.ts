@@ -159,7 +159,7 @@ export class SessionEventHub {
     const { snapshotEvents } = extractSessionSnapshotEvents(
       this.sessionInstance,
       this.sessionId,
-      [],
+      this.sessionInstance.getPendingExtensionUiRequests?.() ?? [],
     );
     return snapshotEvents;
   }

@@ -2411,8 +2411,7 @@
       box-sizing: border-box !important;
     }
     .pi-enh-session-row-host[data-pi-enh-has-odoo-addons="true"] {
-      display: grid !important;
-      grid-template-columns: minmax(0, 1fr) repeat(3, max-content);
+      display: flex !important;
       align-content: center;
       column-gap: 6px !important;
       row-gap: 0 !important;
@@ -2423,13 +2422,6 @@
     .pi-enh-session-row-host[data-pi-enh-has-odoo-addons="true"][hidden],
     .pi-enh-session-row-host[data-pi-enh-has-odoo-addons="true"][style*="display: none"] {
       display: none !important;
-    }
-    .pi-enh-session-row-host[data-pi-enh-has-odoo-addons="true"] > :not(.pi-enh-session-odoo-addons) {
-      grid-row: 1;
-    }
-    .pi-enh-session-row-host[data-pi-enh-has-odoo-addons="true"] > .pi-enh-session-odoo-addons {
-      grid-row: 2;
-      grid-column: 1 / -1;
     }
     .pi-enh-session-row-host[data-pi-enh-has-odoo-addons="true"] .pi-enh-session-tags-row {
       margin-top: 2px;

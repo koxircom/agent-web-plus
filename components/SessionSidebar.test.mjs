@@ -8,6 +8,7 @@ const { getSessionListIndices } = await jiti.import("./SessionSidebar.tsx");
 
 const source = await readFile(new URL("./SessionSidebar.tsx", import.meta.url), "utf8");
 const globalStyles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+const enhancementStyles = await readFile(new URL("../app/enhancements.css", import.meta.url), "utf8");
 const sessionItemSource = source.slice(source.indexOf("function SessionItem("));
 
 test("scrolling keeps the focused session and the viewport mounted without expanding the whole window", () => {
@@ -147,6 +148,18 @@ test("lifecycle refreshes bypass the cache while cross-window polling reuses it"
 
 test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient \|\| session\.submissionPending\) return false;/);
+});
+
+test("Odoo addon session rows keep batch checkboxes beside the content flow", () => {
+  const rowLayout = enhancementStyles.match(/\.pi-enh-session-row-host\[data-pi-enh-has-odoo-addons="true"\]\s*\{([^}]*)\}/)?.[1] ?? "";
+  const addonLayout = enhancementStyles.match(/^[ \t]*\.pi-enh-session-odoo-addons[ \t]*\{([^}]*)\}/m)?.[1] ?? "";
+  const mainContent = sessionItemSource.match(/<div style=\{\{ flex: 1, minWidth: 0 \}\}>([\s\S]*?)<\/div>\s*\{\s*\/\* Collapse toggle/)?.[1] ?? "";
+
+  assert.match(rowLayout, /display:\s*flex\s*!important/);
+  assert.doesNotMatch(rowLayout, /grid-template-columns|grid-row|grid-column/);
+  assert.match(addonLayout, /width:\s*100%/);
+  assert.match(source, /<div style=\{\{ flex: 1, minWidth: 0 \}\}>/);
+  assert.match(mainContent, /<div className="pi-enh-session-odoo-addons">/);
 });
 
 test("hides subagent rows and aggregates their state into the main session row", () => {

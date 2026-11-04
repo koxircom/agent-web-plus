@@ -694,6 +694,8 @@ export class CodexRuntime {
   isAlive() { return this.reachable; } // History-only views are valid even without an active executor.
   hasViewers() { return this.listeners.size > 0; }
   pendingRequests() { return [...this.requests.values()].map(r => r.event); }
+  getPendingExtensionUiRequests() { return this.pendingRequests(); }
+  clientQueuedMessages() { return queue(this.meta); }
   onEvent(listener: (event: AgentEventLike) => void) {
     this.listeners.add(listener);
     // Publish the current queue on every subscription, even when it has not

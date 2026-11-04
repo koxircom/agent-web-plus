@@ -2909,6 +2909,23 @@ function SessionItem({
                   title={`全部标签：${tags.map((tag) => tag.name).join("、")}`}>+{tags.length - 2}</span>}
               </div>
             )}
+            {showOdooAddons && (
+              <div className="pi-enh-session-odoo-addons">
+                {odooAddons.map((addon) => (
+                  <div className="pi-enh-odoo-addon-row" key={addon.technical}>
+                    <span
+                      className={`pi-enh-odoo-addon-pill${addon.isLatest ? " is-latest" : ""}`}
+                      data-pi-enh-latest={addon.isLatest ? "true" : "false"}
+                      title={`${addon.technical} · ${addon.status}${addon.isLatest ? " · 最新实际更新会话" : ""}`}
+                      aria-label={`${addon.technical}${addon.isLatest ? "（最新实际更新会话）" : ""}`}
+                    >
+                      <span className="pi-enh-odoo-addon-dot" aria-hidden="true" />
+                      <span className="pi-enh-odoo-addon-name">{addon.technical}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Collapse toggle — always visible when has children */}
@@ -2972,23 +2989,6 @@ function SessionItem({
           )}
 
 
-          {showOdooAddons && (
-            <div className="pi-enh-session-odoo-addons">
-              {odooAddons.map((addon) => (
-                <div className="pi-enh-odoo-addon-row" key={addon.technical}>
-                  <span
-                    className={`pi-enh-odoo-addon-pill${addon.isLatest ? " is-latest" : ""}`}
-                    data-pi-enh-latest={addon.isLatest ? "true" : "false"}
-                    title={`${addon.technical} · ${addon.status}${addon.isLatest ? " · 最新实际更新会话" : ""}`}
-                    aria-label={`${addon.technical}${addon.isLatest ? "（最新实际更新会话）" : ""}`}
-                  >
-                    <span className="pi-enh-odoo-addon-dot" aria-hidden="true" />
-                    <span className="pi-enh-odoo-addon-name">{addon.technical}</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </>
       )}
     </div>

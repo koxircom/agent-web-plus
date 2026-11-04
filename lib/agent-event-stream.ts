@@ -13,6 +13,7 @@ export interface AgentEventStreamSession {
   isAlive?(): boolean;
   isRunning?(): boolean;
   getCurrentTaskTiming?(): TaskTiming | null;
+  getPendingExtensionUiRequests?(): AgentEventLike[];
   onEvent(listener: (event: AgentEventLike) => void): () => void;
 }
 
@@ -152,7 +153,7 @@ export function extractSessionSnapshotEvents(
     const queueSnapshot = typeof (session as any).clientQueuedMessages === "function"
       ? (session as any).clientQueuedMessages()
       : (session as any).queuedMessages;
-    if (queueSnapshot && ((queueSnapshot.steering?.length ?? 0) > 0 || (queueSnapshot.followUp?.length ?? 0) > 0)) {
+    if (queueSnapshot && Array.isArray(queueSnapshot.steering) && Array.isArray(queueSnapshot.followUp)) {
       events.push({ type: "queue_update", ...queueSnapshot });
     }
   } catch (e) {

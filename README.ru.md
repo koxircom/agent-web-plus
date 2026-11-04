@@ -26,7 +26,7 @@ Agent Web Plus — единая локальная браузерная плат
 Для работы Agent Web Plus требуется Node.js 22.19.0 или новее (`node >=22.19`). Проверьте версию командой `node --version`, затем установите официальный пакет `.tgz` из [`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) и запустите рекомендованную команду `agent-web` (совместимая команда `pi-web` также доступна):
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.62/agent-web-plus-1.4.62.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.63/agent-web-plus-1.4.63.tgz
 agent-web
 ```
 
@@ -36,7 +36,7 @@ agent-web
 
 Если Provider модели ещё не настроен, откройте панель **Models**, войдите в учётную запись или добавьте API Key.
 
-В примере выше указан кандидат на локальное сопровождение `v1.4.62` (`agent-web-plus-1.4.62.tgz`, фактически доступный пакет определяется страницей Releases и не заявляется как опубликованный на GitHub). Для установки нужной версии или обновления остановите запущенный процесс с помощью `Ctrl+C`, замените версию в ссылке на целевую `<version>` из [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) и повторите команду установки:
+В примере выше указан кандидат на локальное сопровождение `v1.4.63` (`agent-web-plus-1.4.63.tgz`, фактически доступный пакет определяется страницей Releases и не заявляется как опубликованный на GitHub). Для установки нужной версии или обновления остановите запущенный процесс с помощью `Ctrl+C`, замените версию в ссылке на целевую `<version>` из [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) и повторите команду установки:
 
 ```bash
 npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v<version>/agent-web-plus-<version>.tgz
@@ -78,10 +78,10 @@ PI_WEB_PASSWORD='длинный-случайный-пароль' agent-web --hos
 
 Для серверных запросов к моделям и API используются стандартные переменные окружения `HTTP_PROXY`, `HTTPS_PROXY` и `NO_PROXY`.
 
-В macOS и Linux (установка из [`.tgz`-релиза на GitHub](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.62/agent-web-plus-1.4.62.tgz) и запуск):
+В macOS и Linux (установка из [`.tgz`-релиза на GitHub](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.63/agent-web-plus-1.4.63.tgz) и запуск):
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.62/agent-web-plus-1.4.62.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.63/agent-web-plus-1.4.63.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -91,7 +91,7 @@ agent-web
 В Windows PowerShell:
 
 ```powershell
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.62/agent-web-plus-1.4.62.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.63/agent-web-plus-1.4.63.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

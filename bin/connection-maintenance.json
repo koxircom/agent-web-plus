@@ -1,7 +1,7 @@
 {
-  "maintenanceVersion": "1.4.62.1",
-  "webVersion": "1.4.62",
-  "fix": "Separate completed Codex execution from pending async input; copy complete target-session handoff URLs and verified paths",
+  "maintenanceVersion": "1.4.63.1",
+  "webVersion": "1.4.63",
+  "fix": "Keep Ask User requests and full queue snapshots on reconnect; preserve shared session row content layout when batch checkboxes are added; includes Codex completion state and complete relay prompts",
   "sourceHashes": {
     "app/api/agent/running/route.ts": "767dd45487ffcb374a243a11df5c3b6e2152811119bc998757917a25aa07b424",
     "app/api/files/[...path]/route.ts": "40c6057d8b34509f798c345ed1afed559a3becf7d584d511d5e20e1144001a84",
@@ -25,14 +25,14 @@
     "lib/file-watch-client.test.mjs": "e986544362dc9599854323e9ce606c50a7d2c531923415bb703b50d145ea8cf4",
     "lib/file-watch-client.ts": "174c29d4e400b87d1885eb226b3aa4342537080d64b77129e2fc77f09c7041c1",
     "lib/native-event-batch-client.ts": "47b1057e0d5e9575545f4b968f33b3e414e04d0e83887f4921e551c7d1ea9d85",
-    "lib/native-event-batch.test.mjs": "5a6eadfe6b0ea0148652c2201eb1d5a328e532fd289ce91d408290e9d8b576c4",
-    "lib/native-event-batch.ts": "493d97e6fbd9d37bdbca1f228043aa754ea91ef83dfdd01b50175cbeaa87f32e",
+    "lib/native-event-batch.test.mjs": "3cb14c60835ffba89c58340ac667d1ec4becf57e6d47356d44b977f3dddf62e1",
+    "lib/native-event-batch.ts": "f348833fab97a56cd4c0072c72e593f0264a6e4ebced88f223837060a99fb5f7",
     "lib/subagent-background-faux.integration.test.mjs": "835a7179789c9ca571100578f1bda497df4607578b6a5b663ae5154b5c76dd2f",
     "lib/subagent-extension.integration.test.mjs": "79a8a8ef475328586f09d47346824ded267b7e6862fb7831b504cec64c7cd7ea",
     "lib/subagent-extension.ts": "98ef79109627e847a3ea55f1c7e9b739e8a64243ccfe8068a28fd2719e8c2c76",
     "lib/terminal-poll-owner.ts": "a5b00727f21b8065435d5b3c3e3dabb76ad44a98b431719e67a5dbf6e358afd1",
-    "package-lock.json": "da97ecf361b58d1dfd0ded4ac0dc6dd1c8f9693e6a8dabd6f054a9f73c50ed07",
-    "package.json": "b37d6e07d245a3cdac745f12058ec14ef83989732c3a7f4f5c135a7247427c91",
+    "package-lock.json": "21477fc6edf3e366d0f227805116e9971383821380df19a7dea23e30a187b3be",
+    "package.json": "62a3437072fd51dce8b0748e979aead7ad54c3fe57a9c100df2691050b199ea4",
     "lib/browser-tab-appearance.ts": "2f417ff99aefb7f09ce6d722ab4e6fbb1729e15ec9cc656bb52da0196e6fb2f6",
     "components/BrowserTabSettings.tsx": "51414a6e5a0b6f28f1451b8b64f97aefa82ee83dab1f5a4fdd3051279a964418",
     "components/SettingsPanel.tsx": "16373fbf5c102b0b4b5c53365e812d9af8190ce30a61919113c85406a1214d27",
@@ -45,9 +45,13 @@
     "enhancements/tests/batch-row-decorations.test.cjs": "4ad4e7362f53df02f32022fd0b3962dd9b00fa746f2207eb249040fe3b0ead36",
     "enhancements/tests/batch-touch-activation.test.cjs": "0515705dda7df08b3e849a9fe29bbe07efb19fd3db6d4c56f31df81c5008dc8d",
     "tests/file-engine-context.pw.mjs": "4a555965a4661f6319c512a4358c773209121ed7db8b9dd965c12d2e5c21b6fe",
-    "lib/execution-engines/codex-engine.ts": "1dae262f34026d9f9ee5fbf36ef8fa8f7a6dcf3271f6ba3b0302de6c43b0a72c",
-    "lib/execution-engines/codex-events.test.mjs": "8a833f9c54356ba03a37f282e843c47bdfbf23a1df5397d0b9d698524f968890",
-    "enhancements/tests/agent-relay-prompt.test.cjs": "f6308884f81f5f3e7402e4ee51ee82b1401614421a44ab52a8064454ab2d9e89"
+    "lib/execution-engines/codex-engine.ts": "129ddf9a2ddbd72fc630c43778115c1d46e34ec8a9b67275c276b8de216997f2",
+    "lib/execution-engines/codex-events.test.mjs": "1b06fc42e739dceec522d5759bb49764905a404c760c7a892fa0eda64590d45c",
+    "enhancements/tests/agent-relay-prompt.test.cjs": "f6308884f81f5f3e7402e4ee51ee82b1401614421a44ab52a8064454ab2d9e89",
+    "lib/agent-event-stream.ts": "84adbeefdf5b06c9ef551296b9c9b4b69360fcc3e219d1aca30d4dd81bb974e8",
+    "app/enhancements.css": "4c1ce9853d99ad21deb6dbe50e943f7e084b3e857158799b2829bab6eb064e42",
+    "components/SessionSidebar.test.mjs": "2a12746f2febc6ce615ef07c1fa90861037a5f7e05abe3671c1d0bcebe8ecf7b",
+    "components/SessionSidebar.tsx": "8042bddf7e6df5133f8c87a54ec3fea33a757e25a790b2fbaea932fd648b1154"
   },
   "sdkVersion": "1.5.0"
 }
