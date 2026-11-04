@@ -562,6 +562,7 @@ export function ComposerQueue({
               data-queue-original-index={originalIndex}
               data-retained-request-id={entry.backup?.requestId}
               className={`pi-enh-queue-row${isDragging ? " pi-enh-queue-row-dragging" : ""}`}
+              style={isDragging && dragView?.moved ? { transform: `translateY(${dragView.offset}px)` } : undefined}
               aria-busy={entry.pending || undefined}
               key={entry.requestId || `${entry.kind}-${originalIndex}`}
             >

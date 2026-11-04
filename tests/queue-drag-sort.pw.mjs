@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile, mkdir, chmod } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { chromium } from "playwright";
@@ -11,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = resolve(__dirname, "..");
 
-const screenshotDir = "/workspace/work/queue-drag158";
+const screenshotDir = process.env.QUEUE_DRAG_SCREENSHOT_DIR || resolve(tmpdir(), "agent-web-queue-drag");
 await mkdir(screenshotDir, { recursive: true });
 
 // Build the bundle in memory with esbuild
@@ -324,6 +325,10 @@ test("[Component & Browser E2E] multi-viewport multi-theme queue drag: drop line
         await page.mouse.down();
         // Drag downwards to between followUp 2 and followUp 3
         await page.mouse.move(handle1Box.x + handle1Box.width / 2, handle1Box.y + handle1Box.height / 2 + 50, { steps: 5 });
+
+        const draggedBox = await page.locator(".pi-enh-queue-row-dragging").boundingBox();
+        assert.ok(draggedBox, "Dragged row is visible");
+        assert.ok(draggedBox.y - initialBoxes[1].y >= 25, "Entire dragged row follows the pointer");
 
         // Assert: Drop line is visible and pointer-events is none
         const dropLine = page.locator(".pi-enh-queue-drop-line");
