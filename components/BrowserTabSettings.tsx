@@ -1,22 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import { useBrowserTabTitle } from "@/hooks/useBrowserTabTitle";
+import { getBrowserTabTitleSnapshot, useBrowserTabTitle } from "@/hooks/useBrowserTabTitle";
 import { sanitizeRawBrowserTabTitle } from "@/lib/browser-tab-title-normalization";
 import { BRAND_NAME } from "@/lib/branding";
 import { buildTabFaviconSvg } from "@/lib/tab-favicon";
-import { DEFAULT_TAB_APPEARANCE, formatBrowserTabTitle, isBrowserTabAppearance, type BrowserTabAppearance } from "@/lib/browser-tab-appearance";
+import { DEFAULT_TAB_APPEARANCE, formatBrowserTabTitle, isBrowserTabAppearance, sameBrowserTabAppearance, type BrowserTabAppearance } from "@/lib/browser-tab-appearance";
 import { ConfigButton } from "./SettingsUi";
 
-type Draft = { text: string; appearance: BrowserTabAppearance };
+type Draft = { text: string; appearance: BrowserTabAppearance; baseRevision: number };
 export function BrowserTabSettings({ cwd, engine }: { cwd: string | null; engine: "pi" | "codex" }) {
-  const { rawTitle, appearance, saveTitle, resetTitle, isLoading, error } = useBrowserTabTitle();
+  const { rawTitle, appearance, revision, saveTitle, resetTitle, isLoading, error } = useBrowserTabTitle();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const server: Draft = { text: rawTitle, appearance: appearance ?? { ...DEFAULT_TAB_APPEARANCE, titleTemplate: rawTitle.trim() ? "{text}" : DEFAULT_TAB_APPEARANCE.titleTemplate } };
+  const server: Draft = { text: rawTitle, appearance: appearance ?? { ...DEFAULT_TAB_APPEARANCE, titleTemplate: rawTitle.trim() ? "{text}" : DEFAULT_TAB_APPEARANCE.titleTemplate }, baseRevision: revision };
   const value = draft ?? server;
-  const changed = JSON.stringify(value) !== JSON.stringify(server);
+  const changed = value.text !== server.text || !sameBrowserTabAppearance(value.appearance, server.appearance);
   const valid = isBrowserTabAppearance(value.appearance);
   const project = cwd?.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? "";
   const hex = value.appearance.themeColor;
@@ -28,9 +28,12 @@ export function BrowserTabSettings({ cwd, engine }: { cwd: string | null; engine
     if (saving || isLoading) return;
     setSaving(true); setFeedback("");
     try {
-      const result = reset ? await resetTitle() : await saveTitle(value.text, value.appearance);
+      const result = reset ? await resetTitle() : await saveTitle(value.text, value.appearance, value.baseRevision);
       if (result.success) { setDraft(null); setFeedback(reset ? "已恢复默认标签页" : "已保存，同一服务的其他页面会自动同步"); }
-      else setFeedback(result.conflict ? "设置已被其他页面修改。你的草稿已保留，请核对后再次保存。" : `保存失败：${result.error || "请稍后重试"}`);
+      else {
+        if (result.conflict) setDraft(current => current ? { ...current, baseRevision: getBrowserTabTitleSnapshot().revision } : current);
+        setFeedback(result.conflict ? "设置已被其他页面修改。你的草稿已保留，请核对后再次保存。" : `保存失败：${result.error || "请稍后重试"}`);
+      }
     } finally { setSaving(false); }
   };
   return <section className="settings-general settings-browser-tab" aria-label="浏览器标签页">

@@ -285,7 +285,8 @@ function getServerSnapshot(): BrowserTabTitleSnapshot {
 
 export async function saveBrowserTabTitle(
   value: string,
-  appearance?: BrowserTabAppearance | null
+  appearance?: BrowserTabAppearance | null,
+  expectedRevision?: number,
 ): Promise<{ success: boolean; conflict?: boolean; error?: string }> {
   // stale 订阅 generation 与 save 串行：连点击两个 save 必须排队执行
   let release: () => void = () => {};
@@ -297,7 +298,7 @@ export async function saveBrowserTabTitle(
 
   try {
     await prevLock;
-    return await doSaveBrowserTabTitle(value, appearance);
+    return await doSaveBrowserTabTitle(value, appearance, expectedRevision);
   } finally {
     release();
   }
@@ -305,13 +306,14 @@ export async function saveBrowserTabTitle(
 
 async function doSaveBrowserTabTitle(
   value: string,
-  appearance?: BrowserTabAppearance | null
+  appearance?: BrowserTabAppearance | null,
+  expectedRevision?: number,
 ): Promise<{ success: boolean; conflict?: boolean; error?: string }> {
   if (currentSnapshot.isLoading || !hasAttemptedInitialFetch) {
     return { success: false, error: "Settings are not loaded" };
   }
   const sanitized = sanitizeRawBrowserTabTitle(value);
-  const currentRevision = currentSnapshot.revision;
+  const currentRevision = expectedRevision ?? currentSnapshot.revision;
 
   try {
     const res = await fetch("/api/ui-settings/browser-title", {

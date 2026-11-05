@@ -35,6 +35,7 @@ function fixture(frames,{ids=['a','b'],status=null,postMode=null,metaNotFound=fa
     setTimeout,clearTimeout,batchDeleteInFlight:false,batchDeleteJob:null,batchDeleteJobEntry:null,
     batchDeleteObserverController:null,batchDeleteObserverGeneration:0,batchDeleteJobStorageKey:storageKey,isSessionBatchMode:false,
     batchDeleteModal:null,selectedSessionBatchIds,syncSessionBatchBar(){},syncSessionBatchRowStates(){},
+    getSessionTitleForBatch:id=>`标题 ${id}`,
     createBatchDeleteJobId:()=>jobId,
     saveBatchDeleteJobPointer(job){storage.set(storageKey,JSON.stringify({id:job.id,ids:job.ids}));},
     clearBatchDeleteJobPointer(){storage.delete(storageKey);},
@@ -100,6 +101,7 @@ test('job transport POSTs once, confirms only returned IDs, and preserves cascad
   assert.deepEqual(f.restored,[]);
   assert.equal(f.refreshes.length,1);
   assert.equal(f.c.batchDeleteJob.done,true);
+  assert.equal(f.c.batchDeleteJob.titles.a,'标题 a');
   assert.equal(f.storage.has(storageKey),true,'完成结果保留到用户明确关闭');
 });
 

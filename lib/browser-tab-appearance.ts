@@ -25,7 +25,18 @@ export function sameBrowserTabAppearance(a: BrowserTabAppearance | null, b: Brow
   return a === b || (a !== null && b !== null && a.titleTemplate === b.titleTemplate && a.logoColor === b.logoColor && a.themeColor === b.themeColor);
 }
 export function formatBrowserTabTitle(appearance: BrowserTabAppearance, values: {project: string; agent: string; text: string; app: string}): string {
-  const title = appearance.titleTemplate.replace(/\{(project|agent|text|app)\}/g, (_, key: keyof typeof values) => values[key]);
+  const parts = appearance.titleTemplate.split(/(\{(?:project|agent|text|app)\})/g);
+  const separator = /^\s*[-|/:,\u00b7\u2022\u2013\u2014]+\s*$/;
+  for (let i = 1; i < parts.length; i += 2) {
+    const key = parts[i].slice(1, -1) as keyof typeof values;
+    const value = values[key];
+    parts[i] = value;
+    if (!value.trim()) {
+      if (i > 1 && separator.test(parts[i - 1])) parts[i - 1] = "";
+      else if (i + 1 < parts.length && separator.test(parts[i + 1])) parts[i + 1] = "";
+    }
+  }
+  const title = parts.join("");
   return clipCodePoints(title.replace(CONTROL_AND_LINEBREAK_RE, "").trim(), 160) || values.project || values.app;
 }
 

@@ -163,6 +163,50 @@ test("follow-up shortcuts preserve newline, IME, mobile and completion behavior"
   }
 });
 
+test("slash menu leaves composition keys to the input method", () => {
+  const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function findHandler(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === "handleKeyDown") return node.initializer.arguments[0];
+    return ts.forEachChild(node, findHandler);
+  }
+  const script = new Script(ts.transpileModule(findHandler(source).getText(source), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText);
+  for (const key of ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Tab", "Escape"]) {
+    for (const composition of [{ ref: true }, { native: true }, { keyCode: 229 }]) {
+      let action = "native";
+      const handler = script.runInNewContext({
+        Date: { now: () => 1000 }, COMPOSITION_END_ENTER_GRACE_MS: 100,
+        isMobile: false, isStreaming: false,
+        isComposingRef: { current: !!composition.ref }, lastCompositionEndAtRef: { current: 0 },
+        historyMenuOpen: false, slashMenuOpen: true, slashQuery: "", displayedSlashCommands: [{}], slashActiveIndex: 0,
+        atMenuOpen: false, atQuery: null, inputHistory: [], value: "/",
+        setSlashActiveIndex() { action = "move"; }, getNextSlashIndex() { return 1; },
+        setSlashMenuOpen() { action = "close"; }, applySlashCommand() { action = "apply"; },
+      });
+      handler({ key, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+        nativeEvent: { isComposing: !!composition.native, keyCode: composition.keyCode || 0 },
+        preventDefault() { action = "prevented"; },
+      });
+      assert.equal(action, "native", `${key} during ${JSON.stringify(composition)}`);
+    }
+  }
+  for (const [key, expected] of [["ArrowLeft", "native"], ["ArrowRight", "native"], ["ArrowDown", "move"], ["ArrowUp", "move"]]) {
+    let action = "native";
+    const handler = script.runInNewContext({
+      Date: { now: () => 1000 }, COMPOSITION_END_ENTER_GRACE_MS: 100,
+      isMobile: false, isStreaming: false, isComposingRef: { current: false }, lastCompositionEndAtRef: { current: 0 },
+      historyMenuOpen: false, slashMenuOpen: true, slashQuery: "", displayedSlashCommands: [{}], slashActiveIndex: 0,
+      atMenuOpen: false, atQuery: null, inputHistory: [], value: "/co",
+      setSlashActiveIndex() { action = "move"; }, getNextSlashIndex() { return 1; },
+    });
+    handler({ key, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+      nativeEvent: { isComposing: false, keyCode: 0 }, preventDefault() { action = "prevented"; },
+    });
+    assert.equal(action, expected, key);
+  }
+});
+
 test("file mention arrows wrap around the match list", () => {
   const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   function findHandler(node) {

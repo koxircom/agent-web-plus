@@ -114,11 +114,11 @@ function deferredSessionInfo(
 	if (
 		!header
 		|| typeof header.id !== "string"
-		|| typeof header.timestamp !== "string"
+		|| !header.id.trim()
 	) return null;
 
-	const created = new Date(header.timestamp);
-	if (!Number.isFinite(created.getTime())) return null;
+	const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
+	const created = new Date(Number.isFinite(headerTime) ? headerTime : fingerprint.mtimeMs);
 
 	return {
 		path: filePath,
@@ -159,12 +159,14 @@ function activityTimeOf(entry: RawEntry): number | undefined {
 	) {
 		return undefined;
 	}
-	if (typeof message.timestamp === "number") return message.timestamp;
+	if (typeof message.timestamp === "number") {
+		return Number.isFinite(new Date(message.timestamp).getTime()) ? message.timestamp : undefined;
+	}
 	const t = new Date(entry.timestamp as string).getTime();
 	return Number.isNaN(t) ? undefined : t;
 }
 
-// Uses the SDK's buildSessionInfo() semantics for displayed metadata.
+// Prefer the first user message, falling back to assistant text when needed.
 export async function scanSessionFileInfo(
 	filePath: string,
 ): Promise<ScannedSessionInfo | null> {
@@ -174,6 +176,7 @@ export async function scanSessionFileInfo(
 		let name: string | undefined;
 		let messageCount = 0;
 		let firstMessage = "";
+		let firstAssistantMessage = "";
 		let lastActivityTime: number | undefined;
 
 		const rl = createInterface({
@@ -217,9 +220,10 @@ export async function scanSessionFileInfo(
 			const textContent = extractTextContent(message);
 			if (!textContent) continue;
 			if (!firstMessage && message.role === "user") firstMessage = textContent;
+			if (!firstAssistantMessage && message.role === "assistant") firstAssistantMessage = textContent;
 		}
 
-		if (!header) return null;
+		if (!header || typeof header.id !== "string" || !header.id.trim()) return null;
 
 		const cwd = typeof header.cwd === "string" ? header.cwd : "";
 		const parentSessionPath =
@@ -243,10 +247,10 @@ export async function scanSessionFileInfo(
 			cwd: typeof header.cwd === "string" ? header.cwd : "",
 			name,
 			parentSessionPath,
-			created: new Date(header.timestamp as string),
+			created: Number.isFinite(headerTime) ? new Date(headerTime) : new Date(stats.mtimeMs),
 			modified,
 			messageCount,
-			firstMessage: firstMessage || "(no messages)",
+			firstMessage: firstMessage || firstAssistantMessage || (messageCount ? "" : "(no messages)"),
 		};
 	} catch (error) {
 		if (isExpectedCandidateDisappearance(error)) return null;
@@ -337,11 +341,13 @@ function loadPersistedIndex(): void {
 		for (const [pathKey, entry] of Object.entries(parsed.entries)) {
 			if (!isRecord(entry) || !isRecord(entry.fp) || !isRecord(entry.info)) continue;
 			const { fp, info } = entry;
+			// Older indexes used this placeholder even when messages existed.
+			if (info.firstMessage === "(no messages)" && typeof info.messageCount === "number" && info.messageCount > 0) continue;
 			if (
 				typeof fp.size !== "number" || !Number.isSafeInteger(fp.size) || fp.size < 0 ||
 				typeof fp.mtimeMs !== "number" || !Number.isFinite(fp.mtimeMs) ||
 				info.path !== pathKey ||
-				typeof info.id !== "string" ||
+				typeof info.id !== "string" || !info.id.trim() ||
 				typeof info.cwd !== "string" ||
 				typeof info.firstMessage !== "string" ||
 				(info.name !== undefined && typeof info.name !== "string") ||

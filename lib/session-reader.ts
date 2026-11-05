@@ -219,7 +219,7 @@ function mapScannedSession(
     // real "(no messages)" session until the details arrive.
     firstMessage: detailsPending && !scanned.firstMessage
       ? ""
-      : scanned.firstMessage || "(no messages)",
+      : scanned.firstMessage || (scanned.messageCount ? "" : "(no messages)"),
     parentSessionId: originSessionId,
     ...(subagent
       ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status } }

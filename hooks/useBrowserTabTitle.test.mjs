@@ -23,6 +23,33 @@ test("normalizeBrowserTabTitle: strips controls and truncates to 80 codepoints",
   assert.equal(normalized, "🌟".repeat(80));
 });
 
+test("a stale draft sends its original revision even after a newer status update", async () => {
+  _resetBrowserTabTitleStateForTesting();
+  globalThis.window = {};
+  const requests = [];
+  globalThis.fetch = async (_url, options) => {
+    if (options?.method === 'PUT') {
+      requests.push(JSON.parse(options.body));
+      return {ok:false,status:409,json:async()=>({})};
+    }
+    return {ok:true,status:200,json:async()=>({version:1,revision:2,title:'窗口二保存',appearance:null})};
+  };
+  try {
+    const off = subscribeBrowserTabTitle(() => {});
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(getBrowserTabTitleSnapshot().revision, 2);
+    const result = await saveBrowserTabTitle('窗口一草稿', null, 1);
+    assert.equal(requests[0].revision, 1);
+    assert.equal(result.conflict, true);
+    assert.equal(getBrowserTabTitleSnapshot().revision, 2);
+    off();
+  } finally {
+    _resetBrowserTabTitleStateForTesting();
+    delete globalThis.window;
+    delete globalThis.fetch;
+  }
+});
+
 test("subscribe lifecycle and initial fetch / EventSource handling", async () => {
   _resetBrowserTabTitleStateForTesting();
 

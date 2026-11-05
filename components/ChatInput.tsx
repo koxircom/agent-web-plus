@@ -2004,12 +2004,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }, [hasFilesBlockingSend, value, attachedImages, queuedMessages, queuedPreviewVisible, onBuiltinCommand, onPromptWithStreamingBehavior, onSteer, onFollowUp, clearInput, onAudioUnlock, runBuiltinCommand]);
 
-  const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
+  const getNextSlashIndex = useCallback((direction: "up" | "down") => {
     const lastIndex = displayedSlashCommands.length - 1;
     if (lastIndex < 0) return 0;
-
-    if (direction === "left") return Math.max(0, slashActiveIndex - 1);
-    if (direction === "right") return Math.min(lastIndex, slashActiveIndex + 1);
 
     const currentNode = slashItemRefs.current[slashActiveIndex];
     if (!currentNode) {
@@ -2138,7 +2135,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
 
-      if (slashMenuOpen && slashQuery !== null) {
+      if (slashMenuOpen && slashQuery !== null && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
           setSlashActiveIndex(getNextSlashIndex("down"));
@@ -2147,16 +2144,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         if (e.key === "ArrowUp") {
           e.preventDefault();
           setSlashActiveIndex(getNextSlashIndex("up"));
-          return;
-        }
-        if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setSlashActiveIndex(getNextSlashIndex("right"));
-          return;
-        }
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setSlashActiveIndex(getNextSlashIndex("left"));
           return;
         }
         if (e.key === "Escape") {
@@ -3047,10 +3034,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                 slashItemRefs.current[index] = node;
                               }}
                               type="button"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                applySlashCommand(command);
-                              }}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => applySlashCommand(command)}
                               onMouseEnter={() => setSlashActiveIndex(index)}
                               style={{
                                 width: "100%",

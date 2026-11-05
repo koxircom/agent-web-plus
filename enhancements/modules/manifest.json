@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "edition": "koxir-standalone-1.4.78",
-  "version": "1.4.78",
+  "edition": "koxir-standalone-1.4.79",
+  "version": "1.4.79",
   "targetFile": "enhancements/pi-web-enhancements.js",
   "mirrorFile": "public/pi-web-enhancements.js",
-  "totalLines": 41498,
-  "totalBytes": 1839957,
-  "bundleSha256": "de723b0f36fcfd14a8c8bc080a655788f2cb7436262998d93cf79b5b5f3fdca7",
-  "publicSha256": "8e904feafcb870697b3e7a6d67797e8eac3b675b188c0fcf04948b73ef577dd0",
+  "totalLines": 41503,
+  "totalBytes": 1840609,
+  "bundleSha256": "a07ad588d799080779ffe523523afe338ecf52f5a5357e5a8b9e43fb8b3de741",
+  "publicSha256": "e16131f4723f62922936af5d72cbbc8e269bd5d34be2f90b7d29dc7663d23c48",
   "runtimeAsset": {
-    "path": "/pi-web-assets/enhancements-c9a866391d256d55.js",
-    "sha256": "c9a866391d256d553f3f28f4fc2c5ea580816d77993a3e62303c0e0e0f2fc35b",
-    "integrity": "sha256-yahmOR0lbVU/Pyj0/CxepYCBbXeZOj5iMDwODg8vw1s=",
-    "bytes": 1410092
+    "path": "/pi-web-assets/enhancements-a9c7efde2b97c4d6.js",
+    "sha256": "a9c7efde2b97c4d60010737194405565118efc820a48b5a5424c462dab766a09",
+    "integrity": "sha256-qcfv3iuXxNYAEHNxlEBVZRGO/IIKSLWlQkxGLat2agk=",
+    "bytes": 1410699
   },
   "modules": [
     {
@@ -89,15 +89,15 @@
       "name": "05-composer-and-input-workflow.js",
       "file": "05-composer-and-input-workflow.js",
       "startLine": 18764,
-      "endLine": 28773,
-      "lineCount": 10010,
+      "endLine": 28778,
+      "lineCount": 10015,
       "lineRange": [
         18764,
-        28773
+        28778
       ],
-      "lineRangeText": "18764-28773",
-      "bytes": 434509,
-      "sha256": "3944801184a18c8026153b716913e26331bcdd51e64111f75ecb4bf72c31bfbb",
+      "lineRangeText": "18764-28778",
+      "bytes": 435161,
+      "sha256": "6504bb40e4c6be1cdd1ff1dad44845f207df8829a13298b243b675dc7ed0e174",
       "responsibility": "AI 快捷操作建议、空输入发送继续、输入框草稿与图片本地记忆、文件直接粘贴与拖放胶囊卡片、输入框图片点击放大、流式思考聚合守卫、运行中切换后续模型、Cursor/Codex 风格统一输入框与模型思考胶囊、Markdown 格式化粘贴、Goal/Plan 模式、@ 提及聚焦插件、全站图片双击预览、右侧面板会话绑定、移动端软键盘与手势守护、会话批量管理与删除。"
     },
     {
@@ -105,14 +105,14 @@
       "id": "06-chat-view-and-tool-cards",
       "name": "06-chat-view-and-tool-cards.js",
       "file": "06-chat-view-and-tool-cards.js",
-      "startLine": 28774,
-      "endLine": 34927,
+      "startLine": 28779,
+      "endLine": 34932,
       "lineCount": 6154,
       "lineRange": [
-        28774,
-        34927
+        28779,
+        34932
       ],
-      "lineRangeText": "28774-34927",
+      "lineRangeText": "28779-34932",
       "bytes": 257703,
       "sha256": "7f8f6f6fa4f5091107a5e4fbc772550fbaabbfb0c6c2aa4f91de0e54cc1dea8c",
       "responsibility": "回合耗时拆解与消耗明细气泡、工具调用自动折叠与子代理派发卡片增强、孤立过程消息吸附聚合器、会话压缩摘要自动折叠、runAllSyncOperations 全量同步步骤编排、原生消息字体与滚动条增强、目录选择器悬停与新建文件夹、Minimap 全导航、回到底部按钮、会话阅读位置记忆与恢复、代码块免扫描保护、本地路径快捷唤起与 Obsidian/Markdown 预览增强。"
@@ -122,14 +122,14 @@
       "id": "07-kernel-scheduler-and-observers",
       "name": "07-kernel-scheduler-and-observers.js",
       "file": "07-kernel-scheduler-and-observers.js",
-      "startLine": 34928,
-      "endLine": 36525,
+      "startLine": 34933,
+      "endLine": 36530,
       "lineCount": 1598,
       "lineRange": [
-        34928,
-        36525
+        34933,
+        36530
       ],
-      "lineRangeText": "34928-36525",
+      "lineRangeText": "34933-36530",
       "bytes": 69107,
       "sha256": "255e9d02f164a8a67fb7055c5cde5214fd9d13c1dd97b2ba966daab176aeac82",
       "responsibility": "防抖 DOM 同步调度器 (scheduleDomSync)、聊天区/弹窗/侧边栏 MutationObserver 观察器、耗时与用量明细浮层渲染 (showDurationTooltip / showUsageTooltip)、实时运行秒表与浏览器标签页计时器 (Live Running Stopwatch)、思考深度持久化与自动恢复。"
@@ -139,14 +139,14 @@
       "id": "08-settings-panels-and-lifecycle",
       "name": "08-settings-panels-and-lifecycle.js",
       "file": "08-settings-panels-and-lifecycle.js",
-      "startLine": 36526,
-      "endLine": 41498,
+      "startLine": 36531,
+      "endLine": 41503,
       "lineCount": 4973,
       "lineRange": [
-        36526,
-        41498
+        36531,
+        41503
       ],
-      "lineRangeText": "36526-41498",
+      "lineRangeText": "36531-41503",
       "bytes": 254496,
       "sha256": "d568257826e7099565620ad52bda761ad8227a5731c774927ec7a8727d922c9f",
       "responsibility": "设置对话框尺寸与侧边栏宽度拖拽调节、设置侧边栏折叠控制器、设置弹窗增强插件面板与归档管理标签页、设置项双击快捷入口与底部快捷栏、全局用量与成本大盘 (Usage & Cost Dashboard)、静默热载探针、零泄漏清理钩子 (__PI_WEB_ENHANCEMENTS_CLEANUP__)、Plugin Micro-Kernel 异常隔离沙箱与首屏 0ms 同步立即执行挂载。"

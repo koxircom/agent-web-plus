@@ -27106,7 +27106,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   function saveBatchDeleteJobPointer(job) {
     const storage = getBatchDeleteJobStorage();
     if (!storage) throw new Error("浏览器不支持保存删除任务恢复指针");
-    storage.setItem(batchDeleteJobStorageKey, JSON.stringify({ id: job.id, ids: job.ids }));
+    storage.setItem(batchDeleteJobStorageKey, JSON.stringify({ id: job.id, ids: job.ids, titles: job.titles }));
   }
 
   function clearBatchDeleteJobPointer() {
@@ -27122,7 +27122,15 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           value.ids.length === 0 || value.ids.length > 10000 ||
           value.ids.some((id) => typeof id !== "string" || !id || id.length > 200) ||
           new Set(value.ids).size !== value.ids.length) return null;
-      return { id: value.id, ids: value.ids };
+      const titles = Object.create(null);
+      if (value.titles && typeof value.titles === "object" && !Array.isArray(value.titles)) {
+        for (const id of value.ids.slice(0, 6)) {
+          if (Object.prototype.hasOwnProperty.call(value.titles, id) && typeof value.titles[id] === "string") {
+            titles[id] = Array.from(value.titles[id]).slice(0, 160).join("");
+          }
+        }
+      }
+      return { id: value.id, ids: value.ids, titles };
     } catch (e) {
       return null;
     }
@@ -27196,12 +27204,12 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     entry.setAttribute("aria-label", entry.textContent);
   }
 
-  function dismissBatchDeleteJob() {
+  function dismissBatchDeleteJob(keepModal = false) {
     if (!isBatchDeleteJobTerminal() && batchDeleteJob?.connectionState !== "not_found") return;
     clearBatchDeleteJobPointer();
     batchDeleteJob = null;
     removeBatchDeleteJobEntry();
-    closeBatchDeleteModal();
+    if (!keepModal) closeBatchDeleteModal();
   }
 
   function stopBatchDeleteObserver() {
@@ -27234,7 +27242,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       stateLabel = "未执行";
     }
 
-    const rawTitle = typeof getSessionTitleForBatch === "function" ? getSessionTitleForBatch(id) : "";
+    const rawTitle = job?.titles?.[id] || (typeof getSessionTitleForBatch === "function" ? getSessionTitleForBatch(id) : "");
     const hasDistinctTitle = Boolean(rawTitle && rawTitle !== id);
     const idDisplay = hasDistinctTitle ? `${rawTitle} (${id})` : id;
 
@@ -27356,8 +27364,9 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
 
   function createBatchDeleteModal(targetIds, view = "confirm") {
     const count = targetIds.length;
+    const replacingResult = view === "confirm" && isBatchDeleteJobTerminal(batchDeleteJob);
     const previewHtml = targetIds.slice(0, 6).map((sid) => {
-      const title = getSessionTitleForBatch(sid);
+      const title = (view === "job" && batchDeleteJob?.titles?.[sid]) || getSessionTitleForBatch(sid);
       return `<div class="pi-enh-batch-modal-item">· ${escapeHtml(title)}</div>`;
     }).join("");
     const overflowCount = count - 6;
@@ -27374,7 +27383,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           <span>${isJobView ? "批量删除任务" : "批量删除会话"}</span>
         </div>
         <div class="pi-enh-batch-modal-body">
-          <div data-batch-delete-intro style="font-weight: 500;">${isJobView ? (batchDeleteJob?.connectionState === "not_found" ? "服务器未找到此任务；没有自动重发删除请求。" : "服务器任务会继续处理；隐藏窗口不会取消任务。") : `确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？`}</div>
+          <div data-batch-delete-intro style="font-weight: 500;">${isJobView ? (batchDeleteJob?.connectionState === "not_found" ? "服务器未找到此任务；没有自动重发删除请求。" : "服务器任务会继续处理；隐藏窗口不会取消任务。") : `确定要彻底删除已选中的 <strong>${count}</strong> 个会话吗？${replacingResult ? "确认后将清除上一批删除结果。" : ""}`}</div>
           ${isJobView ? "" : `<div style="margin-top: 4px; font-size: 12px; color: var(--text-muted);">此操作将从磁盘中永久移除对应会话文件，<strong>无法恢复</strong>。</div>`}
           <div class="pi-enh-batch-modal-list">${previewHtml}${overflowHtml}</div>
           <div id="pi-enh-batch-delete-progress-section" style="${isJobView ? "" : "display: none;"} margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);">
@@ -27437,13 +27446,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       confirmBtn?.addEventListener("click", async () => {
         if (batchDeleteJob) {
           if (!isBatchDeleteJobTerminal(batchDeleteJob)) return;
-          const retryIds = [...(batchDeleteJob.failedIds || []), ...(batchDeleteJob.notStartedIds || [])];
-          if (!retryIds.length) return;
-          dismissBatchDeleteJob();
-          selectedSessionBatchIds.clear();
-          for (const id of retryIds) selectedSessionBatchIds.add(id);
-          setSessionBatchMode(true);
-          return;
+          dismissBatchDeleteJob(true);
         }
         if (confirmBtn) confirmBtn.disabled = true;
         const progressSection = backdrop.querySelector("#pi-enh-batch-delete-progress-section");
@@ -27496,7 +27499,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function openBatchDeleteModal() {
-    if (batchDeleteJob) {
+    if (batchDeleteJob && (!isBatchDeleteJobTerminal(batchDeleteJob) || selectedSessionBatchIds.size === 0)) {
       openBatchDeleteJobModal();
       return;
     }
@@ -27530,11 +27533,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       job.itemErrors = job.itemErrors || {};
     } else {
       if (batchDeleteJob) return;
+      const titles = Object.create(null);
+      for (const id of targetIds.slice(0, 6)) titles[id] = Array.from(getSessionTitleForBatch(id)).slice(0, 160).join("");
       job = {
         id: createBatchDeleteJobId(), ids: targetIds.slice(), status: "running", serverStatus: "running",
         processed: 0, lastSequence: 0, connectionState: "connecting", appliedDeletedIds: new Set(),
         failedIds: [], unknownIds: [], notStartedIds: [], done: false,
-        itemErrors: {},
+        itemErrors: {}, titles,
       };
       try {
         saveBatchDeleteJobPointer(job);
