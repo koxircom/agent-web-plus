@@ -6842,29 +6842,3 @@
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
-    /* ==========================================================================
-     * 侧边栏顶栏单行布局与常驻版本号 (Single-Row Header & Persistent Version Badge)
-     * 原生容器真实规则收敛，避免旧运行补丁与硬编码尺寸
-     * ========================================================================== */
-    .pi-native-sidebar-header-toolbar {
-      flex-wrap: nowrap;
-      justify-content: space-between;
-      gap: 4px;
-    }
-    .pi-native-sidebar-header-toolbar > [data-pi-native-engine-switcher] {
-      flex: 1 1 auto;
-      min-width: 0;
-    }
-    .pi-native-sidebar-header-actions {
-      flex-shrink: 0;
-    }
-    .pi-enh-header-version {
-      opacity: 0.75;
-      margin-left: 2px;
-      font-weight: 600;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      white-space: nowrap;
-      user-select: none;
-    }
-
-

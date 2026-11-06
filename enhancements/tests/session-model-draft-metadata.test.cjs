@@ -144,3 +144,16 @@ test('a real session ID is fetched after row promotion and the existing 404 nega
   assert.equal(f.requests.length, 2);
   assert.equal(f.api.metadata.has(draftId), false);
 });
+
+test('Codex sidebar reads model metadata from the existing state API without requesting history', async () => {
+  const sid = 'codex:550e8400-e29b-41d4-a716-446655440001';
+  const f = fixture({ rows: [row(sid)], responses: [{
+    ok: true,
+    payload: { state: { model: { provider: 'codex', id: 'gpt-6.1' }, thinkingLevel: 'high' } },
+  }] });
+  f.api.sync();
+  await f.runPump();
+  assert.deepEqual(f.requests.map(request => request.url), [`/api/agent/${encodeURIComponent(sid)}`]);
+  assert.equal(f.api.metadata.get(sid).modelId, 'gpt-6.1');
+  assert.equal(f.api.metadata.get(sid).thinkingLevel, 'high');
+});

@@ -1,4 +1,5 @@
 "use client";
+import { beginConnectionAttempt } from "@/lib/connection-diagnostics-client";
 
 import { codexProjectKey } from "@/lib/execution-engines/codex-projection";
 
@@ -928,19 +929,25 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
       if (controller) { refreshQueued = true; return; }
       const current = new AbortController();
       controller = current;
-      const timeout = setTimeout(() => current.abort(), 8000);
+      const diagnostic = beginConnectionAttempt({ operation: "status_poll", url: `/api/agent/running?engine=${executionEngine}`, engine: executionEngine, timeoutMs: 8000 });
+      let responseStatus: number | undefined;
+      let timedOut = false;
+      const timeout = setTimeout(() => { timedOut = true; current.abort(); }, 8000);
       try {
-        const res = await fetch(`/api/agent/running?engine=${executionEngine}`, { cache: "no-store", signal: current.signal });
+        const res = await fetch(`/api/agent/running?engine=${executionEngine}`, { cache: "no-store", signal: current.signal, headers: diagnostic.headers });
+        responseStatus = res.status;
         if (!res.ok) {
           if (res.status === 401 || res.status === 403) unavailable();
           throw new Error(`Task status HTTP ${res.status}`);
         }
         const data = await res.json();
-        if (!Array.isArray(data.runningSessionIds) || data.runningSessionIds.some((id: unknown) => typeof id !== "string")) throw new Error("Invalid running status");
+        if (!Array.isArray(data.runningSessionIds) || data.runningSessionIds.some((id: unknown) => typeof id !== "string")) throw new SyntaxError("Invalid running status");
         if (stopped || controller !== current || current.signal.aborted) return;
-        accept(data, true);
+        if (accept(data, true)) diagnostic.success();
+        else diagnostic.fail(new SyntaxError("Status snapshot rejected"), { status: responseStatus });
         if (data.sessionListVersion !== sessionListVersionRef.current && !sessionListLoadingRef.current) void loadSessions();
-      } catch {
+      } catch (error) {
+        diagnostic.fail(error, { status: responseStatus, timedOut, cancelled: stopped || controller !== current || current.signal.reason === "tab-hidden" });
         if (!stopped && controller === current && current.signal.reason !== "tab-hidden") {
           // Discard stale task indicators immediately, but let the existing
           // visible freshness deadline distinguish one failed read from outage.
@@ -1560,7 +1567,7 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
         }}
       >
         <div className="pi-native-sidebar-header-toolbar">
-          <ExecutionEngineSwitcher engine={executionEngine} connected={runningStatusHealthy} codexEnabled={codexEnabled} onChange={onExecutionEngineChange} />
+          <ExecutionEngineSwitcher engine={executionEngine} connected={runningStatusHealthy} codexEnabled={codexEnabled} onChange={onExecutionEngineChange} actions={
           <div className="pi-native-sidebar-header-actions">
             <button
               type="button"
@@ -1619,7 +1626,7 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
                 </svg>
               </button>
             )}
-          </div>
+          </div>} />
         </div>
 
         {/* CWD picker */}

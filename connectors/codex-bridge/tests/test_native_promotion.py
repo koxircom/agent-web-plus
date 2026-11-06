@@ -121,6 +121,39 @@ class NativePromotionTests(unittest.TestCase):
             self.assertEqual(sum(m == 'turn/steer' for m, _ in calls), 1)
             self.assertEqual(c.submissions['client-q']['status'], 'accepted')
 
+    def test_lost_restore_reply_projects_one_native_item_and_keeps_its_token(self):
+        from bridge.clients.codex.standalone_queue import operate as queue_operate
+        from bridge.clients.codex.native_queue import merge
+        with tempfile.TemporaryDirectory() as root:
+            _, c, n, item, calls, items, request = self.fixture(root)
+            def ended(method, params, timeout=30):
+                if method == 'thread/turns/list': return {'data': []}
+                if method == 'thread/queue/add':
+                    calls.append((method, copy.deepcopy(params)))
+                    items.append({**item, 'id': 'native-restored'})
+                    raise TimeoutError('reply lost after native add')
+                return request(method, params, timeout)
+            n.backend.request.side_effect = ended
+            promote(c, item, n)
+            self.assertEqual(c.submissions['client-q']['nativeQueueStage'], 'uncertain')
+            native_items = n.read(c.id, fresh=True)
+            projected = merge(pending_submissions(c.submissions), native_items, c.submissions)
+            self.assertEqual([r['id'] for r in projected], ['native-restored'])
+            actions = queue_operate(c, {'type': 'get_queue_actions'})
+            self.assertEqual([r['token'] for r in actions['followUp']], ['native-restored'])
+            self.assertEqual(sum(m == 'thread/queue/add' for m, _ in calls), 1)
+
+    def test_unresolved_transfer_disables_cross_source_reorder(self):
+        from bridge.clients.codex.standalone_queue import operate as queue_operate
+        with tempfile.TemporaryDirectory() as root:
+            _, c, n, item, _, items, _ = self.fixture(root)
+            c.submissions['missing-client'] = {'text': '待确认', 'attachments': [], 'mode': 'queue',
+                'status': 'unknown', 'queueOwner': 'native', 'nativeQueueId': 'old-token',
+                'nativePromotion': {'queueId': 'old-token', 'stage': 'delete_uncertain'}}
+            actions = queue_operate(c, {'type': 'get_queue_actions'})
+            self.assertEqual([r['token'] for r in actions['followUp']], [item['id'], 'old-token'])
+            self.assertFalse(actions['reorder'])
+
     def test_explicit_steer_rejection_restores_queue_not_replays_steer(self):
         with tempfile.TemporaryDirectory() as root:
             _, c, n, item, calls, _, request = self.fixture(root)

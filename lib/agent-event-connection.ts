@@ -1,3 +1,4 @@
+import { beginConnectionAttempt } from "./connection-diagnostics-client.ts";
 import type { AgentEventLike } from "./agent-event-wire";
 
 export interface AgentEventSourceLike {
@@ -31,6 +32,7 @@ type Connection = {
   sessionId: string;
   source: AgentEventSourceLike;
   attempt: Attempt;
+  diagnostic: ReturnType<typeof beginConnectionAttempt>;
 };
 
 export interface AgentEventConnectionOptions {
@@ -101,10 +103,13 @@ export class AgentEventConnection {
   private open(sessionId: string): Connection {
     if (this.current) this.discard(this.current, new AgentEventConnectionError("closed"));
 
+    const diagnostic = beginConnectionAttempt({ operation: "session_handshake", url: `/api/agent/${encodeURIComponent(sessionId)}/events`,
+      sessionId, engine: sessionId.startsWith("codex:") ? "codex" : "pi", timeoutMs: this.options.readinessTimeoutMs });
     let source: AgentEventSourceLike;
     try {
       source = this.options.createSource(sessionId);
     } catch (error) {
+      diagnostic.fail(error);
       throw new AgentEventConnectionError(
         "closed",
         error instanceof Error ? error.message : String(error),
@@ -137,7 +142,7 @@ export class AgentEventConnection {
         reject(error);
       },
     };
-    const connection: Connection = { sessionId, source, attempt };
+    const connection: Connection = { sessionId, source, attempt, diagnostic };
     this.current = connection;
 
     source.onmessage = (message) => {
@@ -155,6 +160,7 @@ export class AgentEventConnection {
       if (event.type === "heartbeat") return;
 
       if (event.type === "connected") {
+        diagnostic.success();
         attempt.ready = true;
         attempt.succeed();
         this.stopRetrying();
@@ -175,6 +181,9 @@ export class AgentEventConnection {
 
   private fail(connection: Connection, error: AgentEventConnectionError): void {
     if (this.current !== connection) return;
+    if (!connection.attempt.ready) connection.diagnostic.fail(error, {
+      reason: error.status === "ready_timeout" ? "request_timeout" : error.status === "startup_error" ? "startup_error" : "network_error",
+    });
     this.discard(connection, error);
     if (error.status === "startup_error") this.stopRetrying();
     else this.scheduleRetry(connection.sessionId);
@@ -195,6 +204,9 @@ export class AgentEventConnection {
     if (!this.options.heartbeatTimeoutMs) return;
     this.heartbeatTimer = setTimeout(() => {
       this.heartbeatTimer = null;
+      const diagnostic = beginConnectionAttempt({ operation: "session_handshake", url: `/api/agent/${encodeURIComponent(connection.sessionId)}/events`,
+        sessionId: connection.sessionId, timeoutMs: this.options.heartbeatTimeoutMs });
+      diagnostic.fail(null, { reason: "heartbeat_timeout" });
       this.fail(connection, new AgentEventConnectionError("closed"));
     }, this.options.heartbeatTimeoutMs);
   }

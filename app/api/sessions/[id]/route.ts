@@ -1,3 +1,4 @@
+import { withConnectionDiagnostics } from "@/lib/connection-diagnostics-server";
 import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { selectSessionReadRuntime, isSessionReadStable } from "@/lib/session-read-source";
 import { NextResponse } from "next/server";
@@ -33,7 +34,7 @@ function sessionSnapshotChanged(message: string): Error & { statusCode: number }
   return error;
 }
 
-export async function GET(
+async function handleGet(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -323,4 +324,8 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
+}
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  return withConnectionDiagnostics(request, () => handleGet(request, context));
 }

@@ -275,6 +275,8 @@ async function enumerateSessionFiles(sessionsDir: string): Promise<string[]> {
 
 	const files: string[] = [];
 	for (const dir of dirs) {
+		// 过滤临时测试会话目录（--tmp-*--），彻底杜绝 /tmp 临时会话被枚举并进入会话库与项目列表
+		if (dir.name.startsWith("--tmp-")) continue;
 		const dirPath = join(sessionsDir, dir.name);
 		try {
 			for (const f of await readdir(dirPath)) {

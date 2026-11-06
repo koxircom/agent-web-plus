@@ -122,13 +122,13 @@ function validateSyntaxGate(code, filename = "pi-web-enhancements.js") {
 
 function sanitizeForPublicRepo(text) {
   return String(text || "")
-    .replace(/C:\/Users\/testuser/g, "~")
-    .replace(/C:\\\\Users\\\\testuser/g, "~")
+    .replace(/C:\/Users\/KOXIR/g, "~")
+    .replace(/C:\\\\Users\\\\KOXIR/g, "~")
     .replace(/C:\\Users\\demo/g, "~")
-    .replace(/192\.0\.2\.1/g, "127.0.0.1")
-    .replace(/192\.0\.2\.2/g, "127.0.0.1")
-    .replace(/192\.0\.2\.3/g, "127.0.0.1")
-    .replace(/192\.0\.2\.4/g, "127.0.0.1");
+    .replace(/10\.0\.0\.2/g, "127.0.0.1")
+    .replace(/10\.0\.0\.89/g, "127.0.0.1")
+    .replace(/10\.7\.7\.2/g, "127.0.0.1")
+    .replace(/192\.168\.255\.6/g, "127.0.0.1");
 }
 
 function writeFileIfChanged(filePath, content, encoding) {

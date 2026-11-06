@@ -3,6 +3,30 @@ import threading
 import time
 
 
+def cancel_thread_io(thread):
+    """Cancel this owned reader's synchronous pipe read before closing its file."""
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenThread.restype = wintypes.HANDLE
+    kernel.CancelSynchronousIo.argtypes = [wintypes.HANDLE]
+    kernel.CancelSynchronousIo.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenThread(0x0001, False, thread.native_id)  # THREAD_TERMINATE, required by CancelSynchronousIo.
+    if not handle:
+        if not thread.is_alive():
+            return
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not kernel.CancelSynchronousIo(handle):
+            error = ctypes.get_last_error()
+            if error != 1168:  # ERROR_NOT_FOUND: the pending read already finished.
+                raise ctypes.WinError(error)
+    finally:
+        kernel.CloseHandle(handle)
+
+
 class WindowsPipe:
     """Cancellable overlapped I/O using CPython's standard-library Win32 API.
 

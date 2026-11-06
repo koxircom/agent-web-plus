@@ -389,6 +389,19 @@ const appServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // Connection telemetry is a real auxiliary endpoint; acknowledge without
+  // changing the first-model scenario or recording message content.
+  if (pathname === "/api/diagnostics/connections" && req.method === "POST") {
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw);
+    assert.ok(Array.isArray(body.events));
+    assert.ok(body.events.every(event => event.source === "browser"));
+    res.writeHead(202, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ accepted: body.events.length }));
+    return;
+  }
+
   // Passive auxiliary queries
   if (["/api/skills", "/api/plugins/check", "/api/mcp", "/api/project-trust"].some((p) => pathname.startsWith(p))) {
     res.writeHead(200, { "Content-Type": "application/json" });

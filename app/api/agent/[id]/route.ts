@@ -1,3 +1,4 @@
+import { withConnectionDiagnostics } from "@/lib/connection-diagnostics-server";
 import { noticeRecoveryFromError } from "@/lib/notice-recovery";
 import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { NextResponse } from "next/server";
@@ -68,7 +69,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 }
 
 // Receipt reads neither create a wrapper nor start a model request.
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handleGet(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const query = new URL(req.url).searchParams;
   // Pi wrappers own execution; the inbox owns originals. After a wrapper or
@@ -118,4 +119,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
+}
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  return withConnectionDiagnostics(request, () => handleGet(request, context));
 }

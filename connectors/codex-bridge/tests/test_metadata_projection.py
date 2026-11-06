@@ -20,7 +20,7 @@ class MetadataProjectionTests(unittest.TestCase):
     def test_activity_uses_metadata_and_keeps_native_active_status(self):
         with tempfile.TemporaryDirectory() as root:
             bridge, chat, _ = fixtures.PrefixGrowthTests().make(root, 4)
-            chat.state['threadRuntimeStatus'] = {'type': 'active'}
+            chat._event({'method': 'thread/status/changed', 'params': {'threadId': fixtures.ID, 'status': {'type': 'active'}}})
             bridge.records['threads'][fixtures.ID]['updatedAt'] = 1
             with patch.object(model, 'normalize_item', side_effect=AssertionError('activity projected a body')):
                 result = bridge.activity([fixtures.ID])

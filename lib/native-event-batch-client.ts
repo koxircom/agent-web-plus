@@ -1,3 +1,4 @@
+import { beginConnectionAttempt } from "./connection-diagnostics-client.ts";
 import type { AgentEventSourceLike } from "./agent-event-connection";
 import type { AgentEventLike } from "./agent-event-wire";
 import type { SessionBatchResponsePayload } from "./native-event-batch";
@@ -11,18 +12,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseSessionBatchResponse(value: unknown): SessionBatchResponsePayload {
   if (!isRecord(value) || typeof value.reset !== "boolean" || typeof value.epoch !== "string" || !value.epoch) {
-    throw new Error("Invalid batch event response");
+    throw new SyntaxError("Invalid batch event response");
   }
   if (!Array.isArray(value.events) || !value.events.every((event) =>
     isRecord(event) && typeof event.type === "string" && event.type.length > 0 && event.type.trim() === event.type
   )) {
-    throw new Error("Invalid batch event list");
+    throw new SyntaxError("Invalid batch event list");
   }
 
   const events = value.events as AgentEventLike[];
   if (value.cursor === null) {
     if (events.length !== 1 || events[0].type !== "startup_error" || value.reset) {
-      throw new Error("Invalid batch event cursor");
+      throw new SyntaxError("Invalid batch event cursor");
     }
   } else if (typeof value.cursor === "string") {
     const separator = value.cursor.lastIndexOf(":");
@@ -33,10 +34,10 @@ function parseSessionBatchResponse(value: unknown): SessionBatchResponsePayload 
       || !/^\d+$/.test(seqText)
       || !Number.isSafeInteger(Number(seqText))
     ) {
-      throw new Error("Invalid batch event cursor");
+      throw new SyntaxError("Invalid batch event cursor");
     }
   } else {
-    throw new Error("Invalid batch event cursor");
+    throw new SyntaxError("Invalid batch event cursor");
   }
 
   return {
@@ -148,19 +149,23 @@ export class BatchEventSource implements AgentEventSourceLike {
 
     const cursorParam = this.cursor ? `&cursor=${encodeURIComponent(this.cursor)}` : "";
     const url = `/api/agent/${encodeURIComponent(this.sessionId)}/events?format=batch${cursorParam}`;
+    const diagnostic = beginConnectionAttempt({ operation: "session_events", url, sessionId: this.sessionId,
+      engine: this.sessionId.startsWith("codex:") ? "codex" : "pi", timeoutMs: this.requestTimeoutMs });
+    let responseStatus: number | undefined;
 
     try {
       const res = await Promise.race([
         fetch(url, {
           method: "GET",
           signal: controller.signal,
-          headers: { Accept: "application/json" },
+          headers: { Accept: "application/json", ...diagnostic.headers },
         }),
         timeoutPromise,
       ]);
 
       if (this.readyState === BatchEventSource.CLOSED) return;
 
+      responseStatus = res.status;
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -168,9 +173,11 @@ export class BatchEventSource implements AgentEventSourceLike {
       const payload = parseSessionBatchResponse(await Promise.race([res.json(), timeoutPromise]));
       if (this.readyState === BatchEventSource.CLOSED) return;
       if (this.epoch !== null && payload.epoch !== this.epoch && !payload.reset) {
-        throw new Error("Batch event epoch changed without reset");
+        throw new SyntaxError("Batch event epoch changed without reset");
       }
 
+      if (payload.events.some(event => event.type === "startup_error")) diagnostic.fail(null, { status: responseStatus, reason: "startup_error" });
+      else diagnostic.success();
       const isSnapshot = this.cursor === null || payload.reset || (this.epoch !== null && payload.epoch !== this.epoch);
       const events = [...payload.events];
       if (isSnapshot) {
@@ -223,11 +230,20 @@ export class BatchEventSource implements AgentEventSourceLike {
         }
       }
       if (this.readyState === BatchEventSource.CLOSED) return;
+      // A validated empty batch proves transport liveness without changing
+      // application state or turning idle polling into an active poll loop.
+      if (payload.events.length === 0) {
+        this.onmessage?.(new MessageEvent("message", {
+          data: JSON.stringify({ type: "heartbeat" }),
+        }));
+      }
       // 活跃（有事件接收、正在流式输出或有排队）时使用高频 250ms，静止空闲时降低至 1000ms
       const hasActivity = events.length > 0 || this.isStreaming || this.hasPendingQueue;
       const nextDelay = hasActivity ? this.activePollIntervalMs : this.idlePollIntervalMs;
       this.schedule(nextDelay);
     } catch (error) {
+      diagnostic.fail(error, { status: responseStatus, timedOut,
+        cancelled: this.readyState === BatchEventSource.CLOSED || (controller.signal.aborted && !timedOut) });
       if (this.readyState === BatchEventSource.CLOSED) return;
       if (controller.signal.aborted && !timedOut) return;
 

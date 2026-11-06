@@ -8,12 +8,29 @@ export interface RecentProject {
   root: string;
 }
 
+/** Check if a root path is a legitimate project workspace (filters out temporary test paths). */
+export function isLegitimateProjectRoot(root: string): boolean {
+  if (!root || typeof root !== "string") return false;
+  const normalized = root.trim().replace(/\\/g, "/");
+  // 排除 /tmp、/private/tmp 或 /app 等临时/系统路径，防止测试或容器临时路径污染项目列表
+  if (
+    normalized === "/tmp" ||
+    normalized.startsWith("/tmp/") ||
+    normalized === "/private/tmp" ||
+    normalized.startsWith("/private/tmp/") ||
+    normalized === "/app"
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /** Projects sorted by most recent activity and deduplicated by stable key. */
 export function getRecentProjects(sessions: readonly SessionInfo[]): RecentProject[] {
   const latestByProject = new Map<string, { root: string; modified: string }>();
   for (const session of sessions) {
     const root = session.projectRoot ?? session.cwd;
-    if (!root) continue;
+    if (!root || !isLegitimateProjectRoot(root)) continue;
     const key = workspaceKeyOf(session);
     const previous = latestByProject.get(key);
     if (!previous || session.modified > previous.modified) {

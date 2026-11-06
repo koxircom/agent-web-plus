@@ -1,3 +1,4 @@
+import { withConnectionDiagnostics } from "@/lib/connection-diagnostics-server";
 import type { BrowserTabAppearance } from "@/lib/browser-tab-appearance";
 import { readAgentWebSettings, normalizeBrowserTabTitle } from "@/lib/browser-tab-title";
 import { readExecutionEngineSettings } from "@/lib/execution-engine-settings";
@@ -13,7 +14,7 @@ import {
 export const dynamic = "force-dynamic";
 
 // GET /api/agent/running - Lightweight snapshot for visible-tab polling.
-export async function GET(request: Request) {
+async function handleGet(request: Request) {
   const requestedEngine = new URL(request.url).searchParams.get("engine");
   const engine = requestedEngine === "pi" || requestedEngine === "codex" ? requestedEngine : (await readExecutionEngineSettings()).defaultEngine;
   // Shared transport, independent errors: malformed title settings must not
@@ -47,4 +48,8 @@ export async function GET(request: Request) {
     },
     { headers: { "Cache-Control": "no-store" } },
   );
+}
+
+export async function GET(request: Request) {
+  return withConnectionDiagnostics(request, () => handleGet(request));
 }

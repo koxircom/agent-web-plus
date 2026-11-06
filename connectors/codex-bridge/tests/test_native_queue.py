@@ -1,5 +1,6 @@
 import copy
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock
 from test_shared_bridge import SharedBridgeTests, ID
@@ -26,6 +27,64 @@ class NativeQueueTests(unittest.TestCase):
         self.backend.request.side_effect = None
         self.backend.request.return_value = {'data':[],'nextCursor':None}
         self.assertEqual(self.queue.read(ID,fresh=True),[])
+
+    def test_slow_queue_read_does_not_block_another_session(self):
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        other = '01901234-5678-7000-8000-000000000002'
+        errors, results = [], []
+        def request(_method, params, timeout=30):
+            if params['threadId'] == ID:
+                entered.set()
+                if not release.wait(3): raise AssertionError('slow queue was not released')
+            return {'data': [], 'nextCursor': None}
+        self.backend.request.side_effect = request
+        def read(thread, done=None):
+            try: results.append((thread, self.queue.read(thread, fresh=True)))
+            except BaseException as error: errors.append(error)
+            finally:
+                if done: done.set()
+        slow = threading.Thread(target=read, args=(ID,))
+        fast = threading.Thread(target=read, args=(other, finished))
+        slow.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            fast.start()
+            self.assertTrue(finished.wait(0.5), 'another session waited for the slow queue RPC')
+        finally:
+            release.set()
+            slow.join(2)
+            if fast.ident: fast.join(2)
+        self.assertFalse(errors, errors)
+        self.assertIn((other, []), results)
+
+    def test_invalidation_during_inflight_read_does_not_cache_stale_result(self):
+        entered, release = threading.Event(), threading.Event()
+        first = [copy.deepcopy(self.item)]
+        def request(_method, _params, timeout=30):
+            if not entered.is_set():
+                entered.set()
+                if not release.wait(3): raise AssertionError('queue read was not released')
+                return {'data': first, 'nextCursor': None}
+            return {'data': [], 'nextCursor': None}
+        self.backend.request.side_effect = request
+        errors = []
+        def read():
+            try: self.queue.read(ID, fresh=True)
+            except BaseException as error: errors.append(error)
+        worker = threading.Thread(target=read)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            invalidator = threading.Thread(target=self.queue.invalidate, args=(ID,))
+            invalidator.start()
+            invalidator.join(0.5)
+            self.assertFalse(invalidator.is_alive(), 'invalidation waited for a network read')
+        finally:
+            release.set()
+            worker.join(2)
+            if 'invalidator' in locals(): invalidator.join(2)
+        self.assertFalse(errors, errors)
+        self.assertEqual(self.queue.read(ID), [])
 
     def test_equal_text_is_not_identity_and_native_http_ids_are_distinct(self):
         local=[{'id':'local','text':'原生排队消息'}]

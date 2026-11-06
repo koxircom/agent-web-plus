@@ -5,8 +5,15 @@ import mimetypes
 import threading
 import time
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from bridge.clients.codex.standalone_composer import goal_rpc_unsupported
+
+
+class _QueueRead:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.generation = 0
 
 
 class NativeQueue:
@@ -14,20 +21,36 @@ class NativeQueue:
         self.backend = backend
         self.lock = threading.RLock()
         self.cache = {}
+        self.reads = WeakValueDictionary()
 
     def invalidate(self, thread_id=None):
         with self.lock:
-            for key in ([thread_id] if thread_id else list(self.cache)):
+            keys = [thread_id] if thread_id else set(self.cache) | set(self.reads)
+            for key in keys:
                 if key in self.cache:
                     self.cache[key] = (0, self.cache[key][1])
+                state = self.reads.get(key)
+                if state:
+                    state.generation += 1
 
     def read(self, thread_id, *, fresh=False):
-        # Queue reads are small, serialized and separate from chat/event locks.
+        # Queue reads for the same thread share a lock; an unrelated thread's
+        # RPC must never hold the cache registry lock across network I/O.
         # A failed read never fabricates an empty queue or consumes anything.
         with self.lock:
             saved = self.cache.get(thread_id)
             if saved and not fresh and time.monotonic() - saved[0] < 1:
                 return copy.deepcopy(saved[1])
+            state = self.reads.get(thread_id)
+            if state is None:
+                state = _QueueRead()
+                self.reads[thread_id] = state
+        with state.lock:
+            with self.lock:
+                saved = self.cache.get(thread_id)
+                if saved and not fresh and time.monotonic() - saved[0] < 1:
+                    return copy.deepcopy(saved[1])
+                generation = state.generation
             items, cursor, cursors = [], None, set()
             try:
                 while True:
@@ -50,9 +73,11 @@ class NativeQueue:
             if any(not isinstance(item, dict) or not isinstance(item.get('id'), str)
                    or not isinstance(item.get('input'), list) for item in items):
                 raise ValueError('原生队列条目格式无效')
-            self.cache[thread_id] = (time.monotonic(), items)
-            while len(self.cache) > 64:
-                self.cache.pop(next(iter(self.cache)))
+            with self.lock:
+                if state.generation == generation:
+                    self.cache[thread_id] = (time.monotonic(), items)
+                    while len(self.cache) > 64:
+                        self.cache.pop(next(iter(self.cache)))
             return copy.deepcopy(items)
 
     def mutate(self, thread_id, method, **params):
@@ -82,9 +107,17 @@ def rows(items, receipts=None):
     return result
 
 
+def represented_promotion_ids(items, receipts):
+    clients = {item.get('clientUserMessageId') for item in items}
+    return {row.get('nativeQueueId', key) for key, row in (receipts or {}).items()
+            if key in clients and row.get('nativePromotion')}
+
+
 def merge(submissions, items, receipts=None):
     # A native client ID identifies a user message, not an HTTP delivery ID.
     # Never guess either identity from equal text.
+    represented = represented_promotion_ids(items, receipts)
+    submissions = [row for row in submissions if row['id'] not in represented]
     known = {row['id'] for row in submissions}
     return submissions + rows([item for item in items if item['id'] not in known
                                and item.get('clientUserMessageId') not in known], receipts)

@@ -59,6 +59,7 @@ class GatewayServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address, bridge, config, web_dir, data_dir=None, shared=None, api_only=False):
+        self.usage_runtime_owner = shared is None
         self.transfer_directory = data_dir if shared is None else shared.transfer_directory
         standalone = getattr(bridge, 'standalone', False)
         self.mobile_updates_owner = shared is None and data_dir is not None and not standalone
@@ -103,6 +104,9 @@ class GatewayServer(ThreadingHTTPServer):
             return 'zh'
 
     def server_close(self):
+        if getattr(self, 'usage_runtime_owner', False):
+            from bridge.features.sessions.usage import close_usage_runtime
+            close_usage_runtime(self.bridge)
         if self.mobile_updates_owner:
             self.mobile_updates.close()
         super().server_close()
@@ -145,6 +149,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Request bodies, cookies, query strings and conversation IDs are private.
         pass
+
+    def send_response(self, code, message=None):
+        # Images/downloads also send headers directly, outside output().
+        self._diagnostic_status = code
+        return super().send_response(code, message)
 
     def headers_common(self, cache_control="no-store"):
         self.send_header("Cache-Control", cache_control)
@@ -279,6 +288,38 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(405)
 
     def handle_method(self, write):
+        started = time.monotonic()
+        self._diagnostic_status = None
+        try:
+            return self._handle_method(write)
+        finally:
+            # The systemd service journal retains these bounded, body-free
+            # records even when the browser abandons an upstream request.
+            try:
+                elapsed = round((time.monotonic() - started) * 1000)
+                path = urlsplit(self.path).path
+                match = THREAD_ROUTE.fullmatch(path)
+                route = ('/api/sessions/:id' + ('/' + match[2] if match[2] else '')) if match else path if path in (
+                    '/api/health', '/api/projects', '/api/projects/catalog', '/api/projects/workspace',
+                    '/api/projects/resolve', '/api/projects/worktrees', '/api/projects/browse',
+                    '/api/sessions', '/api/activity', '/api/runtime', '/api/auth', '/api/login') else '/api/other'
+                status = self._diagnostic_status
+                failed = status is None or (status >= 400 and status != 409)
+                if failed or (elapsed >= 1000 and (not match or match[2] not in ('events', 'poll', 'changes'))):
+                    trace = self.headers.get('X-Agent-Web-Trace-ID', '')
+                    if not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', trace):
+                        trace = secrets.token_hex(16)
+                    reason = ('client_disconnected' if status == 499 else 'upstream_unavailable' if status in (502, 503)
+                              else 'request_timeout' if status in (408, 504) else 'authentication_required' if status == 401
+                              else 'access_denied' if status == 403 else 'rate_limited' if status == 429
+                              else 'http_error' if failed else 'slow_request')
+                    LOG.warning('codex_connection %s', json.dumps({'version': 1, 'route': route,
+                                'method': 'POST' if write else 'GET', 'status': status,
+                                'durationMs': elapsed, 'reason': reason, 'traceId': trace}, separators=(',', ':')))
+            except Exception:
+                pass  # Diagnostics must preserve the original request result.
+
+    def _handle_method(self, write):
         try:
             request_path = urlsplit(self.path).path
             if getattr(self.server, 'api_only', False) and not request_path.startswith('/api/'):
@@ -1051,6 +1092,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload['retryable'] = False
             self.output(status, payload)
         except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            self._diagnostic_status = 499
             self.close_connection = True
         except Exception:
             LOG.exception("Gateway operation failed")
@@ -1152,8 +1194,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    @staticmethod
+    def event_session(bridge, thread_id):
+        if getattr(bridge, 'standalone', False):
+            return bridge.session(thread_id, attach=False, background=True)
+        return bridge.session(thread_id, background=True)
+
     def poll(self, bridge, thread_id, after):
-        session = bridge.session(thread_id, background=True)
+        session = self.event_session(bridge, thread_id)
         with session.condition:
             session.viewers += 1
         try:
@@ -1169,7 +1217,7 @@ class Handler(BaseHTTPRequestHandler):
                 session.touched = time.monotonic()
 
     def changes(self, bridge, thread_id, after, epoch, start):
-        session = bridge.session(thread_id, background=True)
+        session = self.event_session(bridge, thread_id)
         with session.condition:
             session.viewers += 1
         try:
@@ -1183,7 +1231,7 @@ class Handler(BaseHTTPRequestHandler):
                 session.touched = time.monotonic()
 
     def stream(self, bridge, thread_id):
-        session = bridge.session(thread_id, background=True)
+        session = self.event_session(bridge, thread_id)
         with session.condition:
             session.viewers += 1
         self.send_response(200)

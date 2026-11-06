@@ -963,7 +963,7 @@ test("restores an in-page session viewport without the default tail jump", () =>
   assert.match(chatWindowSource, /context\.oldestEntryId === position\.oldestEntryId/);
   assert.match(chatWindowSource, /if \(!context\) \{\s*outcome = "error";\s*scrollToBottom\("instant"\);\s*setPendingScrollRestore\(null\);/);
   assert.match(chatWindowSource, /scrollToMessage\(element, position\.anchorOffset\)/);
-  assert.match(chatWindowSource, /visibility: pendingScrollRestore \? "hidden" : undefined/);
+  assert.match(chatWindowSource, /visibility: pendingScrollRestore && revealedScrollRestore !== pendingScrollRestore \? "hidden" : undefined/);
 });
 
 test("keeps a newly sent user message at the top while its response starts", () => {
@@ -1090,8 +1090,9 @@ test("loadSession suppresses AbortError from polluting UI error and conducts bou
   const historyFetch = findNode(loadDeclaration, node => ts.isCallExpression(node)
     && node.expression.getText(hookFile) === "fetch" && node.arguments[0]?.getText(hookFile) === "url");
   const signal = new AbortController().signal;
-  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: { signal } }), { cache: "no-store", signal });
-  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: undefined }), { cache: "no-store" });
+  const readDiagnostic = { headers: { "X-Agent-Web-Trace-ID": "77777777-7777-4777-8777-777777777777" } };
+  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: { signal }, readDiagnostic }), { cache: "no-store", headers: readDiagnostic.headers, signal });
+  assert.deepEqual(evaluate(historyFetch.arguments[1], hookFile, { options: undefined, readDiagnostic }), { cache: "no-store", headers: readDiagnostic.headers });
   assert.match(loadSessionSource, /const stateRes = await fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(sid\)\}\/state`, options\?\.signal \? \{ signal: options\.signal \} : undefined\);/);
 
   // 2. AbortError detection & UI error suppression (positive & negative cases)

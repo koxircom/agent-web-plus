@@ -335,7 +335,7 @@ class CodexUsageCollector:
             with self.lock:
                 self.refreshing = False
 
-    def refresh_sync(self):
+    def refresh_sync(self, *, copy_result=True):
         """Run one deterministic scan; exposed for narrow unit tests."""
         scope = self._scope_fingerprint()
         with self.lock:
@@ -351,7 +351,7 @@ class CodexUsageCollector:
             self.scope_fingerprint = scope
             self.error = None
             self.last_refresh = time.monotonic()
-        return deepcopy(snapshot)
+        return deepcopy(snapshot) if copy_result else snapshot
 
     def _workspace_roots(self):
         roots = set()
@@ -774,15 +774,22 @@ class CodexUsageCollector:
 
 
 _COLLECTOR_GUARD = threading.Lock()
-_COLLECTOR_ATTR = '_codex_usage_ledger_collector_v2'
+_COLLECTOR_ATTR = '_codex_usage_snapshot_runtime_v1'
 
 
 def usage_snapshot(bridge, force=False):
-    """Return a cached snapshot immediately and schedule one bounded refresh."""
+    """Return immutable JSON bytes; large cursor state belongs to a worker."""
+    from bridge.features.sessions.usage_runtime import UsageSnapshotRuntime
     with _COLLECTOR_GUARD:
         collector = getattr(bridge, _COLLECTOR_ATTR, None)
         if collector is None:
-            collector = CodexUsageCollector(bridge)
+            collector = UsageSnapshotRuntime(bridge)
             setattr(bridge, _COLLECTOR_ATTR, collector)
     return collector.response(force=force)
+
+
+def close_usage_runtime(bridge):
+    collector = getattr(bridge, _COLLECTOR_ATTR, None)
+    if collector is not None:
+        collector.close()
 

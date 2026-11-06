@@ -105,3 +105,28 @@ attachment consumption, operation success, or business-result verification.
 - **Recovered modules**: `bridge/clients/codex/{title_naming.py, windows_desktop.py, attachment_readability.py, submission_trace.py}`, `windows_desktop_main.py`.
 - **Integrated modifications**: `bridge/api/httpd.py` (runtime_status handling for Windows desktop, distinction of native desktop error messages, and structured ValueError/IPCError status/code/dispatched/retryable extraction) and `bridge/clients/codex/wsl_history.py` (titleNaming projection integration).
 
+
+## Maintenance revision 1.4.81.1
+
+- Publish compact activity snapshots at native state changes, so sidebar status reads do not wait on history projection locks. Native execution and question status remain authoritative.
+- Resolve upload attachment metadata once per timeline projection instead of rescanning the ledger per loaded turn. Existing path and symlink validation remains in place.
+- Record slow requests and failures in the gateway service journal using route templates, status, duration and validated trace IDs. Request bodies, response bodies, dynamic paths, queries and conversation IDs are omitted; normal long polls are excluded from slow-request alarms.
+- This is a standalone WSL gateway maintenance revision. The Web application version and independent Codex executor are unchanged.
+
+## Maintenance revision 1.4.81.2
+
+- Preserve response status for image/download routes that send headers directly, so diagnostics do not misreport successful responses as failures.
+
+Compressed navigation counts now check the file fingerprint before opening/decompressing a cached rollout. Slow counter reads serialize only per file; other conversations remain independent. Append/replacement invalidation and the existing history scope checks remain authoritative.
+
+## Maintenance revision 1.4.81.3
+
+Read-only native history observation shares failed attempts for up to ten seconds, so concurrent readers do not repeat slow failing resume calls serially. The existing scoped saved history remains readable. Native events and explicit forced retry invalidate the cooldown; native sends, queue mutations and execution ownership do not use it.
+
+## Maintenance revision 1.4.81.4
+
+Standalone GET poll, changes and SSE channels observe sessions without attaching the native writer. This reuses the bounded history observer path; legacy bridge signatures and all native send/queue paths stay unchanged.
+
+## Maintenance revision 1.4.81.5
+
+Compact per-file navigation indexes now retain up to 64 sessions and promote cache hits. Sidebar model/history probes therefore no longer evict unchanged foreground counts after only eight distinct reads. Fingerprint invalidation and exact persisted input counts remain authoritative.

@@ -12,7 +12,8 @@
       "@earendil-works/pi-agent-core",
       "@earendil-works/pi-ai",
       "@earendil-works/pi-coding-agent",
-      "@earendil-works/pi-tui"
+      "@earendil-works/pi-tui",
+      "typebox"
     ]
   },
   "fingerprint": {
@@ -938,7 +939,10 @@
         },
         {
           "name": "release-browser-tab-section",
-          "command": ["node", "tests/browser-tab-section.pw.mjs"],
+          "command": [
+            "node",
+            "tests/browser-tab-section.pw.mjs"
+          ],
           "files": [
             "tests/browser-tab-section.pw.mjs",
             "components/SettingsPanel.tsx",
@@ -964,7 +968,10 @@
         },
         {
           "name": "release-core-enhancement-settings",
-          "command": ["node", "scripts/qa/enhancement-settings-simplify.cjs"],
+          "command": [
+            "node",
+            "scripts/qa/enhancement-settings-simplify.cjs"
+          ],
           "files": [
             "scripts/qa/enhancement-settings-simplify.cjs",
             "enhancements/tests/core-feature-settings.test.cjs",
@@ -977,8 +984,73 @@
         },
         {
           "name": "release-learning-settings",
-          "command": ["node", "scripts/qa/learning-settings.cjs"],
-          "files": ["scripts/qa/learning-settings.cjs", "lib/learning.test.mjs", "tests/learning-settings-page.pw.mjs", "components/LearningSettings.tsx", "components/LearningSettings.module.css"],
+          "command": [
+            "node",
+            "scripts/qa/learning-settings.cjs"
+          ],
+          "files": [
+            "scripts/qa/learning-settings.cjs",
+            "lib/learning.test.mjs",
+            "tests/learning-settings-page.pw.mjs",
+            "components/LearningSettings.tsx",
+            "components/LearningSettings.module.css"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-connection-diagnostics",
+          "command": [
+            "node",
+            "--test-concurrency=1",
+            "--experimental-strip-types",
+            "--test",
+            "lib/connection-diagnostics-server.test.mjs",
+            "lib/connection-diagnostics-client.test.mjs",
+            "app/api/diagnostics/connections/route.test.mjs",
+            "lib/connection-diagnostics-bridge.test.mjs"
+          ],
+          "files": [
+            "lib/connection-diagnostics.ts",
+            "lib/connection-diagnostics-server.ts",
+            "lib/connection-diagnostics-server.test.mjs",
+            "lib/connection-diagnostics-client.ts",
+            "lib/connection-diagnostics-client.test.mjs",
+            "app/api/diagnostics/connections/route.ts",
+            "app/api/diagnostics/connections/route.test.mjs",
+            "proxy.ts",
+            "lib/connection-diagnostics-bridge.test.mjs",
+            "lib/execution-engines/codex-bridge-client.ts",
+            "instrumentation-node.ts"
+          ],
+          "timeoutSeconds": 120
+        },
+        {
+          "name": "release-usage-worker-isolation",
+          "command": [
+            "node",
+            "--test",
+            "lib/usage-ledger-worker.test.mjs",
+            "lib/usage-ledger-engines.test.mjs",
+            "lib/usage-ledger-service.test.mjs",
+            "lib/usage-pricing-routes.test.mjs"
+          ],
+          "files": [
+            "lib/usage-ledger-worker.test.mjs",
+            "lib/usage-ledger-engines.test.mjs",
+            "lib/usage-ledger-service.test.mjs",
+            "lib/usage-pricing-routes.test.mjs"
+          ],
+          "timeoutSeconds": 180
+        },
+        {
+          "name": "release-sidebar-header-layout",
+          "command": [
+            "node",
+            "tests/sidebar-header-layout.pw.mjs"
+          ],
+          "files": [
+            "tests/sidebar-header-layout.pw.mjs"
+          ],
           "timeoutSeconds": 180
         }
       ]

@@ -25,13 +25,15 @@ test("ExecutionEngineSwitcher displays build-injected version badge in connected
   assert.match(switcher, /background: connected \? "#22c55e" : "#eab308"/);
 });
 
-test("enhancements.css provides single-row header and version badge styling without runtime DOM injection", () => {
-  const css = read("../app/enhancements.css");
+test("native header owns status and version layout without enhancement overrides", () => {
+  const css = read("../app/globals.css");
 
   // 顶栏单行自适应布局：收敛为真实容器类，禁止 !important 堆砌
-  assert.match(css, /\.pi-native-sidebar-header-toolbar\s*\{[^}]*flex-wrap:\s*nowrap;/);
+  assert.match(css, /\.pi-native-engine-status\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/);
+  assert.match(css, /\.pi-native-engine-status\s*\{[^}]*white-space:\s*nowrap;/);
   assert.match(css, /\.pi-native-sidebar-header-toolbar > \[data-pi-native-engine-switcher\]\s*\{[^}]*min-width:\s*0;/);
-  assert.match(css, /\.pi-native-sidebar-header-actions\s*\{[^}]*flex-shrink:\s*0;/);
+  assert.match(css, /\.pi-native-sidebar-header-actions\s*\{[^}]*flex-wrap:\s*nowrap;/);
+  assert.doesNotMatch(read("../app/enhancements.css"), /\.pi-native-sidebar-header-toolbar\s*\{/);
 
   // 原生常驻版本号样式
   assert.match(css, /\.pi-enh-header-version\s*\{[^}]*font-family:\s*ui-monospace/);

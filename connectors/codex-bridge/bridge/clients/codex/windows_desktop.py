@@ -19,7 +19,8 @@ from bridge.app.service import Bridge
 from bridge.clients.codex.attachment_readability import AttachmentReadError, check_attachments
 from bridge.clients.codex.ipc import IPCError
 from bridge.clients.codex.submission_trace import new_trace, observe, record
-from bridge.features.sessions.create import CreationUnavailable, create_empty, open_in_desktop
+from bridge.features.sessions.create import CreationError, CreationUnavailable, create_empty, delete_thread_metadata, open_in_desktop
+from bridge.features.sessions.model import pending_requests
 from bridge.features.workspace.project_scopes import (
     get_scoped_worktree_info,
     resolve_scoped_cwd,
@@ -161,7 +162,8 @@ class WindowsDesktopBridge(Bridge):
         "protocol": "agent-web-codex-windows-desktop",
         "version": 1,
         "platform": "win32",
-        "capabilities": ["timeline-v1", "prompt-identity-v1", "desktop-owner-v1"],
+        "capabilities": ["timeline-v1", "prompt-identity-v1", "desktop-owner-v1", "desktop-delete-v1"],
+        "maintenanceRevision": "windows-delete-2",
     }
 
     def __init__(self, codex_home, data_dir, workspaces, ipc_path=None, creation_executable=None):
@@ -693,12 +695,54 @@ class WindowsDesktopBridge(Bridge):
             session.set_history(self.store.history(thread_id, turn_limit=None))
         return self.view(thread_id)
 
+    def message_action(self, thread_id, body=None):
+        if not isinstance(body, dict) or body.get('action') != 'delete':
+            return self._unsupported()
+        record = self._record(thread_id)
+        executable = self.creation_executable
+        if not executable or not Path(executable).is_absolute() or not Path(executable).is_file():
+            raise NativeRejected('Codex 元数据程序不可用，请检查运行配置；尚未删除会话。')
+        session = self.session(thread_id, attach=False, background=True)
+        with session.action_lock:
+            with self.submit_lock:
+                if any(key.startswith(thread_id + ':') and row.get('status') in ('queued', 'unknown')
+                       for key, row in self.submissions.items()):
+                    raise NativeRejected('会话还有待发送或待确认的消息，请处理后再删除。')
+            with session.condition:
+                state = session.state or {}
+                status = (state.get('threadRuntimeStatus') or {}).get('type')
+                if session.connected and status != 'idle':
+                    raise NativeRejected('请先结束当前任务，再删除会话。')
+                if pending_requests(state):
+                    raise NativeRejected('会话正在等待回复，请处理当前问题后再删除。')
+            try:
+                delete_thread_metadata(executable, self.codex_home, record['cwd'], thread_id)
+            except CreationUnavailable as exc:
+                raise NativeRejected(str(exc)) from exc
+            except CreationError as exc:
+                try:
+                    self.store.get(thread_id)
+                except KeyError:
+                    pass  # Exact fresh native-store absence reconciles a lost receipt.
+                else:
+                    raise NativeUnknown('删除结果尚未确认，请刷新列表核对；没有自动重试。' + str(exc)) from exc
+            try:
+                self.store.get(thread_id)
+            except KeyError:
+                pass
+            else:
+                raise NativeUnknown('Codex 已应答，但会话仍存在；请刷新核对，没有重复删除。')
+            with self.lock:
+                if self.live.get(thread_id) is session:
+                    self.live.pop(thread_id)
+            return {'ok': True}
+
     def _unsupported(self, *args, **kwargs):
         raise NativeRejected(
             "Windows 桌面基础接入尚不支持此操作，请在 Codex 桌面处理；没有启动替代执行端。"
         )
 
-    create_worktree = rename = message_action = side_chat = _unsupported
+    create_worktree = rename = side_chat = _unsupported
     permissions = set_goal_status = cancel_goal = edit_goal = _unsupported
     cancel_queued = queue_actions = ignore_submission = _unsupported
     terminal = _unsupported

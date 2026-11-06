@@ -403,7 +403,7 @@ test("Codex native archived panel end-to-end acceptance", async (t) => {
     mockCodexSessions = Array.from({ length: 101 }, (_, i) => ({
       id: `codex:00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
       title: `Codex 任务 ${String(i).padStart(3, "0")}`,
-      cwd: `/home/test/project-${i}`,
+      cwd: `/home/koxir/project-${i}`,
       updatedAt: Date.now() - (101 - i) * 60000,
       archived: true,
     }));
@@ -609,7 +609,7 @@ test("Codex native archived panel end-to-end acceptance", async (t) => {
     mockCodexSessions = Array.from({ length: 5 }, (_, i) => ({
       id: `codex:00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
       title: `拓扑测试条目 ${i} - 具有超长标题用于验证换行与空间几何拓扑表现`,
-      cwd: `/home/test/workspace/repo-${i}`,
+      cwd: `/home/koxir/workspace/repo-${i}`,
       updatedAt: Date.now() - i * 10000,
       archived: true,
     }));

@@ -3,6 +3,7 @@ import copy
 import sys
 import tempfile
 import threading
+from weakref import WeakValueDictionary
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ class SharedBridgeTests(unittest.TestCase):
         backend=Backend();bridge=StandaloneBridge.__new__(StandaloneBridge)
         bridge.records={'threads':{ID:{'title':'原会话','cwd':root,'runtime':'history'}},'titleOverrides':{}}
         bridge.history=None;bridge.registry_lock=threading.RLock();bridge.lock=threading.RLock();bridge.uploads=None;bridge.catalog_reader=None;bridge.save=lambda:None;bridge.workspaces=[{'path':Path(root)}]
+        bridge.history_observation_locks=WeakValueDictionary()
         chat=Chat(bridge,ID,backend.request('fixture',{}),backend);bridge.live={ID:chat};bridge.history_runtime=backend;bridge.runtime=SimpleNamespace(write=lambda _:self.fail('unrelated runtime received a reply'));bridge.closed=threading.Event()
         return bridge,chat,backend
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
 
 type Engine = "pi" | "codex";
@@ -10,11 +10,12 @@ const renderAgentName = (label: string, id?: string) => <span className={`agent-
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION;
 
 /** The shell owns engine/navigation state; this control owns only its pending UI. */
-export function ExecutionEngineSwitcher({ engine, connected, codexEnabled, version = APP_VERSION, onChange }: {
+export function ExecutionEngineSwitcher({ engine, connected, codexEnabled, version = APP_VERSION, actions, onChange }: {
   engine: Engine;
   connected: boolean;
   codexEnabled: boolean;
   version?: string;
+  actions?: ReactNode;
   onChange?: (engine: Engine) => Promise<void>;
 }) {
   const [pending, setPending] = useState(false);
@@ -45,7 +46,8 @@ export function ExecutionEngineSwitcher({ engine, connected, codexEnabled, versi
         finally { setPending(false); }
       }}
     />
-    <div role="status" aria-live="polite" className="flex items-center gap-1 text-[10px] text-text-muted" title={error || (connected ? (version ? `Agent Web Plus v${version}（网页服务已连接，任务状态自动同步）` : "网页服务已连接，任务状态自动同步") : "正在恢复连接，聊天记录和草稿会保留")}>
+    {actions}
+    <div role="status" aria-live="polite" className="pi-native-engine-status" title={error || (connected ? (version ? `Agent Web Plus v${version}（网页服务已连接，任务状态自动同步）` : "网页服务已连接，任务状态自动同步") : "正在恢复连接，聊天记录和草稿会保留")}>
       <span aria-hidden="true" style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "#22c55e" : "#eab308", flexShrink: 0 }} />
       <span>{error ? "切换失败" : (pending ? "正在切换…" : connected ? "已连接" : "连接恢复中…")}</span>
       {connected && !error && !pending && version ? (

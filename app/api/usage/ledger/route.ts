@@ -1,6 +1,5 @@
-import { getUsageLedger, refreshUsageLedger, type UsageLedgerMode } from "@/lib/usage-ledger-service";
-import { readUsageByEngine } from "@/lib/usage-ledger-engines";
-import { getUsagePricing } from "@/lib/usage-pricing";
+import type { UsageLedgerMode } from "@/lib/usage-ledger-service";
+import { readUsageLedgerResponse } from "@/lib/usage-ledger-worker";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,20 +14,24 @@ function responseHeaders(mode: UsageLedgerMode) {
   return {
     "Cache-Control": "no-store",
     "X-Pi-Usage-Mode": mode,
+    "Vary": "Accept-Encoding",
   };
 }
 
-async function respond(operation: typeof getUsageLedger, refreshCodex = false) {
+function acceptsUsageGzip(value: string | null) {
+  return (value ?? "").split(",").some(part => {
+    const [encoding, ...parameters] = part.trim().split(";");
+    if (encoding.toLowerCase() !== "gzip") return false;
+    const quality = parameters.map(v => v.trim()).find(v => /^q\s*=/i.test(v));
+    return quality === undefined || Number(quality.split("=")[1]) > 0;
+  });
+}
+
+async function respond(refresh = false, request?: Request) {
   try {
-    const { ledger, mode } = await readUsageByEngine(operation, undefined, refreshCodex);
-    let pricing;
-    try {
-      pricing = await getUsagePricing();
-    } catch (pricingError) {
-      console.warn("[usage-ledger] Failed to resolve pricing snapshot:", pricingError);
-    }
-    const responsePayload = pricing ? { ...ledger, pricing } : ledger;
-    return Response.json(responsePayload, { headers: responseHeaders(mode) });
+    const { body, compressed, mode, status } = await readUsageLedgerResponse(refresh);
+    const encoded = acceptsUsageGzip(request?.headers.get("Accept-Encoding") ?? null) ? compressed : undefined;
+    return new Response(encoded ?? body, { status, headers: { ...responseHeaders(mode), "Content-Type": "application/json", ...(encoded ? { "Content-Encoding": "gzip" } : {}) } });
   } catch (error) {
     console.error("[usage-ledger] Snapshot request failed:", error);
     const mode = modeForError(error);
@@ -40,11 +43,11 @@ async function respond(operation: typeof getUsageLedger, refreshCodex = false) {
 }
 
 /** Read the validated central snapshot, or create the native instance snapshot once when absent. */
-export async function GET() {
-  return respond(getUsageLedger);
+export async function GET(request: Request) {
+  return respond(false, request);
 }
 
 /** Native mode explicitly regenerates; central mode leaves its existing aggregator untouched. */
-export async function POST() {
-  return respond(refreshUsageLedger, true);
+export async function POST(request: Request) {
+  return respond(true, request);
 }

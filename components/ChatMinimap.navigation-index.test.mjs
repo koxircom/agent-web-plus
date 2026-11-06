@@ -6,12 +6,13 @@ import ts from "typescript";
 const source=readFileSync(new URL("./ChatMinimap.tsx",import.meta.url),"utf8");
 const ast=ts.createSourceFile("m.tsx",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const js=code=>ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
-const functions=new Map(); let effect,scroll,trigger;
+const functions=new Map(); let effect,scroll,trigger,indexVisibility;
 function visit(node){
  if(ts.isFunctionDeclaration(node))functions.set(node.name?.text,node.getText(ast).replace("export ",""));
  if(ts.isCallExpression(node)&&node.expression.getText(ast)==="useEffect"&&node.getText(ast).includes("const initial = getMinimapHistorySettings().initialTurns"))effect=node.getText(ast);
  if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="scrollToNode")scroll="const "+node.getText(ast);
  if(ts.isVariableDeclaration(node)&&node.name.getText(ast)==="triggerLoadEarlier")trigger="const "+node.getText(ast);
+ if(ts.isCallExpression(node)&&node.expression.getText(ast)==="useNavigationIndex")indexVisibility=node.arguments[1].getText(ast);
  ts.forEachChild(node,visit);
 }visit(ast);
 test("index previews preserve repeated text as separate global turns and never replace actual body/identity",()=>{
@@ -21,7 +22,12 @@ test("index previews preserve repeated text as separate global turns and never r
  const result=c.merge(loaded,index);assert.equal(result.length,3);assert.equal(result[2],loaded[0]);assert.equal(result[0].indexed,true);assert.equal(result[0].scrollTop,null);assert.notEqual(result[0].entryId,result[1].entryId);assert.equal(c.merge(loaded,null),loaded);
 });
 for(const value of [undefined,{totalTurns:104,turns:[]}])test(`available/pending directory does not fetch old bodies (${value?'available':'pending'})`,()=>{
- let reads=0;vm.runInNewContext(js(effect),{useEffect:fn=>fn(),overlay:true,minimapHovered:false,navigation:{value},allNodes:[],messages:[],sessionId:"codex:fixture",targetTurns:5,runContinuousLoad:()=>reads++});assert.equal(reads,0);
+ let reads=0;vm.runInNewContext(js(effect),{useEffect:fn=>fn(),visible:true,overlay:true,minimapHovered:false,navigation:{value},allNodes:[],messages:[],sessionId:"codex:fixture",targetTurns:5,runContinuousLoad:()=>reads++});assert.equal(reads,0);
+});
+test("a visible rail requests its title index before hover or opening the preview",()=>{
+ assert.ok(indexVisibility);
+ assert.equal(vm.runInNewContext(indexVisibility,{visible:true,overlay:false,minimapHovered:false}),true);
+ assert.equal(vm.runInNewContext(indexVisibility,{visible:false,overlay:false,minimapHovered:false}),false);
 });
 test("selecting indexed turn requests only on selection, keeps transcript untouched, and uses global offset",()=>{
  let count, reveal=0;const messages=[{role:"user",content:"latest"}];

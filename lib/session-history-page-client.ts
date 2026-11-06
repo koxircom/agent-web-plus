@@ -1,3 +1,4 @@
+import { beginConnectionAttempt } from "./connection-diagnostics-client.ts";
 import { isSessionMemoryCacheEnabled } from "./session-sync-client.ts";
 import type {
   CachedHistoryPage,
@@ -84,7 +85,12 @@ async function executeGuardedGet(
 ): Promise<FetchHistoryPageContextResult | null> {
   if (signal?.aborted || (isCurrent && !isCurrent())) return null;
 
-  const res = await fetchFn(url, { method: "GET", cache: "no-store", signal });
+  const diagnostic = beginConnectionAttempt({ operation: "history_read", url, sessionId: params.sessionId,
+    engine: params.sessionId.startsWith("codex:") ? "codex" : "pi" });
+  let responseStatus: number | undefined;
+  try {
+  const res = await fetchFn(url, { method: "GET", cache: "no-store", signal, headers: diagnostic.headers });
+  responseStatus = res.status;
   if (signal?.aborted || (isCurrent && !isCurrent())) return null;
 
   if (res.status === 401 || res.status === 403 || res.status === 404) {
@@ -107,17 +113,17 @@ async function executeGuardedGet(
   const serverFingerprint = res.headers.get(HISTORY_FINGERPRINT_HEADER);
   if ((protocol === HISTORY_CACHE_PROTOCOL_VERSION && data.tail !== params.tail)
     || (data.tail !== undefined && data.tail !== params.tail)) {
-    throw new Error("History page response tail mismatch");
+    throw new SyntaxError("History page response tail mismatch");
   }
   // A versioned response must certify the exact requested boundary.
   if ((protocol === HISTORY_CACHE_PROTOCOL_VERSION && data.before !== params.before)
     || (data.before !== undefined && data.before !== null && data.before !== params.before)) {
-    throw new Error(`History page response before mismatch: expected ${params.before}, got ${data.before}`);
+    throw new SyntaxError(`History page response before mismatch: expected ${params.before}, got ${data.before}`);
   }
 
   // Validate context shape against boundary cursor
   if (!validateHistoryPageContext(data.context, params.before)) {
-    throw new Error("Invalid history page context received from server");
+    throw new SyntaxError("Invalid history page context received from server");
   }
 
   // Store into cache only if still enabled, generation unchanged, protocol matches, and valid fingerprint exists
@@ -161,6 +167,7 @@ async function executeGuardedGet(
     }
   }
 
+  diagnostic.success();
   return {
     context: data.context,
     tail: data.tail ?? params.tail,
@@ -168,6 +175,10 @@ async function executeGuardedGet(
     fromCache: false,
     fingerprint: serverFingerprint ?? undefined,
   };
+  } catch (error) {
+    diagnostic.fail(error, { status: responseStatus, cancelled: signal?.aborted || (isCurrent ? !isCurrent() : false) });
+    throw error;
+  }
 }
 
 export async function fetchHistoryPageContext(

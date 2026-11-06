@@ -1,4 +1,4 @@
-import type { AgentMessage, AssistantMessage, SessionInfo } from "../types";
+import type { AgentMessage, AssistantMessage, ImageContent, SessionInfo } from "../types";
 import type {SessionUsageSnapshot} from "../session-usage";
 
 export interface CodexRequest {
@@ -24,7 +24,7 @@ export function projectCodexPendingRequests(requests: CodexRequest[]) {
 export interface CodexRow {
   key: string; requestId?: string; deliveryConfirmed?: boolean; turnId: string; order: number; version: string; role: string;
   kind?: string; status?: string; title?: string; text: string; truncated?: boolean; turnStatus?: string;
-  attachments?: { name?: string; type?: string; uploadId?: string; path?: string }[];
+  attachments?: { name?: string; type?: string; uploadId?: string; desktopId?: string; path?: string }[];
   timestamp?: number | string;
   editable?: boolean; forkable?: boolean;
 }
@@ -102,14 +102,23 @@ export function assistantText(meta: CodexMeta, text: string, timestamp?: unknown
            model: meta.model || "Codex", provider: "codex", stopReason: meta.status === "active" ? undefined : "stop",
            ...(ts !== undefined ? { timestamp: ts } : {}) };
 }
+function codexImages(row: CodexRow, meta: CodexMeta): ImageContent[] {
+  return (row.attachments || []).flatMap(attachment => {
+    if (attachment.type !== "localImage" && attachment.type !== "image") return [];
+    const query = new URLSearchParams({ thread: meta.id });
+    if (attachment.uploadId) query.set("upload", attachment.uploadId);
+    else if (attachment.desktopId) query.set("desktop", attachment.desktopId);
+    else return [];
+    return [{ type: "image" as const, source: { type: "url" as const,
+      url: `/api/execution-engines/codex-image?${query}` } }];
+  });
+}
 export function projectCodexRow(row: CodexRow, meta: CodexMeta, epoch?: string): AgentMessage[] {
   const ts = normalizeCodexTimestamp(row.timestamp);
   const timeProp = ts !== undefined ? { timestamp: ts } : {};
   if (row.role === "user") {
     const content: import("../types").UserMessage["content"] = [{ type: "text", text: row.text }];
-    const images = row.attachments?.filter(a => a.uploadId && a.type === "localImage") || [];
-    for (const image of images) content.push({ type: "image", source: { type: "url",
-      url: `/api/execution-engines/codex-image?thread=${encodeURIComponent(meta.id)}&upload=${encodeURIComponent(image.uploadId!)}` } });
+    content.push(...codexImages(row, meta));
     return [{ role: "user", content, ...(row.forkable !== undefined ? { forkable: row.forkable } : {}), ...timeProp }];
   }
   if (row.role === "assistant") return [assistantText(meta, row.text, row.timestamp)];
@@ -119,7 +128,7 @@ export function projectCodexRow(row: CodexRow, meta: CodexMeta, epoch?: string):
     return [{ ...assistantText(meta, "", row.timestamp), content: [{ type: "toolCall", toolCallId: row.key,
               toolName: name, input: { command: row.text, description: row.title || "Codex 工具" } }] },
             { role: "toolResult", toolCallId: row.key, toolName: name,
-              content: [{ type: "text", text: row.text }], inProgress: row.status === "inProgress", isError: row.status === "failed",
+              content: [{ type: "text", text: row.text }, ...codexImages(row, meta)], inProgress: row.status === "inProgress", isError: row.status === "failed",
               ...(row.truncated && epoch ? { deferredResult: { entryId: `${epoch}.${row.key}`, revision: row.version } } : {}),
               ...timeProp }];
   }

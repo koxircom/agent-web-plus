@@ -1,4 +1,5 @@
 "use client";
+import { beginConnectionAttempt } from "@/lib/connection-diagnostics-client";
 import { createAgentEventBatchSource } from "@/lib/native-event-batch-client";
 import { noticeRecoveryFromError, readNoticeRecovery, type NoticeRecovery } from "@/lib/notice-recovery";
 import { resolveExecutionEngine } from "@/lib/execution-engine-context";
@@ -851,6 +852,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const flight = (async (): Promise<unknown> => {
     let messagesLoaded = false;
     let willRetryAbort = false;
+    let readDiagnostic: ReturnType<typeof beginConnectionAttempt> | undefined;
+    let readStatus: number | undefined;
     try {
       if (showLoading) setLoading(true);
       if (syncEnabled && !wireBaseline) {
@@ -877,9 +880,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const url = buildSessionSyncUrl({ sessionId: sid, baseRevision, force: options?.force || Boolean(options?.resident && !reuseResident), syncEnabled, treeFormat: "summary" });
         // A newer epoch may request the same URL while an older read is still
         // pending. Bypass the browser cache so it cannot queue behind that read.
-        const res = await fetch(url, { cache: "no-store", ...(options?.signal ? { signal: options.signal } : {}) });
+        readDiagnostic = beginConnectionAttempt({ operation: "session_read", url, sessionId: sid, engine: sid.startsWith("codex:") ? "codex" : "pi" });
+        const res = await fetch(url, { cache: "no-store", headers: readDiagnostic.headers, ...(options?.signal ? { signal: options.signal } : {}) });
+        readStatus = res.status;
         if (!isCurrentRead()) return null;
         if (res.status === 404 || res.status === 401 || res.status === 403) {
+          readDiagnostic.fail(null, { status: res.status });
           if (res.status === 404) deleteSessionViewSnapshot(sid);
           else clearSessionViewCache();
           setData(null); setActiveLeafId(null); setMessages([]); setEntryIds([]);
@@ -976,6 +982,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setLiveThinkingLevel(asConcreteThinkingLevel(d.context.thinkingLevel));
       }
 
+      readDiagnostic?.success();
       messagesLoaded = true;
       if (ownsSyncPresentation()) setHistorySyncing(false);
       if (historyRecoveryTimerRef.current && historyRecoveryTimerRef.current.sid === sid) {
@@ -1017,6 +1024,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         return null;
       }
     } catch (e) {
+      readDiagnostic?.fail(e, { status: readStatus, cancelled: Boolean(options?.signal?.aborted) || !isCurrentRead() });
       if (isAbortError(e)) {
         const isExplicitCallerAbort = Boolean(options?.signal?.aborted);
         const canRetry = ownsCurrentView() && !options?.abortRetry && !isExplicitCallerAbort;
@@ -1092,6 +1100,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const precedingTailReads = pageKey ? [...loadFlightsRef.current.entries()]
       .filter(([key]) => key.startsWith(`${sid}:`)).map(([, flight]) => flight) : [];
     const flight = (async () => {
+    let contextDiagnostic: ReturnType<typeof beginConnectionAttempt> | undefined;
+    let contextStatus: number | undefined;
     try {
       await Promise.allSettled(precedingTailReads);
       const isCurrent = () => (
@@ -1124,7 +1134,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (before) params.set("before", before);
         if (options?.tail) params.set("tail", String(options.tail));
         const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
-        const res = await fetch(url, { signal: options?.signal });
+        contextDiagnostic = beginConnectionAttempt({ operation: "history_read", url, sessionId: sid, engine: sid.startsWith("codex:") ? "codex" : "pi" });
+        const res = await fetch(url, { signal: options?.signal, headers: contextDiagnostic.headers });
+        contextStatus = res.status;
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         contextData = await res.json() as { context: SessionData["context"] };
       }
@@ -1134,6 +1146,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         || !isCurrent()
       ) return;
       const d = contextData;
+      contextDiagnostic?.success();
       historyCursorRef.current = d.context.oldestEntryId ?? null;
       hasEarlierMessagesRef.current = Boolean(d.context.hasMore);
       setHistoryCursor(d.context.oldestEntryId);
@@ -1163,6 +1176,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       return d.context;
     } catch (e) {
+      contextDiagnostic?.fail(e, { status: contextStatus, cancelled: Boolean(options?.signal?.aborted) || sessionIdRef.current !== sid });
       if (!options?.signal?.aborted) console.error("Failed to load context:", e);
     }
     })();

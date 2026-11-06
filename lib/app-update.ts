@@ -1,4 +1,5 @@
 const STABLE_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
+export const PI_WEB_LATEST_RELEASE_URL = "https://github.com/koxircom/agent-web-plus/releases/latest";
 
 function parseStableVersion(version: string): [number, number, number] | null {
   const match = STABLE_VERSION_PATTERN.exec(version);
@@ -25,4 +26,15 @@ export function isNewerStableVersion(candidate: string, current: string): boolea
 export function getPiWebReleaseUrl(version: string): string | null {
   if (!parseStableVersion(version)) return null;
   return `https://github.com/koxircom/agent-web-plus/releases/tag/v${version}`;
+}
+
+export function getPiWebVersionFromReleaseRedirect(location: string | null): string | null {
+  if (!location) return null;
+  try {
+    const target = new URL(location, PI_WEB_LATEST_RELEASE_URL);
+    const version = /^\/koxircom\/agent-web-plus\/releases\/tag\/v([^/]+)$/.exec(target.pathname)?.[1];
+    return version && getPiWebReleaseUrl(version) === target.href ? version : null;
+  } catch {
+    return null;
+  }
 }

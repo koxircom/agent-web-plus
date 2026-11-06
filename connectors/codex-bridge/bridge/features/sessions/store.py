@@ -10,6 +10,7 @@ import threading
 from collections import OrderedDict
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
+from weakref import WeakValueDictionary
 
 from bridge.features.sessions.model import normalize_state, text_content, normalize_timestamp
 from bridge.features.sessions.compressed_rollout import open_rollout, resolve_rollout_path
@@ -41,6 +42,7 @@ class SessionStore:
         self.history_lock = threading.Lock()
         self.user_count_cache = OrderedDict()
         self.user_count_lock = threading.Lock()
+        self.user_navigation_locks = WeakValueDictionary()
         self.receipt_cache = OrderedDict()
         self.receipt_lock = threading.Lock()
 
@@ -50,64 +52,89 @@ class SessionStore:
         Rollouts append. Cache a count, bounded input previews and file boundary, not transcripts;
         read the appended suffix and reset on truncation/replacement/rewrite.
         """
-        with self.user_count_lock, open_rollout(path) as stream:
-            stat = path.stat() if path.suffix == '.zst' else os.fstat(stream.fileno())
-            stamp = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
-            key = str(path)
+        key = str(path)
+        stat = path.stat()
+        stamp = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        with self.user_count_lock:
             cached = self.user_count_cache.get(key)
             if cached and cached['stamp'] == stamp:
+                self.user_count_cache.move_to_end(key)
                 return cached
-            count, offset, previews = 0, 0, []
-            pending_context, turn_id = None, None
-            if path.suffix != '.zst' and cached and cached['stamp'][0] == stat.st_ino and stat.st_size > cached['offset']:
-                stream.seek(max(0, cached['offset'] - 64))
-                if stream.read(min(64, cached['offset'])) == cached['boundary']:
-                    count, offset = cached['count'], cached['offset']
-                    previews = list(cached['previews'])
-                    pending_context, turn_id = cached.get('pending_context'), cached.get('turn_id')
-            stream.seek(offset)
-            while True:
-                line = stream.readline()
-                if not line or not line.endswith(b'\n'):
-                    break  # A concurrent writer's partial record is not committed.
-                offset = stream.tell()
-                if b'"response_item"' not in line[:200] and not (b'"event_msg"' in line[:200]
-                        and any(tag in line[:512] for tag in (b'"task_started"', b'"UserMessage"', b'"userMessage"'))):
-                    continue
-                try:
-                    record = json.loads(line)
-                except ValueError:
-                    continue
-                payload = record.get('payload') or {}
-                if record.get('type') == 'event_msg':
-                    if payload.get('type') == 'task_started':
-                        turn_id, pending_context = payload.get('turn_id'), None
-                    elif payload.get('type') == 'item_completed':
-                        item = payload.get('item') or {}
-                        if (pending_context and item.get('type') in ('UserMessage', 'userMessage')
-                                and item.get('id') and payload.get('turn_id', turn_id) == pending_context['turnId']):
-                            # A genuine user can send the literal runtime envelope.
-                            count += 1
-                            previews.append({'number': count, 'preview': pending_context['preview']})
-                            previews = previews[-1000:]
-                            pending_context = None
-                    continue
-                if payload.get('type') == 'message' and payload.get('role') == 'user':
-                    text = text_content(payload.get('content', []))
-                    if runtime_context_input(payload):
-                        pending_context = {'turnId': turn_id, 'preview': text.strip()[:512] or '[图片]'}
+            read_lock = self.user_navigation_locks.get(key)
+            if read_lock is None:
+                read_lock = threading.RLock()
+                self.user_navigation_locks[key] = read_lock
+        # Decompression and scanning belong to this path, not a global lock.
+        # Recheck after waiting so simultaneous readers reuse the first result.
+        with read_lock:
+            stat = path.stat()
+            stamp = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            with self.user_count_lock:
+                cached = self.user_count_cache.get(key)
+                if cached and cached['stamp'] == stamp:
+                    self.user_count_cache.move_to_end(key)
+                    return cached
+            with open_rollout(path) as stream:
+                if path.suffix != '.zst':
+                    stat = os.fstat(stream.fileno())
+                    stamp = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+                count, offset, previews = 0, 0, []
+                pending_context, turn_id = None, None
+                if path.suffix != '.zst' and cached and cached['stamp'][0] == stat.st_ino and stat.st_size > cached['offset']:
+                    stream.seek(max(0, cached['offset'] - 64))
+                    if stream.read(min(64, cached['offset'])) == cached['boundary']:
+                        count, offset = cached['count'], cached['offset']
+                        previews = list(cached['previews'])
+                        pending_context, turn_id = cached.get('pending_context'), cached.get('turn_id')
+                stream.seek(offset)
+                while True:
+                    line = stream.readline()
+                    if not line or not line.endswith(b'\n'):
+                        break  # A concurrent writer's partial record is not committed.
+                    offset = stream.tell()
+                    if b'"response_item"' not in line[:200] and not (b'"event_msg"' in line[:200]
+                            and any(tag in line[:512] for tag in (b'"task_started"', b'"UserMessage"', b'"userMessage"'))):
                         continue
-                    pending_context = None
-                    count += 1
-                    previews.append({'number': count, 'preview': text.strip()[:512] or '[图片]'})
-                    previews = previews[-1000:]
-            stream.seek(max(0, offset - 64))
-            boundary = stream.read(min(64, offset))
-            self.user_count_cache[key] = dict(stamp=stamp, count=count, offset=offset, boundary=boundary, previews=previews, pending_context=pending_context, turn_id=turn_id)
-            self.user_count_cache.move_to_end(key)
-            while len(self.user_count_cache) > 8:
-                self.user_count_cache.popitem(last=False)
-            return self.user_count_cache[key]
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    payload = record.get('payload') or {}
+                    if record.get('type') == 'event_msg':
+                        if payload.get('type') == 'task_started':
+                            turn_id, pending_context = payload.get('turn_id'), None
+                        elif payload.get('type') == 'item_completed':
+                            item = payload.get('item') or {}
+                            if (pending_context and item.get('type') in ('UserMessage', 'userMessage')
+                                    and item.get('id') and payload.get('turn_id', turn_id) == pending_context['turnId']):
+                                # A genuine user can send the literal runtime envelope.
+                                count += 1
+                                previews.append({'number': count, 'preview': pending_context['preview']})
+                                previews = previews[-1000:]
+                                pending_context = None
+                        continue
+                    if payload.get('type') == 'message' and payload.get('role') == 'user':
+                        text = text_content(payload.get('content', []))
+                        if runtime_context_input(payload):
+                            pending_context = {'turnId': turn_id, 'preview': text.strip()[:512] or '[图片]'}
+                            continue
+                        pending_context = None
+                        count += 1
+                        previews.append({'number': count, 'preview': text.strip()[:512] or '[图片]'})
+                        previews = previews[-1000:]
+                stream.seek(max(0, offset - 64))
+                boundary = stream.read(min(64, offset))
+            snapshot = dict(stamp=stamp, count=count, offset=offset, boundary=boundary,
+                            previews=previews, pending_context=pending_context, turn_id=turn_id)
+            with self.user_count_lock:
+                self.user_count_cache[key] = snapshot
+                self.user_count_cache.move_to_end(key)
+                # Sidebar metadata reads can touch more than eight sessions.
+                # Keep their compact indexes resident so they do not repeatedly
+                # evict/decompress the selected conversation's large rollout.
+                while len(self.user_count_cache) > 64:
+                    self.user_count_cache.popitem(last=False)
+            return snapshot
 
     def confirmed_user_receipt(self, thread_id, client_id):
         """Check the persisted native identity, independent of the visible tail.

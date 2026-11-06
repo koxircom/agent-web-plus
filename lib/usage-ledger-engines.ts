@@ -59,7 +59,8 @@ export async function readUsageByEngine(operation: () => Promise<PiResult>, read
     if (!(await readExecutionEngineSettings()).codex.enabled) return null;
     const { codexBridgeJson } = await import("./execution-engines/codex-bridge-client");
     const ledger = await codexBridgeJson(`/api/usage/ledger${refreshCodex ? "?refresh=1" : ""}`, undefined, { timeout: 10000 });
-    core.validate(ledger);
+    // combineUsageLedgers validates this producer and the merged ledger. Do
+    // not repeat the full timeline scan before handing it to that owner.
     return ledger as Snapshot;
   });
   const [piResult, codexResult] = await Promise.all([settle(operation), settle(codex)]);

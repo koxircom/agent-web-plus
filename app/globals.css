@@ -2072,18 +2072,20 @@ span.token.table {
   .pi-history-load-spinner { animation: none; }
 }
 
-/* The header wraps when its contents no longer fit the sidebar. */
+/* Actions share the first row; connection status owns the full second row. */
 .pi-native-sidebar-header-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 8px;
+  container-type: inline-size;
+  container-name: pi-sidebar-header;
   min-width: 0;
   margin-bottom: 10px;
 }
 .pi-native-sidebar-header-toolbar > [data-pi-native-engine-switcher] {
-  flex: 1 1 max-content;
-  max-width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 4px;
+  row-gap: 2px;
+  width: 100%;
   min-width: 0;
 }
 /* The shared desktop selector otherwise keeps its intrinsic button width. */
@@ -2092,6 +2094,7 @@ span.token.table {
   --model-selector-height: auto;
   --model-selector-padding-block: 4px;
   --model-selector-padding-start: 0px;
+  --model-selector-padding-end: 0px;
   --model-selector-label-flex: 0 1 auto;
   text-align: left;
   width: 100%;
@@ -2100,14 +2103,35 @@ span.token.table {
 }
 .pi-native-sidebar-header-actions {
   display: flex;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
   max-width: 100%;
-  margin-inline-start: auto;
+}
+.pi-native-engine-status {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.pi-native-engine-status > span { flex-shrink: 0; }
+.pi-enh-header-version {
+  opacity: 0.75;
+  margin-left: 2px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  user-select: none;
+}
+@container pi-sidebar-header (max-width: 220px) {
+  .pi-native-engine-switcher .model-selector .agent-engine-label { font-size: 14px; }
 }
 
 /* Agent names keep their own typography; only menu mechanics are shared. */

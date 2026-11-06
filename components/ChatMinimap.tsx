@@ -230,8 +230,8 @@ export function ChatMinimap({
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [minimapHeight, setMinimapHeight] = useState(600);
   const [minimapHovered, setMinimapHovered] = useState(false);
-  const initialLoadVisibleRef = useRef(overlay || minimapHovered);
-  initialLoadVisibleRef.current = overlay || minimapHovered;
+  const initialLoadVisibleRef = useRef(visible || overlay || minimapHovered);
+  initialLoadVisibleRef.current = visible || overlay || minimapHovered;
   const [mouseYRatio, setMouseYRatio] = useState<number | null>(null);
   const [targetTurns, setTargetTurns] = useState<number>(() => getMinimapHistorySettings().initialTurns);
   useEffect(() => {
@@ -247,7 +247,7 @@ export function ChatMinimap({
   const [loadError, setLoadError] = useState(false);
 
   const historyState = readMinimapHistoryState(allNodes.length);
-  const navigation = useNavigationIndex(sessionId, overlay || minimapHovered, historyState.totalTurns);
+  const navigation = useNavigationIndex(sessionId, visible || overlay || minimapHovered, historyState.totalTurns);
   const navigationIndexRef = useRef(navigation.value); navigationIndexRef.current = navigation.value;
   const pendingNavigationOrdinalRef = useRef<number | null>(null);
   const loadSelectedHistoryRef = useRef<(count: number) => void>(() => {});
@@ -800,7 +800,7 @@ export function ChatMinimap({
   }, [preservePreviewScroll]);
 
   useEffect(() => {
-    if (!overlay && !minimapHovered) return;
+    if (!visible && !overlay && !minimapHovered) return;
     // An available title directory replaces eager transcript pagination. While
     // capability discovery is pending/failed, never fall through to body reads.
     if (navigation.value !== null) return;
@@ -812,8 +812,8 @@ export function ChatMinimap({
     const loadedCount = allMessagesRef.current.filter(message => message.role === "user").length;
     const history = readMinimapHistoryState(loadedCount);
     // ChatWindow installs the authoritative bridge before this passive effect.
-    // Hidden desktop rails also stay idle; loading historical tool runs is
-    // reserved for an opened navigator or an explicit earlier-history action.
+    // A visible rail starts with at least five user turns. Unsupported title
+    // directories use bounded native pagination; hidden rails remain idle.
     if (!sessionId || history.sessionId !== sessionId || !history.hasEarlierMessages || loadedCount >= initial) return;
     const attemptKey = `${sessionGenerationRef.current}:${initial}`;
     if (initialLoadAttemptRef.current === attemptKey) return;
@@ -821,7 +821,7 @@ export function ChatMinimap({
       // Network/budget failures require an explicit retry, never an effect loop.
       initialLoadAttemptRef.current = attemptKey;
     }
-  }, [allNodes.length, messages.length, minimapHovered, navigation.value, overlay, runContinuousLoad, sessionId, targetTurns]);
+  }, [allNodes.length, messages.length, minimapHovered, navigation.value, overlay, runContinuousLoad, sessionId, targetTurns, visible]);
 
   useEffect(() => {
     return () => {

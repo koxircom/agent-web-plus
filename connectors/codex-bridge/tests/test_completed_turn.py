@@ -6,7 +6,7 @@ class CompletedTurnTests(unittest.TestCase):
  def test_authoritative_completed_tools_are_loaded_once_outside_event_lock(self):
   from types import SimpleNamespace
   chat=Chat.__new__(Chat);chat.id='test';chat.lock=threading.RLock();chat.condition=threading.Condition(chat.lock);chat.completed_reads={'done','active'};chat.sequence=0;chat.shared=False
-  chat.pending_completions={};chat.shared_requests={};chat.submissions={};chat.ready=True;chat.closed=False
+  chat.pending_completions={};chat.shared_requests={};chat.submissions={};chat.ready=True;chat.closed=False;chat.dismissed_async_questions={}
   chat.queue_event=threading.Event();chat.persist=lambda *a,**k:None
   chat.state={'turns':[{'turnId':'done','status':'completed','items':[]},{'turnId':'active','status':'inProgress','items':[{'id':'live'}]}],'threadRuntimeStatus':{'type':'idle'},'requests':[]}
   class Backend:
@@ -27,7 +27,7 @@ class SharedCompletionTests(unittest.TestCase):
   import copy
   from types import SimpleNamespace
   chat=Chat.__new__(Chat);chat.id='test';chat.lock=threading.RLock();chat.condition=threading.Condition(chat.lock);chat.completed_reads={'done'};chat.sequence=0;chat.shared=True;chat.history_limit=1
-  chat.pending_completions={};chat.shared_requests={};chat.submissions={};chat.ready=True;chat.closed=False
+  chat.pending_completions={};chat.shared_requests={};chat.submissions={};chat.ready=True;chat.closed=False;chat.dismissed_async_questions={}
   chat.actions=threading.RLock();chat.queue_event=threading.Event()
   chat.persist=lambda *a,**k:None;chat._release_handoff_turns=lambda:None
   final={'id':'final','type':'agentMessage','text':'最终结果','phase':'final_answer'}

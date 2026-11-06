@@ -149,8 +149,10 @@ class WslHistory(SessionStore):
                     if old:
                         del self.sessions[old]
                 session = self.sessions[identifier] = HistorySession(self, identifier)
-            session.refresh(meta, full, turn_limit)
-            return session
+        # HistorySession owns its refresh lock. Parsing one rollout must not
+        # retain the registry lock needed to open every other conversation.
+        session.refresh(meta, full, turn_limit)
+        return session
 
 
 class HistorySession:

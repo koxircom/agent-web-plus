@@ -2880,6 +2880,10 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   const pendingModelMetadataQueue = [];
   let activeModelMetadataWorkers = 0;
 
+  function isModelMetadataSession(sessionId) {
+    return typeof sessionId === "string" && Boolean(sessionId) && !sessionId.startsWith("new:");
+  }
+
   function loadPersistedSessionModelMetadata() {
     try {
       const raw = localStorage.getItem(SESSION_MODEL_STORAGE_KEY);
@@ -2887,7 +2891,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
       const parsed = JSON.parse(raw);
       if (typeof parsed !== "object" || parsed === null) return;
       for (const [sId, item] of Object.entries(parsed)) {
-        if (!sId || !item || typeof item !== "object" || !item.modelId) continue;
+        if (!isModelMetadataSession(sId) || !item || typeof item !== "object" || !item.modelId) continue;
         const updatedAt = Number(item.updatedAt) || 0;
         sessionModelMetadata.set(sId, {
           provider: item.provider || "",
@@ -2905,7 +2909,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     try {
       const validEntries = [];
       for (const [sId, meta] of sessionModelMetadata.entries()) {
-        if (!sId || !meta?.modelId) continue;
+        if (!isModelMetadataSession(sId) || !meta?.modelId) continue;
         validEntries.push({
           id: sId,
           provider: meta.provider || "",
@@ -2930,7 +2934,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function recordSessionModelMetadataFromPayload(sessionId, payload) {
-    if (!sessionId || !payload?.context?.model?.modelId) return;
+    if (!isModelMetadataSession(sessionId) || !payload?.context?.model?.modelId) return;
     const m = payload.context.model;
     const now = Date.now();
     sessionModelMetadata.set(sessionId, {
@@ -3047,10 +3051,13 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   async function fetchSessionModelMetadata(sessionId) {
-    if (!sessionId || sessionModelRequests.has(sessionId)) return;
+    if (!isModelMetadataSession(sessionId) || sessionModelRequests.has(sessionId)) return;
     sessionModelRequests.add(sessionId);
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}?deferThinking=1&deferMedia=1&tail=1`, { cache: "no-store" });
+      const isCodex = sessionId.startsWith("codex:");
+      const url = isCodex ? `/api/agent/${encodeURIComponent(sessionId)}`
+        : `/api/sessions/${encodeURIComponent(sessionId)}?deferThinking=1&deferMedia=1&tail=1`;
+      const response = await fetch(url, { cache: "no-store" });
       if (!response?.ok) {
         sessionModelMetadata.set(sessionId, {
           provider: "",
@@ -3061,17 +3068,18 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
         });
         return;
       }
-      const payload = await response.json(); 
-      const model = payload?.context?.model;
+      const payload = await response.json();
+      const context = isCodex ? payload?.state : payload?.context;
+      const model = context?.model;
       const now = Date.now();
       sessionModelMetadata.set(sessionId, {
         provider: model?.provider || "",
-        modelId: model?.modelId || "",
-        thinkingLevel: payload?.context?.thinkingLevel || "off",
+        modelId: model?.modelId || model?.id || "",
+        thinkingLevel: context?.thinkingLevel || "off",
         expiresAt: now + SESSION_MODEL_CACHE_TTL_MS,
         updatedAt: now,
       });
-      if (model?.modelId) {
+      if (model?.modelId || model?.id) {
         persistSessionModelMetadata();
       }
     } catch (e) {
@@ -3089,7 +3097,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
   }
 
   function enqueueSessionModelMetadata(sessionId) {
-    if (!sessionId || sessionModelRequests.has(sessionId) || pendingModelMetadataQueue.includes(sessionId)) return;
+    if (!isModelMetadataSession(sessionId) || sessionModelRequests.has(sessionId) || pendingModelMetadataQueue.includes(sessionId)) return;
     pendingModelMetadataQueue.push(sessionId);
     pumpSessionModelMetadataQueue();
   }
@@ -3126,7 +3134,7 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
     const now = Date.now();
     for (const row of document.querySelectorAll(".pi-enh-session-row-host[data-pi-enh-session-id]")) {
       const sessionId = row.getAttribute("data-pi-enh-session-id");
-      if (!sessionId) continue;
+      if (!isModelMetadataSession(sessionId)) continue;
       const metadata = sessionModelMetadata.get(sessionId);
       if (metadata && metadata.modelId) {
         renderSessionModelLabel(row, metadata);
@@ -3603,15 +3611,22 @@ var COMPOSER_MODE_ICON_MARKUP = {"goal":"<g fill=\"none\" stroke=\"currentColor\
           ? `${getDurableStateBaseUrl()}/enhancement-state`
           : `${getDurableStateBaseUrl()}/enhancement-state?instance=${getDurableStateInstanceParam()}`;
         let res, data;
+        const initial = isNative ? window.__PI_ENH_INITIAL_DURABLE_STATE__ : null;
+        if (isNative) delete window.__PI_ENH_INITIAL_DURABLE_STATE__;
         try {
-          const fetchRes = await fetchModelsConfigBounded(endpoint, {
-            method: "GET",
-            credentials: "include",
-            cache: "no-store",
-            readJson: true,
-          }, 15000);
-          res = fetchRes?.resp;
-          data = fetchRes?.json;
+          if (!force && initial) {
+            data = await Promise.resolve(initial);
+            res = { ok: data.ok === true };
+          } else {
+            const fetchRes = await fetchModelsConfigBounded(endpoint, {
+              method: "GET",
+              credentials: "include",
+              cache: "no-store",
+              readJson: true,
+            }, 15000);
+            res = fetchRes?.resp;
+            data = fetchRes?.json;
+          }
         } catch (netErr) {
           console.warn("[pi-enh] 独立状态服务读取离线或失败，保留本地缓存:", netErr?.message);
           return;

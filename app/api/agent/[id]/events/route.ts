@@ -1,3 +1,4 @@
+import { withConnectionDiagnostics } from "@/lib/connection-diagnostics-server";
 import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { handleAgentEventBatchRequest } from "@/lib/native-event-batch";
@@ -7,7 +8,7 @@ import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 export const dynamic = "force-dynamic";
 
 // GET /api/agent/[id]/events - SSE stream of agent events, or short-batch poll with ?format=batch
-export async function GET(
+async function handleGet(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -54,4 +55,8 @@ export async function GET(
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  return withConnectionDiagnostics(request, () => handleGet(request, context));
 }

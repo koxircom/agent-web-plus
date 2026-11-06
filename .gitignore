@@ -63,4 +63,3 @@ e2e_*.mjs
 /public/pi-*-manifest.json
 /public/pi-usage-ledger.json
 /public/*.before-*
-/scripts/qa/.quality-runs/

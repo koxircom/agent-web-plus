@@ -40,6 +40,7 @@ class Timeline:
         self.details = {}
         self.positions = {}
         self.versions = OrderedDict()
+        self.content_versions = {}
         self.meta = {}
 
     def update(self, view):
@@ -49,7 +50,7 @@ class Timeline:
             return
         old_timestamps = {row['key']: row['timestamp'] for row in self.rows if 'timestamp' in row}
         activation_ids = set(view.get('goalActivationIds') or ())
-        rows, details = [], {}
+        rows, details, content_versions = [], {}, {}
         for turn in view['turns']:
             occurrences = {}
             first_user = next((m for m in turn['messages'] if m['role'] == 'user'), None)
@@ -75,9 +76,22 @@ class Timeline:
                         row.pop('timestamp', None)
                 if 'timestamp' not in row and key in old_timestamps:
                     row['timestamp'] = old_timestamps[key]
-                version = hashlib.sha256(encoded([text, turn.get('model'), turn.get('effort'),
-                                                 message.get('requestId'), message.get('attachments'), message.get('deliveryConfirmed'),
-                                                 row.get('timestamp')])).hexdigest()[:24]
+                metadata = encoded([turn.get('model'), turn.get('effort'), message.get('requestId'),
+                                    message.get('attachments'), message.get('deliveryConfirmed'), row.get('timestamp')])
+                previous = self.content_versions.get(key)
+                if previous is not None and previous[:2] == (text, metadata):
+                    version = previous[2]
+                else:
+                    # Large tool bodies stay in details. JSON-encoding every
+                    # saved body on each live delta monopolizes the interpreter
+                    # and delays unrelated status/event requests. Reuse stable
+                    # versions; hash changed text in bounded UTF-8 chunks.
+                    digest = hashlib.sha256(metadata)
+                    digest.update(b'\0')
+                    for offset in range(0, len(text), 65536):
+                        digest.update(text[offset:offset + 65536].encode())
+                    version = digest.hexdigest()[:24]
+                content_versions[key] = (text, metadata, version)
                 row.update(key=key, turnId=turn['id'], order=len(rows), version=version,
                            text=text[:180 if activity else TEXT_PREVIEW],
                            truncated=(activity and bool(text)) or len(text) > TEXT_PREVIEW, turnStatus=turn.get('status'),
@@ -114,6 +128,7 @@ class Timeline:
             row['order'] = self.order_origin + index
         self.sequence = view['sequence']
         self.rows, self.details = rows, details
+        self.content_versions = content_versions
         self.positions = {row['key']: i for i, row in enumerate(rows)}
         self.meta = {k: v for k, v in view.items() if k != 'turns'}
         self.meta['latestUserTurnId'] = next((t['id'] for t in reversed(view['turns'])

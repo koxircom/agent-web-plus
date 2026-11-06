@@ -1,4 +1,4 @@
-"""Create or fork a persisted thread, then hand execution to the desktop App.
+"""Perform short-lived thread metadata operations for the desktop App.
 
 The short-lived app-server never receives turn/start. It is shut down before
 returning, so the desktop can become the sole execution owner.
@@ -28,7 +28,7 @@ class ForkUnavailable(CreationUnavailable):
     """The capability check failed before any thread could be created."""
 
 
-def _runtime_operation(executable, codex_home, cwd, operation):
+def _runtime_operation(executable, codex_home, cwd, operation, *, label='创建聊天'):
     if not executable:
         raise CreationUnavailable('找不到 Codex 运行时，请在电脑启动器的运行配置中指定路径')
     if not Path(cwd).is_dir():
@@ -42,14 +42,21 @@ def _runtime_operation(executable, codex_home, cwd, operation):
     except OSError as exc:
         raise CreationUnavailable('无法启动 Codex 运行时，请检查运行配置中的程序路径、项目目录和访问权限后重试') from exc
     messages = queue.Queue()
+    stop_reader = threading.Event()
 
     def read():
         try:
-            for line in process.stdout:
+            while not stop_reader.is_set():
+                line = process.stdout.readline()
+                if not line:
+                    break
                 try:
                     messages.put(json.loads(line))
                 except ValueError:
                     continue
+        except OSError:
+            if not stop_reader.is_set():
+                raise
         finally:
             messages.put(None)
 
@@ -67,15 +74,17 @@ def _runtime_operation(executable, codex_home, cwd, operation):
             try:
                 result = messages.get(timeout=max(.01, deadline - time.monotonic()))
             except queue.Empty as exc:
-                raise CreationError('创建聊天超时，请先检查桌面聊天列表，不要重复创建') from exc
+                raise CreationError(label + '超时，请先检查桌面聊天列表，不要重复操作') from exc
             if result is None:
-                raise CreationError('创建聊天的运行时已断开，请先检查桌面聊天列表')
+                raise CreationError(label + '的运行时已断开，请先检查桌面聊天列表')
             if result.get('id') != counter:
                 if time.monotonic() >= deadline:
-                    raise CreationError('创建聊天超时，请先检查桌面聊天列表')
+                    raise CreationError(label + '超时，请先检查桌面聊天列表')
                 continue
             if 'error' in result:
-                raise CreationError(result['error'].get('message', '创建聊天失败'))
+                error = CreationError(result['error'].get('message', label + '失败'))
+                error.rpc_error = result['error']
+                raise error
             return result['result']
 
     try:
@@ -96,12 +105,19 @@ def _runtime_operation(executable, codex_home, cwd, operation):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            raise CreationError('创建运行时未正常退出，请先检查桌面聊天列表')
+            raise CreationError(label + '辅助程序未正常退出，请先检查桌面聊天列表')
         finally:
+            stop_reader.set()
             reader.join(timeout=1)
+            if reader.is_alive() and os.name == 'nt':
+                from bridge.platforms.windows.transport import cancel_thread_io
+                cancel_thread_io(reader)
+                reader.join(timeout=1)
+            if reader.is_alive():
+                raise CreationError(label + '辅助程序读取管道未退出，请先核对结果；没有重试操作')
             process.stdout.close()
     if process.returncode:
-        raise CreationError('创建运行时退出异常，请先检查桌面聊天列表')
+        raise CreationError(label + '辅助程序退出异常，请先检查桌面聊天列表')
     return result
 
 
@@ -191,3 +207,35 @@ def rename_thread(executable, codex_home, thread_id, title):
     uuid.UUID(thread_id)
     return _runtime_operation(executable, codex_home, str(codex_home),
                               lambda request: request('thread/name/set', {'threadId': thread_id, 'name': title}))
+
+
+def delete_thread_metadata(executable, codex_home, cwd, thread_id):
+    """Native deletion owns storage; never resume a turn or remove files here."""
+    uuid.UUID(thread_id)
+    expected_cwd = Path(cwd).resolve(strict=True)
+
+    def delete(request):
+        try:
+            thread = request('thread/read', {'threadId': thread_id, 'includeTurns': False})['thread']
+            if (thread.get('id') != thread_id
+                    or Path(thread.get('cwd', '')).resolve(strict=True) != expected_cwd):
+                raise CreationUnavailable('会话目录或身份已变化，尚未删除。')
+            if (thread.get('status') or {}).get('type') not in ('idle', 'notLoaded'):
+                raise CreationUnavailable('请先结束当前任务，再删除会话。')
+            queued = request('thread/queue/list', {'threadId': thread_id, 'limit': 1})
+            if not isinstance(queued.get('data'), list):
+                raise CreationUnavailable('无法核对待发送消息，尚未删除会话。')
+            if queued['data'] or queued.get('nextCursor') is not None:
+                raise CreationUnavailable('会话还有待发送消息，请处理队列后再删除。')
+        except CreationUnavailable:
+            raise
+        except (CreationError, KeyError, TypeError, OSError) as exc:
+            raise CreationUnavailable('无法核对会话状态，尚未删除：' + str(exc)) from exc
+        try:
+            return request('thread/delete', {'threadId': thread_id})
+        except CreationError as exc:
+            if getattr(exc, 'rpc_error', None):
+                raise CreationUnavailable('Codex 拒绝删除会话：' + str(exc)) from exc
+            raise
+
+    return _runtime_operation(executable, codex_home, cwd, delete, label='删除会话')

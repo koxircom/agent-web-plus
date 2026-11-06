@@ -5,6 +5,7 @@
 
 | 版本 (Tag) | 发行名称 | 发布日期 | 详细说明 | 线上 Release 页面 |
 | :--- | :--- | :--- | :--- | :--- |
+| `v1.4.88` | v1.4.88 | 2026-11-06 | [v1.4.88说明](v1.4.88.md) | [GitHub Release](https://github.com/koxircom/agent-web-plus/releases/tag/v1.4.88) |
 | `v1.4.79` | v1.4.79 | 2026-11-05 | [v1.4.79说明](v1.4.79.md) | [GitHub Release](https://github.com/koxircom/agent-web-plus/releases/tag/v1.4.79) |
 | `v1.4.78` | v1.4.78 | 2026-11-04 | [v1.4.78说明](v1.4.78.md) | [GitHub Release](https://github.com/koxircom/agent-web-plus/releases/tag/v1.4.78) |
 | `v1.4.77` | v1.4.77 | 2026-11-04 | [v1.4.77说明](v1.4.77.md) | [GitHub Release](https://github.com/koxircom/agent-web-plus/releases/tag/v1.4.77) |

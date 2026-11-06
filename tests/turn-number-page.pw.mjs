@@ -35,6 +35,7 @@ try{
    const req=route.request(),u=new URL(req.url()),p=u.pathname,json=(d,status=200)=>route.fulfill({status,json:d});
    if(u.origin!==origin)return route.abort('blockedbyclient');
    if(!p.startsWith('/api/')){if(/^\/pi-.*manifest\.json$/.test(p))return json([]);if(p==='/pi-usage-ledger.json')return json({});return route.continue();}
+   if(p==='/api/diagnostics/connections'&&req.method()==='POST'){const d=req.postDataJSON();assert(Array.isArray(d.events));assert(d.events.every(e=>e.source==='browser'));return json({accepted:d.events.length},202);}
    if(!['GET','HEAD'].includes(req.method())&&!p.endsWith('/lease')&&!['/api/cwd/validate','/api/execution-engines/check'].includes(p)){blocked.push({path:p,method:req.method()});return json({error:'Read-only fixture'},403);}
    if(p==='/api/execution-engines')return json({defaultEngine:engine,codex:{enabled:true,url:origin+'/native'}});
    if(p==='/api/execution-engines/check')return json({connected:true,projects:[{cwd}]});

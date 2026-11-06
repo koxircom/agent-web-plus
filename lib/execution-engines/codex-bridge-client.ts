@@ -1,5 +1,7 @@
 import "server-only";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { appendConnectionDiagnostic, currentConnectionDiagnosticContext } from "../connection-diagnostics-server";
+import { CONNECTION_TRACE_HEADER, connectionErrorFields, connectionFailureReason, diagnosticRoute, sessionIdFromDiagnosticUrl } from "../connection-diagnostics";
 import { readExecutionEngineSettings } from "../execution-engine-settings";
 
 type Connection = { signature: string; cookie: string; csrf: string; generation: number; flight?: Promise<void> };
@@ -43,20 +45,33 @@ export async function codexBridgeRequest(path: string, body?: unknown, options?:
     timeout = options?.timeout ?? (route.includes("/changes?") ? 20000 : route.includes("/settings") ? 15000 : 10000),
   ) => {
     const headers: Record<string, string> = { Origin: origin };
+    const parent = currentConnectionDiagnosticContext();
+    const traceId = parent?.traceId ?? randomUUID();
+    headers[CONNECTION_TRACE_HEADER] = traceId;
+    const started = performance.now();
+    const logFailure = (error: unknown, status?: number, cancelled = false) => appendConnectionDiagnostic({
+      version: 1, at: new Date().toISOString(), source: "bridge", event: "failure", operation: "upstream", engine: "codex", traceId,
+      sessionId: parent?.sessionId ?? sessionIdFromDiagnosticUrl(route), route: diagnosticRoute(route), status,
+      reason: cancelled ? "request_cancelled" : connectionFailureReason(error, status),
+      durationMs: performance.now() - started, timeoutMs: timeout, ...connectionErrorFields(error),
+    });
     if (target.cookie) headers.Cookie = target.cookie;
     if (value !== undefined || binary) {
       headers["Content-Type"] = binary ? options?.contentType || "application/octet-stream" : "application/json";
       if (target.csrf) headers["X-CSRF-Token"] = target.csrf;
     }
     try {
-      return await fetch(endpoint + route, {
+      const response = await fetch(endpoint + route, {
         method: value !== undefined || binary ? "POST" : "GET", headers,
         body: binary ? Buffer.from(binary) : value !== undefined ? JSON.stringify(value) : undefined,
         cache: "no-store", redirect: "error", signal: requestSignal ? AbortSignal.any([requestSignal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout),
       });
+      if (!response.ok) logFailure(null, response.status);
+      return response;
     } catch (error) {
-      if (requestSignal?.aborted) throw requestSignal.reason ?? error;
+      if (requestSignal?.aborted) { logFailure(error, 499, true); throw requestSignal.reason ?? error; }
       const isTimeout = error instanceof Error && (error.name === "TimeoutError" || (error.name === "AbortError" && !requestSignal?.aborted));
+      logFailure(error, isTimeout ? 504 : 502);
       if (isTimeout) {
         if (value !== undefined || binary) {
           throw new CodexBridgeError(

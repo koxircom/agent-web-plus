@@ -2,7 +2,7 @@
 import base64
 import copy
 from pathlib import Path
-from bridge.clients.codex.native_queue import rows as native_rows, operate as native_operate
+from bridge.clients.codex.native_queue import rows as native_rows, operate as native_operate, represented_promotion_ids
 
 
 def queued(chat):
@@ -59,15 +59,16 @@ def operate(chat, command):
                              'imageCount': sum(bool(a.get('image')) for a in r.get('attachments', []))}
                             for k, r in ordered if (r['mode'] == 'steer') == steering]
                 from bridge.clients.codex.standalone import pending_submissions
+                represented = represented_promotion_ids(native_items, chat.submissions)
                 transfers = [row for row in pending_submissions(chat.submissions)
                              if any(r.get('nativePromotion') and r.get('nativeQueueId') == row['id'] for r in chat.submissions.values())
-                             and row['id'] not in {item['id'] for item in native_items}]
+                             and row['id'] not in {item['id'] for item in native_items} and row['id'] not in represented]
                 transfer_items = [{'token': row['id'], 'text': row['text'], 'status': row['status'],
                                    'imageCount': len(row['attachments'])} for row in transfers]
                 follow_up = items(False) + [{'token': row['id'], 'text': row['text'], 'status': 'queued',
                     'imageCount': len(row['attachments'])} for row in native_rows(native_items, chat.submissions)] + [
                         item for item, row in zip(transfer_items, transfers) if row.get('mode') != 'steer']
-                return {'version': 2, 'reorder': not ordered if native_items else not any(r['status'] == 'unknown' for _, r in ordered), 'steering': items(True) + [item for item, row in zip(transfer_items, transfers) if row.get('mode') == 'steer'], 'followUp': follow_up}
+                return {'version': 2, 'reorder': not transfer_items and (not ordered if native_items else not any(r['status'] == 'unknown' for _, r in ordered)), 'steering': items(True) + [item for item, row in zip(transfer_items, transfers) if row.get('mode') == 'steer'], 'followUp': follow_up}
             tokens = [k for k, _ in ordered]
             all_items = action in ('recall_all_queued_messages', 'clear_queue')
             if action in ('recall_all_queued_messages', 'reorder_queued_message') and command.get('tokens') != tokens:

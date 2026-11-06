@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 import uuid
+from weakref import WeakValueDictionary
 from contextlib import nullcontext
 from pathlib import Path
 from bridge.features.sessions.model import async_requests, merge_turn_items, question_replies
@@ -295,6 +296,7 @@ class Chat(SideChat):
             def write(inner, value):
                 return backend.write(value)
         self.runtime = Journal()
+        self._publish_activity()
 
     @property
     def connected(self):
@@ -302,9 +304,32 @@ class Chat(SideChat):
         return bool(self.ready and not self.closed and process is not None and process.poll() is None)
 
     def changed(self):
+        self._publish_activity()
         self.sequence += 1
         self.touched = time.monotonic()
         self.condition.notify_all()
+
+    def _pending_async_requests(self):
+        pending = []
+        for request in visible_async_requests(self.state, self.dismissed_async_questions):
+            submission = self.submissions.get(async_submission_id(self.id, request['id']))
+            if not submission or submission.get('status') not in ('queued', 'unknown', 'accepted'):
+                pending.append(request)
+        return pending
+
+    def _publish_activity(self):
+        # Called by the native state owner, before publishing its change. Keep
+        # status reads independent of locks used to project large transcripts.
+        # Replace the whole immutable-by-convention value, never update it in place.
+        self._activity_snapshot = {
+            'status': self.state.get('threadRuntimeStatus', {}).get('type', 'idle'),
+            'hasPendingRequests': any(request.get('method') != 'bridge/requestUserInputAsync'
+                                      for request in self.state.get('requests', []))
+                                  or bool(self._pending_async_requests()),
+        }
+
+    def activity_view(self):
+        return {**self._activity_snapshot, 'connected': self.connected}
 
     def refresh_shared_state(self):
         if not self.shared:
@@ -889,15 +914,8 @@ class Chat(SideChat):
         # Use native parsing, including attachments overlaid from the ledger.
         with self.lock:
             result = super().view(include_turns=include_turns)
-            async_pending = visible_async_requests(self.state, self.dismissed_async_questions)
-            restored_async = []
-            for request in async_pending:
-                submission = self.submissions.get(async_submission_id(self.id, request['id']))
-                if submission and submission.get('status') in ('queued', 'unknown', 'accepted'):
-                    continue
-                restored_async.append(request)
             result['requests'] = [request for request in result.get('requests', [])
-                                  if request.get('method') != 'bridge/requestUserInputAsync'] + restored_async
+                                  if request.get('method') != 'bridge/requestUserInputAsync'] + self._pending_async_requests()
         result = {**result, 'connected': self.connected, 'sequence': self.sequence,
                   'submissions': pending_submissions(self.submissions),
                   'connectionError': None if self.connected else ('原 WSL 服务连接已断开，请重连；待确认消息不会自动重发' if self.shared else 'WSL 运行时已停止，后台服务正在恢复'),
@@ -945,6 +963,8 @@ class StandaloneBridge(Bridge):
         self.registry_lock = threading.RLock()
         self.goal_lock = threading.RLock()
         self.lock = threading.RLock()
+        self.history_observation_locks = WeakValueDictionary()
+        self.history_observation_failures = {}
         self.live = {}
         self.closed = threading.Event()
         self.host_errors = []
@@ -1079,13 +1099,15 @@ class StandaloneBridge(Bridge):
     def _history_backend(self):
         if not self.history_home:
             raise PermissionError('未配置 WSL 历史运行时')
-        if self.history_runtime is None:
-            event = lambda message: self._runtime_event(message, 'history')
-            self.history_runtime = (SharedRuntime(self.history_socket, event, home=self.history_home)
-                                    if self.history_socket else
-                                    Runtime(self.executable, self.history_home, str(self.root), event))
-        self.history_runtime.start()
-        return self.history_runtime
+        with self.lock:
+            if self.history_runtime is None:
+                event = lambda message: self._runtime_event(message, 'history')
+                self.history_runtime = (SharedRuntime(self.history_socket, event, home=self.history_home)
+                                        if self.history_socket else
+                                        Runtime(self.executable, self.history_home, str(self.root), event))
+            backend = self.history_runtime
+        backend.start()
+        return backend
 
     def _native_queue(self, thread_id):
         entry = self._scoped_record(thread_id)
@@ -1125,21 +1147,60 @@ class StandaloneBridge(Bridge):
         # No registry write or model turn is needed for observation.
         meta = self.history.get(identifier)
         expected = Path(meta['cwd']).resolve(strict=True)
-        with self.lock:
-            existing = self.live.get(identifier)
-            if existing:
-                return existing
-            backend = self._history_backend()
-            result = self._resume_history(backend, identifier)
+        with self.registry_lock:
+            observation_lock = self.history_observation_locks.get(identifier)
+            if observation_lock is None:
+                observation_lock = threading.RLock()
+                self.history_observation_locks[identifier] = observation_lock
+        # Native RPC and saved-history parsing can be slow. Only callers for
+        # this thread wait; the bridge-wide lock protects publication only.
+        with observation_lock:
+            with self.lock:
+                existing = self.live.get(identifier)
+                if existing:
+                    return existing
+                failures = self.__dict__.setdefault('history_observation_failures', {})
+                failed_at = failures.get(identifier)
+                if failed_at is not None and time.monotonic() - failed_at < 10:
+                    raise SideChatError('原生连接暂不可用，保留原始历史，稍后重试')
+            started = time.monotonic()
+            try:
+                backend = self._history_backend()
+                result = self._resume_history(backend, identifier)
+            except (SideChatError, OSError) as error:
+                # Share a failed read outcome as well as successful observers.
+                # Waiting readers must not each repeat a slow native resume.
+                failures[identifier] = time.monotonic()
+                while len(failures) > 64:
+                    failures.pop(next(iter(failures), None), None)
+                rpc = getattr(error, 'rpc_error', {}) or {}
+                code = rpc.get('code') if isinstance(rpc, dict) else None
+                logger.warning('codex_connection %s', json.dumps({
+                    'version': 1, 'route': '/api/sessions/:id', 'operation': 'history_observe',
+                    'reason': 'native_observer_unavailable', 'errorName': type(error).__name__,
+                    'rpcCode': code if isinstance(code, int) and not isinstance(code, bool) else None,
+                    'durationMs': round((time.monotonic() - started) * 1000),
+                }, separators=(',', ':')))
+                raise
             if Path(result['thread']['cwd']).resolve() != expected:
                 raise PermissionError('共享运行时返回的工作区与历史记录不一致')
-            entry = {**copy.deepcopy(self.records['threads'].get(identifier, {})),
-                     'title': self._title_override(identifier) or meta.get('name') or meta.get('title') or '未命名聊天',
-                     'cwd': str(expected), 'model': result.get('model'), 'effort': result.get('reasoningEffort')}
-            chat = Chat(self, identifier, result, backend, entry=entry)
-            self.live[identifier] = chat
-            self._start_queue(chat)
-            return chat
+            with self.lock:
+                existing = self.live.get(identifier)
+                if existing:
+                    return existing
+                # Deletion or workspace changes during the slow read must not
+                # publish a stale observer after the native owner removed it.
+                current = self.history.get(identifier)
+                if Path(current['cwd']).resolve(strict=True) != expected:
+                    raise PermissionError('读取期间会话工作区已改变，请重新打开会话')
+                entry = {**copy.deepcopy(self.records['threads'].get(identifier, {})),
+                         'title': self._title_override(identifier) or current.get('name') or current.get('title') or '未命名聊天',
+                         'cwd': str(expected), 'model': result.get('model'), 'effort': result.get('reasoningEffort')}
+                chat = Chat(self, identifier, result, backend, entry=entry)
+                failures.pop(identifier, None)
+                self.live[identifier] = chat
+                self._start_queue(chat)
+                return chat
 
     @staticmethod
     def _sandbox_type(value):
@@ -1231,6 +1292,14 @@ class StandaloneBridge(Bridge):
 
     def _runtime_event(self, message, source='web'):
         method, params = message.get('method'), message.get('params') or {}
+        failures = self.__dict__.get('history_observation_failures')
+        if failures:
+            # Native events invalidate this advisory cooldown without waiting
+            # on a chat/history lock or changing the original execution owner.
+            if method == 'bridge/disconnected':
+                failures.clear()
+            elif params.get('threadId'):
+                failures.pop(params['threadId'], None)
         backend = self.history_runtime if source == 'history' else self.runtime
         native = getattr(self, 'native_queue' if source == 'history' else 'web_native_queue', None)
         if native and method in ('thread/queue/changed', 'bridge/disconnected'):
@@ -1352,6 +1421,8 @@ class StandaloneBridge(Bridge):
         chat.queue_event.set()
 
     def session(self, thread_id, attach=True, background=False, force=False):
+        if force:
+            self.__dict__.get('history_observation_failures', {}).pop(thread_id, None)
         with self.registry_lock:
             owned = thread_id in self.records['threads']
         if not owned and self.history:
@@ -1363,6 +1434,21 @@ class StandaloneBridge(Bridge):
                     pass
             return self.history.session(thread_id, full=False)
         entry = self._record(thread_id)
+        if not attach:
+            with self.lock:
+                chat = self.live.get(thread_id)
+            if chat:
+                return chat
+            if entry.get('runtime') == 'history' and self.history_socket:
+                try:
+                    return self._observe_history(thread_id)
+                except (SideChatError, OSError):
+                    pass
+            history = (self.history if entry.get('runtime') == 'history' else
+                       self.web_history if entry.get('runtime') == 'web' else None)
+            if history:
+                return history.session(thread_id, full=False)
+            raise KeyError('此会话当前没有可读取的只读历史')
         with self.lock:
             chat = self.live.get(thread_id)
             if chat:
@@ -1373,17 +1459,6 @@ class StandaloneBridge(Bridge):
                     chat.closed = True
                     chat.queue_event.set()
                 del self.live[thread_id]
-            if not attach:
-                if entry.get('runtime') == 'history' and self.history_socket:
-                    try:
-                        return self._observe_history(thread_id)
-                    except (SideChatError, OSError):
-                        pass
-                history = (self.history if entry.get('runtime') == 'history' else
-                           self.web_history if entry.get('runtime') == 'web' else None)
-                if history:
-                    return history.session(thread_id, full=False)
-                raise KeyError('此会话当前没有可读取的只读历史')
             # Only the registry can authorize a resume. No arbitrary UUIDs and
             # no scanning/importing of ~/.codex or desktop session databases.
             backend = self._history_backend() if entry.get('runtime') == 'history' else self.runtime
@@ -1659,11 +1734,11 @@ class StandaloneBridge(Bridge):
             except KeyError:
                 continue
             chat = self.live.get(identifier)
-            view = chat.view(include_turns=False) if chat else {}
+            view = (chat.activity_view() if isinstance(chat, Chat) else chat.view(include_turns=False)) if chat else {}
             rows.append({'id': identifier, 'host': 'local', 'recency': entry['updatedAt'] * 1000,
                          'connected': True if not chat else chat.connected,
                          'status': view.get('status', 'idle'),
-                         'hasPendingRequests': bool(view.get('requests'))})
+                         'hasPendingRequests': view.get('hasPendingRequests', bool(view.get('requests')))})
         return rows
 
     def navigation_index(self, thread_id):
@@ -1680,6 +1755,15 @@ class StandaloneBridge(Bridge):
     def timeline_read(self, thread_id, mode='page', **options):
         native_items = self._native_queue_items(thread_id) if mode != 'detail' else []
         chat = self.session(thread_id, attach=False)
+        if mode == 'detail':
+            with chat.condition:
+                if chat.timeline.sequence == chat.sequence:
+                    return {**chat.timeline.detail(**options), 'files': []}
+        count_users = getattr(self.history, 'user_message_count', None)
+        user_count = (count_users(thread_id)
+                      if callable(count_users) and (getattr(chat, 'shared', False) or not isinstance(chat, Chat))
+                      else None)
+        expansion = None
         with chat.condition:
             # Detail chunks belong to an already projected timeline. Reuse its
             # immutable text until a native event changes the sequence instead
@@ -1698,9 +1782,8 @@ class StandaloneBridge(Bridge):
             # projection or attachment lookup for every loaded historical turn.
             view = {**chat.view(include_turns=chat.timeline.sequence != chat.sequence),
                     'submissions': merge_native_queue(pending_submissions(submissions), native_items, submissions)}
-            count_users = getattr(self.history, 'user_message_count', None)
-            if callable(count_users) and (getattr(chat, 'shared', False) or not isinstance(chat, Chat)):
-                view['userMessageCount'] = count_users(thread_id)
+            if user_count is not None:
+                view['userMessageCount'] = user_count
             # Bind ledger identities before Timeline computes keys/revisions.
             # Native echoes and offline history must have the same user key.
             for turn in view['turns']:
@@ -1722,8 +1805,10 @@ class StandaloneBridge(Bridge):
                         message['attachments'] = [{**a, 'type': 'localImage' if a.get('image') else 'file',
                                                    **({'uploadId': a['id']} if a.get('image') else {})}
                                                   for a in copy.deepcopy(submission.get('attachments', []))]
-                self._annotate_upload_attachments(chat, turn['messages'])
                 turn['actionable'] = bool(turn.get('id')) and turn.get('id') != 'history'
+            # Resolve the upload ledger once per projection, rather than once
+            # per loaded turn. Original path/symlink checks remain authoritative.
+            self._annotate_upload_attachments(chat, [message for turn in view['turns'] for message in turn['messages']])
             chat.timeline.update(self._with_title_override(thread_id, view))
             if mode == 'detail':
                 result = chat.timeline.detail(**options)
@@ -1739,34 +1824,48 @@ class StandaloneBridge(Bridge):
                     # Live shared turns accumulate independently of the saved
                     # tail budget. Read beyond the whole loaded prefix so its
                     # oldest boundary is present even after many native turns.
-                    next_limit = max(chat.history_limit, len(chat.state['turns'])) * 2
-                    saved = self.history.session(thread_id, turn_limit=next_limit)
-                    with saved.condition:
-                        turns = saved.state['turns']
-                        first = chat.state['turns'][0]['turnId'] if chat.state['turns'] else None
-                        boundary = next((i for i, turn in enumerate(turns) if turn.get('turnId') == first), None)
-                        if boundary is None:
-                            raise ValueError('历史记录的边界已变化，请重新打开会话后继续加载')
-                        chat.state['turns'] = copy.deepcopy(turns[:boundary]) + chat.state['turns']
-                        chat.state['turnsPagination'] = copy.deepcopy(saved.state['turnsPagination'])
-                        chat.history_limit = saved.limit or next_limit
-                        chat.changed()
-                    return self.timeline_read(thread_id, mode, **options)
-            result['files'] = []
-            if mode == 'changes':
-                with self.registry_lock:
-                    entry = copy.deepcopy(self.records['threads'].get(thread_id))
-                if isinstance(chat, Chat):
-                    state = chat.composer_state()
-                elif entry is not None:
-                    state = composer_state(composer_mode(entry.get('composerMode', 'normal')),
-                                           entry.get('threadGoal'), goal_known=bool(entry.get('goalKnown')),
-                                           goal_capable=entry.get('goalSupported') is not False, revision=entry.get('composerRevision', 0))
-                else:
-                    state = None
-                if state is not None:
-                    result.setdefault('meta', {})['composerState'] = state
-            return result
+                    expansion = (max(chat.history_limit, len(chat.state['turns'])) * 2,
+                                 chat.state['turns'][0]['turnId'] if chat.state['turns'] else None)
+            if expansion is None:
+                result['files'] = []
+                if mode == 'changes':
+                    with self.registry_lock:
+                        entry = copy.deepcopy(self.records['threads'].get(thread_id))
+                    if isinstance(chat, Chat):
+                        state = chat.composer_state()
+                    elif entry is not None:
+                        state = composer_state(composer_mode(entry.get('composerMode', 'normal')),
+                                               entry.get('threadGoal'), goal_known=bool(entry.get('goalKnown')),
+                                               goal_capable=entry.get('goalSupported') is not False, revision=entry.get('composerRevision', 0))
+                    else:
+                        state = None
+                    if state is not None:
+                        result.setdefault('meta', {})['composerState'] = state
+                return result
+        next_limit, first = expansion
+        saved = self.history.session(thread_id, turn_limit=next_limit)
+        with saved.condition:
+            turns = saved.state['turns']
+            boundary = next((i for i, turn in enumerate(turns) if turn.get('turnId') == first), None)
+            if boundary is None:
+                raise ValueError('历史记录的边界已变化，请重新打开会话后继续加载')
+            prefix = copy.deepcopy(turns[:boundary])
+            pagination = copy.deepcopy(saved.state['turnsPagination'])
+            saved_limit = saved.limit or next_limit
+        with chat.condition:
+            current_first = chat.state['turns'][0]['turnId'] if chat.state['turns'] else None
+            if current_first != first:
+                # A concurrent reader may have already prepended this prefix.
+                if not any(turn.get('turnId') == first for turn in chat.state['turns']):
+                    raise ValueError('历史记录的边界已变化，请重新打开会话后继续加载')
+            else:
+                if not prefix and not pagination.get('hasLoadedOldest', False):
+                    raise ValueError('历史记录暂时无法向前加载，请稍后重试')
+                chat.state['turns'] = prefix + chat.state['turns']
+                chat.state['turnsPagination'] = pagination
+                chat.history_limit = saved_limit
+                chat.changed()
+        return self.timeline_read(thread_id, mode, **options)
 
     def send(self, thread_id, text, submission_id, mode='send', skills=None, *, work_mode=None, attachments=None, ui_locale=None, client_request_id=None, _text_limit=20000):
         if client_request_id is not None and (not isinstance(client_request_id, str) or not __import__("re").fullmatch(r"[a-zA-Z0-9-]{16,80}", client_request_id)):

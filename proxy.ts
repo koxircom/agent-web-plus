@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { logConnectionRequestFailure } from "@/lib/connection-diagnostics-server";
 import {
   getAuthRetryAfterMs,
   recordAuthFailure,
@@ -25,7 +26,7 @@ function tooManyAttempts(retryAfterMs: number): NextResponse {
   });
 }
 
-export function proxy(request: NextRequest) {
+function handleProxy(request: NextRequest) {
   const isApiRequest = request.nextUrl.pathname === "/api"
     || request.nextUrl.pathname.startsWith("/api/");
   const isTrustedRequest = isApiRequest
@@ -86,6 +87,18 @@ export function proxy(request: NextRequest) {
   }
 
   return NextResponse.next();
+}
+
+export function proxy(request: NextRequest) {
+  const response = handleProxy(request);
+  if (response.status === 401 || response.status === 403 || response.status === 429) {
+    const cookie = request.cookies.get(PI_WEB_SESSION_COOKIE)?.value;
+    // Verify the original signature at an earlier clock only to classify an
+    // already rejected cookie. This never grants access or changes throttling.
+    const expired = response.status === 401 && cookie && isValidWebSessionToken(cookie, process.env.PI_WEB_PASSWORD, 0);
+    logConnectionRequestFailure(request, response.status, expired ? "authentication_expired" : undefined);
+  }
+  return response;
 }
 
 export const config = { matcher: ["/", "/login", "/api/:path*"] };

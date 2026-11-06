@@ -1,7 +1,8 @@
+import { withConnectionDiagnostics } from "@/lib/connection-diagnostics-server";
 import { isCodexSessionId } from "@/lib/execution-engine-settings";
 import { handleSessionContextRequest } from "@/lib/session-context-service";
 
-export async function GET(
+async function handleGet(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -32,4 +33,8 @@ export async function HEAD(req: Request, context: { params: Promise<{ id: string
   const { id } = await context.params;
   if (isCodexSessionId(id)) return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
   return handleSessionContextRequest(req, { id });
+}
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  return withConnectionDiagnostics(request, () => handleGet(request, context));
 }

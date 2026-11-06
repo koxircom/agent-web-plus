@@ -132,6 +132,7 @@ class StandaloneComposerTests(unittest.TestCase):
         chat.lock = threading.RLock()
         chat.condition = threading.Condition(chat.lock)
         chat.state, chat.submissions = {}, {}
+        chat.dismissed_async_questions = {}
         chat.goal_known, chat.goal_supported, chat.goal_support_checked = False, True, False
         chat.backend = NativeBackend()
         chat.changed = lambda: None

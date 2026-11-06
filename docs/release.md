@@ -78,18 +78,6 @@ python3 scripts/publish-release.py \
 
 发布本身不会升级运行实例。实例升级仍须明确目标及授权，保留原会话、置顶、设置、用量账本和实例配置，并按维护流程切换。不得把 GitHub 发布成功当作运行实例升级完成。
 
-## 5. Release 说明规范与生命周期同步
-
-- **集中存放**：所有历史及最新 Release 说明统一存放于 `docs/releases/v<版本>.md`，并在 `docs/releases/README.md` 中自动维护索引导航表；**严禁直接在仓库根目录下平铺 `RELEASE_NOTES_*.md`**，保持根目录整洁纯净。
-- **生命周期对齐 (Clean on Delete)**：源码库中的说明文件与 GitHub 线上 Releases 保持严格 1:1 生命周期对齐。线上若删除已下线的旧版本，仓库内对应的说明文件亦应同步清理。
-- **一键审计与同步工具**：
-  ```bash
-  # 审计当前本地说明与线上 Release 状态差异
-  python3 scripts/sync-release-notes.py
-  # 执行同步：自动清理已删除版本、迁移根目录残留、补齐缺失版本并更新索引
-  python3 scripts/sync-release-notes.py --apply
-  ```
-
 ## README 中直接播放介绍视频
 
 Release 的 MP4 附件用于可选下载。README 的播放器使用 GitHub 视频附件地址，独立放在一个段落中；不要把封面链接到 Release 下载地址充当在线播放。

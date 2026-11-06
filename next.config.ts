@@ -25,6 +25,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: configDir,
   outputFileTracingIncludes: {
     "/api/sessions/**": ["./bin/session-history-worker.cjs"],
+    "/api/usage/ledger": ["./bin/usage-guard/**"],
   },
   experimental: {
     // proxy.ts matches /api/:path*, and Next buffers the request body whenever

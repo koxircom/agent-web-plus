@@ -26,7 +26,7 @@ Agent Web Plus は、**Pi Agent** と **Codex** の双方に対応した統合�
 Agent Web Plus には Node.js 22.19.0 以降（`node >=22.19`）が必要です。`node --version` でバージョンを確認してから、[`koxircom/agent-web-plus` GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) の公式 `.tgz` パッケージをグローバルにインストールして推奨コマンド `agent-web` を起動します（互換コマンド `pi-web` も引き続き利用可能です）：
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.79/agent-web-plus-1.4.79.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.81/agent-web-plus-1.4.81.tgz
 agent-web
 ```
 
@@ -36,7 +36,7 @@ agent-web
 
 モデル Provider が未設定の場合は、**Models** パネルを開いてログインするか API Key を追加してください。
 
-上記のコマンドは `v1.4.79` のアセット（`agent-web-plus-1.4.79.tgz`）を例にしています。利用可能なパッケージは Releases で確認してください。特定バージョンのインストールやアップグレードを行う場合は、実行中のプロセスを `Ctrl+C` で停止し、URL 内のバージョンを [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) 上の対象バージョン `<version>` に置き換えて再実行してください：
+上記のコマンドは `v1.4.81` のアセット（`agent-web-plus-1.4.81.tgz`）を例にしています。利用可能なパッケージは Releases で確認してください。特定バージョンのインストールやアップグレードを行う場合は、実行中のプロセスを `Ctrl+C` で停止し、URL 内のバージョンを [GitHub Releases](https://github.com/koxircom/agent-web-plus/releases) 上の対象バージョン `<version>` に置き換えて再実行してください：
 
 ```bash
 npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v<version>/agent-web-plus-<version>.tgz
@@ -78,10 +78,10 @@ PI_WEB_PASSWORD='十分に長いランダムなパスワード' agent-web --host
 
 サーバー側のモデルリクエストと API リクエストは、標準の `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 環境変数を使用します。
 
-macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.79/agent-web-plus-1.4.79.tgz)からインストールして起動）：
+macOS または Linux（[GitHub Release の `.tgz` パッケージ](https://github.com/koxircom/agent-web-plus/releases/download/v1.4.81/agent-web-plus-1.4.81.tgz)からインストールして起動）：
 
 ```bash
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.79/agent-web-plus-1.4.79.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.81/agent-web-plus-1.4.81.tgz
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
@@ -91,7 +91,7 @@ agent-web
 Windows PowerShell：
 
 ```powershell
-npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.79/agent-web-plus-1.4.79.tgz
+npm install -g https://github.com/koxircom/agent-web-plus/releases/download/v1.4.81/agent-web-plus-1.4.81.tgz
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"

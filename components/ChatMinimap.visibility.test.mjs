@@ -20,10 +20,10 @@ test('a short latest tail still exposes older history without fetching it',()=>{
  assert.equal(c.show(false,200,false),true);
  assert.equal(c.show(true,0,false),true);
 });
-for(const engine of ['pi','codex'])for(const [name,overlay,minimapHovered,expected]of [['hidden rail',false,false,0],['open desktop preview',false,true,1],['mobile overlay',true,false,1]]){
+for(const engine of ['pi','codex'])for(const [name,visible,overlay,minimapHovered,expected]of [['hidden rail',false,false,false,0],['visible desktop rail',true,false,false,1],['open desktop preview',true,false,true,1],['mobile overlay',true,true,false,1]]){
  test(`${engine}: ${name} starts ${expected} automatic history load`,()=>{
   let calls=0;const sessionId=engine==='codex'?'codex:fixture':'fixture';
-  vm.runInNewContext(js(effect),{navigation:{value:null},overlay,minimapHovered,useEffect:fn=>fn(),getMinimapHistorySettings:()=>({initialTurns:5}),targetTurnsRef:{current:5},setTargetTurns(){},allMessagesRef:{current:[{role:'user'}]},readMinimapHistoryState:()=>({sessionId,hasEarlierMessages:true}),sessionId,sessionGenerationRef:{current:1},initialLoadAttemptRef:{current:null},runContinuousLoad:()=>{calls++;return true},allNodes:[],messages:[],targetTurns:5});
+  vm.runInNewContext(js(effect),{navigation:{value:null},visible,overlay,minimapHovered,useEffect:fn=>fn(),getMinimapHistorySettings:()=>({initialTurns:5}),targetTurnsRef:{current:5},setTargetTurns(){},allMessagesRef:{current:[{role:'user'}]},readMinimapHistoryState:()=>({sessionId,hasEarlierMessages:true}),sessionId,sessionGenerationRef:{current:1},initialLoadAttemptRef:{current:null},runContinuousLoad:()=>{calls++;return true},allNodes:[],messages:[],targetTurns:5});
   assert.equal(calls,expected);
  });
 }

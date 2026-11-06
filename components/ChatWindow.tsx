@@ -370,6 +370,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     const position = initialScrollPositionRef.current;
     return position && !position.atBottom ? position : null;
   });
+  const [revealedScrollRestore, setRevealedScrollRestore] = useState<Extract<ChatScrollPosition, { atBottom: false }> | null>(null);
   const [restoreAnchorReady, setRestoreAnchorReady] = useState(false);
 
   const {
@@ -873,6 +874,31 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
   useEffect(() => {
     if (searchTarget) setPendingScrollRestore(null);
   }, [searchTarget]);
+
+  useEffect(() => {
+    const position = pendingScrollRestore;
+    if (!position) return;
+    const timer = window.setTimeout(() => {
+      scrollToBottom("instant");
+      setRevealedScrollRestore(position);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [pendingScrollRestore, scrollToBottom]);
+
+  useEffect(() => {
+    if (!pendingScrollRestore || revealedScrollRestore !== pendingScrollRestore) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const cancelRestore = () => setPendingScrollRestore(null);
+    container.addEventListener("wheel", cancelRestore, { passive: true });
+    container.addEventListener("touchstart", cancelRestore, { passive: true });
+    container.addEventListener("pointerdown", cancelRestore, { passive: true });
+    return () => {
+      container.removeEventListener("wheel", cancelRestore);
+      container.removeEventListener("touchstart", cancelRestore);
+      container.removeEventListener("pointerdown", cancelRestore);
+    };
+  }, [pendingScrollRestore, revealedScrollRestore, scrollContainerRef]);
 
   useEffect(() => {
     const position = pendingScrollRestore;
@@ -1799,7 +1825,7 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
           className="scrollbar-subtle min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-gutter:stable]"
           data-pi-native-scroll-owner={session?.id}
           data-pi-native-scroll-restoring={pendingScrollRestore ? "true" : undefined}
-          style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
+          style={{ visibility: pendingScrollRestore && revealedScrollRestore !== pendingScrollRestore ? "hidden" : undefined }}
         >
           <div data-chat-navigation-blank="true" style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div ref={messageContentRef} data-pi-native-message-column="true" style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
