@@ -993,6 +993,12 @@ export class CodexRuntime {
         return { extensionStatuses: codexComposerStatuses(this.meta) };
       }
       case "composer_goal_action": {
+        if (command.action === "delete" || command.action === "clear") {
+          const view = await this.json(base + "/composer", { mode: "normal" }) as CodexMeta;
+          this.adoptMeta(view, queueGeneration);
+          this.publishComposer();
+          return { extensionStatuses: codexComposerStatuses(this.meta) };
+        }
         if (!["pause", "resume"].includes(String(command.action))) throw new Error("目标操作无效");
         const receipt = await this.json(base + "/goal/status", { id: randomUUID(),
           status: command.action === "pause" ? "paused" : "active", expected: command.expected });
@@ -1060,7 +1066,11 @@ export class CodexRuntime {
         } else acceptPromptDelivery(this.id, command.requestId);
         return result;
       }
-      case "abort": return this.json(base + "/stop", {});
+      case "abort": {
+        const res = await this.json(base + "/stop", {});
+        this.meta = { ...this.meta, status: "idle" };
+        return res;
+      }
       case "set_model": {
         const modelId = command.modelId;
         const previousChain = this.settingsChain;

@@ -78,7 +78,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body translate="no" className="notranslate" suppressHydrationWarning>
+      <body translate="no" className="notranslate" tabIndex={-1} suppressHydrationWarning>
         {children}
         <PwaRegistration />
       </body>

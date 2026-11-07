@@ -130,8 +130,7 @@ export function ComposerQueue({
   const actionsEnabled = syncStatus === "ready" && (executionEngine === "pi" || executionEngine === "codex");
   const signature = JSON.stringify([sessionId, entries, nativeIds]);
 
-  const [feedback, setFeedback] = useState<{ message: string; type: "info" | "success" | "error" } | null>(null);
-  const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
 
   // Direct native queue bridge without DOM events
   const bridge = useComposerQueueBridge({
@@ -141,12 +140,9 @@ export function ComposerQueue({
     actionsEnabled,
     onRestoreRecall,
     onRecallQueue,
-    onToast: (msg, type = "info") => {
-      setFeedback({ message: msg, type });
-      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
-      feedbackTimer.current = setTimeout(() => setFeedback(null), 4000);
-    },
   });
+  // Errors have one owner per operation and never enter the queue's flow.
+  const errorMessage = (reorderError || bridge.errorMessage || "").trim();
 
   const [confirmation, setConfirmation] = useState<{ signature: string; index: number } | null>(null);
   const [hover, setHover] = useState<{ src: string; left: number; bottom: number; count: number } | null>(null);
@@ -234,8 +230,7 @@ export function ComposerQueue({
     setDragView(null);
     releaseOwnedCapture();
     endDrag(true);
-    setFeedback(null);
-    if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
+    setReorderError(null);
 
     if (prevSignatureRef.current !== signature) {
       const activeOp = currentPendingOpRef.current;
@@ -243,17 +238,6 @@ export function ComposerQueue({
         currentPendingOpRef.current = null;
         if (pendingReorderTimer.current) clearTimeout(pendingReorderTimer.current);
         setPendingReorder((curr) => (curr === activeOp ? null : curr));
-
-        if (activeOp.expectedIds && activeOp.expectedIds.length) {
-          const actualIds = nativeIds;
-          const matches =
-            actualIds.length === activeOp.expectedIds.length &&
-            actualIds.every((id, idx) => id === activeOp.expectedIds![idx]);
-
-          if (!matches) {
-            setFeedback({ message: "队列已被外部更新，已恢复最新状态", type: "info" });
-          }
-        }
       }
       prevSignatureRef.current = signature;
     }
@@ -434,7 +418,6 @@ export function ComposerQueue({
       releaseOwnedCapture();
       if (dragFrame.current !== null) cancelAnimationFrame(dragFrame.current);
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
-      if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
       if (pendingReorderTimer.current) clearTimeout(pendingReorderTimer.current);
     },
     [],
@@ -458,6 +441,7 @@ export function ComposerQueue({
     };
 
     currentPendingOpRef.current = op;
+    setReorderError(null);
     setPendingReorder(op);
 
     if (pendingReorderTimer.current) clearTimeout(pendingReorderTimer.current);
@@ -466,7 +450,7 @@ export function ComposerQueue({
         currentPendingOpRef.current = null;
         setPendingReorder((current) => {
           if (current === op) {
-            setFeedback({ message: "队列排序确认超时，请刷新同步", type: "error" });
+            setReorderError("队列排序确认超时，请刷新同步");
             return null;
           }
           return current;
@@ -494,7 +478,7 @@ export function ComposerQueue({
   }, [rows, pendingReorder, signature]);
 
   const remove = (originalIdx: number) => {
-    if (!actionsEnabled || !bridge.enabled) return;
+    if (!actionsEnabled || !bridge.enabled || bridge.busy) return;
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     if (confirmation?.signature === signature && confirmation.index === originalIdx) {
       setConfirmation(null);
@@ -514,7 +498,7 @@ export function ComposerQueue({
       data-pi-native-queue="true"
       aria-label="排队消息"
       aria-busy={syncStatus === "loading" || undefined}
-      hidden={!rows.length && syncStatus === "ready"}
+      hidden={!rows.length && syncStatus === "ready" && !errorMessage}
     >
       {syncStatus !== "ready" && (
         <div role="status" className="px-3 py-1 text-[11px] text-text-muted">
@@ -543,6 +527,11 @@ export function ComposerQueue({
             !actionsEnabled ||
             !bridge.enabled ||
             isPendingAction;
+          const canDeleteOrRecall =
+            !entry.pending &&
+            actionsEnabled &&
+            bridge.enabled &&
+            !isPendingAction;
           const isMenuOpen = menu !== null;
           const sortable =
             queueActionsAvailable &&
@@ -565,6 +554,12 @@ export function ComposerQueue({
               style={isDragging && dragView?.moved ? { transform: `translateY(${dragView.offset}px)` } : undefined}
               aria-busy={entry.pending || undefined}
               key={entry.requestId || `${entry.kind}-${originalIndex}`}
+              onContextMenu={() => {
+                if (drag.current) {
+                  releaseOwnedCapture();
+                  endDrag(true);
+                }
+              }}
             >
               {queueActionsAvailable && (
                 <button
@@ -714,6 +709,7 @@ export function ComposerQueue({
                     });
                   }}
                   onMouseEnter={(e) => {
+                    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     setHover({
                       src,
@@ -732,7 +728,7 @@ export function ComposerQueue({
                 <button
                   type="button"
                   className="pi-enh-queue-text"
-                  disabled={disabled}
+                  disabled={!canDeleteOrRecall}
                   title={`点击移回输入框编辑：${entry.text || "图片消息"}`}
                   onClick={() => void bridge.action("recall", originalIndex)}
                 >
@@ -773,7 +769,7 @@ export function ComposerQueue({
                     className={`pi-enh-queue-delete${confirming ? " pi-enh-queue-delete-confirming" : ""}`}
                     aria-label={`删除第 ${renderIndex + 1} 条排队消息`}
                     title={confirming ? "再次点击确认删除" : "删除此排队消息"}
-                    disabled={disabled}
+                    disabled={!canDeleteOrRecall}
                     onClick={() => remove(originalIndex)}
                   >
                     <QueueIcon kind="delete" />
@@ -868,12 +864,9 @@ export function ComposerQueue({
           </div>,
           document.body,
         )}
-      {(feedback || bridge.errorMessage) && (
-        <div
-          role={feedback?.type === "error" || bridge.errorMessage ? "alert" : "status"}
-          className="pi-enh-queue-feedback px-3 py-1 text-[11px] text-amber-500"
-        >
-          {feedback?.message || bridge.errorMessage}
+      {errorMessage && (
+        <div role="alert" className="pi-enh-queue-feedback pi-enh-queue-error">
+          {errorMessage}
         </div>
       )}
       {gallery && (
@@ -912,7 +905,7 @@ function QueueGalleryDialog({
     dialog.showModal();
     closeButtonRef.current?.focus({ preventScroll: true });
     return () => {
-      document.body.style.overflow = previousOverflow;
+      document.body.style.overflow = previousOverflow === "hidden" ? "" : previousOverflow;
       if (dialog.open) dialog.close();
       if (trigger?.isConnected) trigger.focus({ preventScroll: true });
     };

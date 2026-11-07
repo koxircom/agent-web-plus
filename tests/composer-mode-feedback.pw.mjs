@@ -25,8 +25,8 @@ try{await new Promise(r=>server.listen(0,'127.0.0.1',r));base='http://127.0.0.1:
  assert.equal(await page.getByRole('button',{name:'退出目标模式',exact:true}).count(),0);
  assert.equal(await card.getAttribute('data-status'),'active');
  await page.evaluate(({id,snapshot})=>window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__(id,{...snapshot,goalStatus:'complete'}),{id,snapshot});
- await page.waitForFunction(()=>document.querySelector('.chat-composer-goal-summary')?.dataset.status==='complete');assert.equal(await card.getByRole('button').count(),0);
- await page.evaluate(id=>window.__PI_ENH_COMMIT_COMPOSER_MODE_STATE__(id,{version:1,mode:'normal',goalKnown:true,capabilities:{goal:true,plan:true}}),id);
+ await page.waitForFunction(()=>document.querySelector('.chat-composer-goal-summary')?.dataset.status==='complete');assert.equal(await card.getByRole('button',{name:'删除目标'}).count(),1);
+ await card.getByRole('button',{name:'删除目标'}).click();
  await page.waitForFunction(()=>!document.querySelector('.chat-composer-goal-summary'));
  }
  rejectNext=true;await pick('goal');await page.waitForFunction(()=>document.body.textContent.includes('模拟切换被拒绝'));assert.equal(await page.locator('.chat-composer-mode-status').count(),0);assert.equal(await page.locator('textarea').inputValue(),'切换模式不能丢失输入内容');assert.equal(spriteRequests,0);cases.push({engine,width,planIcon:true,goalIcon:true,failedSwitchNotEnabled:true,exitMode:true,draftPreserved:true,spriteRequests});await context.close()}

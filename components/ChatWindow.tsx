@@ -527,16 +527,57 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
     // Coalesce completion events into one frame in this single selection owner.
     let activePointer: number | null = null;
     let selectionFrame: number | null = null;
+    let selectionTimer: ReturnType<typeof setTimeout> | null = null;
+    let isTouching = false;
+    const isTouchEnv = window.matchMedia?.("(any-pointer: coarse)").matches || isMobile;
     const cancelSelectionFrame = () => {
       if (selectionFrame !== null) cancelAnimationFrame(selectionFrame);
+      if (selectionTimer !== null) clearTimeout(selectionTimer);
       selectionFrame = null;
+      selectionTimer = null;
     };
     const scheduleSelection = () => {
-      if (activePointer !== null || quoteInputOpen || selectionFrame !== null) return;
+      // 触屏环境下：如果用户手指正按在屏幕上拖动手柄（isTouching === true），
+      // 严禁触发任何 React 状态更新或 DOM 变动，确保 DOM 树绝对静止，
+      // 彻底消除 Android Chrome 在手柄移动期间因 DOM 重绘将起始点（Anchor）向上跳选的缺陷。
+      if (isTouchEnv) {
+        if (isTouching || quoteInputOpen) return;
+        cancelSelectionFrame();
+        selectionTimer = setTimeout(() => {
+          selectionTimer = null;
+          if (!isTouching) captureQuotedSelection();
+        }, 300);
+        return;
+      }
+      if (activePointer !== null || quoteInputOpen) return;
+      if (selectionFrame !== null) return;
       selectionFrame = requestAnimationFrame(() => {
         selectionFrame = null;
         captureQuotedSelection();
       });
+    };
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.target instanceof Node && quotePopoverRef.current?.contains(event.target)) return;
+      isTouching = true;
+      cancelSelectionFrame();
+      // 手指触碰屏幕时平稳收起旧工具条，避免拖拽手柄期间悬挂遮挡或引发 DOM 变动
+      if (!quoteInputOpen && quotedRangeRef.current) {
+        closeQuotedSelection();
+      }
+    };
+    const onTouchMove = () => {
+      isTouching = true;
+      cancelSelectionFrame();
+    };
+    const onTouchEnd = () => {
+      isTouching = false;
+      if (!quoteInputOpen) {
+        cancelSelectionFrame();
+        selectionTimer = setTimeout(() => {
+          selectionTimer = null;
+          if (!isTouching) captureQuotedSelection();
+        }, 250);
+      }
     };
     const onPointerDown = (event: PointerEvent) => {
       if (!event.isPrimary || event.button !== 0 || quoteInputOpen) return;
@@ -544,7 +585,6 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       if (event.target instanceof Node && quotePopoverRef.current?.contains(event.target)) return;
       activePointer = event.pointerId;
       cancelSelectionFrame();
-      if (quotedRangeRef.current) closeQuotedSelection();
     };
     const onPointerUp = (event: PointerEvent) => {
       if (activePointer !== null && event.pointerId !== activePointer) return;
@@ -552,25 +592,33 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       activePointer = null;
       scheduleSelection();
     };
-    const cancelSelectionGesture = () => {
+    const cancelSelectionGesture = (event: Event) => {
       activePointer = null;
       cancelSelectionFrame();
       if (!quoteInputOpen && quotedRangeRef.current) closeQuotedSelection();
+      if (event.type === "pointercancel" && isTouchEnv && !isTouching) scheduleSelection();
     };
     const onContextMenu = (event: MouseEvent) => {
       if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true'], .pi-enh-annotation-editor, .pi-enh-annotation-list, .pi-enh-menu")) return;
-      const enhancer = window as Window & { __PI_ENH_IS_MOBILE_ENV__?: () => boolean; __PI_ENH_IS_PLUGIN_ENABLED__?: (pluginId: string) => boolean };
+      const enhancer = window as Window & { __PI_ENH_IS_PLUGIN_ENABLED__?: (pluginId: string) => boolean };
       if (!quoteSelectionEnabled && !enhancer.__PI_ENH_IS_PLUGIN_ENABLED__?.("quick-quote")) return;
+      // 彻底屏蔽浏览器自带的原生选择工具条与 Touch to Search 搜索条，只使用应用专属的复制和引用工具条
+      event.preventDefault();
       const selection = window.getSelection();
       const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim());
-      if ((enhancer.__PI_ENH_IS_MOBILE_ENV__?.() ?? isMobile) || hasSelection) event.preventDefault();
-      if (hasSelection) scheduleSelection();
+      if (hasSelection && !isTouching) scheduleSelection();
     };
     document.addEventListener("selectionchange", scheduleSelection);
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("pointerup", onPointerUp);
     document.addEventListener("pointercancel", cancelSelectionGesture);
     document.addEventListener("contextmenu", onContextMenu, true);
+    if (isTouchEnv) {
+      document.addEventListener("touchstart", onTouchStart, { passive: true });
+      document.addEventListener("touchmove", onTouchMove, { passive: true });
+      document.addEventListener("touchend", onTouchEnd, { passive: true });
+      document.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    }
     window.addEventListener("blur", cancelSelectionGesture);
     return () => {
       cancelSelectionFrame();
@@ -579,6 +627,12 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       document.removeEventListener("pointerup", onPointerUp);
       document.removeEventListener("pointercancel", cancelSelectionGesture);
       document.removeEventListener("contextmenu", onContextMenu, true);
+      if (isTouchEnv) {
+        document.removeEventListener("touchstart", onTouchStart);
+        document.removeEventListener("touchmove", onTouchMove);
+        document.removeEventListener("touchend", onTouchEnd);
+        document.removeEventListener("touchcancel", onTouchEnd);
+      }
       window.removeEventListener("blur", cancelSelectionGesture);
     };
   }, [captureQuotedSelection, closeQuotedSelection, isMobile, quoteInputOpen, quoteSelectionEnabled]);
@@ -615,12 +669,14 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
       } else if (mobile) {
         const composer = document.querySelector<HTMLElement>("textarea.chat-input-textarea");
         const maxBottom = Math.min(viewportBottom - 20, composer?.getBoundingClientRect().top ?? viewportBottom);
-        top = selectionBottom + 10;
+        // Leave room for Android's native drag handles below the range. The
+        // previous 10px gap placed this toolbar directly on the lower handle.
+        const handleClearance = 40;
+        top = selectionBottom + handleClearance;
         if (top + rect.height > maxBottom) {
           const aboveNativeMenu = selectionTop - rect.height - 48;
           top = aboveNativeMenu >= viewportTop + 10 ? aboveNativeMenu
-            : selectionTop - rect.height - 8 >= viewportTop + 10 ? selectionTop - rect.height - 8
-              : Math.max(viewportTop + 10, maxBottom - rect.height);
+            : Math.max(viewportTop + 10, maxBottom - rect.height);
         }
       } else {
         top = selectionTop - rect.height - 8;
@@ -1668,32 +1724,59 @@ export function ChatWindow({ mobileNavigationOpen = false, onMobileNavigationOpe
           >
             {error}
           </div>
-          <button
-            type="button"
-            onClick={retryLoadSession}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "8px 16px",
-              borderRadius: 8,
-              border: "1px solid var(--accent)",
-              background: "var(--accent)",
-              color: "var(--accent-contrast)",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
-              transition: "opacity 0.15s ease",
-              flexShrink: 0,
-              whiteSpace: "nowrap",
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-            </svg>
-            <span>{t("chat.reloadSession")}</span>
-          </button>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <button
+              type="button"
+              onClick={retryLoadSession}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 16px",
+                borderRadius: 8,
+                border: "1px solid var(--accent)",
+                background: "var(--accent)",
+                color: "var(--accent-contrast)",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                transition: "opacity 0.15s ease",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+              <span>{t("chat.reloadSession")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== "undefined" && window.location) {
+                  window.location.href = "/";
+                }
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--bg-hover)",
+                color: "var(--text)",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>{t("sidebar.new") || "新建会话"}</span>
+            </button>
+          </div>
         </div>
         <div className="chat-composer-footer relative shrink-0" key="chat-input-container">
           {chatInputElement}

@@ -4365,6 +4365,7 @@
       }
 
       listEl.innerHTML = html;
+      if (popover.isConnected) positionPopover();
     }
 
     renderList("");
@@ -4552,32 +4553,43 @@
     document.body.appendChild(popover);
     activeSessionTagsPopover = popover;
 
-    const pWidth = 230;
-    const pHeight = 260;
-    const padding = 8;
-    let x = 0;
-    let y = 0;
-
-    const rect = triggerRect || (triggerItem?.getBoundingClientRect ? triggerItem.getBoundingClientRect() : null);
-    if (rect && rect.width > 0) {
-      if (rect.right + pWidth + padding <= window.innerWidth) {
-        x = rect.right + 2;
-      } else if (rect.left - pWidth - 2 >= padding) {
-        x = rect.left - pWidth - 2;
-      } else {
-        x = Math.max(padding, window.innerWidth - pWidth - padding);
+    // Size from real content, not a six-row cap or a guessed popover height.
+    // The list alone may scroll only when the whole visual viewport is full.
+    function positionPopover() {
+      const padding = 8;
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft || 0;
+      const top = viewport?.offsetTop || 0;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      popover.style.maxWidth = `${Math.max(0, width - padding * 2)}px`;
+      popover.style.maxHeight = `${Math.max(0, height - padding * 2)}px`;
+      // Entrance animation scales the bounding rect; layout dimensions do not.
+      const pWidth = popover.offsetWidth;
+      const pHeight = popover.offsetHeight;
+      const rect = triggerItem?.isConnected ? triggerItem.getBoundingClientRect() : triggerRect;
+      let x = left + 100;
+      let y = top + 100;
+      if (rect && rect.width > 0) {
+        x = rect.right + pWidth + padding <= left + width
+          ? rect.right + 2
+          : rect.left - pWidth - 2 >= left + padding
+            ? rect.left - pWidth - 2
+            : left + width - pWidth - padding;
+        y = rect.top - 4;
+      } else if (event) {
+        x = (event.clientX || 0) + 4;
+        y = (event.clientY || 0) - 4;
       }
-      y = Math.max(padding, Math.min(rect.top - 4, window.innerHeight - pHeight - padding));
-    } else if (event) {
-      x = Math.max(padding, Math.min((event.clientX || 0) + 4, window.innerWidth - pWidth - padding));
-      y = Math.max(padding, Math.min((event.clientY || 0) - 4, window.innerHeight - pHeight - padding));
-    } else {
-      x = 100;
-      y = 100;
+      x = Math.max(left + padding, Math.min(x, left + width - pWidth - padding));
+      y = Math.max(top + padding, Math.min(y, top + height - pHeight - padding));
+      popover.style.left = `${Math.round(x)}px`;
+      popover.style.top = `${Math.round(y)}px`;
     }
-
-    popover.style.left = `${Math.round(x)}px`;
-    popover.style.top = `${Math.round(y)}px`;
+    positionPopover();
+    window.addEventListener("resize", positionPopover);
+    window.visualViewport?.addEventListener("resize", positionPopover);
+    window.visualViewport?.addEventListener("scroll", positionPopover);
 
     const onDocPointerDown = (evt) => {
       if (popover && !popover.contains(evt.target) && !triggerItem?.contains?.(evt.target) && !(activeMenu && activeMenu.contains(evt.target))) {
@@ -4595,6 +4607,9 @@
     document.addEventListener("keydown", onDocKeyDown, true);
 
     activeSessionTagsCleanup = () => {
+      window.removeEventListener("resize", positionPopover);
+      window.visualViewport?.removeEventListener("resize", positionPopover);
+      window.visualViewport?.removeEventListener("scroll", positionPopover);
       document.removeEventListener("pointerdown", onDocPointerDown, true);
       window.removeEventListener("keydown", onDocKeyDown, true);
       document.removeEventListener("keydown", onDocKeyDown, true);
@@ -16788,12 +16803,13 @@
     }
   });
 
-  addManagedListener(document, "mousedown", (event) => {
+  addManagedListener(document, "pointerdown", (event) => {
     if (!annotationEditor || !activeAnnotationSaveHandler) return;
     const target = event.target;
     if (annotationEditor.contains(target)) return;
     if (target?.closest?.(".pi-enh-quote-bar, .pi-enh-annotation-marker")) return;
-    // 点击编辑框外部，自动无备注保存当前引用，等效于点击保存
+    // Save the pending annotation before another touch selection starts. A
+    // long press may never emit mousedown, leaving the editor over its handles.
     activeAnnotationSaveHandler(false);
   });
   addManagedListener(window, "scroll", scheduleAnnotationReposition, true);

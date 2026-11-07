@@ -33,9 +33,12 @@ export async function POST(
       );
     }
 
-    session.inner.setSessionName(result.title);
-    invalidateSessionListCache();
-    return NextResponse.json({ title: result.title, usage: result.usage ?? null });
+    const title = typeof result?.title === "string" ? result.title.trim() : "";
+    if (title) {
+      session.inner.setSessionName(title);
+      invalidateSessionListCache();
+    }
+    return NextResponse.json({ title: title || null, usage: result?.usage ?? null });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },

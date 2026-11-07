@@ -1413,7 +1413,11 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
     void loadSessions(false, true);
   }, [loadSessions]);
 
+  const lastNewSessionTapRef = useRef(0);
   const handleNewSession = useCallback(() => {
+    const now = Date.now();
+    if (now - lastNewSessionTapRef.current < 350) return;
+    lastNewSessionTapRef.current = now;
     const effectiveCwd = selectedCwd ?? selectedCwdProp ?? allSessions[0]?.cwd ?? (homeDir || null);
     if (!effectiveCwd) return;
     // Generate a temporary UUID client-side — no backend call needed.
@@ -1541,6 +1545,7 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
         display: "flex",
         flexDirection: "column",
         height: "100%",
+        minHeight: 0,
         overflow: "hidden",
         "--sidebar-session-pane-height": `${sessionPaneResizer.width}px`,
       } as CSSProperties}
@@ -1639,6 +1644,7 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
               width: "100%",
               display: "flex",
               alignItems: "center",
+              minWidth: 0,
               padding: "6px 10px",
               background: selectedCwd ? "var(--bg-hover)" : "rgba(37,99,235,0.06)",
               border: selectedCwd ? "1px solid var(--border)" : "1px solid rgba(37,99,235,0.4)",
@@ -1843,7 +1849,11 @@ export function SessionSidebar({ bootstrap, explorerVisible = false, executionEn
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.stopPropagation();
-                setSessionSearchQuery("");
+                if (sessionSearchQuery) {
+                  setSessionSearchQuery("");
+                } else {
+                  setSessionSearchOpen(false);
+                }
               }
             }}
             className="mt-[6px] block h-[29px] w-full min-w-0 rounded-[7px] border border-border bg-bg px-[10px] text-xs text-text focus:outline-2 focus:outline-accent"
@@ -2821,7 +2831,7 @@ function SessionItem({
               }}
               title={title}
             >
-              <span id={batchTitleId} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+              <span id={batchTitleId} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, wordBreak: "break-all", overflowWrap: "anywhere" }}>
                 {title}
               </span>
               {session.titleNaming?.status === "failed" && (

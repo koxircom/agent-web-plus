@@ -3229,12 +3229,13 @@
     }
   });
 
-  addManagedListener(document, "mousedown", (event) => {
+  addManagedListener(document, "pointerdown", (event) => {
     if (!annotationEditor || !activeAnnotationSaveHandler) return;
     const target = event.target;
     if (annotationEditor.contains(target)) return;
     if (target?.closest?.(".pi-enh-quote-bar, .pi-enh-annotation-marker")) return;
-    // 点击编辑框外部，自动无备注保存当前引用，等效于点击保存
+    // Save the pending annotation before another touch selection starts. A
+    // long press may never emit mousedown, leaving the editor over its handles.
     activeAnnotationSaveHandler(false);
   });
   addManagedListener(window, "scroll", scheduleAnnotationReposition, true);

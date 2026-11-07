@@ -98,7 +98,16 @@ export function MermaidBlock({ code, isStreaming, defaultPreview = false }: Merm
   }
 
   const body = renderState?.key === currentKey && renderState.status === "error" ? (
-      <div className="mermaid-block mermaid-block-error">{t("i18n.invalidMermaid")}</div>
+      <div className="mermaid-block mermaid-block-error" style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+        <span>{t("i18n.invalidMermaid")}</span>
+        <button
+          type="button"
+          onClick={() => setShowPreview(false)}
+          style={{ background: "none", border: "1px solid currentColor", borderRadius: 4, padding: "2px 8px", color: "inherit", cursor: "pointer", fontSize: 11 }}
+        >
+          {t("i18n.source")}
+        </button>
+      </div>
     ) : renderState?.key !== currentKey || renderState.status !== "ready" ? (
       <div className="mermaid-block mermaid-block-loading" aria-label={t("i18n.renderingMermaid")} />
     ) : (

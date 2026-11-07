@@ -757,10 +757,27 @@ pre, code {
 .markdown-body h1 { font-size: 1.16em; }
 .markdown-body h2 { font-size: 1.08em; }
 .markdown-body h3 { font-size: 0.98em; color: color-mix(in srgb, var(--text) 88%, var(--text-muted)); }
-.markdown-body ul, .markdown-body ol {
-  padding-left: 22px;
+.markdown-body ul {
+  padding-left: 20px;
   margin: 5px 0 8px;
   list-style-position: outside;
+}
+.markdown-body ol {
+  padding-left: 32px;
+  margin: 5px 0 8px;
+  list-style-position: outside;
+}
+.markdown-body ul ul, .markdown-body ol ol, .markdown-body ul ol, .markdown-body ol ul {
+  margin: 3px 0;
+  padding-left: 24px;
+}
+@media (max-width: 640px) {
+  .markdown-body ol {
+    padding-left: 34px;
+  }
+  .markdown-body li {
+    padding-left: 4px;
+  }
 }
 .markdown-body li { margin: 3px 0; padding-left: 2px; }
 .markdown-body ul > li { list-style-type: disc; }
@@ -798,6 +815,8 @@ pre, code {
   font-family: var(--font-mono);
   font-size: 0.92em;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .markdown-body .contains-task-list {
   padding-left: 0;
@@ -846,11 +865,17 @@ pre, code {
   background: var(--bg-subtle);
   color: var(--text-muted);
 }
+.markdown-body blockquote blockquote {
+  background: transparent;
+  padding-right: 0;
+  margin: 4px 0;
+}
 .markdown-table-wrap {
   width: 100%;
   margin: 8px 0;
   overflow-x: auto;
   overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--border);
   border-radius: 7px;
 }
@@ -2146,3 +2171,62 @@ span.token.table {
 .agent-engine-label { font-size: 18px; line-height: 1.2; }
 .agent-engine-label-codex { font-family: "OpenAI Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-weight: 500; }
 .agent-engine-label-pi { font-family: var(--font-mono); font-weight: 600; }
+
+/* =========================================================================
+ * 会话文本选择隔离约束（Selection Boundary Containment）
+ * 严格限制选区仅限于聊天正文（.markdown-body / .markdown-user-message），
+ * 绝不允许选区向上蔓延至顶部工具条、或向下溢出至输入框与底栏。
+ * ========================================================================= */
+header,
+[data-mobile-toolbar="true"],
+#mobile-toolbar-actions,
+.sidebar-container,
+.right-panel-container,
+.chat-composer-footer,
+.chat-composer-card:not(textarea):not(input),
+.chat-composer-goal-host,
+.chat-composer-goal-summary,
+.chat-composer-model-controls,
+.chat-composer-attachment-controls,
+.chat-composer-right,
+.chat-composer-left,
+.extension-status-shelf,
+.extension-status-line,
+.assistant-message-copy,
+.pi-enh-turn-number-badge,
+[data-message-role="assistant"] > div:first-child,
+[data-pi-native-message-footer],
+button,
+summary,
+[role="button"],
+[role="toolbar"] {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+/* 消息正文与输入框 textarea / input 保持正常可选可输入（仅正文容器作为选择根节点，内部自然继承连续文本流） */
+.markdown-body,
+.markdown-user-message,
+.markdown-compaction-message,
+.markdown-custom-message,
+textarea,
+input,
+[contenteditable="true"] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* A coarse-pointer drag starting in the transcript must not extend into a
+ * separate, inactive composer. Directly interacting with the editor focuses
+ * it and restores native text selection; the focused rule above still applies. */
+@media (any-pointer: coarse) {
+  .chat-composer-footer :is(textarea, input, [contenteditable="true"]):not(:focus) {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+  }
+}
+
+/* Suppress Native Mobile Context Menu Callout in Chat Area */
+.chat-window, .message-view, main, [data-message-role], .prose, .markdown-body, .markdown-user-message, #chat-message-list {
+  -webkit-touch-callout: none !important;
+}

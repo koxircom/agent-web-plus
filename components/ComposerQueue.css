@@ -1,6 +1,8 @@
-.pi-enh-queue-panel { max-width: var(--chat-content-max-width, 820px); margin: 0 auto; padding: 0 14px; box-sizing: border-box; color: var(--text-muted); font-size: 13px; line-height: 1.4; }
+.pi-enh-queue-panel { position: relative; max-width: var(--chat-content-max-width, 820px); margin: 0 auto; padding: 0 14px; box-sizing: border-box; color: var(--text-muted); font-size: 13px; line-height: 1.4; }
 .pi-enh-queue-panel[hidden] { display: none; }
-.pi-enh-queue-list { display: grid; gap: 0; padding: 1px 6px 7px; margin-bottom: -7px; border: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-bottom: 0; border-radius: 18px 18px 0 0; background: color-mix(in srgb, var(--bg-panel) 92%, black); max-height: 180px; overflow-y: auto; position: relative; overscroll-behavior: contain; }
+.pi-enh-queue-error { position: absolute; inset-inline: 14px; bottom: calc(100% + 6px); z-index: 30; box-sizing: border-box; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-panel); color: #dc2626; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.pi-enh-queue-list:empty { display: none; }
+.pi-enh-queue-list { display: grid; gap: 0; padding: 1px 6px 7px; margin-bottom: -7px; border: 1px solid color-mix(in srgb, var(--border) 55%, transparent); border-bottom: 0; border-radius: 18px 18px 0 0; background: color-mix(in srgb, var(--bg-panel) 92%, black); max-height: 180px; overflow-y: auto; scrollbar-width: thin; position: relative; overscroll-behavior: contain; }
 .pi-enh-queue-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; min-height: 35px; padding: 2px 8px; border: 0; border-radius: 0; background: transparent; box-sizing: border-box; }
 .pi-enh-queue-row-dragging { position: relative; z-index: 11; border-radius: 6px; background: var(--bg-panel); box-shadow: 0 4px 14px #0003; cursor: grabbing; }
 .pi-enh-queue-drop-line { position: absolute; left: 8px; right: 8px; height: 2px; background: var(--accent, #3b82f6); border-radius: 1px; pointer-events: none; z-index: 10; margin-top: -1px; box-shadow: 0 0 6px rgba(59, 130, 246, 0.5); }

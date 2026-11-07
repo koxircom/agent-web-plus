@@ -23,7 +23,6 @@ export interface UseComposerQueueBridgeOptions {
   actionsEnabled: boolean;
   onRestoreRecall?: (payload: RecalledPromptRestoration) => Promise<boolean>;
   onRecallQueue?: () => void;
-  onToast?: (message: string, type?: "info" | "success" | "error") => void;
 }
 
 export interface UseComposerQueueBridgeResult {
@@ -45,7 +44,6 @@ export function useComposerQueueBridge({
   actionsEnabled,
   onRestoreRecall,
   onRecallQueue,
-  onToast,
 }: UseComposerQueueBridgeOptions): UseComposerQueueBridgeResult {
   // 1. Plugin toggle subscription from settings registry, no ready-event wait
   const [pluginEnabled, setPluginEnabled] = useState(() => isSettingsPluginEnabled("composer-queue-panel"));
@@ -231,9 +229,6 @@ export function useComposerQueueBridge({
           if (!token) throw new Error("排队消息未绑定或队列状态已变化");
           const ok = await promoteQueuedMessage(sessionId, token);
           if (!ok) throw new Error("转为立即引导失败");
-          if (isStillCurrent()) {
-            onToast?.("已转为立即引导，将在下一个执行点优先处理", "success");
-          }
           return true;
         } else if (name === "reorder") {
           const token = state.tokens[index];
@@ -251,9 +246,6 @@ export function useComposerQueueBridge({
             targetDraftKey: sessionId,
             onRestoreRecall,
           });
-          if (isStillCurrent()) {
-            onToast?.("已移回输入框编辑", "success");
-          }
           return true;
         } else if (name === "recallAll") {
           if (!state.tokens.length) {
@@ -266,9 +258,6 @@ export function useComposerQueueBridge({
             targetDraftKey: sessionId,
             onRestoreRecall,
           });
-          if (isStillCurrent()) {
-            onToast?.("已全部移回输入框编辑", "success");
-          }
           return true;
         }
         return false;
@@ -276,7 +265,6 @@ export function useComposerQueueBridge({
         if (isStillCurrent()) {
           const msg = (err as Error)?.message || "排队消息操作失败";
           setErrorMessage(msg);
-          onToast?.(msg, "error");
         }
         return false;
       } finally {
@@ -286,7 +274,7 @@ export function useComposerQueueBridge({
         }
       }
     },
-    [actionsEnabled, pluginEnabled, state, signature, sessionId, onRecallQueue, onRestoreRecall, onToast],
+    [actionsEnabled, pluginEnabled, state, signature, sessionId, onRecallQueue, onRestoreRecall],
   );
 
   return {

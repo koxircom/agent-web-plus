@@ -799,7 +799,14 @@ export function SettingsPanel({
     };
   }, [section, activateSectionById]);
 
-  // 5. 键盘 Escape 关闭
+  // 5. 键盘 Escape 关闭与背景滚动穿透锁定
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow === "hidden" ? "" : prevOverflow;
+    };
+  }, []);
   useEffect(() => listenForPanelEscape(document, onClose), [onClose]);
 
   // 6. Project 缺失或被禁用的扩展自动回退

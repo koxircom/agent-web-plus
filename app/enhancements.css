@@ -2707,6 +2707,11 @@
       position: fixed;
       z-index: 100000;
       width: 230px;
+      max-width: calc(100vw - 16px);
+      max-height: calc(100dvh - 16px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
       background: var(--bg, #18181b);
       border: 1px solid var(--border, #27272a);
       border-radius: 8px;
@@ -2730,6 +2735,7 @@
       transition: transform 0.15s ease, opacity 0.15s ease, color 0.15s ease;
     }
     .pi-enh-tags-search-box {
+      flex-shrink: 0;
       margin-bottom: 6px;
     }
     .pi-enh-tags-search-input {
@@ -2747,8 +2753,10 @@
       border-color: var(--accent, #38bdf8);
     }
     .pi-enh-tags-list {
-      max-height: 180px;
+      min-height: 0;
+      flex: 0 1 auto;
       overflow-y: auto;
+      overscroll-behavior: contain;
       display: flex;
       flex-direction: column;
       gap: 2px;
@@ -2757,6 +2765,7 @@
       list-style: none;
     }
     .pi-enh-tag-option {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       gap: 6px;
@@ -2803,6 +2812,7 @@
       font-size: 11px;
     }
     .pi-enh-tags-popover-footer {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -3825,28 +3835,28 @@
       display: none !important;
     }
 
-    /* Compact segmented selection toolbar */
+    /* Compact segmented selection toolbar - enlarged 30% for touch accessibility */
     .pi-enh-quote-bar {
       position: fixed; z-index: 95; display: inline-flex; align-items: stretch; gap: 0; overflow: hidden;
-      padding: 0; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px;
-      background: #303030; color: #f4f4f5;
+      padding: 0; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px;
+      background: #27272a; color: #f4f4f5;
       box-shadow: 0 10px 32px rgba(0, 0, 0, 0.58), 0 3px 8px rgba(0, 0, 0, 0.35);
       user-select: none; backdrop-filter: blur(16px);
       animation: piEnhFadeIn 0.12s cubic-bezier(0.16, 1, 0.3, 1); touch-action: manipulation;
     }
     .pi-enh-quote-copy-btn, .pi-enh-quote-btn {
-      display: inline-flex; align-items: center; justify-content: center; min-height: 26px; min-width: 50px; padding: 4px 10px;
+      display: inline-flex; align-items: center; justify-content: center; min-height: 38px; min-width: 68px; padding: 6px 16px;
       border: 0; border-radius: 0; background: transparent; color: inherit;
-      font: inherit; font-size: 11px; font-weight: 550; cursor: pointer;
+      font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
       transition: background 0.12s ease; touch-action: manipulation;
     }
-    .pi-enh-quote-copy-btn:hover, .pi-enh-quote-btn:hover { background: rgba(255, 255, 255, 0.1); }
+    .pi-enh-quote-copy-btn:hover, .pi-enh-quote-btn:hover { background: rgba(255, 255, 255, 0.15); }
     .pi-enh-quote-copy-btn:focus-visible, .pi-enh-quote-btn:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.45); outline-offset: -3px; }
     .pi-enh-quote-divider { width: 1px; align-self: stretch; flex: 0 0 1px; background: rgba(255, 255, 255, 0.18); }
 
     /* Suppress Native Mobile Context Menu Callout in Chat Area */
-    .chat-window, .message-view, main, [data-message-role], .prose, .markdown-body {
-      -webkit-touch-callout: none;
+    .chat-window, .message-view, main, [data-message-role], .prose, .markdown-body, .markdown-user-message, #chat-message-list {
+      -webkit-touch-callout: none !important;
     }
     textarea, input, [contenteditable="true"] {
       -webkit-touch-callout: default;
@@ -3854,10 +3864,10 @@
 
 
 
-    /* Mobile / Touch Responsive Enhancement */
+    /* Mobile / Touch Responsive Enhancement - synchronized 30% magnification */
     @media (max-width: 768px) {
-      .pi-enh-quote-bar { z-index: 999999; padding: 0; }
-      .pi-enh-quote-copy-btn, .pi-enh-quote-btn { min-height: 26px; min-width: 46px; padding: 4px 9px; font-size: 10px; }
+      .pi-enh-quote-bar { z-index: 999999; padding: 0; border-radius: 12px; }
+      .pi-enh-quote-copy-btn, .pi-enh-quote-btn { min-height: 38px; min-width: 68px; padding: 6px 15px; font-size: 15px; }
     }
 
     /* Duration Breakdown Tooltip */

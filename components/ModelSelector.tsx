@@ -145,6 +145,18 @@ export function ModelSelector({
       setOpen(false);
       triggerRef.current?.focus({ preventScroll: true });
     };
+    const handleOutsideClick = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (
+        panelRef.current?.contains(target) ||
+        triggerRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setFilter("");
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", handleOutsideClick, true);
     window.addEventListener("keydown", handleMenuEscape, true);
     const viewport = window.visualViewport;
     window.addEventListener("resize", updateForViewportChange);
@@ -153,6 +165,7 @@ export function ModelSelector({
     viewport?.addEventListener("scroll", updateForViewportChange);
 
     return () => {
+      window.removeEventListener("pointerdown", handleOutsideClick, true);
       window.removeEventListener("keydown", handleMenuEscape, true);
       window.removeEventListener("resize", updateForViewportChange);
       window.removeEventListener("scroll", updateOnScroll, true);

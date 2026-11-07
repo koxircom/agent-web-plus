@@ -264,6 +264,15 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
     snapshot.goal?.goalActiveSinceMs,
   ]);
 
+  const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (deleteConfirmTimerRef.current) clearTimeout(deleteConfirmTimerRef.current);
+    };
+  }, []);
+
   const openAddMenu = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     const openMenu = (window as any).__PI_ENH_OPEN_COMPOSER_ADD_MENU__;
     if (typeof openMenu === "function") {
@@ -285,6 +294,27 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
       try { void handleAction(goal.action, goal.sessionId, event.currentTarget); } catch (_) {}
     }
   }, [snapshot]);
+
+  const handleGoalDelete = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (deleteConfirmTimerRef.current) clearTimeout(deleteConfirmTimerRef.current);
+    if (deleteConfirming) {
+      setDeleteConfirming(false);
+      const { goal, sessionId } = snapshot;
+      const targetSessionId = goal?.sessionId || sessionId;
+      const handleAction = (window as any).__PI_ENH_HANDLE_COMPOSER_GOAL_ACTION__;
+      if (typeof handleAction === "function") {
+        try {
+          const ok = await handleAction("delete", targetSessionId ?? undefined, event.currentTarget);
+          if (ok) return;
+        } catch (_) {}
+      }
+      exitMode();
+    } else {
+      setDeleteConfirming(true);
+      deleteConfirmTimerRef.current = setTimeout(() => setDeleteConfirming(false), 3500);
+    }
+  }, [deleteConfirming, snapshot, exitMode]);
 
   const modeLabel = snapshot.mode === "plan" ? "计划" : snapshot.mode === "goal" ? "目标" : "";
   const modePending = !snapshot.sessionId && Boolean(modeLabel);
@@ -327,15 +357,35 @@ function NativeComposerModeControls({ onModeChange, goalHost = null }: { onModeC
                   {formatComposerGoalDuration(goalDurationMs)}
                 </span>
               )}
-              {goal.action && <button
+              {goal.action && (
+                <button
+                  type="button"
+                  className="chat-composer-goal-action chat-composer-goal-pause-btn"
+                  aria-label={goalActionLabel}
+                  title={goalActionLabel}
+                  onClick={handleGoalAction}
+                >
+                  {goal.action === "resume" ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <polygon points="6 4 20 12 6 20" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <rect x="6" y="5" width="4" height="14" rx="1.2" />
+                      <rect x="14" y="5" width="4" height="14" rx="1.2" />
+                    </svg>
+                  )}
+                </button>
+              )}
+              <button
                 type="button"
-                className="chat-composer-goal-action"
-                aria-label={goalActionLabel}
-                title={goalActionLabel}
-                onClick={handleGoalAction}
+                className={`chat-composer-goal-action chat-composer-goal-delete-btn${deleteConfirming ? " chat-composer-goal-delete-confirming" : ""}`}
+                aria-label={deleteConfirming ? "再次点击确认删除目标" : "删除目标"}
+                title={deleteConfirming ? "再次点击确认删除目标" : "删除当前目标并退出目标模式"}
+                onClick={handleGoalDelete}
               >
-                {goalActionText}
-              </button>}
+                <ComposerQueueIcon kind="delete" />
+              </button>
             </div>
   );
 
@@ -818,10 +868,26 @@ function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "wa
   );
 }
 
-export function ModelErrorBanner({ error }: { error?: string | null }) {
+export function ModelErrorBanner({ error, onClose }: { error?: string | null; onClose?: () => void }) {
   const { t } = useI18n();
-  if (!error) return null;
-  return <ModelNoticeBanner tone="error" title={t("chat.modelError")} body={error} />;
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+  useEffect(() => {
+    if (error !== dismissedError) {
+      setDismissedError(null);
+    }
+  }, [error]);
+  if (!error || error === dismissedError) return null;
+  return (
+    <ModelNoticeBanner
+      tone="error"
+      title={t("chat.modelError")}
+      body={error}
+      onClose={() => {
+        setDismissedError(error);
+        onClose?.();
+      }}
+    />
+  );
 }
 
 /** True when the selected model is known to accept image input (#584). Unknown modality info never blocks the user. */
@@ -875,6 +941,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [atMenuMaxHeight, setAtMenuMaxHeight] = useState<number | null>(null);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
   const [imageWarningDismissed, setImageWarningDismissed] = useState(false);
+  const [compactResultDismissed, setCompactResultDismissed] = useState(false);
+  const [compactErrorDismissed, setCompactErrorDismissed] = useState(false);
+  useEffect(() => { setCompactResultDismissed(false); }, [compactResult]);
+  useEffect(() => { setCompactErrorDismissed(false); }, [compactError]);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const [historyActiveIndex, setHistoryActiveIndex] = useState(0);
   const [builtinCommandPending, setBuiltinCommandPending] = useState(false);
@@ -1182,7 +1252,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       });
     },
     addImages(files: File[]) {
-      processImageFiles(files);
+      consumeDocumentFiles(files);
     },
   }));
 
@@ -1703,7 +1773,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }, [hasFilesBlockingSend, isStreaming, allowEmptyContinue, runBuiltinCommand, onSend, clearInput, onAudioUnlock]);
 
-  const slashQuery = !compact && value.startsWith("/") && !/\s/.test(value.slice(1))
+  const slashQuery = !compact && (value.startsWith("/") || value.startsWith("／")) && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
     : null;
 
@@ -2535,7 +2605,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useLayoutEffect(() => {
     gestureRef.current = null;
     setDragHeight(null);
-  }, [draftKey]);
+    if (draftKey && !getDraft(draftKey)?.value?.trim() && !heightLocked) {
+      setCustomHeight(null, false);
+    }
+  }, [draftKey, heightLocked, setCustomHeight]);
 
   const [goalHost, setGoalHost] = useState<HTMLDivElement | null>(null);
   const isCodexActive = codexLayoutEnabled && !compact;
@@ -2618,9 +2691,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
         </>
       )}
+      {isCodexActive && modesEnabled && <div ref={setGoalHost} className="chat-composer-goal-host" style={{maxWidth: rootStyle.maxWidth, marginLeft: "auto", marginRight: "auto"}} />}
       <ComposerQueue sessionId={draftKey ?? ""} executionEngine={executionEngine} queuedMessages={queuedMessages} syncStatus={queueSyncStatus} onRecallQueue={onRecallQueue} onRestoreRecall={onRestoreRecall} pending={queuedPreviewVisible ? queuedSubmissionPreview : null} retainedSubmissions={retainedSubmissions} deliveredRequestIds={deliveredRequestIds} />
       {extensionPanel}
-      {isCodexActive && modesEnabled && <div ref={setGoalHost} className="chat-composer-goal-host" style={{maxWidth: rootStyle.maxWidth, marginLeft: "auto", marginRight: "auto"}} />}
       <div className={rootClassName} style={rootStyle} data-pi-native-composer-layout="true" data-pi-native-inline-suggestions={!compact ? "true" : undefined}
         data-composer-min-height={!fixedHeight ? customHeight ?? undefined : undefined}>
         {isCodexActive && (
@@ -2679,7 +2752,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
              {t("chat.retrying", { attempt: retryInfo.attempt, max: retryInfo.maxAttempts })}{retryInfo.errorMessage && <span style={{ opacity: 0.7, marginLeft: 4 }}>— {retryInfo.errorMessage}</span>}
           </div>
         )}
-        {compactResultText && (
+        {compactResultText && !compactResultDismissed && (
           <div style={{
             marginBottom: 8, padding: "5px 10px",
             background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.24)",
@@ -2689,10 +2762,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <polyline points="20 6 9 17 4 12" />
             </svg>
-            {compactResultText}
+            <span style={{ flex: 1, minWidth: 0 }}>{compactResultText}</span>
+            <button
+              type="button"
+              onClick={() => setCompactResultDismissed(true)}
+              aria-label={t("chat.close")}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", opacity: 0.7, padding: "0 2px", fontSize: 13, lineHeight: 1 }}
+            >×</button>
           </div>
         )}
-        {compactError && (
+        {compactError && !compactErrorDismissed && (
           <div
             role="alert"
             style={{
@@ -2705,11 +2784,18 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               fontFamily: "var(--font-mono)",
               fontSize: 12,
               lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-              overflowWrap: "anywhere",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
             }}
           >
-            {compactError}
+            <div style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{compactError}</div>
+            <button
+              type="button"
+              onClick={() => setCompactErrorDismissed(true)}
+              aria-label={t("chat.close")}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "inherit", opacity: 0.7, padding: "0 2px", fontSize: 13, lineHeight: 1, flexShrink: 0 }}
+            >×</button>
           </div>
         )}
         {bashMode && (

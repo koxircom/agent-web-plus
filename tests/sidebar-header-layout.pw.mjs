@@ -23,9 +23,9 @@ else {
     import {ExecutionEngineSwitcher} from './components/ExecutionEngineSwitcher';
     import {I18nProvider} from './hooks/useI18n';
     const p=new URLSearchParams(location.search);const actions=<div className="pi-native-sidebar-header-actions">{['New','Search','批量管理会话'].map(name=><button key={name} aria-label={name} style={{width:32,height:32,flexShrink:0,border:'1px solid var(--border)',borderRadius:7}}>+</button>)}</div>;
-    function App(){const [engine,setEngine]=React.useState(p.get('engine')||'codex');return <section style={{boxSizing:'border-box',padding:10,width:Number(p.get('width')||220)}}><div className="pi-native-sidebar-header-toolbar"><ExecutionEngineSwitcher engine={engine} connected={p.get('connected')!=='false'} codexEnabled version="1.4.88" actions={${legacy ? 'undefined' : 'actions'}} onChange={async e=>setEngine(e)}/>${legacy ? '{actions}' : ''}</div></section>}
+    function App(){const [engine,setEngine]=React.useState(p.get('engine')||'codex');return <section style={{boxSizing:'border-box',padding:10,width:Number(p.get('width')||220)}}><div className="pi-native-sidebar-header-toolbar"><ExecutionEngineSwitcher engine={engine} connected={p.get('connected')!=='false'} codexEnabled version="1.4.93" actions={${legacy ? 'undefined' : 'actions'}} onChange={async e=>setEngine(e)}/>${legacy ? '{actions}' : ''}</div></section>}
     createRoot(document.getElementById('root')).render(<I18nProvider initialLocale="zh-CN"><App/></I18nProvider>);
-  `},bundle:true,write:false,format:"iife",jsx:"automatic",alias:{"@":root},define:{"process.env.NODE_ENV":'"production"',"process.env.NEXT_PUBLIC_APP_VERSION":'"1.4.88"'}});
+  `},bundle:true,write:false,format:"iife",jsx:"automatic",alias:{"@":root},define:{"process.env.NODE_ENV":'"production"',"process.env.NEXT_PUBLIC_APP_VERSION":'"1.4.93"'}});
   const fonts = css.css.replace(/url\(["']?\/fonts\/([^"')]+)["']?\)/g, (url, name) => {
     const file = path.join(root,"public/fonts",name);
     return fs.existsSync(file) ? `url(data:font/woff2;base64,${fs.readFileSync(file).toString("base64")})` : url;

@@ -224,10 +224,13 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
 .chat-composer-goal-host:empty { display: none; }
 .chat-composer-goal-host:not(:empty) {
   padding: 8px 12px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-panel);
+  box-sizing: border-box;
+  position: relative;
+  z-index: 2;
 }
 .chat-composer-goal-host svg { flex: 0 0 16px; color: var(--accent); }
 
@@ -336,6 +339,34 @@ textarea.chat-input-textarea[data-pi-inline-suggestion]::placeholder {
 .chat-composer-goal-action:hover {
   color: var(--text);
   background: var(--bg-hover);
+}
+.chat-composer-goal-pause-btn,
+.chat-composer-goal-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.chat-composer-goal-pause-btn:hover {
+  color: #ef4444 !important;
+  border-color: color-mix(in srgb, #ef4444 40%, transparent) !important;
+  background: color-mix(in srgb, #ef4444 12%, transparent) !important;
+}
+.chat-composer-goal-delete-btn:hover,
+.chat-composer-goal-delete-confirming {
+  color: #ef4444 !important;
+  border-color: color-mix(in srgb, #ef4444 40%, transparent) !important;
+  background: color-mix(in srgb, #ef4444 12%, transparent) !important;
 }
 
 /* One shared control owns stable geometry; show its capsule only during interaction. */

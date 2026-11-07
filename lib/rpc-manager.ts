@@ -1082,8 +1082,8 @@ export class AgentSessionWrapper {
 
       case "composer_goal_action": {
         const action = command.action;
-        if (action !== "pause" && action !== "resume") {
-          throw new Error("目标操作参数无效，只支持 pause 与 resume。");
+        if (action !== "pause" && action !== "resume" && action !== "delete" && action !== "clear") {
+          throw new Error("目标操作参数无效，只支持 pause、resume 与 delete。");
         }
         const runner = this.inner.extensionRunner;
         const registered = runner?.getCommand?.("composer-goal");
@@ -1117,6 +1117,12 @@ export class AgentSessionWrapper {
         }
 
         // 无 prompt/MCP/preflight/bashadmission 锁等待，直通调用扩展命令
+        if (action === "delete" || action === "clear") {
+          await registered.handler("delete", runner.createCommandContext());
+          const text = this.extensionStatuses.get("composer-modes");
+          return { extensionStatuses: [{ key: "composer-modes", text: typeof text === "string" ? text : JSON.stringify(text) }] };
+        }
+
         await registered.handler(action, runner.createCommandContext());
 
         const text = this.extensionStatuses.get("composer-modes");
@@ -1958,6 +1964,7 @@ export class AgentSessionWrapper {
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     this.activeToolEvents.clear();
+    this.pendingNativePrompts.clear();
     this.clearExtensionWidgets(false);
 
     const finishDispose = () => {
