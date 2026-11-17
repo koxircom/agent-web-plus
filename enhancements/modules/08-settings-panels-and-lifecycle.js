@@ -2490,7 +2490,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
               if (isStillCurrent) {
                 renderArchivedPanel(opHost, nav);
-                showToast(err?.message || "删除会话未确认，已保留状态", undefined, 3500);
+                showToast(escapeHtml(err?.message || "删除会话未确认，已保留状态"), undefined, 3500);
               }
             }
           })();

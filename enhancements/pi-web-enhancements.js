@@ -7401,6 +7401,19 @@
     return [...currentActive, ...otherItems, ...archived];
   }
 
+  function sessionDeleteError(response, detail, fallback) {
+    const raw = typeof detail?.error === "string" ? detail.error
+      : (typeof detail?.message === "string" ? detail.message : fallback);
+    const reason = String(raw || fallback || "删除未确认").slice(0, 600);
+    const code = typeof detail?.code === "string" && /^[A-Za-z0-9_.:-]{1,80}$/.test(detail.code)
+      ? detail.code : "";
+    const prefix = response ? `HTTP ${response.status}${code ? ` [${code}]` : ""}` : "";
+    const error = new Error(prefix ? `${prefix}: ${reason}` : reason);
+    if (response) error.status = response.status;
+    if (code) error.code = code;
+    return error;
+  }
+
   async function deleteArchivedSession(sessionId) {
     if (!sessionId) return false;
     const isCodex = String(sessionId).startsWith("codex:");
@@ -7414,18 +7427,18 @@
         if (!resp || !resp.ok) {
           restoreSessionDeleteState(sessionId);
           const detail = resp ? await resp.json().catch(() => ({})) : {};
-          throw new Error(typeof detail?.error === "string" ? detail.error : (resp ? `删除失败 (HTTP ${resp.status})` : "无法连接执行端，请稍后重试"));
+          throw sessionDeleteError(resp, detail, "无法连接执行端，请稍后重试");
         }
         const data = await resp.json().catch(() => ({}));
         if (!data || data.ok !== true) {
           restoreSessionDeleteState(sessionId);
-          throw new Error(typeof data?.error === "string" ? data.error : "删除未确认，执行端未返回确认标记");
+          throw sessionDeleteError(resp, data, "删除未确认，执行端未返回确认标记");
         }
       } else {
         if (!resp || (!resp.ok && resp.status !== 404)) {
           restoreSessionDeleteState(sessionId);
           const detail = resp ? await resp.json().catch(() => ({})) : {};
-          throw new Error(typeof detail?.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
+          throw sessionDeleteError(resp, detail, "无法连接执行端，请稍后重试");
         }
       }
 
@@ -11807,6 +11820,22 @@
     return null;
   }
 
+  async function isConfirmedSessionDeleteResponse(response, sessionId) {
+    if (!response) return false;
+    if (String(sessionId || "").startsWith("codex:")) {
+      // A remote 404 or a transport-level success is not a confirmed deletion.
+      // Keep the original body available for the caller's error handling.
+      if (!response.ok || typeof response.clone !== "function") return false;
+      try {
+        const data = await response.clone().json();
+        return data?.ok === true;
+      } catch (_) {
+        return false;
+      }
+    }
+    return response.ok || response.status === 200 || response.status === 204 || response.status === 404;
+  }
+
   async function cachedSessionFetch(input, init) {
     const activeFetch = baseFetch || originalWindowFetch || (typeof fetch === "function" ? fetch : null);
     if (!activeFetch) return Promise.reject(new Error("fetch unavailable"));
@@ -11859,7 +11888,7 @@
         throw fetchErr;
       }
       if (method === "DELETE") {
-        if (response && (response.ok || response.status === 200 || response.status === 204 || response.status === 404)) {
+        if (await isConfirmedSessionDeleteResponse(response, targetSessionId)) {
           if (targetSessionId) {
             markSessionDeleteConfirmed(targetSessionId);
             cleanupDeletedSessionEverywhere(targetSessionId);
@@ -11916,7 +11945,7 @@
         throw fetchErr;
       }
       if (method === "DELETE") {
-        if (response && (response.ok || response.status === 200 || response.status === 204 || response.status === 404)) {
+        if (await isConfirmedSessionDeleteResponse(response, targetSessionId)) {
           if (targetSessionId) {
             markSessionDeleteConfirmed(targetSessionId);
             cleanupDeletedSessionEverywhere(targetSessionId);
@@ -14379,7 +14408,7 @@
       } catch (err) {
         restoreSessionDeleteState(sessionId);
         requestSessionListRefresh(false, true);
-        showToast("删除会话失败，已恢复会话: " + (err?.message || String(err)), sessionDeleteIcon);
+        showToast("删除会话失败，已恢复会话: " + escapeHtml(err?.message || String(err)), sessionDeleteIcon);
       } finally {
         inFlightDeletes.delete(sessionId);
       }
@@ -39051,7 +39080,7 @@ window.__PI_ENH_TOGGLE_USAGE_DASHBOARD__ = toggleUsageDashboard;
               const isStillCurrent = Boolean(opHost && opHost.isConnected && getCurrentArchivedEngine() === "codex" && codexArchivedEpoch === opEpoch);
               if (isStillCurrent) {
                 renderArchivedPanel(opHost, nav);
-                showToast(err?.message || "删除会话未确认，已保留状态", undefined, 3500);
+                showToast(escapeHtml(err?.message || "删除会话未确认，已保留状态"), undefined, 3500);
               }
             }
           })();
