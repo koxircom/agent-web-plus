@@ -4333,6 +4333,22 @@
     return null;
   }
 
+  async function isConfirmedSessionDeleteResponse(response, sessionId) {
+    if (!response) return false;
+    if (String(sessionId || "").startsWith("codex:")) {
+      // A remote 404 or a transport-level success is not a confirmed deletion.
+      // Keep the original body available for the caller's error handling.
+      if (!response.ok || typeof response.clone !== "function") return false;
+      try {
+        const data = await response.clone().json();
+        return data?.ok === true;
+      } catch (_) {
+        return false;
+      }
+    }
+    return response.ok || response.status === 200 || response.status === 204 || response.status === 404;
+  }
+
   async function cachedSessionFetch(input, init) {
     const activeFetch = baseFetch || originalWindowFetch || (typeof fetch === "function" ? fetch : null);
     if (!activeFetch) return Promise.reject(new Error("fetch unavailable"));
@@ -4385,7 +4401,7 @@
         throw fetchErr;
       }
       if (method === "DELETE") {
-        if (response && (response.ok || response.status === 200 || response.status === 204 || response.status === 404)) {
+        if (await isConfirmedSessionDeleteResponse(response, targetSessionId)) {
           if (targetSessionId) {
             markSessionDeleteConfirmed(targetSessionId);
             cleanupDeletedSessionEverywhere(targetSessionId);
@@ -4442,7 +4458,7 @@
         throw fetchErr;
       }
       if (method === "DELETE") {
-        if (response && (response.ok || response.status === 200 || response.status === 204 || response.status === 404)) {
+        if (await isConfirmedSessionDeleteResponse(response, targetSessionId)) {
           if (targetSessionId) {
             markSessionDeleteConfirmed(targetSessionId);
             cleanupDeletedSessionEverywhere(targetSessionId);

@@ -805,7 +805,7 @@
       } catch (err) {
         restoreSessionDeleteState(sessionId);
         requestSessionListRefresh(false, true);
-        showToast("删除会话失败，已恢复会话: " + (err?.message || String(err)), sessionDeleteIcon);
+        showToast("删除会话失败，已恢复会话: " + escapeHtml(err?.message || String(err)), sessionDeleteIcon);
       } finally {
         inFlightDeletes.delete(sessionId);
       }

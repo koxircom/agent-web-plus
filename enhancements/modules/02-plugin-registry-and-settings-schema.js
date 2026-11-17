@@ -6979,6 +6979,19 @@
     return [...currentActive, ...otherItems, ...archived];
   }
 
+  function sessionDeleteError(response, detail, fallback) {
+    const raw = typeof detail?.error === "string" ? detail.error
+      : (typeof detail?.message === "string" ? detail.message : fallback);
+    const reason = String(raw || fallback || "删除未确认").slice(0, 600);
+    const code = typeof detail?.code === "string" && /^[A-Za-z0-9_.:-]{1,80}$/.test(detail.code)
+      ? detail.code : "";
+    const prefix = response ? `HTTP ${response.status}${code ? ` [${code}]` : ""}` : "";
+    const error = new Error(prefix ? `${prefix}: ${reason}` : reason);
+    if (response) error.status = response.status;
+    if (code) error.code = code;
+    return error;
+  }
+
   async function deleteArchivedSession(sessionId) {
     if (!sessionId) return false;
     const isCodex = String(sessionId).startsWith("codex:");
@@ -6992,18 +7005,18 @@
         if (!resp || !resp.ok) {
           restoreSessionDeleteState(sessionId);
           const detail = resp ? await resp.json().catch(() => ({})) : {};
-          throw new Error(typeof detail?.error === "string" ? detail.error : (resp ? `删除失败 (HTTP ${resp.status})` : "无法连接执行端，请稍后重试"));
+          throw sessionDeleteError(resp, detail, "无法连接执行端，请稍后重试");
         }
         const data = await resp.json().catch(() => ({}));
         if (!data || data.ok !== true) {
           restoreSessionDeleteState(sessionId);
-          throw new Error(typeof data?.error === "string" ? data.error : "删除未确认，执行端未返回确认标记");
+          throw sessionDeleteError(resp, data, "删除未确认，执行端未返回确认标记");
         }
       } else {
         if (!resp || (!resp.ok && resp.status !== 404)) {
           restoreSessionDeleteState(sessionId);
           const detail = resp ? await resp.json().catch(() => ({})) : {};
-          throw new Error(typeof detail?.error === "string" ? detail.error : "无法连接执行端，请稍后重试");
+          throw sessionDeleteError(resp, detail, "无法连接执行端，请稍后重试");
         }
       }
 

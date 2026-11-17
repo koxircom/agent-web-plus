@@ -4,15 +4,15 @@
   "version": "1.4.101",
   "targetFile": "enhancements/pi-web-enhancements.js",
   "mirrorFile": "public/pi-web-enhancements.js",
-  "totalLines": 41534,
-  "totalBytes": 1842603,
-  "bundleSha256": "0ce3f1512e0a2d5841c5e2625bc11af84e640e4e495f89464bcb304ab6efa361",
-  "publicSha256": "b7b873dcc45bd85f57bea3ce60570c04e74aaad9e984702268d5a2da1dc2be52",
+  "totalLines": 41563,
+  "totalBytes": 1843740,
+  "bundleSha256": "1324ddc74408e45a3d041622d6ee875a721a24b0332b16dbd38ecb53ebeee07a",
+  "publicSha256": "d71771db9e92015f87d6b7985ea41bb4535f542bc8c692929fae6efdd4a8843d",
   "runtimeAsset": {
-    "path": "/pi-web-assets/enhancements-cd96ae9e1a07ea18.js",
-    "sha256": "cd96ae9e1a07ea18007a9dc958a728532e45a6f3dbfcd9d21627204030106f78",
-    "integrity": "sha256-zZaunhoH6hgAep3JWKcoUy5FpvPb/NnSFicgQDAQb3g=",
-    "bytes": 1411951
+    "path": "/pi-web-assets/enhancements-5fc60cf331ab4a4e.js",
+    "sha256": "5fc60cf331ab4a4e9b3bdb22f17001c4b8633a4ec19b2d81009a38dff9acd5da",
+    "integrity": "sha256-X8YM8zGrSk6bO9si8XABxLhjOk7Bmy2BAJo43/ms1do=",
+    "bytes": 1412684
   },
   "modules": [
     {
@@ -38,15 +38,15 @@
       "name": "02-plugin-registry-and-settings-schema.js",
       "file": "02-plugin-registry-and-settings-schema.js",
       "startLine": 423,
-      "endLine": 7474,
-      "lineCount": 7052,
+      "endLine": 7487,
+      "lineCount": 7065,
       "lineRange": [
         423,
-        7474
+        7487
       ],
-      "lineRangeText": "423-7474",
-      "bytes": 298440,
-      "sha256": "c1172bcf7845f57acfb3ac38212be0dc31547dd1aae4df46887e3c1b711d26d0",
+      "lineRangeText": "423-7487",
+      "bytes": 298978,
+      "sha256": "7d689d70f483a44bb583a2702c0cdf06743c5dd7c2816e79ccb0163db7f4e477",
       "responsibility": "ENHANCEMENT_PLUGINS (76 个插件) 注册表与默认配置 Schema、模块与插件启闭持久化、用户消息状态对齐与大图去重、会话置顶/归档/背景色/多维彩色标签/Odoo 插件更新状态胶囊与分组保留策略。"
     },
     {
@@ -54,16 +54,16 @@
       "id": "03-session-cache-and-sync-engine",
       "name": "03-session-cache-and-sync-engine.js",
       "file": "03-session-cache-and-sync-engine.js",
-      "startLine": 7475,
-      "endLine": 13574,
-      "lineCount": 6100,
+      "startLine": 7488,
+      "endLine": 13603,
+      "lineCount": 6116,
       "lineRange": [
-        7475,
-        13574
+        7488,
+        13603
       ],
-      "lineRangeText": "7475-13574",
-      "bytes": 268974,
-      "sha256": "2ac23245ed67e4a463ac9c6cfe47c899a1b8c0f7d29c2d80bb463c80cb2b57b8",
+      "lineRangeText": "7488-13603",
+      "bytes": 269551,
+      "sha256": "64d9bc2676212cd155a7094f0c762e9406bf072794f6dd9898aa4b73d0cf4c68",
       "responsibility": "会话内存秒开缓存 (Session Memory Cache)、CacheStorage/IndexedDB 统一持久化存储抽象、会话历史顺序防回退守卫 (session-history-order-guard)、高性能会话搜索 LRU 缓存与归档折叠管理、权威终态核验引擎 (Terminal Reconcile Engine)、原生缓存预加载与跨端多标签页同步。"
     },
     {
@@ -71,16 +71,16 @@
       "id": "04-sidebar-and-session-management",
       "name": "04-sidebar-and-session-management.js",
       "file": "04-sidebar-and-session-management.js",
-      "startLine": 13575,
-      "endLine": 18794,
+      "startLine": 13604,
+      "endLine": 18823,
       "lineCount": 5220,
       "lineRange": [
-        13575,
-        18794
+        13604,
+        18823
       ],
-      "lineRangeText": "13575-18794",
-      "bytes": 242522,
-      "sha256": "cbf6ac050c4a5b9ca009f8f5dd0d4d4737bb758292f41141e151dcf62c35aa31",
+      "lineRangeText": "13604-18823",
+      "bytes": 242532,
+      "sha256": "eeaea78664010b63bf2cebdf1d4ca54da0f11d011c7fca77f8ad688298b71e63",
       "responsibility": "侧边栏会话行右键上下文菜单、未读水位线管理、会话行内重命名与双击重命名、快捷引用工具条与文本批注 (Quote Toolbar & Annotations)、ask_user 网页原生选择器与四题交互原型、跨项目会话状态提示 (Cross-project Session Status Indicator)。"
     },
     {
@@ -88,14 +88,14 @@
       "id": "05-composer-and-input-workflow",
       "name": "05-composer-and-input-workflow.js",
       "file": "05-composer-and-input-workflow.js",
-      "startLine": 18795,
-      "endLine": 28809,
+      "startLine": 18824,
+      "endLine": 28838,
       "lineCount": 10015,
       "lineRange": [
-        18795,
-        28809
+        18824,
+        28838
       ],
-      "lineRangeText": "18795-28809",
+      "lineRangeText": "18824-28838",
       "bytes": 435161,
       "sha256": "6504bb40e4c6be1cdd1ff1dad44845f207df8829a13298b243b675dc7ed0e174",
       "responsibility": "AI 快捷操作建议、空输入发送继续、输入框草稿与图片本地记忆、文件直接粘贴与拖放胶囊卡片、输入框图片点击放大、流式思考聚合守卫、运行中切换后续模型、Cursor/Codex 风格统一输入框与模型思考胶囊、Markdown 格式化粘贴、Goal/Plan 模式、@ 提及聚焦插件、全站图片双击预览、右侧面板会话绑定、移动端软键盘与手势守护、会话批量管理与删除。"
@@ -105,14 +105,14 @@
       "id": "06-chat-view-and-tool-cards",
       "name": "06-chat-view-and-tool-cards.js",
       "file": "06-chat-view-and-tool-cards.js",
-      "startLine": 28810,
-      "endLine": 34963,
+      "startLine": 28839,
+      "endLine": 34992,
       "lineCount": 6154,
       "lineRange": [
-        28810,
-        34963
+        28839,
+        34992
       ],
-      "lineRangeText": "28810-34963",
+      "lineRangeText": "28839-34992",
       "bytes": 257703,
       "sha256": "7f8f6f6fa4f5091107a5e4fbc772550fbaabbfb0c6c2aa4f91de0e54cc1dea8c",
       "responsibility": "回合耗时拆解与消耗明细气泡、工具调用自动折叠与子代理派发卡片增强、孤立过程消息吸附聚合器、会话压缩摘要自动折叠、runAllSyncOperations 全量同步步骤编排、原生消息字体与滚动条增强、目录选择器悬停与新建文件夹、Minimap 全导航、回到底部按钮、会话阅读位置记忆与恢复、代码块免扫描保护、本地路径快捷唤起与 Obsidian/Markdown 预览增强。"
@@ -122,14 +122,14 @@
       "id": "07-kernel-scheduler-and-observers",
       "name": "07-kernel-scheduler-and-observers.js",
       "file": "07-kernel-scheduler-and-observers.js",
-      "startLine": 34964,
-      "endLine": 36561,
+      "startLine": 34993,
+      "endLine": 36590,
       "lineCount": 1598,
       "lineRange": [
-        34964,
-        36561
+        34993,
+        36590
       ],
-      "lineRangeText": "34964-36561",
+      "lineRangeText": "34993-36590",
       "bytes": 69107,
       "sha256": "255e9d02f164a8a67fb7055c5cde5214fd9d13c1dd97b2ba966daab176aeac82",
       "responsibility": "防抖 DOM 同步调度器 (scheduleDomSync)、聊天区/弹窗/侧边栏 MutationObserver 观察器、耗时与用量明细浮层渲染 (showDurationTooltip / showUsageTooltip)、实时运行秒表与浏览器标签页计时器 (Live Running Stopwatch)、思考深度持久化与自动恢复。"
@@ -139,16 +139,16 @@
       "id": "08-settings-panels-and-lifecycle",
       "name": "08-settings-panels-and-lifecycle.js",
       "file": "08-settings-panels-and-lifecycle.js",
-      "startLine": 36562,
-      "endLine": 41534,
+      "startLine": 36591,
+      "endLine": 41563,
       "lineCount": 4973,
       "lineRange": [
-        36562,
-        41534
+        36591,
+        41563
       ],
-      "lineRangeText": "36562-41534",
-      "bytes": 254496,
-      "sha256": "d568257826e7099565620ad52bda761ad8227a5731c774927ec7a8727d922c9f",
+      "lineRangeText": "36591-41563",
+      "bytes": 254508,
+      "sha256": "6796cda4c591ef7d836e4c078dcaf29e4b94d811763cf8e69cd110eb1631bddd",
       "responsibility": "设置对话框尺寸与侧边栏宽度拖拽调节、设置侧边栏折叠控制器、设置弹窗增强插件面板与归档管理标签页、设置项双击快捷入口与底部快捷栏、全局用量与成本大盘 (Usage & Cost Dashboard)、静默热载探针、零泄漏清理钩子 (__PI_WEB_ENHANCEMENTS_CLEANUP__)、Plugin Micro-Kernel 异常隔离沙箱与首屏 0ms 同步立即执行挂载。"
     }
   ]
